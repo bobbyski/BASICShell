@@ -37,19 +37,21 @@ struct StudioView: View {
                 }
             }
 
-            Divider()
+            if model.isCommandBarVisible {
+                Divider()
 
-            HStack {
-                Button("Run") { model.runEditorProgram() }
-                    .keyboardShortcut("r", modifiers: [.command])
-                Button("List") { model.listProgram() }
-                Button("New") { model.clearProgram() }
-                TextField("Immediate command", text: $model.command)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.submitCommand() }
-                Button("Submit") { model.submitCommand() }
+                HStack {
+                    Button("Run") { model.runEditorProgram() }
+                        .keyboardShortcut("r", modifiers: [.command])
+                    Button("List") { model.listProgram() }
+                    Button("New") { model.clearProgram() }
+                    TextField("Immediate command", text: $model.command)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { model.submitCommand() }
+                    Button("Submit") { model.submitCommand() }
+                }
+                .padding()
             }
-            .padding()
         }
         .onAppear {
             model.runStartupProgramIfNeeded()
@@ -59,23 +61,53 @@ struct StudioView: View {
                 Button {
                     model.selectedPane = .console
                 } label: {
-                    Label("Console", systemImage: "terminal")
+                    Image(systemName: "terminal")
+                        .foregroundStyle(model.selectedPane == .console ? Color.blue : Color.primary)
                 }
                 .help("Console")
 
                 Button {
                     model.selectedPane = .editor
                 } label: {
-                    Label("Editor", systemImage: "square.and.pencil")
+                    Image(systemName: "square.and.pencil")
+                        .foregroundStyle(model.selectedPane == .editor ? Color.blue : Color.primary)
                 }
                 .help("Editor")
 
                 Button {
                     model.isDebugVisible.toggle()
                 } label: {
-                    Label("Debug", systemImage: "ladybug")
+                    Image(systemName: "ladybug")
+                        .foregroundStyle(model.isDebugVisible ? Color.blue : Color.primary)
                 }
                 .help("Debug")
+
+                Button {
+                    model.isCommandBarVisible.toggle()
+                } label: {
+                    Image(systemName: "keyboard")
+                        .foregroundStyle(model.isCommandBarVisible ? Color.blue : Color.primary)
+                }
+                .help("Command Bar")
+
+                Menu {
+                    ForEach(TerminalScreenSize.allCases, id: \.self) { size in
+                        Button {
+                            model.terminalScreenSize = size
+                        } label: {
+                            HStack {
+                                Text(size.label)
+                                if model.terminalScreenSize == size {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(model.terminalScreenSize.label, systemImage: "rectangle.inset.filled")
+                }
+                .help("Screen Size")
             }
         }
     }
@@ -84,20 +116,14 @@ struct StudioView: View {
     private var mainPane: some View {
         switch model.selectedPane {
         case .editor:
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Editor")
-                    .font(.headline)
+            VStack(spacing: 0) {
                 TextEditor(text: $model.programText)
                     .font(.system(.body, design: .monospaced))
-                    .border(Color.secondary.opacity(0.35))
             }
             .padding()
         case .console:
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Console")
-                    .font(.headline)
+            VStack(spacing: 0) {
                 SwiftTermGraphicsConsole(model: model)
-                    .border(Color.secondary.opacity(0.35))
             }
             .padding()
         }
@@ -109,10 +135,39 @@ enum StudioPane {
     case console
 }
 
+enum TerminalScreenSize: String, CaseIterable {
+    case eightyByTwentyFive
+    case sixtyFourBySixteen
+    case thirtyTwoBySixteen
+    case flexible
+
+    var label: String {
+        switch self {
+        case .eightyByTwentyFive: return "80x25"
+        case .sixtyFourBySixteen: return "64x16"
+        case .thirtyTwoBySixteen: return "32x16"
+        case .flexible: return "Flexible"
+        }
+    }
+
+    var dimensions: (cols: Int, rows: Int)? {
+        switch self {
+        case .eightyByTwentyFive: return (80, 25)
+        case .sixtyFourBySixteen: return (64, 16)
+        case .thirtyTwoBySixteen: return (32, 16)
+        case .flexible: return nil
+        }
+    }
+}
+
 @MainActor
 final class StudioModel: ObservableObject {
-    @Published var selectedPane: StudioPane = .editor
+    private let prompt = "READY\n> "
+
+    @Published var selectedPane: StudioPane = .console
     @Published var isDebugVisible = false
+    @Published var isCommandBarVisible = false
+    @Published var terminalScreenSize: TerminalScreenSize = .eightyByTwentyFive
     @Published var programText = """
     print "AIBASIC SWIFTTERM"
     screen 1
@@ -125,12 +180,13 @@ final class StudioModel: ObservableObject {
     print "CENTER =", point(160,100)
     end
     """
-    @Published var consoleText = ""
+    @Published var consoleText = "READY\n> "
     @Published var command = ""
     @Published var graphicsRevision = 0
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
+    private var consoleInputBuffer = ""
 
     private lazy var session = BASICSession(host: self)
 
@@ -150,21 +206,21 @@ final class StudioModel: ObservableObject {
 
     func runEditorProgram() {
         rebuildProgramFromEditor()
-        appendConsole("> RUN")
-        _ = session.submit("RUN")
         selectedPane = .console
+        submitConsoleCommand("RUN", echo: true)
     }
 
     func listProgram() {
         rebuildProgramFromEditor()
-        appendConsole("> LIST")
-        _ = session.submit("LIST")
+        selectedPane = .console
+        submitConsoleCommand("LIST", echo: true)
     }
 
     func clearProgram() {
         _ = session.submit("NEW")
         programText = ""
-        consoleText = ""
+        consoleText = prompt
+        consoleInputBuffer = ""
         graphics.clear(color: nil)
         graphicsRevision += 1
     }
@@ -172,9 +228,32 @@ final class StudioModel: ObservableObject {
     func submitCommand() {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        appendConsole("> \(trimmed)")
-        _ = session.submit(trimmed)
+        selectedPane = .console
+        submitConsoleCommand(trimmed, echo: true)
         command = ""
+    }
+
+    func handleConsoleInput(_ bytes: [UInt8]) {
+        for byte in bytes {
+            switch byte {
+            case 10, 13:
+                consoleText += "\n"
+                let command = consoleInputBuffer
+                consoleInputBuffer = ""
+                submitConsoleCommand(command, echo: false)
+            case 8, 127:
+                if !consoleInputBuffer.isEmpty {
+                    consoleInputBuffer.removeLast()
+                    consoleText += "\u{8} \u{8}"
+                }
+            case 32...126:
+                let character = Character(UnicodeScalar(byte))
+                consoleInputBuffer.append(character)
+                consoleText.append(character)
+            default:
+                break
+            }
+        }
     }
 
     private func rebuildProgramFromEditor() {
@@ -182,12 +261,29 @@ final class StudioModel: ObservableObject {
         session.program.loadSource(programText)
     }
 
-    private func appendConsole(_ text: String) {
-        if consoleText.isEmpty {
-            consoleText = text
-        } else {
-            consoleText += "\n" + text
+    private func appendConsoleOutput(_ text: String) {
+        consoleText += text + "\n"
+    }
+
+    private func submitConsoleCommand(_ command: String, echo: Bool) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if echo {
+            if !consoleText.hasSuffix(prompt) {
+                consoleText += prompt
+            }
+            consoleText += command + "\n"
         }
+
+        if !trimmed.isEmpty {
+            let shouldContinue = session.submit(command)
+            if !shouldContinue {
+                appendConsoleOutput("BYE")
+                return
+            }
+        }
+
+        consoleText += prompt
     }
 
     private func expandedPath(_ path: String) -> String {
@@ -220,6 +316,7 @@ struct DebugPane: View {
             debugRow("View", value: model.selectedPane == .editor ? "Editor" : "Console")
             debugRow("Program Lines", value: "\(model.programLineCount)")
             debugRow("Console Lines", value: "\(model.consoleLineCount)")
+            debugRow("Screen Size", value: model.terminalScreenSize.label)
             debugRow("Graphics Mode", value: "\(model.graphics.mode.number)")
             debugRow("Graphics Size", value: graphicsSize)
             debugRow("Graphics Colors", value: "\(model.graphics.mode.colorCount)")
@@ -251,8 +348,8 @@ struct DebugPane: View {
 
 extension StudioModel: BASICHost {
     nonisolated func printLine(_ text: String) {
-        Task { @MainActor in
-            appendConsole(text)
+        MainActor.assumeIsolated {
+            appendConsoleOutput(text)
         }
     }
 
@@ -354,19 +451,30 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
     @ObservedObject var model: StudioModel
 
     func makeNSView(context: Context) -> AIBasicTerminalContainerView {
-        AIBasicTerminalContainerView()
+        let view = AIBasicTerminalContainerView()
+        view.model = model
+        return view
     }
 
     func updateNSView(_ nsView: AIBasicTerminalContainerView, context: Context) {
-        nsView.render(consoleText: model.consoleText, graphics: model.graphics, revision: model.graphicsRevision)
+        nsView.model = model
+        nsView.render(
+            consoleText: model.consoleText,
+            graphics: model.graphics,
+            revision: model.graphicsRevision,
+            screenSize: model.terminalScreenSize
+        )
     }
 }
 
 final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDelegate {
+    weak var model: StudioModel?
+
     private let terminalView = TerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
     private let overlayView = GraphicsOverlayView(frame: .zero)
     private var renderedCharacterCount = 0
     private var renderedRevision = -1
+    private var renderedScreenSize: TerminalScreenSize?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -386,6 +494,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.terminalDelegate = self
         terminalView.configureNativeColors()
         terminalView.linkReporting = .none
+        terminalView.getTerminal().resize(cols: 80, rows: 25)
 
         overlayView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -404,7 +513,22 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         ])
     }
 
-    func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int) {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(terminalView)
+    }
+
+    override func layout() {
+        super.layout()
+        applyScreenSizeIfNeeded(force: false)
+    }
+
+    func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int, screenSize: TerminalScreenSize) {
+        if renderedScreenSize != screenSize {
+            renderedScreenSize = screenSize
+            applyScreenSizeIfNeeded(force: true)
+        }
+
         if consoleText.count < renderedCharacterCount {
             terminalView.getTerminal().resetToInitialState()
             renderedCharacterCount = 0
@@ -425,10 +549,28 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
+    private func applyScreenSizeIfNeeded(force: Bool) {
+        let screenSize = renderedScreenSize ?? .eightyByTwentyFive
+        if let dimensions = screenSize.dimensions {
+            terminalView.getTerminal().resize(cols: dimensions.cols, rows: dimensions.rows)
+            terminalView.needsDisplay = true
+            return
+        }
+
+        guard force || bounds.width > 0 else { return }
+        terminalView.sizeChanged(source: terminalView.getTerminal())
+        terminalView.needsDisplay = true
+    }
+
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        let bytes = Array(data)
+        Task { @MainActor [weak model] in
+            model?.handleConsoleInput(bytes)
+        }
+    }
     func scrolled(source: TerminalView, position: Double) {}
     func bell(source: TerminalView) {}
     func clipboardCopy(source: TerminalView, content: Data) {}
