@@ -1,5 +1,6 @@
 import BASICCore
 import AppKit
+import MarkdownUI
 import SwiftUI
 import SwiftTerm
 import WebKit
@@ -25,21 +26,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct StudioView: View {
     @StateObject private var model = StudioModel()
+    @State private var inspectorWidth: CGFloat = 360
 
     var body: some View {
         VStack(spacing: 0) {
-            HSplitView {
-                mainPane
-                    .frame(minWidth: 420)
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    mainPane
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
 
-                if let inspectorPane = model.inspectorPane {
-                    switch inspectorPane {
-                    case .debug:
-                        DebugPane(model: model)
-                            .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
-                    case .docs:
-                        UserDocumentationPane()
-                            .frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
+                    if let inspectorPane = model.inspectorPane {
+                        InspectorDivider(
+                            width: $inspectorWidth,
+                            availableWidth: geometry.size.width,
+                            minimumMainWidth: 420,
+                            minimumInspectorWidth: 260
+                        )
+
+                        inspectorView(for: inspectorPane)
+                            .frame(width: clampedInspectorWidth(availableWidth: geometry.size.width))
+                            .frame(maxHeight: .infinity)
                     }
                 }
             }
@@ -153,6 +159,56 @@ struct StudioView: View {
             }
             .padding()
         }
+    }
+
+    @ViewBuilder
+    private func inspectorView(for pane: InspectorPane) -> some View {
+        switch pane {
+        case .debug:
+            DebugPane(model: model)
+        case .docs:
+            UserDocumentationPane()
+        }
+    }
+
+    private func clampedInspectorWidth(availableWidth: CGFloat) -> CGFloat {
+        min(max(inspectorWidth, 260), max(260, availableWidth - 420))
+    }
+}
+
+struct InspectorDivider: View {
+    @Binding var width: CGFloat
+    let availableWidth: CGFloat
+    let minimumMainWidth: CGFloat
+    let minimumInspectorWidth: CGFloat
+    @State private var dragStartWidth: CGFloat?
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
+            Color.clear
+                .frame(width: 8)
+        }
+        .frame(width: 8)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if dragStartWidth == nil {
+                        dragStartWidth = width
+                    }
+
+                    let maximumWidth = max(minimumInspectorWidth, availableWidth - minimumMainWidth)
+                    let proposedWidth = (dragStartWidth ?? width) - value.translation.width
+                    width = min(max(proposedWidth, minimumInspectorWidth), maximumWidth)
+                }
+                .onEnded { _ in
+                    dragStartWidth = nil
+                }
+        )
+        .help("Resize side pane")
     }
 }
 
@@ -678,7 +734,7 @@ struct UserDocumentationPane: View {
 
                 ScrollView {
                     if let selectedDoc {
-                        Text(markdown: selectedDoc.content)
+                        Markdown(selectedDoc.content)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
@@ -749,16 +805,6 @@ struct UserDoc: Identifiable, Hashable {
             }
         }
         return fallback.replacingOccurrences(of: "_", with: " ")
-    }
-}
-
-private extension Text {
-    init(markdown: String) {
-        if let attributed = try? AttributedString(markdown: markdown) {
-            self.init(attributed)
-        } else {
-            self.init(verbatim: markdown)
-        }
     }
 }
 

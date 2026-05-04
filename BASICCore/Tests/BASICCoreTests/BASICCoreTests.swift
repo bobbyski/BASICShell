@@ -28,6 +28,95 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Colon separates statements")
+    func colonStatementSeparator() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("CLS:PRINT \"HELLO\"")
+
+        #expect(host.output == ["\u{001B}[2J\u{001B}[H", "HELLO"])
+    }
+
+    @Test("REM ignores the rest of the line")
+    func remIgnoresRestOfLine() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "start"
+        rem print "x: ";x
+        print "done"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["start", "done"])
+    }
+
+    @Test("Comment aliases ignore the rest of the line")
+    func commentAliasesIgnoreRestOfLine() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "start"
+        ' print "apostrophe"
+        # print "hash"
+        // print "slash"
+        print "done" ' trailing apostrophe comment
+        print "ok" // trailing slash comment
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["start", "done", "ok"])
+    }
+
+    @Test("Hash comments are only recognized at the start of a physical line")
+    func hashCommentsOnlyStartPhysicalLines() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PRINT \"ok\": # not a trailing comment")
+
+        #expect(host.output == [
+            """
+            PRINT "ok": # not a trailing comment
+                        ^
+            Syntax error: Unexpected character #
+            """
+        ])
+    }
+
+    @Test("Trailing backslash joins physical lines")
+    func trailingBackslashJoinsPhysicalLines() {
+        let host = TestHost()
+        let program = BASICProgram()
+
+        program.loadSource("""
+        print "A"; \\
+        "B"
+        print \\
+        "C"
+        """)
+
+        let session = BASICSession(host: host)
+        session.program.loadSource(program.listing())
+        session.submit("RUN")
+
+        #expect(host.output == ["AB", "C"])
+    }
+
+    @Test("PRINT supports comma tabs and semicolon joins")
+    func printSeparators() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PRINT \"x=\";5")
+        session.submit("PRINT \"A\",\"B\"")
+
+        #expect(host.output == ["x=5", "A             B"])
+    }
+
     @Test("Syntax errors include source and caret context")
     func syntaxErrorContext() {
         let host = TestHost()

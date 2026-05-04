@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		74D0835107EBA56BF18A331D /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = EF38E292B830FC5A0F76CE1D /* MarkdownUI */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
 		DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */ = {isa = PBXBuildFile; productRef = A5E611364F88C87B9EAAD4AF /* BASICCore */; };
 /* End PBXBuildFile section */
@@ -25,6 +26,7 @@
 			files = (
 				DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */,
 				4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */,
+				74D0835107EBA56BF18A331D /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +92,7 @@
 			packageProductDependencies = (
 				A5E611364F88C87B9EAAD4AF /* BASICCore */,
 				130A03B0A453DD5074363E15 /* SwiftTerm */,
+				EF38E292B830FC5A0F76CE1D /* MarkdownUI */,
 			);
 			productName = BASICStudio;
 			productReference = 393A6113D352F2C1DAC75002 /* BASICStudio.app */;
@@ -119,6 +122,7 @@
 			mainGroup = 883262CA887E26D7AAEE209F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				C5B392400820111A96EDAFA4 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				51196CCCA29E213E68ADF750 /* XCLocalSwiftPackageReference "../BASICCore" */,
 			);
@@ -338,6 +342,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.1;
+			};
+		};
 		C5B392400820111A96EDAFA4 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
@@ -357,6 +369,11 @@
 		A5E611364F88C87B9EAAD4AF /* BASICCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BASICCore;
+		};
+		EF38E292B830FC5A0F76CE1D /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

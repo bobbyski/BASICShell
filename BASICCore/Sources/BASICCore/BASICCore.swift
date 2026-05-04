@@ -121,6 +121,8 @@ public final class BASICProgram {
             sourceLines.removeFirst()
         }
 
+        sourceLines = Self.joinContinuationLines(sourceLines)
+
         lines = sourceLines
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -159,6 +161,45 @@ public final class BASICProgram {
         guard !digits.isEmpty, let number = Int(digits) else { return nil }
         let rest = source[index...].trimmingCharacters(in: .whitespaces)
         return (number, rest)
+    }
+
+    private static func joinContinuationLines(_ sourceLines: [String]) -> [String] {
+        var joinedLines: [String] = []
+        var pending: String?
+
+        for sourceLine in sourceLines {
+            let line = sourceLine.trimmingCharacters(in: .whitespaces)
+            let combined = [pending, line]
+                .compactMap { $0 }
+                .joined(separator: pending == nil ? "" : " ")
+
+            if let continued = removingTrailingContinuation(from: combined) {
+                pending = continued
+            } else {
+                joinedLines.append(combined)
+                pending = nil
+            }
+        }
+
+        if let pending {
+            joinedLines.append(pending)
+        }
+
+        return joinedLines
+    }
+
+    private static func removingTrailingContinuation(from line: String) -> String? {
+        var index = line.endIndex
+        while index > line.startIndex {
+            let previous = line.index(before: index)
+            if line[previous].isWhitespace {
+                index = previous
+                continue
+            }
+            guard line[previous] == "\\" else { return nil }
+            return String(line[..<previous]).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
     }
 }
 
@@ -324,11 +365,18 @@ public final class BASICInterpreter {
             return .next
         case .labeled(_, let statement):
             return try execute(statement, pc: pc)
+        case .sequence(let statements):
+            for statement in statements {
+                let flow = try execute(statement, pc: pc)
+                if flow != .next {
+                    return flow
+                }
+            }
+            return .next
         case .end:
             return .end
-        case .print(let expressions):
-            let values = try expressions.map { try evaluate($0).description }
-            host?.printLine(values.joined(separator: " "))
+        case .print(let parts):
+            host?.printLine(try renderPrint(parts))
             return .next
         case .screen(let expression):
             let modeNumber = try integer(expression)
@@ -420,6 +468,29 @@ public final class BASICInterpreter {
             throw BASICError.runtime("Cannot assign string to numeric variable \(name)")
         }
         variables[name.uppercased()] = value
+    }
+
+    private func renderPrint(_ parts: [PrintPart]) throws -> String {
+        var output = ""
+        var column = 0
+        let tabWidth = 14
+
+        for part in parts {
+            switch part {
+            case .expression(let expression):
+                let text = try evaluate(expression).description
+                output += text
+                column += text.count
+            case .separator(.comma):
+                let spaces = tabWidth - (column % tabWidth)
+                output += String(repeating: " ", count: spaces)
+                column += spaces
+            case .separator(.semicolon):
+                break
+            }
+        }
+
+        return output
     }
 
     private func evaluate(_ expression: Expression) throws -> BASICValue {
@@ -519,7 +590,7 @@ private struct ParsedLine {
     let statement: Statement
 }
 
-private enum Flow {
+private enum Flow: Equatable {
     case next
     case goto(Int)
     case gotoLabel(String)
@@ -532,7 +603,8 @@ private indirect enum Statement: Equatable {
     case remark
     case label(String)
     case labeled(String, Statement)
-    case print([Expression])
+    case sequence([Statement])
+    case print([PrintPart])
     case screen(Expression)
     case color(Expression)
     case cls
@@ -553,6 +625,16 @@ private indirect enum Statement: Equatable {
         if case .labeled(let name, _) = self { return name }
         return nil
     }
+}
+
+private enum PrintPart: Equatable {
+    case expression(Expression)
+    case separator(PrintSeparator)
+}
+
+private enum PrintSeparator: Equatable {
+    case comma
+    case semicolon
 }
 
 private enum BranchTarget: Equatable {
@@ -592,6 +674,7 @@ private enum Token: Equatable {
     case string(String)
     case identifier(String)
     case comma
+    case semicolon
     case colon
     case equals
     case less
@@ -616,6 +699,7 @@ private struct LexedToken: Equatable {
 private struct Lexer {
     private let source: String
     private var index: String.Index
+    private var atStatementStart = true
 
     init(source: String) {
         self.source = source
@@ -637,6 +721,10 @@ private struct Lexer {
         guard index < source.endIndex else { return LexedToken(token: .eof, column: column) }
         let character = source[index]
 
+        if startsComment(character) {
+            index = source.endIndex
+            return emit(.eof, column: column)
+        }
         if character.isNumber || character == "." {
             return try scanNumber()
         }
@@ -651,6 +739,7 @@ private struct Lexer {
         let token: Token
         switch character {
         case ",": token = .comma
+        case ";": token = .semicolon
         case ":": token = .colon
         case "=": token = .equals
         case "+": token = .plus
@@ -669,7 +758,7 @@ private struct Lexer {
         default:
             throw BASICError.contextualSyntax(message: "Unexpected character \(character)", source: source, column: column)
         }
-        return LexedToken(token: token, column: column)
+        return emit(token, column: column)
     }
 
     private mutating func scanNumber() throws -> LexedToken {
@@ -690,7 +779,7 @@ private struct Lexer {
         guard let value = Double(text) else {
             throw BASICError.contextualSyntax(message: "Invalid number \(text)", source: source, column: column)
         }
-        return LexedToken(token: .number(value), column: column)
+        return emit(.number(value), column: column)
     }
 
     private mutating func scanString() throws -> LexedToken {
@@ -705,7 +794,7 @@ private struct Lexer {
         }
         let value = String(source[start..<index])
         advance()
-        return LexedToken(token: .string(value), column: column)
+        return emit(.string(value), column: column)
     }
 
     private mutating func scanIdentifier() -> LexedToken {
@@ -714,7 +803,11 @@ private struct Lexer {
         while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "$" {
             advance()
         }
-        return LexedToken(token: .identifier(String(source[start..<index])), column: column)
+        let name = String(source[start..<index])
+        if atStatementStart, name.uppercased() == "REM" {
+            index = source.endIndex
+        }
+        return emit(.identifier(name), column: column)
     }
 
     private mutating func skipWhitespace() {
@@ -731,6 +824,33 @@ private struct Lexer {
 
     private mutating func advance() {
         index = source.index(after: index)
+    }
+
+    private mutating func emit(_ token: Token, column: Int) -> LexedToken {
+        if token == .colon {
+            atStatementStart = true
+        } else if token != .eof {
+            atStatementStart = false
+        }
+        return LexedToken(token: token, column: column)
+    }
+
+    private func startsComment(_ character: Character) -> Bool {
+        if character == "'" {
+            return true
+        }
+        if character == "#" {
+            return isAtPhysicalLineStart
+        }
+        if character == "/" {
+            let next = source.index(after: index)
+            return next < source.endIndex && source[next] == "/"
+        }
+        return false
+    }
+
+    private var isAtPhysicalLineStart: Bool {
+        source[..<index].allSatisfy(\.isWhitespace)
     }
 
     private var column: Int {
@@ -750,54 +870,57 @@ private struct Parser {
     }
 
     mutating func parseStatement() throws -> Statement {
+        var statements: [Statement] = []
+        while !isAtEnd {
+            statements.append(try parseSingleStatement())
+            if !match(.colon) {
+                break
+            }
+        }
+
+        try consumeEnd()
+        if statements.isEmpty { return .empty }
+        if statements.count == 1 { return statements[0] }
+        return .sequence(statements)
+    }
+
+    private mutating func parseSingleStatement() throws -> Statement {
         if isAtEnd { return .empty }
-        if case .identifier(let name) = peek, peekNext == .colon {
+        if case .identifier(let name) = peek, peekNext == .colon, !Self.statementKeywords.contains(name.uppercased()) {
             _ = advance()
             _ = advance()
             if isAtEnd {
                 return .label(name)
             }
-            return .labeled(name, try parseStatement())
+            return .labeled(name, try parseSingleStatement())
         }
         if matchIdentifier("LABEL") {
             let name = try consumeLabelName("Expected label name")
-            try consumeEnd()
             return .label(name)
         }
         if matchIdentifier("REM") { return .remark }
         if matchIdentifier("PRINT") {
-            if isAtEnd { return .print([]) }
-            var expressions: [Expression] = []
-            repeat {
-                expressions.append(try parseExpression())
-            } while match(.comma)
-            try consumeEnd()
-            return .print(expressions)
+            return .print(try parsePrintParts())
         }
         if matchIdentifier("SCREEN") {
             let mode = try parseExpression()
-            try consumeEnd()
             return .screen(mode)
         }
         if matchIdentifier("COLOR") {
             let color = try parseExpression()
-            try consumeEnd()
             return .color(color)
         }
         if matchIdentifier("CLS") {
-            try consumeEnd()
             return .cls
         }
         if matchIdentifier("PSET") {
             let point = try parsePoint()
             let color = match(.comma) ? try parseExpression() : nil
-            try consumeEnd()
             return .pset(point, color)
         }
         if matchIdentifier("PRESET") {
             let point = try parsePoint()
             let color = match(.comma) ? try parseExpression() : nil
-            try consumeEnd()
             return .preset(point, color)
         }
         if matchIdentifier("LINE") {
@@ -805,7 +928,6 @@ private struct Parser {
             guard match(.minus) else { throw syntax("Expected - in LINE") }
             let end = try parsePoint()
             let color = match(.comma) ? try parseExpression() : nil
-            try consumeEnd()
             return .line(start, end, color)
         }
         if matchIdentifier("LET") {
@@ -813,12 +935,10 @@ private struct Parser {
         }
         if matchIdentifier("INPUT") {
             let name = try consumeIdentifier("Expected variable name after INPUT")
-            try consumeEnd()
             return .input(name)
         }
         if matchIdentifier("GOTO") {
             let target = try consumeBranchTarget("Expected line number or label after GOTO")
-            try consumeEnd()
             switch target {
             case .line(let line): return .goto(line)
             case .label(let label): return .gotoLabel(label)
@@ -826,22 +946,18 @@ private struct Parser {
         }
         if matchIdentifier("GOSUB") {
             let target = try consumeBranchTarget("Expected line number or label after GOSUB")
-            try consumeEnd()
             return .gosub(target)
         }
         if matchIdentifier("RETURN") {
-            try consumeEnd()
             return .returnFromSubroutine
         }
         if matchIdentifier("IF") {
             let condition = try parseExpression()
             guard matchIdentifier("THEN") else { throw syntax("Expected THEN") }
             let target = try consumeBranchTarget("Expected line number or label after THEN")
-            try consumeEnd()
             return .ifThen(condition, target)
         }
         if matchIdentifier("END") || matchIdentifier("STOP") {
-            try consumeEnd()
             return .end
         }
         if case .identifier = peek {
@@ -850,11 +966,24 @@ private struct Parser {
         throw syntax("Unknown statement")
     }
 
+    private mutating func parsePrintParts() throws -> [PrintPart] {
+        var parts: [PrintPart] = []
+        while !isStatementEnd {
+            if match(.comma) {
+                parts.append(.separator(.comma))
+            } else if match(.semicolon) {
+                parts.append(.separator(.semicolon))
+            } else {
+                parts.append(.expression(try parseExpression()))
+            }
+        }
+        return parts
+    }
+
     private mutating func parseAssignment() throws -> Statement {
         let name = try consumeIdentifier("Expected variable name")
         guard match(.equals) else { throw syntax("Expected =") }
         let expression = try parseExpression()
-        try consumeEnd()
         return .letValue(name, expression)
     }
 
@@ -984,6 +1113,7 @@ private struct Parser {
     }
 
     private var isAtEnd: Bool { peek == .eof }
+    private var isStatementEnd: Bool { peek == .eof || peek == .colon }
     private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1
@@ -1019,4 +1149,9 @@ private struct Parser {
         }
         return .contextualSyntax(message: message, source: source, column: column)
     }
+
+    private static let statementKeywords: Set<String> = [
+        "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
+        "LET", "INPUT", "GOTO", "GOSUB", "RETURN", "IF", "END", "STOP"
+    ]
 }
