@@ -1,4 +1,4 @@
-# POINT
+# POINT() Function
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-Studio%20only-lightgrey)
 

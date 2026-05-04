@@ -706,6 +706,13 @@ struct UserDocumentationPane: View {
     @State private var docs = UserDoc.loadAll()
     @State private var selectedDocID: UserDoc.ID?
 
+    private var selectedDocBinding: Binding<UserDoc.ID> {
+        Binding(
+            get: { selectedDocID ?? docs.first?.id ?? "" },
+            set: { selectedDocID = $0 }
+        )
+    }
+
     private var selectedDoc: UserDoc? {
         let id = selectedDocID ?? docs.first?.id
         return docs.first { $0.id == id }
@@ -717,6 +724,16 @@ struct UserDocumentationPane: View {
                 Text("Documentation")
                     .font(.headline)
                 Spacer()
+                if !docs.isEmpty {
+                    Picker("Topic", selection: selectedDocBinding) {
+                        ForEach(docs) { doc in
+                            Text(doc.title).tag(doc.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 260)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -724,28 +741,19 @@ struct UserDocumentationPane: View {
 
             Divider()
 
-            HSplitView {
-                List(docs, selection: $selectedDocID) { doc in
-                    Text(doc.title)
-                        .lineLimit(1)
-                        .tag(doc.id)
+            ScrollView {
+                if let selectedDoc {
+                    Markdown(selectedDoc.content)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(18)
+                } else {
+                    Text("No documentation found.")
+                        .foregroundStyle(.secondary)
+                        .padding()
                 }
-                .frame(minWidth: 120, idealWidth: 150, maxWidth: 190)
-
-                ScrollView {
-                    if let selectedDoc {
-                        Markdown(selectedDoc.content)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                    } else {
-                        Text("No documentation found.")
-                            .foregroundStyle(.secondary)
-                            .padding()
-                    }
-                }
-                .frame(minWidth: 170)
             }
+            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
             selectedDocID = selectedDocID ?? docs.first?.id
