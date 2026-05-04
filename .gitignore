@@ -6,3 +6,6 @@ BASICStudio/Build/Intermediates.noindex/BASICCore.build
 BASICStudio/Build/Intermediates.noindex/BASICStudio.build/Debug/BASICStudio.build
 BASICStudio/Build/Intermediates.noindex/SwiftTerm.build
 BASICStudio/Build
+BASICCore/.swiftpm
+BASICStudio/BASICStudio.xcodeproj/project.xcworkspace/xcuserdata/bobby.xcuserdatad
+BASICStudio/BASICStudio.xcodeproj/xcuserdata
