@@ -1,3 +1,8 @@
 BASICCore/.build
 BASICShell/.build
 BASICStudio/.build
+BASICStudio/.xcode-derived
+BASICStudio/Build/Intermediates.noindex/BASICCore.build
+BASICStudio/Build/Intermediates.noindex/BASICStudio.build/Debug/BASICStudio.build
+BASICStudio/Build/Intermediates.noindex/SwiftTerm.build
+BASICStudio/Build
