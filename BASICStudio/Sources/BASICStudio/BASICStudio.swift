@@ -425,7 +425,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|IF|THEN|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|IF|THEN|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -537,12 +537,11 @@ final class StudioModel: ObservableObject {
     }
 
     private func rebuildProgramFromEditor() {
-        _ = session.submit("NEW")
         session.program.loadSource(programText)
     }
 
-    private func appendConsoleOutput(_ text: String) {
-        consoleText += text + "\n"
+    private func appendConsoleOutput(_ text: String, terminator: String = "\n") {
+        consoleText += text + terminator
     }
 
     private func submitConsoleCommand(_ command: String, echo: Bool) {
@@ -575,14 +574,14 @@ final class StudioModel: ObservableObject {
 
     private func shouldUseEditorProgram(for command: String) -> Bool {
         let keyword = command.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        return keyword == "LIST" || keyword == "RUN"
+        return keyword == "LIST" || keyword == "RUN" || keyword == "SAVE" || keyword.hasPrefix("SAVE ")
     }
 
     private func shouldSyncEditorAfterCommand(_ command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         let uppercased = trimmed.uppercased()
-        return trimmed.first?.isNumber == true || uppercased == "NEW" || uppercased.hasPrefix("LOAD ")
+        return trimmed.first?.isNumber == true || uppercased == "NEW" || uppercased == "LOAD" || uppercased.hasPrefix("LOAD ")
     }
 
     private func syncEditorFromSession() {
@@ -604,7 +603,7 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    private func expandedPath(_ path: String) -> String {
+    nonisolated private func expandedPath(_ path: String) -> String {
         if path == "~" || path.hasPrefix("~/") {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
@@ -817,6 +816,13 @@ struct UserDoc: Identifiable, Hashable {
 }
 
 extension StudioModel: BASICHost {
+    nonisolated func print(_ text: String, terminator: String) {
+        MainActor.assumeIsolated {
+            highlightErrorIfPresent(text)
+            appendConsoleOutput(text, terminator: terminator)
+        }
+    }
+
     nonisolated func printLine(_ text: String) {
         MainActor.assumeIsolated {
             highlightErrorIfPresent(text)
@@ -826,6 +832,23 @@ extension StudioModel: BASICHost {
 
     nonisolated func readLine(prompt: String) -> String? {
         nil
+    }
+}
+
+extension StudioModel: BASICFileHost {
+    nonisolated func loadTextFile(path: String) throws -> String {
+        try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+    }
+
+    nonisolated func saveTextFile(path: String, text: String) throws {
+        try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+    }
+
+    nonisolated func listFiles() throws -> [String] {
+        try FileManager.default
+            .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
+            .filter { !$0.hasPrefix(".") }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }
 

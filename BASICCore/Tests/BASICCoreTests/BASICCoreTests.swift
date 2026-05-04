@@ -289,6 +289,67 @@ struct BASICCoreTests {
         #expect(host.output == ["1,1", "1,2", "2,1", "2,2"])
     }
 
+    @Test("IF THEN ELSE supports inline statements")
+    func ifThenElseInlineStatements() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 3
+        if i = 2 then print "Two" else print "Not two"
+        next i
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Not two", "Two", "Not two"])
+    }
+
+    @Test("IF THEN still supports label targets")
+    func ifThenStillSupportsLabelTargets() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let i = 5
+        if i = 5 then Five
+        print "miss"
+        end
+        Five:
+        print "hit"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["hit"])
+    }
+
+    @Test("FOR NEXT works on colon-separated lines")
+    func forNextOnColonSeparatedLine() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 for i=1 to 3:print \"i=\";i,i*2:next i")
+        session.submit("20 for x=1 to 4:print x;:next x")
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "i=1           2",
+            "i=2           4",
+            "i=3           6",
+            "1234"
+        ])
+    }
+
+    @Test("PRINT trailing semicolon suppresses newline")
+    func printTrailingSemicolonSuppressesNewline() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 for x=1 to 4:print x;:next x")
+        session.submit("RUN")
+
+        #expect(host.output == ["1234"])
+    }
+
     @Test("Colon separates statements")
     func colonStatementSeparator() {
         let host = TestHost()
@@ -486,6 +547,82 @@ struct BASICCoreTests {
         #expect(host.output == ["7"])
     }
 
+    @Test("SAVE writes program and remembers file name")
+    func saveWritesProgramAndRemembersFileName() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print \"saved\"")
+        session.submit("save \"demo.bas\"")
+        session.submit("20 print \"again\"")
+        session.submit("save")
+
+        #expect(host.files["demo.bas"] == """
+        10 print "saved"
+        20 print "again"
+        """)
+    }
+
+    @Test("LOAD remembers file name for later SAVE")
+    func loadRemembersFileNameForSave() {
+        let host = TestHost()
+        host.files["demo.bas"] = "10 print \"loaded\""
+        let session = BASICSession(host: host)
+
+        session.submit("load \"demo.bas\"")
+        session.submit("20 print \"updated\"")
+        session.submit("save")
+
+        #expect(host.files["demo.bas"] == """
+        10 print "loaded"
+        20 print "updated"
+        """)
+    }
+
+    @Test("FILES lists current directory files")
+    func filesListsCurrentDirectoryFiles() {
+        let host = TestHost()
+        host.files["zeta.bas"] = ""
+        host.files["alpha.bas"] = ""
+        let session = BASICSession(host: host)
+
+        session.submit("files")
+
+        #expect(host.output == ["alpha.bas\nzeta.bas"])
+    }
+
+    @Test("SAVE LOAD and FILES can run as program statements")
+    func fileCommandsCanRunAsProgramStatements() {
+        let host = TestHost()
+        host.files["loadme.bas"] = "10 print \"loaded\""
+        host.files["other.bas"] = ""
+        let session = BASICSession(host: host)
+
+        session.submit("10 files")
+        session.submit("20 load \"loadme.bas\"")
+        session.submit("30 save \"saved.bas\"")
+        session.submit("RUN")
+
+        #expect(host.output == ["loadme.bas\nother.bas"])
+        #expect(host.files["saved.bas"] == "10 print \"loaded\"")
+    }
+
+    @Test("RUN can start at a line for safe SAVE shortcuts")
+    func runCanStartAtLineForSaveShortcut() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print \"do not run\"")
+        session.submit("65535 save\"shortcut.bas\"")
+        session.submit("RUN 65535")
+
+        #expect(host.output == [])
+        #expect(host.files["shortcut.bas"] == """
+        10 print "do not run"
+        65535 save"shortcut.bas"
+        """)
+    }
+
     @Test("Loaded source ignores shebang")
     func shebangSource() throws {
         let host = TestHost()
@@ -529,14 +666,37 @@ struct BASICCoreTests {
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost {
     var output: [String] = []
+    var pendingOutput = ""
+    var hasPendingUnterminatedOutput = false
     var input: [String] = []
     var files: [String: String] = [:]
     var screenMode: BASICScreenMode?
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
 
+    func print(_ text: String, terminator: String) {
+        pendingOutput += text
+        if terminator.contains("\n") {
+            output.append(pendingOutput)
+            pendingOutput = ""
+            hasPendingUnterminatedOutput = false
+        } else if hasPendingUnterminatedOutput {
+            output[output.count - 1] = pendingOutput
+        } else {
+            output.append(pendingOutput)
+            hasPendingUnterminatedOutput = true
+        }
+    }
+
     func printLine(_ text: String) {
-        output.append(text)
+        if pendingOutput.isEmpty {
+            output.append(text)
+        } else {
+            pendingOutput += text
+            output[output.count - 1] = pendingOutput
+            pendingOutput = ""
+            hasPendingUnterminatedOutput = false
+        }
     }
 
     func readLine(prompt: String) -> String? {
@@ -545,6 +705,14 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
 
     func loadTextFile(path: String) throws -> String {
         files[path] ?? ""
+    }
+
+    func saveTextFile(path: String, text: String) throws {
+        files[path] = text
+    }
+
+    func listFiles() throws -> [String] {
+        files.keys.sorted()
     }
 
     func setScreenMode(_ mode: BASICScreenMode) {
@@ -573,10 +741,33 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
 
 private final class TextOnlyHost: BASICFileHost {
     var output: [String] = []
+    var pendingOutput = ""
+    var hasPendingUnterminatedOutput = false
     var files: [String: String] = [:]
 
+    func print(_ text: String, terminator: String) {
+        pendingOutput += text
+        if terminator.contains("\n") {
+            output.append(pendingOutput)
+            pendingOutput = ""
+            hasPendingUnterminatedOutput = false
+        } else if hasPendingUnterminatedOutput {
+            output[output.count - 1] = pendingOutput
+        } else {
+            output.append(pendingOutput)
+            hasPendingUnterminatedOutput = true
+        }
+    }
+
     func printLine(_ text: String) {
-        output.append(text)
+        if pendingOutput.isEmpty {
+            output.append(text)
+        } else {
+            pendingOutput += text
+            output[output.count - 1] = pendingOutput
+            pendingOutput = ""
+            hasPendingUnterminatedOutput = false
+        }
     }
 
     func readLine(prompt: String) -> String? {
@@ -585,5 +776,13 @@ private final class TextOnlyHost: BASICFileHost {
 
     func loadTextFile(path: String) throws -> String {
         files[path] ?? ""
+    }
+
+    func saveTextFile(path: String, text: String) throws {
+        files[path] = text
+    }
+
+    func listFiles() throws -> [String] {
+        files.keys.sorted()
     }
 }

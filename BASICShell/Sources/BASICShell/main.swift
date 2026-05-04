@@ -2,8 +2,12 @@ import BASICCore
 import Foundation
 
 final class ConsoleHost: BASICFileHost {
+    func print(_ text: String, terminator: String) {
+        Swift.print(text, terminator: terminator)
+    }
+
     func printLine(_ text: String) {
-        print(text)
+        Swift.print(text)
     }
 
     func readLine(prompt: String) -> String? {
@@ -12,13 +16,25 @@ final class ConsoleHost: BASICFileHost {
     }
 
     func loadTextFile(path: String) throws -> String {
-        let expandedPath: String
+        try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+    }
+
+    func saveTextFile(path: String, text: String) throws {
+        try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+    }
+
+    func listFiles() throws -> [String] {
+        try FileManager.default
+            .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
+            .filter { !$0.hasPrefix(".") }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private func expandedPath(_ path: String) -> String {
         if path == "~" || path.hasPrefix("~/") {
-            expandedPath = FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
-        } else {
-            expandedPath = path
+            return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
-        return try String(contentsOfFile: expandedPath, encoding: .utf8)
+        return path
     }
 }
 

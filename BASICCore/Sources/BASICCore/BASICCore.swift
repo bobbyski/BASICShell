@@ -409,12 +409,25 @@ private extension BASICType {
 }
 
 public protocol BASICHost: AnyObject {
+    func print(_ text: String, terminator: String)
     func printLine(_ text: String)
     func readLine(prompt: String) -> String?
 }
 
 public protocol BASICFileHost: BASICHost {
     func loadTextFile(path: String) throws -> String
+    func saveTextFile(path: String, text: String) throws
+    func listFiles() throws -> [String]
+}
+
+public extension BASICFileHost {
+    func saveTextFile(path: String, text: String) throws {
+        throw BASICError.runtime("SAVE is not supported by this host")
+    }
+
+    func listFiles() throws -> [String] {
+        throw BASICError.runtime("FILES is not supported by this host")
+    }
 }
 
 public struct BASICScreenMode: Equatable, Sendable {
@@ -438,6 +451,12 @@ public protocol BASICGraphicsHost: BASICHost {
     func setPixel(x: Int, y: Int, color: Int)
     func getPixel(x: Int, y: Int) -> Int
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int)
+}
+
+public extension BASICHost {
+    func print(_ text: String, terminator: String) {
+        printLine(text + terminator.trimmingCharacters(in: .newlines))
+    }
 }
 
 public final class BASICProgram {
@@ -558,10 +577,15 @@ private struct ProgramLine {
     var source: String
 }
 
+private final class BASICFileState {
+    var lastFilePath: String?
+}
+
 public final class BASICSession {
     public let program = BASICProgram()
     private let host: BASICHost
     private let runtime = BASICRuntime()
+    private let fileState = BASICFileState()
 
     public init(host: BASICHost) {
         self.host = host
@@ -584,31 +608,69 @@ public final class BASICSession {
                 }
                 do {
                     program.loadSource(try fileHost.loadTextFile(path: path))
+                    fileState.lastFilePath = path
                 } catch {
                     throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
                 }
                 return true
             }
+            if let saveCommand = try Self.savePath(from: trimmed) {
+                guard let fileHost = host as? BASICFileHost else {
+                    throw BASICError.runtime("SAVE is not supported by this host")
+                }
+                guard let path = saveCommand ?? fileState.lastFilePath else {
+                    throw BASICError.syntax("Expected path after SAVE")
+                }
+                do {
+                    try fileHost.saveTextFile(path: path, text: program.listing())
+                    fileState.lastFilePath = path
+                } catch let error as BASICError {
+                    throw error
+                } catch {
+                    throw BASICError.runtime("Could not save \(path): \(error.localizedDescription)")
+                }
+                return true
+            }
+            if Self.isFilesCommand(trimmed) {
+                guard let fileHost = host as? BASICFileHost else {
+                    throw BASICError.runtime("FILES is not supported by this host")
+                }
+                do {
+                    let files = try fileHost.listFiles()
+                    if !files.isEmpty {
+                        host.printLine(files.joined(separator: "\n"))
+                    }
+                } catch let error as BASICError {
+                    throw error
+                } catch {
+                    throw BASICError.runtime("Could not list files: \(error.localizedDescription)")
+                }
+                return true
+            }
+
+            if let startLine = try Self.runStartLine(from: trimmed) {
+                runtime.resetForRun()
+                try BASICInterpreter(program: program, host: host, runtime: runtime, fileState: fileState).run(startLine: startLine)
+                return true
+            }
 
             switch trimmed.uppercased() {
-            case "RUN":
-                runtime.resetForRun()
-                try BASICInterpreter(program: program, host: host, runtime: runtime).run()
             case "LIST":
                 let listing = program.listing()
                 if !listing.isEmpty { host.printLine(listing) }
             case "NEW":
                 program.clear()
                 runtime.clearAll()
+                fileState.lastFilePath = nil
             case "CLEAR":
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, FILES, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             case "QUIT", "EXIT":
                 return false
             default:
-                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime).run()
+                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState).run()
             }
         } catch let error as BASICError {
             host.printLine(error.description)
@@ -638,14 +700,28 @@ public final class BASICSession {
     }
 
     private static func loadPath(from source: String) throws -> String? {
-        guard keywordPrefix("LOAD", matches: source) else { return nil }
-        let start = source.index(source.startIndex, offsetBy: 4)
+        try commandPath(keyword: "LOAD", from: source, requiresPath: true)
+    }
+
+    private static func savePath(from source: String) throws -> String?? {
+        guard keywordPrefix("SAVE", matches: source) else { return nil }
+        return try commandPath(keyword: "SAVE", from: source, requiresPath: false)
+    }
+
+    private static func commandPath(keyword: String, from source: String, requiresPath: Bool) throws -> String? {
+        guard keywordPrefix(keyword, matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: keyword.count)
         let rest = source[start...].trimmingCharacters(in: .whitespaces)
-        guard !rest.isEmpty else { throw BASICError.syntax("Expected path after LOAD") }
+        guard !rest.isEmpty else {
+            if requiresPath {
+                throw BASICError.syntax("Expected path after \(keyword)")
+            }
+            return nil
+        }
 
         if rest.hasPrefix("\"") {
             guard rest.hasSuffix("\""), rest.count >= 2 else {
-                throw BASICError.syntax("Unterminated LOAD path")
+                throw BASICError.syntax("Unterminated \(keyword) path")
             }
             return String(rest.dropFirst().dropLast())
         }
@@ -653,12 +729,25 @@ public final class BASICSession {
         return rest
     }
 
+    private static func isFilesCommand(_ source: String) -> Bool {
+        source.uppercased() == "FILES"
+    }
+
+    private static func runStartLine(from source: String) throws -> Int?? {
+        guard keywordPrefix("RUN", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 3)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return .some(nil) }
+        guard let line = Int(rest) else { throw BASICError.syntax("Expected line number after RUN") }
+        return .some(line)
+    }
+
     private static func keywordPrefix(_ keyword: String, matches source: String) -> Bool {
         guard source.count >= keyword.count else { return false }
         let end = source.index(source.startIndex, offsetBy: keyword.count)
         guard source[source.startIndex..<end].uppercased() == keyword else { return false }
         guard end < source.endIndex else { return true }
-        return source[end].isWhitespace
+        return source[end].isWhitespace || source[end] == "\""
     }
 }
 
@@ -666,25 +755,28 @@ public final class BASICInterpreter {
     private let program: BASICProgram
     private weak var host: BASICHost?
     private let runtime: BASICRuntime
+    private let fileState: BASICFileState
     private var gosubStack: [Int] = []
     private var forStack: [ForFrame] = []
 
     public convenience init(program: BASICProgram, host: BASICHost) {
-        self.init(program: program, host: host, runtime: BASICRuntime())
+        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState())
     }
 
-    fileprivate init(program: BASICProgram, host: BASICHost, runtime: BASICRuntime) {
+    fileprivate init(program: BASICProgram, host: BASICHost, runtime: BASICRuntime, fileState: BASICFileState = BASICFileState()) {
         self.program = program
         self.host = host
         self.runtime = runtime
+        self.fileState = fileState
     }
 
-    public func run() throws {
+    public func run(startLine: Int? = nil) throws {
         gosubStack.removeAll()
         forStack.removeAll()
-        let parsed = try program.orderedLines.map { line in
+        let parsed = try program.orderedLines.flatMap { line in
             var parser = try Parser(source: line.source)
-            return try ParsedLine(number: line.number, statement: parser.parseStatement())
+            let statement = try parser.parseStatement()
+            return ParsedLine.flatten(number: line.number, statement: statement)
         }
         var lineIndexByNumber: [Int: Int] = [:]
         var lineIndexByLabel: [String: Int] = [:]
@@ -698,6 +790,10 @@ public final class BASICInterpreter {
         }
 
         var pc = 0
+        if let startLine {
+            guard let index = lineIndexByNumber[startLine] else { throw BASICError.missingLine(startLine) }
+            pc = index
+        }
         while pc < parsed.count {
             let current = parsed[pc]
             let next = try execute(current.statement, pc: pc, parsed: parsed)
@@ -744,7 +840,8 @@ public final class BASICInterpreter {
         case .end:
             return .end
         case .print(let parts):
-            host?.printLine(try renderPrint(parts))
+            let rendered = try renderPrint(parts)
+            host?.print(rendered.text, terminator: rendered.terminator)
             return .next
         case .screen(let expression):
             let modeNumber = try integer(expression)
@@ -814,6 +911,18 @@ public final class BASICInterpreter {
             }
             try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
             return .next
+        case .load(let path):
+            let resolvedPath = try string(path)
+            try loadProgram(path: resolvedPath)
+            return .next
+        case .save(let path):
+            let resolvedPath = try path.map(string) ?? fileState.lastFilePath
+            guard let resolvedPath else { throw BASICError.syntax("Expected path after SAVE") }
+            try saveProgram(path: resolvedPath)
+            return .next
+        case .files:
+            try listFiles()
+            return .next
         case .goto(let line):
             return .goto(line)
         case .gotoLabel(let label):
@@ -828,8 +937,12 @@ public final class BASICInterpreter {
             }
             runtime.popLocalContext()
             return .returnTo(index)
-        case .ifThen(let condition, let target):
-            return try evaluate(condition).truthy ? target.flow : .next
+        case .ifThen(let condition, let thenAction, let elseAction):
+            if try evaluate(condition).truthy {
+                return try execute(thenAction, pc: pc, parsed: parsed)
+            }
+            guard let elseAction else { return .next }
+            return try execute(elseAction, pc: pc, parsed: parsed)
         case .forLoop(let variable, let start, let end, let step):
             return try forLoopFlow(variable: variable, start: start, end: end, step: step, pc: pc, parsed: parsed)
         case .nextLoop(let variables):
@@ -890,6 +1003,48 @@ public final class BASICInterpreter {
         return .next
     }
 
+    private func loadProgram(path: String) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("LOAD is not supported by this host")
+        }
+        do {
+            program.loadSource(try fileHost.loadTextFile(path: path))
+            fileState.lastFilePath = path
+        } catch {
+            throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
+        }
+    }
+
+    private func saveProgram(path: String) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("SAVE is not supported by this host")
+        }
+        do {
+            try fileHost.saveTextFile(path: path, text: program.listing())
+            fileState.lastFilePath = path
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not save \(path): \(error.localizedDescription)")
+        }
+    }
+
+    private func listFiles() throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("FILES is not supported by this host")
+        }
+        do {
+            let files = try fileHost.listFiles()
+            if !files.isEmpty {
+                host?.printLine(files.joined(separator: "\n"))
+            }
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not list files: \(error.localizedDescription)")
+        }
+    }
+
     private func advanceNextLoop(variable: VariableName?) throws -> Flow {
         guard let frame = forStack.last else {
             throw BASICError.runtime("NEXT without FOR")
@@ -911,7 +1066,7 @@ public final class BASICInterpreter {
         return .next
     }
 
-    private func renderPrint(_ parts: [PrintPart]) throws -> String {
+    private func renderPrint(_ parts: [PrintPart]) throws -> PrintOutput {
         var output = ""
         var column = 0
         let tabWidth = 14
@@ -931,7 +1086,17 @@ public final class BASICInterpreter {
             }
         }
 
-        return output
+        let terminator = parts.last?.suppressesNewline == true ? "" : "\n"
+        return PrintOutput(text: output, terminator: terminator)
+    }
+
+    private func execute(_ action: ConditionalAction, pc: Int, parsed: [ParsedLine]) throws -> Flow {
+        switch action {
+        case .branch(let target):
+            return target.flow
+        case .statement(let statement):
+            return try execute(statement, pc: pc, parsed: parsed)
+        }
     }
 
     private func selectCaseFlow(_ expression: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
@@ -1147,6 +1312,13 @@ public final class BASICInterpreter {
         Int(try numeric(try evaluate(expression)).rounded())
     }
 
+    private func string(_ expression: Expression) throws -> String {
+        guard let string = try evaluate(expression).string else {
+            throw BASICError.runtime("Expected a string")
+        }
+        return string.description
+    }
+
     private func resolve(point: GraphicsPoint) throws -> (x: Int, y: Int) {
         (try integer(point.x), try integer(point.y))
     }
@@ -1170,6 +1342,16 @@ public final class BASICInterpreter {
 private struct ParsedLine {
     let number: Int?
     let statement: Statement
+
+    static func flatten(number: Int?, statement: Statement) -> [ParsedLine] {
+        guard case .sequence(let statements) = statement else {
+            return [ParsedLine(number: number, statement: statement)]
+        }
+
+        return statements.enumerated().map { index, statement in
+            ParsedLine(number: index == 0 ? number : nil, statement: statement)
+        }
+    }
 }
 
 private struct ForFrame {
@@ -1210,11 +1392,14 @@ private indirect enum Statement: Equatable {
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
     case optionLetMode(LetMode)
     case input(String)
+    case load(Expression)
+    case save(Expression?)
+    case files
     case goto(Int)
     case gotoLabel(String)
     case gosub(BranchTarget)
     case returnFromSubroutine
-    case ifThen(Expression, BranchTarget)
+    case ifThen(Expression, ConditionalAction, ConditionalAction?)
     case forLoop(variable: VariableName, start: Expression, end: Expression, step: Expression?)
     case nextLoop([VariableName])
     case selectCase(Expression)
@@ -1240,11 +1425,21 @@ private enum CaseClause: Equatable {
 private enum PrintPart: Equatable {
     case expression(Expression)
     case separator(PrintSeparator)
+
+    var suppressesNewline: Bool {
+        if case .separator = self { return true }
+        return false
+    }
 }
 
 private enum PrintSeparator: Equatable {
     case comma
     case semicolon
+}
+
+private struct PrintOutput: Equatable {
+    let text: String
+    let terminator: String
 }
 
 private enum BranchTarget: Equatable {
@@ -1257,6 +1452,11 @@ private enum BranchTarget: Equatable {
         case .label(let label): return .gotoLabel(label)
         }
     }
+}
+
+private indirect enum ConditionalAction: Equatable {
+    case branch(BranchTarget)
+    case statement(Statement)
 }
 
 private indirect enum Expression: Equatable {
@@ -1478,6 +1678,7 @@ private struct Parser {
     private let source: String
     private var tokens: [LexedToken] = []
     private var current = 0
+    private var stopsAtElse = false
 
     init(source: String) throws {
         self.source = source
@@ -1588,6 +1789,15 @@ private struct Parser {
             let name = try consumeIdentifier("Expected variable name after INPUT")
             return .input(name)
         }
+        if matchIdentifier("LOAD") {
+            return .load(try parseExpression())
+        }
+        if matchIdentifier("SAVE") {
+            return .save(isStatementEnd ? nil : try parseExpression())
+        }
+        if matchIdentifier("FILES") {
+            return .files
+        }
         if matchIdentifier("GOTO") {
             let target = try consumeBranchTarget("Expected line number or label after GOTO")
             switch target {
@@ -1605,8 +1815,9 @@ private struct Parser {
         if matchIdentifier("IF") {
             let condition = try parseExpression()
             guard matchIdentifier("THEN") else { throw syntax("Expected THEN") }
-            let target = try consumeBranchTarget("Expected line number or label after THEN")
-            return .ifThen(condition, target)
+            let thenAction = try parseConditionalAction(stoppingAtElse: true)
+            let elseAction = matchIdentifier("ELSE") ? try parseConditionalAction(stoppingAtElse: false) : nil
+            return .ifThen(condition, thenAction, elseAction)
         }
         if matchIdentifier("STOP") {
             return .end
@@ -1636,6 +1847,17 @@ private struct Parser {
             }
         }
         return .nextLoop(variables)
+    }
+
+    private mutating func parseConditionalAction(stoppingAtElse: Bool) throws -> ConditionalAction {
+        if let target = try consumeInlineBranchTarget() {
+            return .branch(target)
+        }
+
+        let previousStopsAtElse = stopsAtElse
+        stopsAtElse = stoppingAtElse
+        defer { stopsAtElse = previousStopsAtElse }
+        return .statement(try parseSingleStatement())
     }
 
     private mutating func parsePrintParts() throws -> [PrintPart] {
@@ -1866,6 +2088,27 @@ private struct Parser {
         }
     }
 
+    private mutating func consumeInlineBranchTarget() throws -> BranchTarget? {
+        switch peek {
+        case .number(let value) where value.rounded() == value:
+            _ = advance()
+            return .line(Int(value))
+        case .string(let name):
+            _ = advance()
+            return .label(name)
+        case .identifier(let name) where isInlineLabelTarget(name):
+            _ = advance()
+            return .label(name)
+        default:
+            return nil
+        }
+    }
+
+    private func isInlineLabelTarget(_ name: String) -> Bool {
+        guard !Self.statementKeywords.contains(name.uppercased()) else { return false }
+        return peekNext == .eof || peekNext == .colon || isElse(peekNext)
+    }
+
     private mutating func consumeLabelName(_ message: String) throws -> String {
         switch advance() {
         case .identifier(let name), .string(let name):
@@ -1882,7 +2125,7 @@ private struct Parser {
     }
 
     private var isAtEnd: Bool { peek == .eof }
-    private var isStatementEnd: Bool { peek == .eof || peek == .colon }
+    private var isStatementEnd: Bool { peek == .eof || peek == .colon || (stopsAtElse && isElse(peek)) }
     private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1
@@ -1919,6 +2162,13 @@ private struct Parser {
         return true
     }
 
+    private func isElse(_ token: Token) -> Bool {
+        if case .identifier(let name) = token, name.uppercased() == "ELSE" {
+            return true
+        }
+        return false
+    }
+
     private func syntax(_ message: String) -> BASICError {
         let column: Int
         if current < tokens.count {
@@ -1940,7 +2190,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "GOTO", "GOSUB", "RETURN", "IF",
-        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "EXIT", "END", "STOP"
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "GOTO", "GOSUB", "RETURN", "IF",
+        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSE", "EXIT", "END", "STOP"
     ]
 }
