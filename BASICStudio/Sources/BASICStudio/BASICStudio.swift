@@ -425,7 +425,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|IF|THEN|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|TO|IS|AS|TRUE|FALSE)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|IF|THEN|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],

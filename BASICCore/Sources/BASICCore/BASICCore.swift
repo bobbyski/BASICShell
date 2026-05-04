@@ -667,6 +667,7 @@ public final class BASICInterpreter {
     private weak var host: BASICHost?
     private let runtime: BASICRuntime
     private var gosubStack: [Int] = []
+    private var forStack: [ForFrame] = []
 
     public convenience init(program: BASICProgram, host: BASICHost) {
         self.init(program: program, host: host, runtime: BASICRuntime())
@@ -679,6 +680,8 @@ public final class BASICInterpreter {
     }
 
     public func run() throws {
+        gosubStack.removeAll()
+        forStack.removeAll()
         let parsed = try program.orderedLines.map { line in
             var parser = try Parser(source: line.source)
             return try ParsedLine(number: line.number, statement: parser.parseStatement())
@@ -729,10 +732,10 @@ public final class BASICInterpreter {
         case .label:
             return .next
         case .labeled(_, let statement):
-            return try execute(statement, pc: pc)
+            return try execute(statement, pc: pc, parsed: parsed)
         case .sequence(let statements):
             for statement in statements {
-                let flow = try execute(statement, pc: pc)
+                let flow = try execute(statement, pc: pc, parsed: parsed)
                 if flow != .next {
                     return flow
                 }
@@ -827,6 +830,10 @@ public final class BASICInterpreter {
             return .returnTo(index)
         case .ifThen(let condition, let target):
             return try evaluate(condition).truthy ? target.flow : .next
+        case .forLoop(let variable, let start, let end, let step):
+            return try forLoopFlow(variable: variable, start: start, end: end, step: step, pc: pc, parsed: parsed)
+        case .nextLoop(let variables):
+            return try nextLoopFlow(variables: variables)
         case .selectCase(let expression):
             return try selectCaseFlow(expression, pc: pc, parsed: parsed)
         case .caseClause, .caseElse:
@@ -839,6 +846,69 @@ public final class BASICInterpreter {
         case .exitSelect:
             return .exitSelect
         }
+    }
+
+    private func forLoopFlow(
+        variable: VariableName,
+        start: Expression,
+        end: Expression,
+        step: Expression?,
+        pc: Int,
+        parsed: [ParsedLine]
+    ) throws -> Flow {
+        let startValue = try numeric(try evaluate(start))
+        let endValue = try numeric(try evaluate(end))
+        let stepValue = try step.map { try numeric(try evaluate($0)) } ?? 1
+        guard stepValue != 0 else {
+            throw BASICError.runtime("FOR STEP cannot be 0")
+        }
+
+        try runtime.assign(kind: .bare, variable: variable, declaredType: nil, value: .number(startValue))
+        let entersLoop = stepValue > 0 ? startValue <= endValue : startValue >= endValue
+        guard entersLoop else {
+            guard let index = matchingNext(after: pc, in: parsed) else {
+                throw BASICError.runtime("FOR without NEXT")
+            }
+            return .jump(index + 1)
+        }
+
+        forStack.append(ForFrame(variable: variable, endValue: endValue, stepValue: stepValue, loopStartIndex: pc))
+        return .next
+    }
+
+    private func nextLoopFlow(variables: [VariableName]) throws -> Flow {
+        if variables.isEmpty {
+            return try advanceNextLoop(variable: nil)
+        }
+
+        for variable in variables {
+            let flow = try advanceNextLoop(variable: variable)
+            if flow != .next {
+                return flow
+            }
+        }
+        return .next
+    }
+
+    private func advanceNextLoop(variable: VariableName?) throws -> Flow {
+        guard let frame = forStack.last else {
+            throw BASICError.runtime("NEXT without FOR")
+        }
+        if let variable, variable.normalized != frame.variable.normalized {
+            throw BASICError.runtime("NEXT \(variable.name) without matching FOR")
+        }
+
+        let currentValue = try numeric(runtime.value(for: frame.variable))
+        let nextValue = currentValue + frame.stepValue
+        try runtime.assign(kind: .bare, variable: frame.variable, declaredType: nil, value: .number(nextValue))
+
+        let continues = frame.stepValue > 0 ? nextValue <= frame.endValue : nextValue >= frame.endValue
+        if continues {
+            return .jump(frame.loopStartIndex + 1)
+        }
+
+        _ = forStack.popLast()
+        return .next
     }
 
     private func renderPrint(_ parts: [PrintPart]) throws -> String {
@@ -917,6 +987,41 @@ public final class BASICInterpreter {
             index += 1
         }
         return nil
+    }
+
+    private func matchingNext(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            for event in loopEvents(in: parsed[index].statement) {
+                switch event {
+                case .forLoop:
+                    depth += 1
+                case .nextLoop:
+                    if depth == 0 {
+                        return index
+                    }
+                    depth -= 1
+                }
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func loopEvents(in statement: Statement) -> [LoopEvent] {
+        switch statement {
+        case .forLoop:
+            return [.forLoop]
+        case .nextLoop:
+            return [.nextLoop]
+        case .labeled(_, let statement):
+            return loopEvents(in: statement)
+        case .sequence(let statements):
+            return statements.flatMap(loopEvents)
+        default:
+            return []
+        }
     }
 
     private func caseClause(_ clause: CaseClause, matches testValue: BASICValue) throws -> Bool {
@@ -1067,6 +1172,18 @@ private struct ParsedLine {
     let statement: Statement
 }
 
+private struct ForFrame {
+    let variable: VariableName
+    let endValue: Double
+    let stepValue: Double
+    let loopStartIndex: Int
+}
+
+private enum LoopEvent {
+    case forLoop
+    case nextLoop
+}
+
 private enum Flow: Equatable {
     case next
     case jump(Int)
@@ -1098,6 +1215,8 @@ private indirect enum Statement: Equatable {
     case gosub(BranchTarget)
     case returnFromSubroutine
     case ifThen(Expression, BranchTarget)
+    case forLoop(variable: VariableName, start: Expression, end: Expression, step: Expression?)
+    case nextLoop([VariableName])
     case selectCase(Expression)
     case caseClause([CaseClause])
     case caseElse
@@ -1399,6 +1518,12 @@ private struct Parser {
         if matchIdentifier("PRINT") {
             return .print(try parsePrintParts())
         }
+        if matchIdentifier("FOR") {
+            return try parseForLoop()
+        }
+        if matchIdentifier("NEXT") {
+            return try parseNextLoop()
+        }
         if matchIdentifier("SELECT") {
             _ = matchIdentifier("CASE")
             return .selectCase(try parseExpression())
@@ -1490,6 +1615,27 @@ private struct Parser {
             return try parseAssignment(kind: .bare, requiresEquals: true)
         }
         throw syntax("Unknown statement")
+    }
+
+    private mutating func parseForLoop() throws -> Statement {
+        let variable = try consumeVariableName("Expected variable name after FOR")
+        guard match(.equals) else { throw syntax("Expected =") }
+        let start = try parseExpression()
+        guard matchIdentifier("TO") else { throw syntax("Expected TO") }
+        let end = try parseExpression()
+        let step = matchIdentifier("STEP") ? try parseExpression() : nil
+        return .forLoop(variable: variable, start: start, end: end, step: step)
+    }
+
+    private mutating func parseNextLoop() throws -> Statement {
+        var variables: [VariableName] = []
+        while !isStatementEnd {
+            variables.append(try consumeVariableName("Expected variable name after NEXT"))
+            if !match(.comma) {
+                break
+            }
+        }
+        return .nextLoop(variables)
     }
 
     private mutating func parsePrintParts() throws -> [PrintPart] {
@@ -1795,6 +1941,6 @@ private struct Parser {
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "GOTO", "GOSUB", "RETURN", "IF",
-        "SELECT", "CASE", "EXIT", "END", "STOP"
+        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "EXIT", "END", "STOP"
     ]
 }

@@ -223,6 +223,72 @@ struct BASICCoreTests {
         #expect(host.output == ["before", "done"])
     }
 
+    @Test("FOR NEXT loops with default step")
+    func forNextDefaultStep() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 3
+        print i
+        next i
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["1", "2", "3"])
+    }
+
+    @Test("FOR NEXT supports STEP and negative STEP")
+    func forNextStep() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 5 step 2
+        print i
+        next
+        for j = 5 to 1 step -2
+        print j
+        next j
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["1", "3", "5", "5", "3", "1"])
+    }
+
+    @Test("FOR NEXT skips loops that do not enter")
+    func forNextSkipsUnenteredLoops() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 5 to 1
+        print i
+        next i
+        print "done"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["done"])
+    }
+
+    @Test("FOR NEXT supports nested loops")
+    func forNextNestedLoops() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 2
+        for j = 1 to 2
+        print i;",";j
+        next j
+        next i
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["1,1", "1,2", "2,1", "2,2"])
+    }
+
     @Test("Colon separates statements")
     func colonStatementSeparator() {
         let host = TestHost()
