@@ -28,6 +28,136 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("RUN clears direct-mode variables before starting")
+    func runClearsVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("let x = 5")
+        session.program.loadSource("""
+        print x
+        let x = 9
+        """)
+        session.submit("RUN")
+        session.submit("print x")
+
+        #expect(host.output == ["0", "9"])
+    }
+
+    @Test("OPTION LOCAL-LET makes LET local inside GOSUB")
+    func optionLocalLetMakesLetLocalInsideGosub() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        option local-let
+        let x = 1
+        gosub Demo
+        print x
+        end
+        Demo:
+        let x = 2
+        print x
+        return
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["2", "1"])
+    }
+
+    @Test("GLOBAL can be updated from local context")
+    func globalCanBeUpdatedFromLocalContext() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        option local-let
+        global total as integer = 0
+        gosub AddOne
+        print total
+        end
+        AddOne:
+        local temp as integer = 1
+        total = total + temp
+        return
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["1"])
+    }
+
+    @Test("OPTION GLOBAL-LET keeps LET global")
+    func optionGlobalLetKeepsLetGlobal() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        option global-let
+        let x = 1
+        gosub Demo
+        print x
+        end
+        Demo:
+        let x = 2
+        return
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["2"])
+    }
+
+    @Test("AS type suffix conflicts are reported")
+    func asTypeSuffixConflictsAreReported() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("global x$ as integer = 5")
+
+        #expect(host.output == [
+            """
+            global x$ as integer = 5
+                   ^
+            Type error: suffix $ conflicts with AS INTEGER
+            """
+        ])
+    }
+
+    @Test("Boolean variables accept TRUE FALSE 0 and 1")
+    func booleanVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("global done as boolean = true")
+        session.submit("print done")
+        session.submit("done = 0")
+        session.submit("print done")
+        session.submit("done = 1")
+        session.submit("print done + 1")
+
+        #expect(host.output == ["TRUE", "FALSE", "2"])
+    }
+
+    @Test("Typed assignment rejects incompatible values")
+    func typedAssignmentRejectsIncompatibleValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("global count as integer = 1.5")
+
+        #expect(host.output == ["Type error: Cannot assign non-integer value to count"])
+    }
+
+    @Test("CHR zero uses data-backed string display and LEN counts characters")
+    func chrZeroStringDisplayAndLen() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("print \"A\";chr$(0);\"B\"")
+        session.submit("print len(\"A\" + chr$(0) + \"B\")")
+
+        #expect(host.output == ["AB", "2"])
+    }
+
     @Test("Colon separates statements")
     func colonStatementSeparator() {
         let host = TestHost()

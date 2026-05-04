@@ -3,6 +3,8 @@ import Foundation
 public enum BASICError: Error, CustomStringConvertible, Equatable {
     case syntax(String)
     case contextualSyntax(message: String, source: String, column: Int)
+    case type(message: String)
+    case contextualType(message: String, source: String, column: Int)
     case runtime(String)
     case studioOnlyFeature
     case missingLine(Int)
@@ -15,6 +17,10 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
         case .contextualSyntax(let message, let source, let column):
             let marker = String(repeating: " ", count: max(0, column)) + "^"
             return "\(source)\n\(marker)\nSyntax error: \(message)"
+        case .type(let message): return "Type error: \(message)"
+        case .contextualType(let message, let source, let column):
+            let marker = String(repeating: " ", count: max(0, column)) + "^"
+            return "\(source)\n\(marker)\nType error: \(message)"
         case .runtime(let message): return "Runtime error: \(message)"
         case .studioOnlyFeature: return "Unsupported feature: you must run this program in BASICStudio"
         case .missingLine(let line): return "Missing line \(line)"
@@ -24,9 +30,84 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     }
 }
 
+public struct BASICString: Equatable, CustomStringConvertible {
+    private enum Storage: Equatable {
+        case text(String)
+        case data(Data)
+    }
+
+    private let storage: Storage
+
+    public init(_ value: String) {
+        if value.utf8.contains(0) {
+            self.storage = .data(Data(value.utf8))
+        } else {
+            self.storage = .text(value)
+        }
+    }
+
+    private init(data: Data) {
+        if data.contains(0) {
+            self.storage = .data(data)
+        } else {
+            self.storage = .text(String(decoding: data, as: UTF8.self))
+        }
+    }
+
+    public var description: String {
+        switch storage {
+        case .text(let value):
+            return value
+        case .data(let data):
+            return String(decoding: data.filter { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    var characterCount: Int {
+        description.count
+    }
+
+    var byteCount: Int {
+        switch storage {
+        case .text(let value): return value.utf8.count
+        case .data(let data): return data.count
+        }
+    }
+
+    func concatenating(_ other: BASICString) -> BASICString {
+        switch (storage, other.storage) {
+        case (.text(let left), .text(let right)):
+            return BASICString(left + right)
+        default:
+            return BASICString(data: data + other.data)
+        }
+    }
+
+    private var data: Data {
+        switch storage {
+        case .text(let value): return Data(value.utf8)
+        case .data(let data): return data
+        }
+    }
+
+    static func character(code: Int) throws -> BASICString {
+        guard (0...255).contains(code) else {
+            throw BASICError.runtime("CHR$ code must be between 0 and 255")
+        }
+        if code == 0 {
+            return BASICString(data: Data([0]))
+        }
+        guard let scalar = UnicodeScalar(code) else {
+            throw BASICError.runtime("Invalid CHR$ code \(code)")
+        }
+        return BASICString(String(Character(scalar)))
+    }
+}
+
 public enum BASICValue: Equatable, CustomStringConvertible {
     case number(Double)
-    case string(String)
+    case string(BASICString)
+    case boolean(Bool)
 
     public var description: String {
         switch self {
@@ -36,25 +117,294 @@ public enum BASICValue: Equatable, CustomStringConvertible {
             }
             return String(value)
         case .string(let value):
-            return value
+            return value.description
+        case .boolean(let value):
+            return value ? "TRUE" : "FALSE"
         }
     }
 
     var truthy: Bool {
         switch self {
         case .number(let value): return value != 0
-        case .string(let value): return !value.isEmpty
+        case .string(let value): return !value.description.isEmpty
+        case .boolean(let value): return value
         }
     }
 
     var number: Double? {
         if case .number(let value) = self { return value }
+        if case .boolean(let value) = self { return value ? 1 : 0 }
         return nil
     }
 
-    var string: String? {
+    var string: BASICString? {
         if case .string(let value) = self { return value }
         return nil
+    }
+
+    private var isEmpty: Bool {
+        if case .string(let value) = self {
+            return value.description.isEmpty
+        }
+        return false
+    }
+}
+
+private enum BASICScalarType: String, Equatable {
+    case integer = "INTEGER"
+    case double = "DOUBLE"
+    case string = "STRING"
+    case boolean = "BOOLEAN"
+}
+
+private enum BASICType: Equatable {
+    case scalar(BASICScalarType)
+    case record(String)
+    case classType(String)
+}
+
+private enum LetMode: Equatable {
+    case global
+    case local
+}
+
+private enum AssignmentKind: Equatable {
+    case bare
+    case letValue
+    case global
+    case local
+}
+
+private struct VariableName: Equatable {
+    let name: String
+    let column: Int
+
+    var normalized: String { name.uppercased() }
+}
+
+private struct VariableBinding: Equatable {
+    var displayName: String
+    var type: BASICType
+    var value: BASICValue
+}
+
+private final class BASICRuntime {
+    private var globals: [String: VariableBinding] = [:]
+    private var locals: [[String: VariableBinding]] = []
+    var letMode: LetMode = .global
+
+    func resetForRun() {
+        globals.removeAll()
+        locals.removeAll()
+    }
+
+    func clearAll() {
+        resetForRun()
+        letMode = .global
+    }
+
+    func pushLocalContext() {
+        locals.append([:])
+    }
+
+    func popLocalContext() {
+        if !locals.isEmpty {
+            _ = locals.removeLast()
+        }
+    }
+
+    func value(for variable: VariableName) -> BASICValue {
+        if let binding = binding(for: variable.normalized) {
+            return binding.value
+        }
+        return defaultValue(for: inferredType(name: variable.name, value: nil))
+    }
+
+    func assign(
+        kind: AssignmentKind,
+        variable: VariableName,
+        declaredType: BASICType?,
+        value: BASICValue?
+    ) throws {
+        try validateSuffix(variable: variable, declaredType: declaredType)
+        let normalized = variable.normalized
+        let target = targetContext(kind: kind, normalized: normalized)
+        let existing = binding(in: target, normalized: normalized)
+        let type = try resolvedType(variable: variable, declaredType: declaredType, value: value, existing: existing)
+        let coerced = try coerce(value ?? defaultValue(for: type), to: type, variable: variable)
+        let binding = VariableBinding(displayName: variable.name, type: type, value: coerced)
+        set(binding, in: target, normalized: normalized)
+    }
+
+    private enum TargetContext {
+        case global
+        case local(Int)
+    }
+
+    private func targetContext(kind: AssignmentKind, normalized: String) -> TargetContext {
+        switch kind {
+        case .global:
+            return .global
+        case .local:
+            return locals.indices.last.map(TargetContext.local) ?? .global
+        case .letValue:
+            switch letMode {
+            case .global:
+                return .global
+            case .local:
+                return locals.indices.last.map(TargetContext.local) ?? .global
+            }
+        case .bare:
+            if let visible = visibleContext(for: normalized) {
+                return visible
+            }
+            switch letMode {
+            case .global:
+                return .global
+            case .local:
+                return locals.indices.last.map(TargetContext.local) ?? .global
+            }
+        }
+    }
+
+    private func visibleContext(for normalized: String) -> TargetContext? {
+        for index in locals.indices.reversed() {
+            if locals[index][normalized] != nil {
+                return .local(index)
+            }
+        }
+        if globals[normalized] != nil {
+            return .global
+        }
+        return nil
+    }
+
+    private func binding(for normalized: String) -> VariableBinding? {
+        if let context = visibleContext(for: normalized) {
+            return binding(in: context, normalized: normalized)
+        }
+        return nil
+    }
+
+    private func binding(in context: TargetContext, normalized: String) -> VariableBinding? {
+        switch context {
+        case .global: return globals[normalized]
+        case .local(let index): return locals[index][normalized]
+        }
+    }
+
+    private func set(_ binding: VariableBinding, in context: TargetContext, normalized: String) {
+        switch context {
+        case .global:
+            globals[normalized] = binding
+        case .local(let index):
+            locals[index][normalized] = binding
+        }
+    }
+
+    private func resolvedType(
+        variable: VariableName,
+        declaredType: BASICType?,
+        value: BASICValue?,
+        existing: VariableBinding?
+    ) throws -> BASICType {
+        if let declaredType {
+            if let existing, existing.type != declaredType {
+                throw BASICError.type(message: "Cannot redeclare \(variable.name) as \(declaredType.name)")
+            }
+            return declaredType
+        }
+        if let existing {
+            return existing.type
+        }
+        return inferredType(name: variable.name, value: value)
+    }
+
+    private func inferredType(name: String, value: BASICValue?) -> BASICType {
+        if let suffixType = suffixType(for: name) {
+            return suffixType
+        }
+        if let value {
+            switch value {
+            case .string: return .scalar(.string)
+            case .boolean: return .scalar(.boolean)
+            case .number(let number) where number.rounded() != number:
+                return .scalar(.double)
+            case .number:
+                return .scalar(.double)
+            }
+        }
+        return .scalar(.double)
+    }
+
+    private func suffixType(for name: String) -> BASICType? {
+        switch name.last {
+        case "$": return .scalar(.string)
+        case "%": return .scalar(.integer)
+        case "#": return .scalar(.double)
+        default: return nil
+        }
+    }
+
+    private func validateSuffix(variable: VariableName, declaredType: BASICType?) throws {
+        guard let declaredType, let suffixType = suffixType(for: variable.name), suffixType != declaredType else {
+            return
+        }
+        throw BASICError.type(message: "suffix \(variable.name.last!) conflicts with AS \(declaredType.name)")
+    }
+
+    private func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
+        guard case .scalar(let scalar) = type else {
+            throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
+        }
+
+        switch scalar {
+        case .string:
+            guard let string = value.string else {
+                throw BASICError.type(message: "Cannot assign non-string value to \(variable.name)")
+            }
+            return .string(string)
+        case .double:
+            guard let number = value.number else {
+                throw BASICError.type(message: "Cannot assign non-numeric value to \(variable.name)")
+            }
+            return .number(number)
+        case .integer:
+            guard let number = value.number else {
+                throw BASICError.type(message: "Cannot assign non-numeric value to \(variable.name)")
+            }
+            guard number.rounded() == number else {
+                throw BASICError.type(message: "Cannot assign non-integer value to \(variable.name)")
+            }
+            return .number(number)
+        case .boolean:
+            if case .boolean = value {
+                return value
+            }
+            guard let number = value.number, number == 0 || number == 1 else {
+                throw BASICError.type(message: "Boolean \(variable.name) must be FALSE, TRUE, 0, or 1")
+            }
+            return .boolean(number == 1)
+        }
+    }
+
+    private func defaultValue(for type: BASICType) -> BASICValue {
+        switch type {
+        case .scalar(.string): return .string(BASICString(""))
+        case .scalar(.boolean): return .boolean(false)
+        case .scalar: return .number(0)
+        case .record, .classType: return .number(0)
+        }
+    }
+}
+
+private extension BASICType {
+    var name: String {
+        switch self {
+        case .scalar(let scalar): return scalar.rawValue
+        case .record(let name): return name
+        case .classType(let name): return name
+        }
     }
 }
 
@@ -211,6 +561,7 @@ private struct ProgramLine {
 public final class BASICSession {
     public let program = BASICProgram()
     private let host: BASICHost
+    private let runtime = BASICRuntime()
 
     public init(host: BASICHost) {
         self.host = host
@@ -241,21 +592,23 @@ public final class BASICSession {
 
             switch trimmed.uppercased() {
             case "RUN":
-                try BASICInterpreter(program: program, host: host).run()
+                runtime.resetForRun()
+                try BASICInterpreter(program: program, host: host, runtime: runtime).run()
             case "LIST":
                 let listing = program.listing()
                 if !listing.isEmpty { host.printLine(listing) }
             case "NEW":
                 program.clear()
+                runtime.clearAll()
             case "CLEAR":
-                host.printLine("")
+                runtime.clearAll()
             case "HELP":
                 host.printLine("Commands: RUN, LIST, LOAD, NEW, CLEAR, HELP, QUIT")
-                host.printLine("Statements: PRINT, LET, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
+                host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             case "QUIT", "EXIT":
                 return false
             default:
-                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host).run()
+                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime).run()
             }
         } catch let error as BASICError {
             host.printLine(error.description)
@@ -312,12 +665,17 @@ public final class BASICSession {
 public final class BASICInterpreter {
     private let program: BASICProgram
     private weak var host: BASICHost?
-    private var variables: [String: BASICValue] = [:]
+    private let runtime: BASICRuntime
     private var gosubStack: [Int] = []
 
-    public init(program: BASICProgram, host: BASICHost) {
+    public convenience init(program: BASICProgram, host: BASICHost) {
+        self.init(program: program, host: host, runtime: BASICRuntime())
+    }
+
+    fileprivate init(program: BASICProgram, host: BASICHost, runtime: BASICRuntime) {
         self.program = program
         self.host = host
+        self.runtime = runtime
     }
 
     public func run() throws {
@@ -427,21 +785,24 @@ public final class BASICInterpreter {
                 color: resolvedColor
             )
             return .next
-        case .letValue(let name, let expression):
-            let value = try evaluate(expression)
-            try assign(value, to: name)
+        case .assignment(let kind, let variable, let declaredType, let expression):
+            let value = try expression.map(evaluate)
+            try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
+            return .next
+        case .optionLetMode(let mode):
+            runtime.letMode = mode
             return .next
         case .input(let name):
             let raw = host?.readLine(prompt: "\(name)? ") ?? ""
             let value: BASICValue
             if name.hasSuffix("$") {
-                value = .string(raw)
+                value = .string(BASICString(raw))
             } else if let number = Double(raw.trimmingCharacters(in: .whitespaces)) {
                 value = .number(number)
             } else {
                 throw BASICError.runtime("Expected numeric input for \(name)")
             }
-            variables[name.uppercased()] = value
+            try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
             return .next
         case .goto(let line):
             return .goto(line)
@@ -449,25 +810,17 @@ public final class BASICInterpreter {
             return .gotoLabel(label)
         case .gosub(let target):
             gosubStack.append(pc + 1)
+            runtime.pushLocalContext()
             return target.flow
         case .returnFromSubroutine:
             guard let index = gosubStack.popLast() else {
                 throw BASICError.runtime("RETURN without GOSUB")
             }
+            runtime.popLocalContext()
             return .returnTo(index)
         case .ifThen(let condition, let target):
             return try evaluate(condition).truthy ? target.flow : .next
         }
-    }
-
-    private func assign(_ value: BASICValue, to name: String) throws {
-        if name.hasSuffix("$"), value.string == nil {
-            throw BASICError.runtime("Cannot assign number to string variable \(name)")
-        }
-        if !name.hasSuffix("$"), value.number == nil {
-            throw BASICError.runtime("Cannot assign string to numeric variable \(name)")
-        }
-        variables[name.uppercased()] = value
     }
 
     private func renderPrint(_ parts: [PrintPart]) throws -> String {
@@ -498,9 +851,11 @@ public final class BASICInterpreter {
         case .number(let value):
             return .number(value)
         case .string(let value):
-            return .string(value)
+            return .string(BASICString(value))
+        case .boolean(let value):
+            return .boolean(value)
         case .variable(let name):
-            return variables[name.uppercased()] ?? (name.hasSuffix("$") ? .string("") : .number(0))
+            return runtime.value(for: name)
         case .unaryMinus(let expression):
             guard let value = try evaluate(expression).number else {
                 throw BASICError.runtime("Unary minus requires a number")
@@ -514,6 +869,13 @@ public final class BASICInterpreter {
             }
             let resolved = try resolve(point: point)
             return .number(Double(graphicsHost.getPixel(x: resolved.x, y: resolved.y)))
+        case .chrFunction(let expression):
+            return .string(try BASICString.character(code: integer(expression)))
+        case .lenFunction(let expression):
+            guard let string = try evaluate(expression).string else {
+                throw BASICError.runtime("LEN requires a string")
+            }
+            return .number(Double(string.characterCount))
         }
     }
 
@@ -524,7 +886,7 @@ public final class BASICInterpreter {
         switch operation {
         case .add:
             if let leftString = left.string, let rightString = right.string {
-                return .string(leftString + rightString)
+                return .string(leftString.concatenating(rightString))
             }
             return .number(try numeric(left) + numeric(right))
         case .subtract:
@@ -611,7 +973,8 @@ private indirect enum Statement: Equatable {
     case pset(GraphicsPoint, Expression?)
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
-    case letValue(String, Expression)
+    case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
+    case optionLetMode(LetMode)
     case input(String)
     case goto(Int)
     case gotoLabel(String)
@@ -652,10 +1015,13 @@ private enum BranchTarget: Equatable {
 private indirect enum Expression: Equatable {
     case number(Double)
     case string(String)
-    case variable(String)
+    case boolean(Bool)
+    case variable(VariableName)
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
     case pointFunction(GraphicsPoint)
+    case chrFunction(Expression)
+    case lenFunction(Expression)
 }
 
 private struct GraphicsPoint: Equatable {
@@ -800,7 +1166,10 @@ private struct Lexer {
     private mutating func scanIdentifier() -> LexedToken {
         let start = index
         let column = self.column
-        while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "$" {
+        while index < source.endIndex, source[index].isLetter || source[index].isNumber {
+            advance()
+        }
+        if index < source.endIndex, source[index] == "$" || source[index] == "%" || source[index] == "#" {
             advance()
         }
         let name = String(source[start..<index])
@@ -902,6 +1271,15 @@ private struct Parser {
         if matchIdentifier("PRINT") {
             return .print(try parsePrintParts())
         }
+        if matchIdentifier("OPTION") {
+            return .optionLetMode(try parseLetMode())
+        }
+        if matchIdentifier("GLOBAL") {
+            return try parseAssignment(kind: .global, requiresEquals: false)
+        }
+        if matchIdentifier("LOCAL") {
+            return try parseAssignment(kind: .local, requiresEquals: false)
+        }
         if matchIdentifier("SCREEN") {
             let mode = try parseExpression()
             return .screen(mode)
@@ -931,7 +1309,7 @@ private struct Parser {
             return .line(start, end, color)
         }
         if matchIdentifier("LET") {
-            return try parseAssignment()
+            return try parseAssignment(kind: .letValue, requiresEquals: true)
         }
         if matchIdentifier("INPUT") {
             let name = try consumeIdentifier("Expected variable name after INPUT")
@@ -961,7 +1339,7 @@ private struct Parser {
             return .end
         }
         if case .identifier = peek {
-            return try parseAssignment()
+            return try parseAssignment(kind: .bare, requiresEquals: true)
         }
         throw syntax("Unknown statement")
     }
@@ -980,11 +1358,62 @@ private struct Parser {
         return parts
     }
 
-    private mutating func parseAssignment() throws -> Statement {
-        let name = try consumeIdentifier("Expected variable name")
-        guard match(.equals) else { throw syntax("Expected =") }
-        let expression = try parseExpression()
-        return .letValue(name, expression)
+    private mutating func parseAssignment(kind: AssignmentKind, requiresEquals: Bool) throws -> Statement {
+        let variable = try consumeVariableName("Expected variable name")
+        let declaredType = try parseOptionalType(for: variable)
+        let expression: Expression?
+        if match(.equals) {
+            expression = try parseExpression()
+        } else if requiresEquals {
+            throw syntax("Expected =")
+        } else {
+            expression = nil
+        }
+        return .assignment(kind, variable, declaredType, expression)
+    }
+
+    private mutating func parseLetMode() throws -> LetMode {
+        if matchIdentifier("GLOBAL") {
+            guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected GLOBAL-LET") }
+            return .global
+        }
+        if matchIdentifier("LOCAL") {
+            guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected LOCAL-LET") }
+            return .local
+        }
+        throw syntax("Expected GLOBAL-LET or LOCAL-LET")
+    }
+
+    private mutating func parseOptionalType(for variable: VariableName) throws -> BASICType? {
+        guard matchIdentifier("AS") else { return nil }
+        let typeToken = tokens[current]
+        guard case .identifier(let name) = advance() else {
+            throw syntax("Expected type name")
+        }
+        let type: BASICType
+        switch name.uppercased() {
+        case "INTEGER": type = .scalar(.integer)
+        case "DOUBLE": type = .scalar(.double)
+        case "STRING": type = .scalar(.string)
+        case "BOOLEAN": type = .scalar(.boolean)
+        case "RECORD":
+            guard case .identifier(let recordName) = advance() else { throw syntax("Expected RECORD type name") }
+            type = .record(recordName)
+        case "CLASS":
+            guard case .identifier(let className) = advance() else { throw syntax("Expected CLASS type name") }
+            type = .classType(className)
+        default:
+            throw BASICError.contextualType(message: "Unknown type \(name)", source: source, column: typeToken.column)
+        }
+
+        if let suffixType = suffixType(for: variable.name), suffixType != type {
+            throw BASICError.contextualType(
+                message: "suffix \(variable.name.last!) conflicts with AS \(type.name)",
+                source: source,
+                column: variable.column
+            )
+        }
+        return type
     }
 
     private mutating func parseExpression() throws -> Expression {
@@ -1053,10 +1482,20 @@ private struct Parser {
         case .number(let value): return .number(value)
         case .string(let value): return .string(value)
         case .identifier(let name):
-            if name.uppercased() == "POINT", peek == .leftParen {
+            let uppercased = name.uppercased()
+            if uppercased == "TRUE" { return .boolean(true) }
+            if uppercased == "FALSE" { return .boolean(false) }
+            if uppercased == "POINT", peek == .leftParen {
                 return .pointFunction(try parsePoint(openParenAlreadyConsumed: false))
             }
-            return .variable(name)
+            if uppercased == "CHR$", peek == .leftParen {
+                return .chrFunction(try parseSingleArgumentFunction())
+            }
+            if uppercased == "LEN", peek == .leftParen {
+                return .lenFunction(try parseSingleArgumentFunction())
+            }
+            let column = tokens[max(0, current - 1)].column
+            return .variable(VariableName(name: name, column: column))
         case .leftParen:
             let expression = try parseExpression()
             guard match(.rightParen) else { throw syntax("Expected )") }
@@ -1077,11 +1516,26 @@ private struct Parser {
         return GraphicsPoint(x: x, y: y)
     }
 
+    private mutating func parseSingleArgumentFunction() throws -> Expression {
+        guard match(.leftParen) else { throw syntax("Expected (") }
+        let expression = try parseExpression()
+        guard match(.rightParen) else { throw syntax("Expected )") }
+        return expression
+    }
+
     private mutating func consumeIdentifier(_ message: String) throws -> String {
         guard case .identifier(let name) = advance() else {
             throw syntax(message)
         }
         return name
+    }
+
+    private mutating func consumeVariableName(_ message: String) throws -> VariableName {
+        let token = tokens[current]
+        guard case .identifier(let name) = advance() else {
+            throw syntax(message)
+        }
+        return VariableName(name: name, column: token.column)
     }
 
     private mutating func consumeBranchTarget(_ message: String) throws -> BranchTarget {
@@ -1150,8 +1604,17 @@ private struct Parser {
         return .contextualSyntax(message: message, source: source, column: column)
     }
 
+    private func suffixType(for name: String) -> BASICType? {
+        switch name.last {
+        case "$": return .scalar(.string)
+        case "%": return .scalar(.integer)
+        case "#": return .scalar(.double)
+        default: return nil
+        }
+    }
+
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "INPUT", "GOTO", "GOSUB", "RETURN", "IF", "END", "STOP"
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "GOTO", "GOSUB", "RETURN", "IF", "END", "STOP"
     ]
 }
