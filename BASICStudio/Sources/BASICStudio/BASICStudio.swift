@@ -28,24 +28,13 @@ struct StudioView: View {
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Program")
-                        .font(.headline)
-                    TextEditor(text: $model.programText)
-                        .font(.system(.body, design: .monospaced))
-                        .border(Color.secondary.opacity(0.35))
-                }
-                .frame(minWidth: 320)
-                .padding()
+                mainPane
+                    .frame(minWidth: 420)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Console")
-                        .font(.headline)
-                    SwiftTermGraphicsConsole(model: model)
-                    .border(Color.secondary.opacity(0.35))
+                if model.isDebugVisible {
+                    DebugPane(model: model)
+                        .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
                 }
-                .frame(minWidth: 300)
-                .padding()
             }
 
             Divider()
@@ -65,11 +54,65 @@ struct StudioView: View {
         .onAppear {
             model.runStartupProgramIfNeeded()
         }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.selectedPane = .console
+                } label: {
+                    Label("Console", systemImage: "terminal")
+                }
+                .help("Console")
+
+                Button {
+                    model.selectedPane = .editor
+                } label: {
+                    Label("Editor", systemImage: "square.and.pencil")
+                }
+                .help("Editor")
+
+                Button {
+                    model.isDebugVisible.toggle()
+                } label: {
+                    Label("Debug", systemImage: "ladybug")
+                }
+                .help("Debug")
+            }
+        }
     }
+
+    @ViewBuilder
+    private var mainPane: some View {
+        switch model.selectedPane {
+        case .editor:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Editor")
+                    .font(.headline)
+                TextEditor(text: $model.programText)
+                    .font(.system(.body, design: .monospaced))
+                    .border(Color.secondary.opacity(0.35))
+            }
+            .padding()
+        case .console:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Console")
+                    .font(.headline)
+                SwiftTermGraphicsConsole(model: model)
+                    .border(Color.secondary.opacity(0.35))
+            }
+            .padding()
+        }
+    }
+}
+
+enum StudioPane {
+    case editor
+    case console
 }
 
 @MainActor
 final class StudioModel: ObservableObject {
+    @Published var selectedPane: StudioPane = .editor
+    @Published var isDebugVisible = false
     @Published var programText = """
     print "AIBASIC SWIFTTERM"
     screen 1
@@ -109,6 +152,7 @@ final class StudioModel: ObservableObject {
         rebuildProgramFromEditor()
         appendConsole("> RUN")
         _ = session.submit("RUN")
+        selectedPane = .console
     }
 
     func listProgram() {
@@ -151,6 +195,57 @@ final class StudioModel: ObservableObject {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
         return path
+    }
+
+    var programLineCount: Int {
+        programText.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    var consoleLineCount: Int {
+        guard !consoleText.isEmpty else { return 0 }
+        return consoleText.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+}
+
+struct DebugPane: View {
+    @ObservedObject var model: StudioModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Debug")
+                .font(.headline)
+
+            Divider()
+
+            debugRow("View", value: model.selectedPane == .editor ? "Editor" : "Console")
+            debugRow("Program Lines", value: "\(model.programLineCount)")
+            debugRow("Console Lines", value: "\(model.consoleLineCount)")
+            debugRow("Graphics Mode", value: "\(model.graphics.mode.number)")
+            debugRow("Graphics Size", value: graphicsSize)
+            debugRow("Graphics Colors", value: "\(model.graphics.mode.colorCount)")
+            debugRow("Current Color", value: "\(model.graphics.currentColor)")
+            debugRow("Revision", value: "\(model.graphicsRevision)")
+
+            Spacer(minLength: 0)
+        }
+        .padding()
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var graphicsSize: String {
+        guard model.graphics.isEnabled else { return "Off" }
+        return "\(model.graphics.mode.width) x \(model.graphics.mode.height)"
+    }
+
+    private func debugRow(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .monospacedDigit()
+        }
+        .font(.callout)
     }
 }
 
