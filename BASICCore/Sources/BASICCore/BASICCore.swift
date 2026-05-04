@@ -2,7 +2,9 @@ import Foundation
 
 public enum BASICError: Error, CustomStringConvertible, Equatable {
     case syntax(String)
+    case contextualSyntax(message: String, source: String, column: Int)
     case runtime(String)
+    case studioOnlyFeature
     case missingLine(Int)
     case missingLabel(String)
     case halted
@@ -10,7 +12,11 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     public var description: String {
         switch self {
         case .syntax(let message): return "Syntax error: \(message)"
+        case .contextualSyntax(let message, let source, let column):
+            let marker = String(repeating: " ", count: max(0, column)) + "^"
+            return "\(source)\n\(marker)\nSyntax error: \(message)"
         case .runtime(let message): return "Runtime error: \(message)"
+        case .studioOnlyFeature: return "Unsupported feature: you must run this program in BASICStudio"
         case .missingLine(let line): return "Missing line \(line)"
         case .missingLabel(let label): return "Missing label \(label)"
         case .halted: return "Program halted"
@@ -327,14 +333,14 @@ public final class BASICInterpreter {
         case .screen(let expression):
             let modeNumber = try integer(expression)
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("SCREEN is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             graphicsHost.setScreenMode(screenMode(for: modeNumber))
             return .next
         case .color(let expression):
             let color = try integer(expression)
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("COLOR is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             graphicsHost.setGraphicsColor(color)
             return .next
@@ -344,7 +350,7 @@ public final class BASICInterpreter {
             return .next
         case .pset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("PSET is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             let resolved = try resolve(point: point)
             let resolvedColor = try color.map(integer) ?? 1
@@ -352,7 +358,7 @@ public final class BASICInterpreter {
             return .next
         case .preset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("PRESET is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             let resolved = try resolve(point: point)
             let resolvedColor = try color.map(integer) ?? 0
@@ -360,7 +366,7 @@ public final class BASICInterpreter {
             return .next
         case .line(let start, let end, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("LINE is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             let resolvedStart = try resolve(point: start)
             let resolvedEnd = try resolve(point: end)
@@ -433,7 +439,7 @@ public final class BASICInterpreter {
             return try evaluateBinary(left, operation, right)
         case .pointFunction(let point):
             guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.runtime("POINT is not supported by this host")
+                throw BASICError.studioOnlyFeature
             }
             let resolved = try resolve(point: point)
             return .number(Double(graphicsHost.getPixel(x: resolved.x, y: resolved.y)))
@@ -602,6 +608,11 @@ private enum Token: Equatable {
     case eof
 }
 
+private struct LexedToken: Equatable {
+    let token: Token
+    let column: Int
+}
+
 private struct Lexer {
     private let source: String
     private var index: String.Index
@@ -611,18 +622,19 @@ private struct Lexer {
         self.index = source.startIndex
     }
 
-    mutating func tokenize() throws -> [Token] {
-        var tokens: [Token] = []
+    mutating func tokenize() throws -> [LexedToken] {
+        var tokens: [LexedToken] = []
         while let token = try nextToken() {
             tokens.append(token)
-            if token == .eof { break }
+            if token.token == .eof { break }
         }
         return tokens
     }
 
-    private mutating func nextToken() throws -> Token? {
+    private mutating func nextToken() throws -> LexedToken? {
         skipWhitespace()
-        guard index < source.endIndex else { return .eof }
+        let column = self.column
+        guard index < source.endIndex else { return LexedToken(token: .eof, column: column) }
         let character = source[index]
 
         if character.isNumber || character == "." {
@@ -636,30 +648,33 @@ private struct Lexer {
         }
 
         advance()
+        let token: Token
         switch character {
-        case ",": return .comma
-        case ":": return .colon
-        case "=": return .equals
-        case "+": return .plus
-        case "-": return .minus
-        case "*": return .star
-        case "/": return .slash
-        case "(": return .leftParen
-        case ")": return .rightParen
+        case ",": token = .comma
+        case ":": token = .colon
+        case "=": token = .equals
+        case "+": token = .plus
+        case "-": token = .minus
+        case "*": token = .star
+        case "/": token = .slash
+        case "(": token = .leftParen
+        case ")": token = .rightParen
         case "<":
-            if match("=") { return .lessEqual }
-            if match(">") { return .notEqual }
-            return .less
+            if match("=") { token = .lessEqual }
+            else if match(">") { token = .notEqual }
+            else { token = .less }
         case ">":
-            if match("=") { return .greaterEqual }
-            return .greater
+            if match("=") { token = .greaterEqual }
+            else { token = .greater }
         default:
-            throw BASICError.syntax("Unexpected character \(character)")
+            throw BASICError.contextualSyntax(message: "Unexpected character \(character)", source: source, column: column)
         }
+        return LexedToken(token: token, column: column)
     }
 
-    private mutating func scanNumber() throws -> Token {
+    private mutating func scanNumber() throws -> LexedToken {
         let start = index
+        let column = self.column
         var seenDot = false
         while index < source.endIndex {
             let character = source[index]
@@ -673,31 +688,33 @@ private struct Lexer {
         }
         let text = String(source[start..<index])
         guard let value = Double(text) else {
-            throw BASICError.syntax("Invalid number \(text)")
+            throw BASICError.contextualSyntax(message: "Invalid number \(text)", source: source, column: column)
         }
-        return .number(value)
+        return LexedToken(token: .number(value), column: column)
     }
 
-    private mutating func scanString() throws -> Token {
+    private mutating func scanString() throws -> LexedToken {
+        let column = self.column
         advance()
         let start = index
         while index < source.endIndex, source[index] != "\"" {
             advance()
         }
         guard index < source.endIndex else {
-            throw BASICError.syntax("Unterminated string")
+            throw BASICError.contextualSyntax(message: "Unterminated string", source: source, column: column)
         }
         let value = String(source[start..<index])
         advance()
-        return .string(value)
+        return LexedToken(token: .string(value), column: column)
     }
 
-    private mutating func scanIdentifier() -> Token {
+    private mutating func scanIdentifier() -> LexedToken {
         let start = index
+        let column = self.column
         while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "$" {
             advance()
         }
-        return .identifier(String(source[start..<index]))
+        return LexedToken(token: .identifier(String(source[start..<index])), column: column)
     }
 
     private mutating func skipWhitespace() {
@@ -715,13 +732,19 @@ private struct Lexer {
     private mutating func advance() {
         index = source.index(after: index)
     }
+
+    private var column: Int {
+        source.distance(from: source.startIndex, to: index)
+    }
 }
 
 private struct Parser {
-    private var tokens: [Token] = []
+    private let source: String
+    private var tokens: [LexedToken] = []
     private var current = 0
 
     init(source: String) throws {
+        self.source = source
         var lexer = Lexer(source: source)
         self.tokens = try lexer.tokenize()
     }
@@ -779,7 +802,7 @@ private struct Parser {
         }
         if matchIdentifier("LINE") {
             let start = try parsePoint()
-            guard match(.minus) else { throw BASICError.syntax("Expected - in LINE") }
+            guard match(.minus) else { throw syntax("Expected - in LINE") }
             let end = try parsePoint()
             let color = match(.comma) ? try parseExpression() : nil
             try consumeEnd()
@@ -812,7 +835,7 @@ private struct Parser {
         }
         if matchIdentifier("IF") {
             let condition = try parseExpression()
-            guard matchIdentifier("THEN") else { throw BASICError.syntax("Expected THEN") }
+            guard matchIdentifier("THEN") else { throw syntax("Expected THEN") }
             let target = try consumeBranchTarget("Expected line number or label after THEN")
             try consumeEnd()
             return .ifThen(condition, target)
@@ -824,12 +847,12 @@ private struct Parser {
         if case .identifier = peek {
             return try parseAssignment()
         }
-        throw BASICError.syntax("Unknown statement")
+        throw syntax("Unknown statement")
     }
 
     private mutating func parseAssignment() throws -> Statement {
         let name = try consumeIdentifier("Expected variable name")
-        guard match(.equals) else { throw BASICError.syntax("Expected =") }
+        guard match(.equals) else { throw syntax("Expected =") }
         let expression = try parseExpression()
         try consumeEnd()
         return .letValue(name, expression)
@@ -907,27 +930,27 @@ private struct Parser {
             return .variable(name)
         case .leftParen:
             let expression = try parseExpression()
-            guard match(.rightParen) else { throw BASICError.syntax("Expected )") }
+            guard match(.rightParen) else { throw syntax("Expected )") }
             return expression
         default:
-            throw BASICError.syntax("Expected expression")
+            throw syntax("Expected expression")
         }
     }
 
     private mutating func parsePoint(openParenAlreadyConsumed: Bool = false) throws -> GraphicsPoint {
         if !openParenAlreadyConsumed {
-            guard match(.leftParen) else { throw BASICError.syntax("Expected (") }
+            guard match(.leftParen) else { throw syntax("Expected (") }
         }
         let x = try parseExpression()
-        guard match(.comma) else { throw BASICError.syntax("Expected ,") }
+        guard match(.comma) else { throw syntax("Expected ,") }
         let y = try parseExpression()
-        guard match(.rightParen) else { throw BASICError.syntax("Expected )") }
+        guard match(.rightParen) else { throw syntax("Expected )") }
         return GraphicsPoint(x: x, y: y)
     }
 
     private mutating func consumeIdentifier(_ message: String) throws -> String {
         guard case .identifier(let name) = advance() else {
-            throw BASICError.syntax(message)
+            throw syntax(message)
         }
         return name
     }
@@ -941,7 +964,7 @@ private struct Parser {
         case .string(let name):
             return .label(name)
         default:
-            throw BASICError.syntax(message)
+            throw syntax(message)
         }
     }
 
@@ -950,27 +973,27 @@ private struct Parser {
         case .identifier(let name), .string(let name):
             return name
         default:
-            throw BASICError.syntax(message)
+            throw syntax(message)
         }
     }
 
     private mutating func consumeEnd() throws {
         guard isAtEnd else {
-            throw BASICError.syntax("Unexpected input after statement")
+            throw syntax("Unexpected input after statement")
         }
     }
 
     private var isAtEnd: Bool { peek == .eof }
-    private var peek: Token { tokens[current] }
+    private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1
         guard next < tokens.count else { return .eof }
-        return tokens[next]
+        return tokens[next].token
     }
 
     @discardableResult
     private mutating func advance() -> Token {
-        let token = tokens[current]
+        let token = tokens[current].token
         if !isAtEnd { current += 1 }
         return token
     }
@@ -985,5 +1008,15 @@ private struct Parser {
         guard case .identifier(let name) = peek, name.uppercased() == keyword else { return false }
         _ = advance()
         return true
+    }
+
+    private func syntax(_ message: String) -> BASICError {
+        let column: Int
+        if current < tokens.count {
+            column = tokens[current].column
+        } else {
+            column = source.count
+        }
+        return .contextualSyntax(message: message, source: source, column: column)
     }
 }

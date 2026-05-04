@@ -2,6 +2,7 @@ import BASICCore
 import AppKit
 import SwiftUI
 import SwiftTerm
+import WebKit
 
 @main
 struct BASICStudioApp: App {
@@ -31,9 +32,15 @@ struct StudioView: View {
                 mainPane
                     .frame(minWidth: 420)
 
-                if model.isDebugVisible {
-                    DebugPane(model: model)
-                        .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
+                if let inspectorPane = model.inspectorPane {
+                    switch inspectorPane {
+                    case .debug:
+                        DebugPane(model: model)
+                            .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
+                    case .docs:
+                        UserDocumentationPane()
+                            .frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
+                    }
                 }
             }
 
@@ -75,12 +82,20 @@ struct StudioView: View {
                 .help("Editor")
 
                 Button {
-                    model.isDebugVisible.toggle()
+                    model.toggleInspector(.debug)
                 } label: {
                     Image(systemName: "ladybug")
-                        .foregroundStyle(model.isDebugVisible ? Color.blue : Color.primary)
+                        .foregroundStyle(model.inspectorPane == .debug ? Color.blue : Color.primary)
                 }
                 .help("Debug")
+
+                Button {
+                    model.toggleInspector(.docs)
+                } label: {
+                    Image(systemName: "book")
+                        .foregroundStyle(model.inspectorPane == .docs ? Color.blue : Color.primary)
+                }
+                .help("Documentation")
 
                 Button {
                     model.isCommandBarVisible.toggle()
@@ -89,6 +104,14 @@ struct StudioView: View {
                         .foregroundStyle(model.isCommandBarVisible ? Color.blue : Color.primary)
                 }
                 .help("Command Bar")
+
+                Button {
+                    model.isEditorGutterVisible.toggle()
+                } label: {
+                    Image(systemName: "list.number")
+                        .foregroundStyle(model.isEditorGutterVisible ? Color.blue : Color.primary)
+                }
+                .help("Editor Line Numbers")
 
                 Menu {
                     ForEach(TerminalScreenSize.allCases, id: \.self) { size in
@@ -117,8 +140,11 @@ struct StudioView: View {
         switch model.selectedPane {
         case .editor:
             VStack(spacing: 0) {
-                TextEditor(text: $model.programText)
-                    .font(.system(.body, design: .monospaced))
+                MonacoEditor(
+                    text: $model.programText,
+                    showsLineNumbers: model.isEditorGutterVisible,
+                    errorLine: model.editorErrorLine
+                )
             }
             .padding()
         case .console:
@@ -133,6 +159,11 @@ struct StudioView: View {
 enum StudioPane {
     case editor
     case console
+}
+
+enum InspectorPane {
+    case debug
+    case docs
 }
 
 enum TerminalScreenSize: String, CaseIterable {
@@ -160,26 +191,236 @@ enum TerminalScreenSize: String, CaseIterable {
     }
 }
 
+struct MonacoEditor: NSViewRepresentable {
+    @Binding var text: String
+    let showsLineNumbers: Bool
+    let errorLine: Int?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(context.coordinator, name: "basicStudio")
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.loadHTMLString(Self.html, baseURL: nil)
+        context.coordinator.webView = webView
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.sync(text: text, showsLineNumbers: showsLineNumbers, errorLine: errorLine)
+    }
+
+    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
+        nsView.configuration.userContentController.removeScriptMessageHandler(forName: "basicStudio")
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        var text: Binding<String>
+        weak var webView: WKWebView?
+        private var isReady = false
+        private var pendingText: String?
+        private var pendingShowsLineNumbers: Bool?
+        private var pendingErrorLine: Int?
+        private var lastAppliedText: String?
+        private var lastAppliedShowsLineNumbers: Bool?
+        private var lastAppliedErrorLine: Int?
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any],
+                  let type = body["type"] as? String else { return }
+
+            switch type {
+            case "ready":
+                isReady = true
+                applyPending()
+            case "change":
+                guard let newText = body["text"] as? String else { return }
+                lastAppliedText = newText
+                text.wrappedValue = newText
+            default:
+                break
+            }
+        }
+
+        func sync(text: String, showsLineNumbers: Bool, errorLine: Int?) {
+            pendingText = text
+            pendingShowsLineNumbers = showsLineNumbers
+            pendingErrorLine = errorLine
+            applyPending()
+        }
+
+        private func applyPending() {
+            guard isReady, let webView else { return }
+
+            if let pendingText, pendingText != lastAppliedText {
+                webView.evaluateJavaScript("window.basicStudioSetText(\(json(pendingText)));")
+                lastAppliedText = pendingText
+            }
+
+            if let pendingShowsLineNumbers, pendingShowsLineNumbers != lastAppliedShowsLineNumbers {
+                webView.evaluateJavaScript("window.basicStudioSetLineNumbers(\(pendingShowsLineNumbers ? "true" : "false"));")
+                lastAppliedShowsLineNumbers = pendingShowsLineNumbers
+            }
+
+            if pendingErrorLine != lastAppliedErrorLine {
+                if let pendingErrorLine {
+                    webView.evaluateJavaScript("window.basicStudioSetErrorLine(\(pendingErrorLine));")
+                } else {
+                    webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
+                }
+                lastAppliedErrorLine = pendingErrorLine
+            }
+        }
+
+        private func json(_ value: String) -> String {
+            guard let data = try? JSONEncoder().encode(value),
+                  let encoded = String(data: data, encoding: .utf8) else {
+                return "\"\""
+            }
+            return encoded
+        }
+    }
+
+    private static let html = """
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        html, body, #editor {
+          height: 100%;
+          width: 100%;
+          margin: 0;
+          overflow: hidden;
+          background: #ffffff;
+        }
+        .basic-error-line {
+          background: rgba(255, 59, 48, 0.16);
+        }
+      </style>
+      <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+    </head>
+    <body>
+      <div id="editor"></div>
+      <script>
+        let editor = null;
+        let pendingText = "";
+        let pendingLineNumbers = false;
+        let suppressChange = false;
+        let errorDecorations = [];
+
+        function post(message) {
+          window.webkit.messageHandlers.basicStudio.postMessage(message);
+        }
+
+        window.basicStudioSetText = function(value) {
+          pendingText = value;
+          if (!editor || editor.getValue() === value) { return; }
+          suppressChange = true;
+          editor.setValue(value);
+          suppressChange = false;
+        };
+
+        window.basicStudioSetLineNumbers = function(show) {
+          pendingLineNumbers = show;
+          if (!editor) { return; }
+          editor.updateOptions({
+            lineNumbers: show ? "on" : "off",
+            glyphMargin: false,
+            folding: show
+          });
+        };
+
+        window.basicStudioSetErrorLine = function(lineNumber) {
+          if (!editor) { return; }
+          const decorations = lineNumber ? [{
+            range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+            options: {
+              isWholeLine: true,
+              className: "basic-error-line",
+              overviewRuler: {
+                color: "rgba(255, 59, 48, 0.85)",
+                position: monaco.editor.OverviewRulerLane.Right
+              }
+            }
+          }] : [];
+          errorDecorations.splice(0, errorDecorations.length, ...editor.deltaDecorations(errorDecorations, decorations));
+          if (lineNumber) {
+            editor.revealLineInCenterIfOutsideViewport(lineNumber);
+          }
+        };
+
+        require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs" } });
+        require(["vs/editor/editor.main"], function() {
+          monaco.languages.register({ id: "aibasic" });
+          monaco.languages.setMonarchTokensProvider("aibasic", {
+            ignoreCase: true,
+            tokenizer: {
+              root: [
+                [/\\b(PRINT|LET|INPUT|GOTO|GOSUB|RETURN|IF|THEN|LABEL|END|REM|RUN|LIST|LOAD|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT)\\b/, "keyword"],
+                [/".*?"/, "string"],
+                [/\\b\\d+(\\.\\d+)?\\b/, "number"],
+                [/'.*$/, "comment"],
+                [/\\bREM\\b.*$/, "comment"]
+              ]
+            }
+          });
+
+          editor = monaco.editor.create(document.getElementById("editor"), {
+            value: pendingText,
+            language: "aibasic",
+            theme: "vs",
+            automaticLayout: true,
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            fontSize: 13,
+            lineNumbers: pendingLineNumbers ? "on" : "off",
+            glyphMargin: false,
+            folding: pendingLineNumbers,
+            lineDecorationsWidth: 8,
+            lineNumbersMinChars: 3,
+            renderLineHighlight: "line",
+            wordWrap: "off"
+          });
+
+          editor.onDidChangeModelContent(function() {
+            if (!suppressChange) {
+              post({ type: "change", text: editor.getValue() });
+            }
+          });
+
+          post({ type: "ready" });
+        });
+      </script>
+    </body>
+    </html>
+    """
+}
+
 @MainActor
 final class StudioModel: ObservableObject {
     private let prompt = "READY\n> "
 
     @Published var selectedPane: StudioPane = .console
-    @Published var isDebugVisible = false
+    @Published var inspectorPane: InspectorPane?
     @Published var isCommandBarVisible = false
+    @Published var isEditorGutterVisible = false
+    @Published var editorErrorLine: Int?
     @Published var terminalScreenSize: TerminalScreenSize = .flexible
-    @Published var programText = """
-    print "AIBASIC SWIFTTERM"
-    screen 1
-    color 2
-    line (10,10)-(310,10), 2
-    line (310,10)-(310,190), 3
-    line (310,190)-(10,190), 1
-    line (10,190)-(10,10), 2
-    pset (160,100), 3
-    print "CENTER =", point(160,100)
-    end
-    """
+    @Published var programText = StudioModel.defaultProgramSource()
     @Published var consoleText = "READY\n> "
     @Published var command = ""
     @Published var graphicsRevision = 0
@@ -201,6 +442,10 @@ final class StudioModel: ObservableObject {
         guard shouldRunStartupProgram else { return }
         shouldRunStartupProgram = false
         runEditorProgram()
+    }
+
+    func toggleInspector(_ pane: InspectorPane) {
+        inspectorPane = inspectorPane == pane ? nil : pane
     }
 
     func runEditorProgram() {
@@ -246,6 +491,7 @@ final class StudioModel: ObservableObject {
 
     private func submitConsoleCommand(_ command: String, echo: Bool) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        editorErrorLine = nil
         if shouldUseEditorProgram(for: trimmed) {
             rebuildProgramFromEditor()
         }
@@ -287,11 +533,64 @@ final class StudioModel: ObservableObject {
         programText = session.program.listing()
     }
 
+    private func highlightErrorIfPresent(_ text: String) {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.count >= 3,
+              lines[1].contains("^"),
+              lines[2].hasPrefix("Syntax error:") else { return }
+
+        let source = lines[0].trimmingCharacters(in: .whitespaces)
+        guard !source.isEmpty else { return }
+
+        let programLines = programText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        if let index = programLines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == source }) {
+            editorErrorLine = index + 1
+        }
+    }
+
     private func expandedPath(_ path: String) -> String {
         if path == "~" || path.hasPrefix("~/") {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
         return path
+    }
+
+    private static func defaultProgramSource() -> String {
+        let fileManager = FileManager.default
+        let relativePath = "basicPrograms/BASICStudio/test-suite.bas"
+        let sourcePath = String(#filePath)
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let candidates = [
+            fileManager.currentDirectoryPath + "/" + relativePath,
+            fileManager.currentDirectoryPath + "/../../" + relativePath,
+            sourceURL
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent(relativePath)
+                .path
+        ]
+
+        for path in candidates {
+            if let source = try? String(contentsOfFile: path, encoding: .utf8) {
+                return source
+            }
+        }
+
+        return """
+        print "AIBASIC SWIFTTERM"
+        screen 1
+        color 2
+        line (10,10)-(310,10), 2
+        line (310,10)-(310,190), 3
+        line (310,190)-(10,190), 1
+        line (10,190)-(10,10), 2
+        pset (160,100), 3
+        print "CENTER =", point(160,100)
+        end
+        """
     }
 
     var programLineCount: Int {
@@ -347,9 +646,126 @@ struct DebugPane: View {
     }
 }
 
+struct UserDocumentationPane: View {
+    @State private var docs = UserDoc.loadAll()
+    @State private var selectedDocID: UserDoc.ID?
+
+    private var selectedDoc: UserDoc? {
+        let id = selectedDocID ?? docs.first?.id
+        return docs.first { $0.id == id }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Documentation")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            HSplitView {
+                List(docs, selection: $selectedDocID) { doc in
+                    Text(doc.title)
+                        .lineLimit(1)
+                        .tag(doc.id)
+                }
+                .frame(minWidth: 120, idealWidth: 150, maxWidth: 190)
+
+                ScrollView {
+                    if let selectedDoc {
+                        Text(markdown: selectedDoc.content)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                    } else {
+                        Text("No documentation found.")
+                            .foregroundStyle(.secondary)
+                            .padding()
+                    }
+                }
+                .frame(minWidth: 170)
+            }
+        }
+        .onAppear {
+            selectedDocID = selectedDocID ?? docs.first?.id
+        }
+    }
+}
+
+struct UserDoc: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let content: String
+
+    static func loadAll() -> [UserDoc] {
+        for directory in documentationDirectories() {
+            guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
+                continue
+            }
+
+            let docs = files
+                .filter { $0.pathExtension.lowercased() == "md" }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .compactMap { url -> UserDoc? in
+                    guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                    return UserDoc(
+                        id: url.lastPathComponent,
+                        title: title(from: content, fallback: url.deletingPathExtension().lastPathComponent),
+                        content: content
+                    )
+                }
+
+            if !docs.isEmpty {
+                return docs
+            }
+        }
+
+        return []
+    }
+
+    private static func documentationDirectories() -> [URL] {
+        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let sourceURL = URL(fileURLWithPath: String(#filePath))
+        return [
+            currentDirectory.appendingPathComponent("UserDocs"),
+            currentDirectory.appendingPathComponent("Code/BASICStudio/UserDocs"),
+            sourceURL
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("UserDocs")
+        ]
+    }
+
+    private static func title(from content: String, fallback: String) -> String {
+        for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("# ") {
+                return String(line.dropFirst(2))
+            }
+        }
+        return fallback.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+private extension Text {
+    init(markdown: String) {
+        if let attributed = try? AttributedString(markdown: markdown) {
+            self.init(attributed)
+        } else {
+            self.init(verbatim: markdown)
+        }
+    }
+}
+
 extension StudioModel: BASICHost {
     nonisolated func printLine(_ text: String) {
         MainActor.assumeIsolated {
+            highlightErrorIfPresent(text)
             appendConsoleOutput(text)
         }
     }

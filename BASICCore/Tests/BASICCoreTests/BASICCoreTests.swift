@@ -28,6 +28,38 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Syntax errors include source and caret context")
+    func syntaxErrorContext() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 PRINT \"OK\"")
+        session.submit("20 skdjfhs fhkdsfhsdfk")
+        session.submit("RUN")
+
+        #expect(host.output == [
+            """
+            skdjfhs fhkdsfhsdfk
+                    ^
+            Syntax error: Expected =
+            """
+        ])
+    }
+
+    @Test("Graphics commands explain they require BASICStudio on text-only hosts")
+    func studioOnlyGraphicsError() {
+        let host = TextOnlyHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        pset (2,3), 2
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Unsupported feature: you must run this program in BASICStudio"])
+    }
+
     @Test("Stores and lists numbered lines")
     func listing() {
         let host = TestHost()
@@ -186,5 +218,22 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
 
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
         lines.append((x1, y1, x2, y2, color))
+    }
+}
+
+private final class TextOnlyHost: BASICFileHost {
+    var output: [String] = []
+    var files: [String: String] = [:]
+
+    func printLine(_ text: String) {
+        output.append(text)
+    }
+
+    func readLine(prompt: String) -> String? {
+        nil
+    }
+
+    func loadTextFile(path: String) throws -> String {
+        files[path] ?? ""
     }
 }
