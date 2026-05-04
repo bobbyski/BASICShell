@@ -167,7 +167,7 @@ final class StudioModel: ObservableObject {
     @Published var selectedPane: StudioPane = .console
     @Published var isDebugVisible = false
     @Published var isCommandBarVisible = false
-    @Published var terminalScreenSize: TerminalScreenSize = .eightyByTwentyFive
+    @Published var terminalScreenSize: TerminalScreenSize = .flexible
     @Published var programText = """
     print "AIBASIC SWIFTTERM"
     screen 1
@@ -186,7 +186,6 @@ final class StudioModel: ObservableObject {
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
-    private var consoleInputBuffer = ""
 
     private lazy var session = BASICSession(host: self)
 
@@ -220,7 +219,6 @@ final class StudioModel: ObservableObject {
         _ = session.submit("NEW")
         programText = ""
         consoleText = prompt
-        consoleInputBuffer = ""
         graphics.clear(color: nil)
         graphicsRevision += 1
     }
@@ -233,27 +231,8 @@ final class StudioModel: ObservableObject {
         command = ""
     }
 
-    func handleConsoleInput(_ bytes: [UInt8]) {
-        for byte in bytes {
-            switch byte {
-            case 10, 13:
-                consoleText += "\n"
-                let command = consoleInputBuffer
-                consoleInputBuffer = ""
-                submitConsoleCommand(command, echo: false)
-            case 8, 127:
-                if !consoleInputBuffer.isEmpty {
-                    consoleInputBuffer.removeLast()
-                    consoleText += "\u{8} \u{8}"
-                }
-            case 32...126:
-                let character = Character(UnicodeScalar(byte))
-                consoleInputBuffer.append(character)
-                consoleText.append(character)
-            default:
-                break
-            }
-        }
+    func submitConsoleLineFromTerminal(_ command: String) {
+        submitConsoleCommand(command, echo: false)
     }
 
     private func rebuildProgramFromEditor() {
@@ -267,6 +246,9 @@ final class StudioModel: ObservableObject {
 
     private func submitConsoleCommand(_ command: String, echo: Bool) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if shouldUseEditorProgram(for: trimmed) {
+            rebuildProgramFromEditor()
+        }
 
         if echo {
             if !consoleText.hasSuffix(prompt) {
@@ -277,6 +259,9 @@ final class StudioModel: ObservableObject {
 
         if !trimmed.isEmpty {
             let shouldContinue = session.submit(command)
+            if shouldSyncEditorAfterCommand(trimmed) {
+                syncEditorFromSession()
+            }
             if !shouldContinue {
                 appendConsoleOutput("BYE")
                 return
@@ -284,6 +269,22 @@ final class StudioModel: ObservableObject {
         }
 
         consoleText += prompt
+    }
+
+    private func shouldUseEditorProgram(for command: String) -> Bool {
+        let keyword = command.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return keyword == "LIST" || keyword == "RUN"
+    }
+
+    private func shouldSyncEditorAfterCommand(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let uppercased = trimmed.uppercased()
+        return trimmed.first?.isNumber == true || uppercased == "NEW" || uppercased.hasPrefix("LOAD ")
+    }
+
+    private func syncEditorFromSession() {
+        programText = session.program.listing()
     }
 
     private func expandedPath(_ path: String) -> String {
@@ -475,6 +476,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var renderedCharacterCount = 0
     private var renderedRevision = -1
     private var renderedScreenSize: TerminalScreenSize?
+    private var inputBuffer = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -490,27 +492,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
 
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
         terminalView.terminalDelegate = self
         terminalView.configureNativeColors()
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
 
-        overlayView.translatesAutoresizingMaskIntoConstraints = false
-
         addSubview(terminalView)
         addSubview(overlayView, positioned: .above, relativeTo: terminalView)
-
-        NSLayoutConstraint.activate([
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            overlayView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            overlayView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            overlayView.topAnchor.constraint(equalTo: topAnchor),
-            overlayView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
     }
 
     override func viewDidMoveToWindow() {
@@ -520,25 +508,25 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     override func layout() {
         super.layout()
-        applyScreenSizeIfNeeded(force: false)
+        applyScreenSize(force: false)
     }
 
     func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int, screenSize: TerminalScreenSize) {
         if renderedScreenSize != screenSize {
             renderedScreenSize = screenSize
-            applyScreenSizeIfNeeded(force: true)
+            applyScreenSize(force: true)
         }
 
         if consoleText.count < renderedCharacterCount {
             terminalView.getTerminal().resetToInitialState()
             renderedCharacterCount = 0
+            inputBuffer = ""
         }
 
         if consoleText.count > renderedCharacterCount {
             let start = consoleText.index(consoleText.startIndex, offsetBy: renderedCharacterCount)
             let newText = String(consoleText[start...]).replacingOccurrences(of: "\n", with: "\r\n")
-            terminalView.getTerminal().feed(text: newText)
-            terminalView.needsDisplay = true
+            feedTerminal(newText)
             renderedCharacterCount = consoleText.count
         }
 
@@ -549,26 +537,86 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
-    private func applyScreenSizeIfNeeded(force: Bool) {
-        let screenSize = renderedScreenSize ?? .eightyByTwentyFive
+    private func applyScreenSize(force: Bool) {
+        let screenSize = renderedScreenSize ?? .flexible
         if let dimensions = screenSize.dimensions {
             terminalView.getTerminal().resize(cols: dimensions.cols, rows: dimensions.rows)
+            let optimalSize = terminalView.getOptimalFrameSize().size
+            let width = min(bounds.width, optimalSize.width)
+            let height = min(bounds.height, optimalSize.height)
+            let frame = CGRect(
+                x: bounds.midX - width / 2,
+                y: bounds.midY - height / 2,
+                width: width,
+                height: height
+            )
+            terminalView.frame = frame
+            overlayView.frame = frame
             terminalView.needsDisplay = true
+            overlayView.needsDisplay = true
             return
         }
 
         guard force || bounds.width > 0 else { return }
+        terminalView.frame = bounds
+        overlayView.frame = bounds
         terminalView.sizeChanged(source: terminalView.getTerminal())
         terminalView.needsDisplay = true
+        overlayView.needsDisplay = true
+    }
+
+    private func feedTerminal(_ text: String) {
+        terminalView.getTerminal().feed(text: text)
+        refreshTerminalDisplay()
+    }
+
+    private func refreshTerminalDisplay() {
+        let terminal = terminalView.getTerminal()
+        terminal.refresh(startRow: 0, endRow: max(0, terminal.rows - 1))
+        terminalView.needsDisplay = true
+        terminalView.setNeedsDisplay(terminalView.bounds)
+        positionSwiftTermCaret()
+    }
+
+    private func positionSwiftTermCaret() {
+        guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
+
+        let terminal = terminalView.getTerminal()
+        let cellWidth = terminalView.frame.width / CGFloat(max(terminal.cols, 1))
+        let cellHeight = terminalView.frame.height / CGFloat(max(terminal.rows, 1))
+        let x = CGFloat(min(max(terminal.buffer.x, 0), max(terminal.cols - 1, 0))) * cellWidth
+        let y = terminalView.frame.height - (CGFloat(min(max(terminal.buffer.y, 0), max(terminal.rows - 1, 0))) + 1) * cellHeight
+
+        for subview in terminalView.subviews where String(describing: type(of: subview)).contains("CaretView") {
+            subview.frame.origin = CGPoint(x: x, y: y)
+        }
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        let bytes = Array(data)
-        Task { @MainActor [weak model] in
-            model?.handleConsoleInput(bytes)
+        for byte in data {
+            switch byte {
+            case 10, 13:
+                feedTerminal("\r\n")
+                let command = inputBuffer
+                inputBuffer = ""
+                Task { @MainActor [weak model] in
+                    model?.submitConsoleLineFromTerminal(command)
+                }
+            case 8, 127:
+                guard !inputBuffer.isEmpty else { continue }
+                inputBuffer.removeLast()
+                feedTerminal("\u{8} \u{20}\u{8}")
+            case 32...126:
+                let scalar = UnicodeScalar(byte)
+                let character = String(Character(scalar))
+                inputBuffer.append(character)
+                feedTerminal(character)
+            default:
+                break
+            }
         }
     }
     func scrolled(source: TerminalView, position: Double) {}
