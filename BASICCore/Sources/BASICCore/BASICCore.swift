@@ -943,6 +943,20 @@ public final class BASICInterpreter {
             }
             guard let elseAction else { return .next }
             return try execute(elseAction, pc: pc, parsed: parsed)
+        case .blockIf(let condition):
+            return try blockIfFlow(condition, pc: pc, parsed: parsed)
+        case .elseIf:
+            guard let index = matchingEndIf(after: pc, in: parsed) else {
+                throw BASICError.runtime("ELSEIF without END IF")
+            }
+            return .jump(index + 1)
+        case .elseBlock:
+            guard let index = matchingEndIf(after: pc, in: parsed) else {
+                throw BASICError.runtime("ELSE without END IF")
+            }
+            return .jump(index + 1)
+        case .endIf:
+            return .next
         case .forLoop(let variable, let start, let end, let step):
             return try forLoopFlow(variable: variable, start: start, end: end, step: step, pc: pc, parsed: parsed)
         case .nextLoop(let variables):
@@ -1001,6 +1015,57 @@ public final class BASICInterpreter {
             }
         }
         return .next
+    }
+
+    private func blockIfFlow(_ condition: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
+        if try evaluate(condition).truthy {
+            return .next
+        }
+
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .blockIf:
+                depth += 1
+            case .endIf:
+                if depth == 0 {
+                    return .jump(index + 1)
+                }
+                depth -= 1
+            case .elseIf(let condition) where depth == 0:
+                if try evaluate(condition).truthy {
+                    return .jump(index + 1)
+                }
+            case .elseBlock where depth == 0:
+                return .jump(index + 1)
+            default:
+                break
+            }
+            index += 1
+        }
+
+        throw BASICError.runtime("IF without END IF")
+    }
+
+    private func matchingEndIf(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .blockIf:
+                depth += 1
+            case .endIf:
+                if depth == 0 {
+                    return index
+                }
+                depth -= 1
+            default:
+                break
+            }
+            index += 1
+        }
+        return nil
     }
 
     private func loadProgram(path: String) throws {
@@ -1400,6 +1465,10 @@ private indirect enum Statement: Equatable {
     case gosub(BranchTarget)
     case returnFromSubroutine
     case ifThen(Expression, ConditionalAction, ConditionalAction?)
+    case blockIf(Expression)
+    case elseIf(Expression)
+    case elseBlock
+    case endIf
     case forLoop(variable: VariableName, start: Expression, end: Expression, step: Expression?)
     case nextLoop([VariableName])
     case selectCase(Expression)
@@ -1735,9 +1804,20 @@ private struct Parser {
             }
             return .caseClause(try parseCaseClauses())
         }
+        if matchIdentifier("ELSEIF") {
+            let condition = try parseExpression()
+            guard matchIdentifier("THEN") else { throw syntax("Expected THEN") }
+            return .elseIf(condition)
+        }
+        if matchIdentifier("ELSE") {
+            return .elseBlock
+        }
         if matchIdentifier("END") {
             if matchIdentifier("SELECT") {
                 return .endSelect
+            }
+            if matchIdentifier("IF") {
+                return .endIf
             }
             return .end
         }
@@ -1815,6 +1895,9 @@ private struct Parser {
         if matchIdentifier("IF") {
             let condition = try parseExpression()
             guard matchIdentifier("THEN") else { throw syntax("Expected THEN") }
+            if isStatementEnd {
+                return .blockIf(condition)
+            }
             let thenAction = try parseConditionalAction(stoppingAtElse: true)
             let elseAction = matchIdentifier("ELSE") ? try parseConditionalAction(stoppingAtElse: false) : nil
             return .ifThen(condition, thenAction, elseAction)
@@ -2191,6 +2274,6 @@ private struct Parser {
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "GOTO", "GOSUB", "RETURN", "IF",
-        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSE", "EXIT", "END", "STOP"
+        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]
 }

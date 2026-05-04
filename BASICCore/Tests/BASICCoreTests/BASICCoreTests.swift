@@ -322,6 +322,56 @@ struct BASICCoreTests {
         #expect(host.output == ["hit"])
     }
 
+    @Test("Block IF supports ELSEIF ELSE and END IF")
+    func blockIfElseIfElseEndIf() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 3
+        if i = 1 then
+        print "one"
+        elseif i = 2 then
+        print "two"
+        else
+        print "other"
+        end if
+        next i
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["one", "two", "other"])
+    }
+
+    @Test("Block IF supports nested blocks")
+    func blockIfNestedBlocks() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let day = 4
+        let hour = 12
+        if day = 3 then
+        if hour = 14 or hour = 15 then
+        print "wednesday time"
+        else
+        print "wednesday other"
+        end if
+        elseif day = 4 then
+        if hour = 12 then
+        print "thursday time"
+        else
+        print "thursday other"
+        end if
+        else
+        print "other day"
+        end if
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["thursday time"])
+    }
+
     @Test("FOR NEXT works on colon-separated lines")
     func forNextOnColonSeparatedLine() {
         let host = TestHost()
