@@ -697,10 +697,12 @@ public final class BASICInterpreter {
         var pc = 0
         while pc < parsed.count {
             let current = parsed[pc]
-            let next = try execute(current.statement, pc: pc)
+            let next = try execute(current.statement, pc: pc, parsed: parsed)
             switch next {
             case .next:
                 pc += 1
+            case .jump(let index):
+                pc = index
             case .goto(let line):
                 guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
                 pc = index
@@ -711,11 +713,16 @@ public final class BASICInterpreter {
                 pc = index
             case .end:
                 return
+            case .exitSelect:
+                guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                    throw BASICError.runtime("EXIT SELECT without SELECT")
+                }
+                pc = index + 1
             }
         }
     }
 
-    private func execute(_ statement: Statement, pc: Int) throws -> Flow {
+    private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
         case .empty, .remark:
             return .next
@@ -820,6 +827,17 @@ public final class BASICInterpreter {
             return .returnTo(index)
         case .ifThen(let condition, let target):
             return try evaluate(condition).truthy ? target.flow : .next
+        case .selectCase(let expression):
+            return try selectCaseFlow(expression, pc: pc, parsed: parsed)
+        case .caseClause, .caseElse:
+            guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                throw BASICError.runtime("CASE without SELECT")
+            }
+            return .jump(index + 1)
+        case .endSelect:
+            return .next
+        case .exitSelect:
+            return .exitSelect
         }
     }
 
@@ -844,6 +862,103 @@ public final class BASICInterpreter {
         }
 
         return output
+    }
+
+    private func selectCaseFlow(_ expression: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
+        let testValue = try evaluate(expression)
+        var depth = 0
+        var elseIndex: Int?
+        var index = pc + 1
+
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .selectCase:
+                depth += 1
+            case .endSelect:
+                if depth == 0 {
+                    if let elseIndex {
+                        return .jump(elseIndex + 1)
+                    }
+                    return .jump(index + 1)
+                }
+                depth -= 1
+            case .caseClause(let clauses) where depth == 0:
+                for clause in clauses {
+                    if try caseClause(clause, matches: testValue) {
+                        return .jump(index + 1)
+                    }
+                }
+            case .caseElse where depth == 0:
+                elseIndex = index
+            default:
+                break
+            }
+            index += 1
+        }
+
+        throw BASICError.runtime("SELECT without END SELECT")
+    }
+
+    private func matchingEndSelect(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .selectCase:
+                depth += 1
+            case .endSelect:
+                if depth == 0 {
+                    return index
+                }
+                depth -= 1
+            default:
+                break
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func caseClause(_ clause: CaseClause, matches testValue: BASICValue) throws -> Bool {
+        switch clause {
+        case .equals(let expression):
+            return try compare(testValue, .equal, evaluate(expression))
+        case .range(let lower, let upper):
+            return try compare(testValue, .greaterEqual, evaluate(lower)) && compare(testValue, .lessEqual, evaluate(upper))
+        case .comparison(let operation, let expression):
+            return try compare(testValue, operation, evaluate(expression))
+        }
+    }
+
+    private func compare(_ left: BASICValue, _ operation: BinaryOperation, _ right: BASICValue) throws -> Bool {
+        switch operation {
+        case .equal:
+            return left == right
+        case .notEqual:
+            return left != right
+        case .less, .lessEqual, .greater, .greaterEqual:
+            if let leftNumber = left.number, let rightNumber = right.number {
+                switch operation {
+                case .less: return leftNumber < rightNumber
+                case .lessEqual: return leftNumber <= rightNumber
+                case .greater: return leftNumber > rightNumber
+                case .greaterEqual: return leftNumber >= rightNumber
+                default: break
+                }
+            }
+            if let leftString = left.string?.description, let rightString = right.string?.description {
+                switch operation {
+                case .less: return leftString < rightString
+                case .lessEqual: return leftString <= rightString
+                case .greater: return leftString > rightString
+                case .greaterEqual: return leftString >= rightString
+                default: break
+                }
+            }
+            throw BASICError.runtime("Cannot compare these values")
+        case .add, .subtract, .multiply, .divide, .and, .or:
+            throw BASICError.runtime("Invalid CASE comparison")
+        }
     }
 
     private func evaluate(_ expression: Expression) throws -> BASICValue {
@@ -954,9 +1069,11 @@ private struct ParsedLine {
 
 private enum Flow: Equatable {
     case next
+    case jump(Int)
     case goto(Int)
     case gotoLabel(String)
     case returnTo(Int)
+    case exitSelect
     case end
 }
 
@@ -981,6 +1098,11 @@ private indirect enum Statement: Equatable {
     case gosub(BranchTarget)
     case returnFromSubroutine
     case ifThen(Expression, BranchTarget)
+    case selectCase(Expression)
+    case caseClause([CaseClause])
+    case caseElse
+    case endSelect
+    case exitSelect
     case end
 
     var label: String? {
@@ -988,6 +1110,12 @@ private indirect enum Statement: Equatable {
         if case .labeled(let name, _) = self { return name }
         return nil
     }
+}
+
+private enum CaseClause: Equatable {
+    case equals(Expression)
+    case range(Expression, Expression)
+    case comparison(BinaryOperation, Expression)
 }
 
 private enum PrintPart: Equatable {
@@ -1271,6 +1399,26 @@ private struct Parser {
         if matchIdentifier("PRINT") {
             return .print(try parsePrintParts())
         }
+        if matchIdentifier("SELECT") {
+            _ = matchIdentifier("CASE")
+            return .selectCase(try parseExpression())
+        }
+        if matchIdentifier("CASE") {
+            if matchIdentifier("ELSE") {
+                return .caseElse
+            }
+            return .caseClause(try parseCaseClauses())
+        }
+        if matchIdentifier("END") {
+            if matchIdentifier("SELECT") {
+                return .endSelect
+            }
+            return .end
+        }
+        if matchIdentifier("EXIT") {
+            guard matchIdentifier("SELECT") else { throw syntax("Expected SELECT") }
+            return .exitSelect
+        }
         if matchIdentifier("OPTION") {
             return .optionLetMode(try parseLetMode())
         }
@@ -1335,7 +1483,7 @@ private struct Parser {
             let target = try consumeBranchTarget("Expected line number or label after THEN")
             return .ifThen(condition, target)
         }
-        if matchIdentifier("END") || matchIdentifier("STOP") {
+        if matchIdentifier("STOP") {
             return .end
         }
         if case .identifier = peek {
@@ -1356,6 +1504,27 @@ private struct Parser {
             }
         }
         return parts
+    }
+
+    private mutating func parseCaseClauses() throws -> [CaseClause] {
+        var clauses: [CaseClause] = []
+        repeat {
+            clauses.append(try parseCaseClause())
+        } while match(.comma)
+        return clauses
+    }
+
+    private mutating func parseCaseClause() throws -> CaseClause {
+        _ = matchIdentifier("IS")
+        if let operation = matchComparisonOperator() {
+            return .comparison(operation, try parseExpression())
+        }
+
+        let lower = try parseExpression()
+        if matchIdentifier("TO") {
+            return .range(lower, try parseExpression())
+        }
+        return .equals(lower)
     }
 
     private mutating func parseAssignment(kind: AssignmentKind, requiresEquals: Bool) throws -> Statement {
@@ -1588,6 +1757,16 @@ private struct Parser {
         return true
     }
 
+    private mutating func matchComparisonOperator() -> BinaryOperation? {
+        if match(.equals) { return .equal }
+        if match(.notEqual) { return .notEqual }
+        if match(.lessEqual) { return .lessEqual }
+        if match(.less) { return .less }
+        if match(.greaterEqual) { return .greaterEqual }
+        if match(.greater) { return .greater }
+        return nil
+    }
+
     private mutating func matchIdentifier(_ keyword: String) -> Bool {
         guard case .identifier(let name) = peek, name.uppercased() == keyword else { return false }
         _ = advance()
@@ -1615,6 +1794,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "GOTO", "GOSUB", "RETURN", "IF", "END", "STOP"
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "GOTO", "GOSUB", "RETURN", "IF",
+        "SELECT", "CASE", "EXIT", "END", "STOP"
     ]
 }

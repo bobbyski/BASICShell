@@ -158,6 +158,71 @@ struct BASICCoreTests {
         #expect(host.output == ["AB", "2"])
     }
 
+    @Test("SELECT CASE supports values ranges comparisons and else")
+    func selectCaseValuesRangesComparisonsAndElse() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        global n as integer = 8
+        select case n
+        case 1 to 5
+        print "low"
+        case 6, 7, 8
+        print "match"
+        case is > 10
+        print "high"
+        case else
+        print "else"
+        end select
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["match"])
+    }
+
+    @Test("SELECT CASE falls through to CASE ELSE")
+    func selectCaseElse() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        global item$ as string = "zebra"
+        select case item$
+        case "apple", "banana"
+        print "fruit"
+        case "nuts" to "soup"
+        print "pantry"
+        case else
+        print "other"
+        end select
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["other"])
+    }
+
+    @Test("EXIT SELECT skips to END SELECT")
+    func exitSelect() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        select case 1
+        case 1
+        print "before"
+        exit select
+        print "after"
+        case else
+        print "else"
+        end select
+        print "done"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["before", "done"])
+    }
+
     @Test("Colon separates statements")
     func colonStatementSeparator() {
         let host = TestHost()
