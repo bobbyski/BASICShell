@@ -3,16 +3,52 @@ import AppKit
 import MarkdownUI
 import SwiftUI
 import SwiftTerm
+import UniformTypeIdentifiers
 import WebKit
 
 @main
 struct BASICStudioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = StudioModel()
 
     var body: some Scene {
         WindowGroup("AIBasic Studio") {
-            StudioView()
+            StudioView(model: model)
                 .frame(minWidth: 760, minHeight: 520)
+        }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Load...") {
+                    model.loadProgramFromMenu()
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+            }
+
+            CommandGroup(replacing: .saveItem) {
+                Button("Save") {
+                    model.saveProgramFromMenu()
+                }
+                .keyboardShortcut("s", modifiers: [.command])
+
+                Button("Save As...") {
+                    model.saveProgramAsFromMenu()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .textEditing) {
+                Divider()
+
+                Button("Find") {
+                    model.showFind()
+                }
+                .keyboardShortcut("f", modifiers: [.command])
+
+                Button("Find and Replace") {
+                    model.showFindAndReplace()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+            }
         }
     }
 }
@@ -25,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct StudioView: View {
-    @StateObject private var model = StudioModel()
+    @ObservedObject var model: StudioModel
     @State private var inspectorWidth: CGFloat = 360
 
     var body: some View {
@@ -119,6 +155,32 @@ struct StudioView: View {
                 }
                 .help("Editor Line Numbers")
 
+                Button {
+                    model.showFind()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .help("Find")
+
+                Menu {
+                    ForEach(EditorTheme.allCases, id: \.self) { theme in
+                        Button {
+                            model.editorTheme = theme
+                        } label: {
+                            HStack {
+                                Text(theme.label)
+                                if model.editorTheme == theme {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(model.editorTheme.label, systemImage: "paintpalette")
+                }
+                .help("Editor Theme")
+
                 Menu {
                     ForEach(TerminalScreenSize.allCases, id: \.self) { size in
                         Button {
@@ -149,7 +211,10 @@ struct StudioView: View {
                 MonacoEditor(
                     text: $model.programText,
                     showsLineNumbers: model.isEditorGutterVisible,
-                    errorLine: model.editorErrorLine
+                    theme: model.editorTheme,
+                    errorLine: model.editorErrorLine,
+                    findRequest: model.editorFindRequest,
+                    replaceRequest: model.editorReplaceRequest
                 )
             }
             .padding()
@@ -222,7 +287,29 @@ enum InspectorPane {
     case docs
 }
 
-enum TerminalScreenSize: String, CaseIterable {
+enum EditorTheme: String, CaseIterable, Codable {
+    case dark
+    case light
+    case highContrast
+
+    var label: String {
+        switch self {
+        case .dark: return "Dark"
+        case .light: return "Light"
+        case .highContrast: return "High Contrast"
+        }
+    }
+
+    var monacoName: String {
+        switch self {
+        case .dark: return "vs-dark"
+        case .light: return "vs"
+        case .highContrast: return "hc-black"
+        }
+    }
+}
+
+enum TerminalScreenSize: String, CaseIterable, Codable {
     case eightyByTwentyFive
     case sixtyFourBySixteen
     case thirtyTwoBySixteen
@@ -247,10 +334,60 @@ enum TerminalScreenSize: String, CaseIterable {
     }
 }
 
+struct StudioSettings: Codable {
+    var editorTheme: EditorTheme = .dark
+    var isEditorGutterVisible = false
+    var terminalScreenSize: TerminalScreenSize = .flexible
+}
+
+struct StudioSettingsStore {
+    private static let fileName = "StudioSettings.json"
+
+    static var settingsURL: URL {
+        let fileManager = FileManager.default
+        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base
+            .appendingPathComponent("AIBasic", isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
+    static func load() -> StudioSettings {
+        let url = settingsURL
+        guard let data = try? Data(contentsOf: url),
+              let settings = try? JSONDecoder().decode(StudioSettings.self, from: data) else {
+            return StudioSettings()
+        }
+        return settings
+    }
+
+    static func save(_ settings: StudioSettings) {
+        let url = settingsURL
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONEncoder.pretty.encode(settings)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("Unable to save BASICStudio settings: \(error.localizedDescription)")
+        }
+    }
+}
+
+private extension JSONEncoder {
+    static var pretty: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+}
+
 struct MonacoEditor: NSViewRepresentable {
     @Binding var text: String
     let showsLineNumbers: Bool
+    let theme: EditorTheme
     let errorLine: Int?
+    let findRequest: Int
+    let replaceRequest: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -269,7 +406,14 @@ struct MonacoEditor: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.text = $text
-        context.coordinator.sync(text: text, showsLineNumbers: showsLineNumbers, errorLine: errorLine)
+        context.coordinator.sync(
+            text: text,
+            showsLineNumbers: showsLineNumbers,
+            theme: theme,
+            errorLine: errorLine,
+            findRequest: findRequest,
+            replaceRequest: replaceRequest
+        )
     }
 
     static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
@@ -283,10 +427,16 @@ struct MonacoEditor: NSViewRepresentable {
         private var isReady = false
         private var pendingText: String?
         private var pendingShowsLineNumbers: Bool?
+        private var pendingTheme: EditorTheme?
         private var pendingErrorLine: Int?
+        private var pendingFindRequest: Int?
+        private var pendingReplaceRequest: Int?
         private var lastAppliedText: String?
         private var lastAppliedShowsLineNumbers: Bool?
+        private var lastAppliedTheme: EditorTheme?
         private var lastAppliedErrorLine: Int?
+        private var lastAppliedFindRequest: Int?
+        private var lastAppliedReplaceRequest: Int?
 
         init(text: Binding<String>) {
             self.text = text
@@ -309,10 +459,13 @@ struct MonacoEditor: NSViewRepresentable {
             }
         }
 
-        func sync(text: String, showsLineNumbers: Bool, errorLine: Int?) {
+        func sync(text: String, showsLineNumbers: Bool, theme: EditorTheme, errorLine: Int?, findRequest: Int, replaceRequest: Int) {
             pendingText = text
             pendingShowsLineNumbers = showsLineNumbers
+            pendingTheme = theme
             pendingErrorLine = errorLine
+            pendingFindRequest = findRequest
+            pendingReplaceRequest = replaceRequest
             applyPending()
         }
 
@@ -329,6 +482,11 @@ struct MonacoEditor: NSViewRepresentable {
                 lastAppliedShowsLineNumbers = pendingShowsLineNumbers
             }
 
+            if let pendingTheme, pendingTheme != lastAppliedTheme {
+                webView.evaluateJavaScript("window.basicStudioSetTheme(\(json(pendingTheme.monacoName)));")
+                lastAppliedTheme = pendingTheme
+            }
+
             if pendingErrorLine != lastAppliedErrorLine {
                 if let pendingErrorLine {
                     webView.evaluateJavaScript("window.basicStudioSetErrorLine(\(pendingErrorLine));")
@@ -336,6 +494,20 @@ struct MonacoEditor: NSViewRepresentable {
                     webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
                 }
                 lastAppliedErrorLine = pendingErrorLine
+            }
+
+            if let pendingFindRequest, pendingFindRequest != lastAppliedFindRequest {
+                if pendingFindRequest > 0 {
+                    webView.evaluateJavaScript("window.basicStudioFind(false);")
+                }
+                lastAppliedFindRequest = pendingFindRequest
+            }
+
+            if let pendingReplaceRequest, pendingReplaceRequest != lastAppliedReplaceRequest {
+                if pendingReplaceRequest > 0 {
+                    webView.evaluateJavaScript("window.basicStudioFind(true);")
+                }
+                lastAppliedReplaceRequest = pendingReplaceRequest
             }
         }
 
@@ -360,7 +532,7 @@ struct MonacoEditor: NSViewRepresentable {
           width: 100%;
           margin: 0;
           overflow: hidden;
-          background: #ffffff;
+          background: #1e1e1e;
         }
         .basic-error-line {
           background: rgba(255, 59, 48, 0.16);
@@ -374,6 +546,9 @@ struct MonacoEditor: NSViewRepresentable {
         let editor = null;
         let pendingText = "";
         let pendingLineNumbers = false;
+        let pendingTheme = "vs-dark";
+        let pendingFind = false;
+        let pendingFindShowsReplace = false;
         let suppressChange = false;
         let errorDecorations = [];
 
@@ -397,6 +572,32 @@ struct MonacoEditor: NSViewRepresentable {
             glyphMargin: false,
             folding: show
           });
+        };
+
+        function applyPageBackground(themeName) {
+          const color = themeName === "vs" ? "#ffffff" : (themeName === "hc-black" ? "#000000" : "#1e1e1e");
+          document.documentElement.style.background = color;
+          document.body.style.background = color;
+        }
+
+        window.basicStudioSetTheme = function(themeName) {
+          pendingTheme = themeName;
+          applyPageBackground(themeName);
+          if (!editor) { return; }
+          monaco.editor.setTheme(themeName);
+        };
+
+        window.basicStudioFind = function(showReplace) {
+          if (!editor) {
+            pendingFind = true;
+            pendingFindShowsReplace = showReplace;
+            return;
+          }
+          pendingFind = false;
+          pendingFindShowsReplace = false;
+          editor.focus();
+          const actionName = showReplace ? "editor.action.startFindReplaceAction" : "actions.find";
+          editor.getAction(actionName).run();
         };
 
         window.basicStudioSetErrorLine = function(lineNumber) {
@@ -437,7 +638,7 @@ struct MonacoEditor: NSViewRepresentable {
           editor = monaco.editor.create(document.getElementById("editor"), {
             value: pendingText,
             language: "aibasic",
-            theme: "vs",
+            theme: pendingTheme,
             automaticLayout: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
@@ -452,11 +653,17 @@ struct MonacoEditor: NSViewRepresentable {
             wordWrap: "off"
           });
 
+          applyPageBackground(pendingTheme);
+
           editor.onDidChangeModelContent(function() {
             if (!suppressChange) {
               post({ type: "change", text: editor.getValue() });
             }
           });
+
+          if (pendingFind) {
+            window.basicStudioFind(pendingFindShowsReplace);
+          }
 
           post({ type: "ready" });
         });
@@ -473,9 +680,18 @@ final class StudioModel: ObservableObject {
     @Published var selectedPane: StudioPane = .console
     @Published var inspectorPane: InspectorPane?
     @Published var isCommandBarVisible = false
-    @Published var isEditorGutterVisible = false
+    @Published var isEditorGutterVisible = false {
+        didSet { saveSettings() }
+    }
+    @Published var editorTheme: EditorTheme = .dark {
+        didSet { saveSettings() }
+    }
     @Published var editorErrorLine: Int?
-    @Published var terminalScreenSize: TerminalScreenSize = .flexible
+    @Published var editorFindRequest = 0
+    @Published var editorReplaceRequest = 0
+    @Published var terminalScreenSize: TerminalScreenSize = .flexible {
+        didSet { saveSettings() }
+    }
     @Published var programText = StudioModel.defaultProgramSource()
     @Published var consoleText = "READY\n> "
     @Published var command = ""
@@ -483,15 +699,24 @@ final class StudioModel: ObservableObject {
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
+    private var currentProgramURL: URL?
 
     private lazy var session = BASICSession(host: self)
 
     init() {
+        let settings = StudioSettingsStore.load()
+        editorTheme = settings.editorTheme
+        isEditorGutterVisible = settings.isEditorGutterVisible
+        terminalScreenSize = settings.terminalScreenSize
+
         if let path = CommandLine.arguments.dropFirst().first,
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
+            currentProgramURL = URL(fileURLWithPath: expandedPath(path))
             shouldRunStartupProgram = true
         }
+
+        saveSettings()
     }
 
     func runStartupProgramIfNeeded() {
@@ -502,6 +727,56 @@ final class StudioModel: ObservableObject {
 
     func toggleInspector(_ pane: InspectorPane) {
         inspectorPane = inspectorPane == pane ? nil : pane
+    }
+
+    func showFind() {
+        selectedPane = .editor
+        editorFindRequest += 1
+    }
+
+    func showFindAndReplace() {
+        selectedPane = .editor
+        editorReplaceRequest += 1
+    }
+
+    func loadProgramFromMenu() {
+        let panel = NSOpenPanel()
+        panel.title = "Load BASIC Program"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = Self.basicProgramContentTypes
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            programText = source
+            currentProgramURL = url
+            editorErrorLine = nil
+            rebuildProgramFromEditor()
+            selectedPane = .editor
+        } catch {
+            presentFileError("Unable to load \(url.lastPathComponent).", error: error)
+        }
+    }
+
+    func saveProgramFromMenu() {
+        if let currentProgramURL {
+            saveProgram(to: currentProgramURL)
+        } else {
+            saveProgramAsFromMenu()
+        }
+    }
+
+    func saveProgramAsFromMenu() {
+        let panel = NSSavePanel()
+        panel.title = "Save BASIC Program"
+        panel.allowedContentTypes = Self.basicProgramContentTypes
+        panel.nameFieldStringValue = currentProgramURL?.lastPathComponent ?? "Untitled.bas"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        saveProgram(to: url)
     }
 
     func runEditorProgram() {
@@ -538,6 +813,24 @@ final class StudioModel: ObservableObject {
 
     private func rebuildProgramFromEditor() {
         session.program.loadSource(programText)
+    }
+
+    private func saveProgram(to url: URL) {
+        do {
+            try programText.write(to: url, atomically: true, encoding: .utf8)
+            currentProgramURL = url
+            rebuildProgramFromEditor()
+        } catch {
+            presentFileError("Unable to save \(url.lastPathComponent).", error: error)
+        }
+    }
+
+    private func presentFileError(_ message: String, error: Error) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private func appendConsoleOutput(_ text: String, terminator: String = "\n") {
@@ -588,6 +881,16 @@ final class StudioModel: ObservableObject {
         programText = session.program.listing()
     }
 
+    private func saveSettings() {
+        StudioSettingsStore.save(
+            StudioSettings(
+                editorTheme: editorTheme,
+                isEditorGutterVisible: isEditorGutterVisible,
+                terminalScreenSize: terminalScreenSize
+            )
+        )
+    }
+
     private func highlightErrorIfPresent(_ text: String) {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard lines.count >= 3,
@@ -608,6 +911,14 @@ final class StudioModel: ObservableObject {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
         return path
+    }
+
+    private static var basicProgramContentTypes: [UTType] {
+        var types: [UTType] = [.plainText, .text, .sourceCode]
+        if let basic = UTType(filenameExtension: "bas") {
+            types.append(basic)
+        }
+        return types
     }
 
     private static func defaultProgramSource() -> String {
