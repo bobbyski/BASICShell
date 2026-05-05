@@ -6,12 +6,21 @@ let package = Package(
     name: "BASICShell",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(path: "../BASICCore")
+        .package(path: "../BASICCore"),
+        .package(url: "https://github.com/migueldeicaza/TermKit", branch: "main")
     ],
     targets: [
         .executableTarget(
             name: "BASICShell",
-            dependencies: ["BASICCore"]
+            dependencies: [
+                "BASICCore",
+            ]
+        ),
+        .executableTarget(
+            name: "BASICEdit",
+            dependencies: [
+                "TermKit"
+            ]
         )
     ]
 )

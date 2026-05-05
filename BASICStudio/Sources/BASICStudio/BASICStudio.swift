@@ -675,8 +675,6 @@ struct MonacoEditor: NSViewRepresentable {
 
 @MainActor
 final class StudioModel: ObservableObject {
-    private let prompt = "READY\n> "
-
     @Published var selectedPane: StudioPane = .console
     @Published var inspectorPane: InspectorPane?
     @Published var isCommandBarVisible = false
@@ -693,7 +691,7 @@ final class StudioModel: ObservableObject {
         didSet { saveSettings() }
     }
     @Published var programText = StudioModel.defaultProgramSource()
-    @Published var consoleText = "READY\n> "
+    @Published var consoleText = BASICSession.defaultPrompt
     @Published var command = ""
     @Published var graphicsRevision = 0
 
@@ -702,6 +700,10 @@ final class StudioModel: ObservableObject {
     private var currentProgramURL: URL?
 
     private lazy var session = BASICSession(host: self)
+
+    private var prompt: String {
+        session.prompt
+    }
 
     init() {
         let settings = StudioSettingsStore.load()
@@ -849,6 +851,14 @@ final class StudioModel: ObservableObject {
                 consoleText += prompt
             }
             consoleText += command + "\n"
+        }
+
+        if trimmed.uppercased() == "EDIT" {
+            graphics.clear(color: nil)
+            graphicsRevision += 1
+            selectedPane = .editor
+            consoleText += prompt
+            return
         }
 
         if !trimmed.isEmpty {

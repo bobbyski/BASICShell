@@ -616,13 +616,18 @@ private final class BASICFileState {
 }
 
 public final class BASICSession {
+    public static let defaultPrompt = "READY\n> "
+
     public let program = BASICProgram()
+    public var prompt: String
+
     private let host: BASICHost
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
 
-    public init(host: BASICHost) {
+    public init(host: BASICHost, prompt: String = BASICSession.defaultPrompt) {
         self.host = host
+        self.prompt = prompt
     }
 
     @discardableResult
