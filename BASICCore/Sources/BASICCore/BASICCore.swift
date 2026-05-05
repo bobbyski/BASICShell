@@ -105,12 +105,15 @@ public struct BASICString: Equatable, CustomStringConvertible {
 }
 
 public enum BASICValue: Equatable, CustomStringConvertible {
+    case empty
     case number(Double)
     case string(BASICString)
     case boolean(Bool)
 
     public var description: String {
         switch self {
+        case .empty:
+            return ""
         case .number(let value):
             if value.rounded() == value {
                 return String(Int(value))
@@ -125,6 +128,7 @@ public enum BASICValue: Equatable, CustomStringConvertible {
 
     var truthy: Bool {
         switch self {
+        case .empty: return false
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
@@ -132,12 +136,14 @@ public enum BASICValue: Equatable, CustomStringConvertible {
     }
 
     var number: Double? {
+        if case .empty = self { return 0 }
         if case .number(let value) = self { return value }
         if case .boolean(let value) = self { return value ? 1 : 0 }
         return nil
     }
 
     var string: BASICString? {
+        if case .empty = self { return BASICString("") }
         if case .string(let value) = self { return value }
         return nil
     }
@@ -155,10 +161,12 @@ private enum BASICScalarType: String, Equatable {
     case double = "DOUBLE"
     case string = "STRING"
     case boolean = "BOOLEAN"
+    case variant = "VARIANT"
 }
 
 private enum BASICType: Equatable {
     case scalar(BASICScalarType)
+    case void
     case record(String)
     case classType(String)
 }
@@ -186,6 +194,26 @@ private struct VariableBinding: Equatable {
     var displayName: String
     var type: BASICType
     var value: BASICValue
+}
+
+private struct FunctionParameter: Equatable {
+    let variable: VariableName
+    let type: BASICType
+}
+
+private struct FunctionDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let parameters: [FunctionParameter]
+    let returnType: BASICType
+    let startIndex: Int
+    let endIndex: Int
+}
+
+private struct FunctionFrame {
+    let definition: FunctionDefinition
+    var returnValue: BASICValue
+    var didReturn: Bool = false
 }
 
 private final class BASICRuntime {
@@ -326,6 +354,7 @@ private final class BASICRuntime {
         }
         if let value {
             switch value {
+            case .empty: return .scalar(.variant)
             case .string: return .scalar(.string)
             case .boolean: return .scalar(.boolean)
             case .number(let number) where number.rounded() != number:
@@ -353,12 +382,14 @@ private final class BASICRuntime {
         throw BASICError.type(message: "suffix \(variable.name.last!) conflicts with AS \(declaredType.name)")
     }
 
-    private func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
+    func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
         }
 
         switch scalar {
+        case .variant:
+            return value
         case .string:
             guard let string = value.string else {
                 throw BASICError.type(message: "Cannot assign non-string value to \(variable.name)")
@@ -388,10 +419,12 @@ private final class BASICRuntime {
         }
     }
 
-    private func defaultValue(for type: BASICType) -> BASICValue {
+    func defaultValue(for type: BASICType) -> BASICValue {
         switch type {
+        case .void: return .empty
         case .scalar(.string): return .string(BASICString(""))
         case .scalar(.boolean): return .boolean(false)
+        case .scalar(.variant): return .empty
         case .scalar: return .number(0)
         case .record, .classType: return .number(0)
         }
@@ -402,6 +435,7 @@ private extension BASICType {
     var name: String {
         switch self {
         case .scalar(let scalar): return scalar.rawValue
+        case .void: return "VOID"
         case .record(let name): return name
         case .classType(let name): return name
         }
@@ -758,6 +792,11 @@ public final class BASICInterpreter {
     private let fileState: BASICFileState
     private var gosubStack: [Int] = []
     private var forStack: [ForFrame] = []
+    private var functionStack: [FunctionFrame] = []
+    private var functionDefinitions: [String: FunctionDefinition] = [:]
+    private var lineIndexByNumber: [Int: Int] = [:]
+    private var lineIndexByLabel: [String: Int] = [:]
+    private var parsedLines: [ParsedLine] = []
 
     public convenience init(program: BASICProgram, host: BASICHost) {
         self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState())
@@ -773,13 +812,15 @@ public final class BASICInterpreter {
     public func run(startLine: Int? = nil) throws {
         gosubStack.removeAll()
         forStack.removeAll()
+        functionStack.removeAll()
         let parsed = try program.orderedLines.flatMap { line in
             var parser = try Parser(source: line.source)
             let statement = try parser.parseStatement()
             return ParsedLine.flatten(number: line.number, statement: statement)
         }
-        var lineIndexByNumber: [Int: Int] = [:]
-        var lineIndexByLabel: [String: Int] = [:]
+        parsedLines = parsed
+        lineIndexByNumber = [:]
+        lineIndexByLabel = [:]
         for (index, line) in parsed.enumerated() {
             if let number = line.number {
                 lineIndexByNumber[number] = index
@@ -788,6 +829,7 @@ public final class BASICInterpreter {
                 lineIndexByLabel[label.uppercased()] = index
             }
         }
+        functionDefinitions = try collectFunctions(in: parsed)
 
         var pc = 0
         if let startLine {
@@ -817,6 +859,8 @@ public final class BASICInterpreter {
                     throw BASICError.runtime("EXIT SELECT without SELECT")
                 }
                 pc = index + 1
+            case .functionReturn:
+                throw BASICError.runtime("RETURN outside FUNCTION")
             }
         }
     }
@@ -839,6 +883,16 @@ public final class BASICInterpreter {
             return .next
         case .end:
             return .end
+        case .functionDeclaration:
+            guard let index = matchingEndFunction(after: pc, in: parsed) else {
+                throw BASICError.runtime("FUNCTION without END FUNCTION")
+            }
+            return .jump(index + 1)
+        case .endFunction:
+            if !functionStack.isEmpty {
+                return .functionReturn
+            }
+            return .next
         case .print(let parts):
             let rendered = try renderPrint(parts)
             host?.print(rendered.text, terminator: rendered.terminator)
@@ -894,6 +948,9 @@ public final class BASICInterpreter {
             return .next
         case .assignment(let kind, let variable, let declaredType, let expression):
             let value = try expression.map(evaluate)
+            if try assignFunctionReturnIfNeeded(variable: variable, declaredType: declaredType, value: value) {
+                return .next
+            }
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
             return .next
         case .optionLetMode(let mode):
@@ -932,11 +989,26 @@ public final class BASICInterpreter {
             runtime.pushLocalContext()
             return target.flow
         case .returnFromSubroutine:
+            if !functionStack.isEmpty {
+                try setFunctionReturn(nil)
+                return .functionReturn
+            }
             guard let index = gosubStack.popLast() else {
                 throw BASICError.runtime("RETURN without GOSUB")
             }
             runtime.popLocalContext()
             return .returnTo(index)
+        case .returnValue(let expression):
+            guard !functionStack.isEmpty else {
+                throw BASICError.runtime("RETURN value outside FUNCTION")
+            }
+            try setFunctionReturn(try evaluate(expression))
+            return .functionReturn
+        case .exitFunction:
+            guard !functionStack.isEmpty else {
+                throw BASICError.runtime("EXIT FUNCTION outside FUNCTION")
+            }
+            return .functionReturn
         case .ifThen(let condition, let thenAction, let elseAction):
             if try evaluate(condition).truthy {
                 return try execute(thenAction, pc: pc, parsed: parsed)
@@ -1015,6 +1087,143 @@ public final class BASICInterpreter {
             }
         }
         return .next
+    }
+
+    private func collectFunctions(in parsed: [ParsedLine]) throws -> [String: FunctionDefinition] {
+        var definitions: [String: FunctionDefinition] = [:]
+        for (index, line) in parsed.enumerated() {
+            guard case .functionDeclaration(let name, let parameters, let returnType) = line.statement else {
+                continue
+            }
+            guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
+                throw BASICError.runtime("FUNCTION without END FUNCTION")
+            }
+            let definition = FunctionDefinition(
+                displayName: name.name,
+                normalizedName: name.normalized,
+                parameters: parameters,
+                returnType: returnType,
+                startIndex: index,
+                endIndex: endIndex
+            )
+            if definitions[name.normalized] != nil {
+                throw BASICError.runtime("Function \(name.name) is already defined")
+            }
+            definitions[name.normalized] = definition
+        }
+        return definitions
+    }
+
+    private func matchingEndFunction(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .functionDeclaration:
+                depth += 1
+            case .endFunction:
+                if depth == 0 {
+                    return index
+                }
+                depth -= 1
+            default:
+                break
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func callFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
+        guard let definition = functionDefinitions[name.normalized] else {
+            throw BASICError.runtime("Unknown function \(name.name)")
+        }
+        guard definition.returnType != .void else {
+            throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
+        }
+        guard arguments.count == definition.parameters.count else {
+            throw BASICError.runtime("Function \(definition.displayName) expects \(definition.parameters.count) arguments, got \(arguments.count)")
+        }
+        guard functionStack.count < 512 else {
+            throw BASICError.runtime("Function call depth exceeded")
+        }
+
+        let values = try arguments.map(evaluate)
+        runtime.pushLocalContext()
+        for (parameter, value) in zip(definition.parameters, values) {
+            try runtime.assign(kind: .local, variable: parameter.variable, declaredType: parameter.type, value: value)
+        }
+
+        functionStack.append(FunctionFrame(definition: definition, returnValue: runtime.defaultValue(for: definition.returnType)))
+        defer {
+            _ = functionStack.popLast()
+            runtime.popLocalContext()
+        }
+
+        var pc = definition.startIndex + 1
+        let parsed = parsedLines
+        while pc < definition.endIndex {
+            let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
+            switch flow {
+            case .next:
+                pc += 1
+            case .jump(let index):
+                pc = index
+            case .goto(let line):
+                guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
+                pc = index
+            case .gotoLabel(let label):
+                guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+                pc = index
+            case .returnTo(let index):
+                pc = index
+            case .exitSelect:
+                guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                    throw BASICError.runtime("EXIT SELECT without SELECT")
+                }
+                pc = index + 1
+            case .functionReturn:
+                return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+            case .end:
+                return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+            }
+        }
+
+        return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+    }
+
+    private func assignFunctionReturnIfNeeded(variable: VariableName, declaredType: BASICType?, value: BASICValue?) throws -> Bool {
+        guard let frame = functionStack.last, variable.normalized == frame.definition.normalizedName else {
+            return false
+        }
+        guard declaredType == nil else {
+            throw BASICError.type(message: "Cannot redeclare function return \(variable.name)")
+        }
+        try setFunctionReturn(value)
+        return true
+    }
+
+    private func setFunctionReturn(_ value: BASICValue?) throws {
+        guard var frame = functionStack.popLast() else {
+            throw BASICError.runtime("RETURN outside FUNCTION")
+        }
+        if frame.definition.returnType == .void {
+            if value != nil {
+                functionStack.append(frame)
+                throw BASICError.type(message: "VOID function \(frame.definition.displayName) cannot return a value")
+            }
+            frame.didReturn = true
+            functionStack.append(frame)
+            return
+        }
+        let coerced = try runtime.coerce(
+            value ?? runtime.defaultValue(for: frame.definition.returnType),
+            to: frame.definition.returnType,
+            variable: VariableName(name: frame.definition.displayName, column: 0)
+        )
+        frame.returnValue = coerced
+        frame.didReturn = true
+        functionStack.append(frame)
     }
 
     private func blockIfFlow(_ condition: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
@@ -1313,6 +1522,8 @@ public final class BASICInterpreter {
             return .number(-value)
         case .binary(let left, let operation, let right):
             return try evaluateBinary(left, operation, right)
+        case .functionCall(let name, let arguments):
+            return try callFunction(name: name, arguments: arguments)
         case .pointFunction(let point):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
@@ -1438,6 +1649,7 @@ private enum Flow: Equatable {
     case gotoLabel(String)
     case returnTo(Int)
     case exitSelect
+    case functionReturn
     case end
 }
 
@@ -1447,6 +1659,8 @@ private indirect enum Statement: Equatable {
     case label(String)
     case labeled(String, Statement)
     case sequence([Statement])
+    case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
+    case endFunction
     case print([PrintPart])
     case screen(Expression)
     case color(Expression)
@@ -1464,6 +1678,8 @@ private indirect enum Statement: Equatable {
     case gotoLabel(String)
     case gosub(BranchTarget)
     case returnFromSubroutine
+    case returnValue(Expression)
+    case exitFunction
     case ifThen(Expression, ConditionalAction, ConditionalAction?)
     case blockIf(Expression)
     case elseIf(Expression)
@@ -1535,6 +1751,7 @@ private indirect enum Expression: Equatable {
     case variable(VariableName)
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
+    case functionCall(VariableName, [Expression])
     case pointFunction(GraphicsPoint)
     case chrFunction(Expression)
     case lenFunction(Expression)
@@ -1788,6 +2005,9 @@ private struct Parser {
         if matchIdentifier("PRINT") {
             return .print(try parsePrintParts())
         }
+        if matchIdentifier("FUNCTION") {
+            return try parseFunctionDeclaration()
+        }
         if matchIdentifier("FOR") {
             return try parseForLoop()
         }
@@ -1813,6 +2033,9 @@ private struct Parser {
             return .elseBlock
         }
         if matchIdentifier("END") {
+            if matchIdentifier("FUNCTION") {
+                return .endFunction
+            }
             if matchIdentifier("SELECT") {
                 return .endSelect
             }
@@ -1822,8 +2045,12 @@ private struct Parser {
             return .end
         }
         if matchIdentifier("EXIT") {
-            guard matchIdentifier("SELECT") else { throw syntax("Expected SELECT") }
-            return .exitSelect
+            if matchIdentifier("SELECT") {
+                return .exitSelect
+            }
+            guard matchIdentifier("FUNCTION") else { throw syntax("Expected SELECT or FUNCTION") }
+            guard isStatementEnd else { throw syntax("EXIT FUNCTION does not accept a return value") }
+            return .exitFunction
         }
         if matchIdentifier("OPTION") {
             return .optionLetMode(try parseLetMode())
@@ -1890,7 +2117,10 @@ private struct Parser {
             return .gosub(target)
         }
         if matchIdentifier("RETURN") {
-            return .returnFromSubroutine
+            if isStatementEnd {
+                return .returnFromSubroutine
+            }
+            return .returnValue(try parseExpression())
         }
         if matchIdentifier("IF") {
             let condition = try parseExpression()
@@ -1930,6 +2160,40 @@ private struct Parser {
             }
         }
         return .nextLoop(variables)
+    }
+
+    private mutating func parseFunctionDeclaration() throws -> Statement {
+        let name = try consumeVariableName("Expected function name")
+        guard match(.leftParen) else { throw syntax("Expected (") }
+        var parameters: [FunctionParameter] = []
+        if !match(.rightParen) {
+            repeat {
+                let parameter = try consumeVariableName("Expected parameter name")
+                guard matchIdentifier("AS") else { throw syntax("Parameter \(parameter.name) requires AS <type>") }
+                let type = try parseType(allowVoid: false)
+                parameters.append(FunctionParameter(variable: parameter, type: type))
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+
+        let returnType: BASICType
+        if matchIdentifier("AS") {
+            returnType = try parseType(allowVoid: true)
+        } else if let suffixType = suffixType(for: name.name) {
+            returnType = suffixType
+        } else {
+            returnType = .void
+        }
+
+        if let suffixType = suffixType(for: name.name), suffixType != returnType {
+            throw BASICError.contextualType(
+                message: "suffix \(name.name.last!) conflicts with AS \(returnType.name)",
+                source: source,
+                column: name.column
+            )
+        }
+
+        return .functionDeclaration(name: name, parameters: parameters, returnType: returnType)
     }
 
     private mutating func parseConditionalAction(stoppingAtElse: Bool) throws -> ConditionalAction {
@@ -2006,6 +2270,18 @@ private struct Parser {
 
     private mutating func parseOptionalType(for variable: VariableName) throws -> BASICType? {
         guard matchIdentifier("AS") else { return nil }
+        let type = try parseType(allowVoid: false)
+        if let suffixType = suffixType(for: variable.name), suffixType != type {
+            throw BASICError.contextualType(
+                message: "suffix \(variable.name.last!) conflicts with AS \(type.name)",
+                source: source,
+                column: variable.column
+            )
+        }
+        return type
+    }
+
+    private mutating func parseType(allowVoid: Bool) throws -> BASICType {
         let typeToken = tokens[current]
         guard case .identifier(let name) = advance() else {
             throw syntax("Expected type name")
@@ -2016,6 +2292,9 @@ private struct Parser {
         case "DOUBLE": type = .scalar(.double)
         case "STRING": type = .scalar(.string)
         case "BOOLEAN": type = .scalar(.boolean)
+        case "VARIANT": type = .scalar(.variant)
+        case "VOID" where allowVoid: type = .void
+        case "VOID": throw BASICError.contextualType(message: "VOID is only valid as a function return type", source: source, column: typeToken.column)
         case "RECORD":
             guard case .identifier(let recordName) = advance() else { throw syntax("Expected RECORD type name") }
             type = .record(recordName)
@@ -2024,14 +2303,6 @@ private struct Parser {
             type = .classType(className)
         default:
             throw BASICError.contextualType(message: "Unknown type \(name)", source: source, column: typeToken.column)
-        }
-
-        if let suffixType = suffixType(for: variable.name), suffixType != type {
-            throw BASICError.contextualType(
-                message: "suffix \(variable.name.last!) conflicts with AS \(type.name)",
-                source: source,
-                column: variable.column
-            )
         }
         return type
     }
@@ -2115,6 +2386,9 @@ private struct Parser {
                 return .lenFunction(try parseSingleArgumentFunction())
             }
             let column = tokens[max(0, current - 1)].column
+            if peek == .leftParen {
+                return .functionCall(VariableName(name: name, column: column), try parseArgumentList())
+            }
             return .variable(VariableName(name: name, column: column))
         case .leftParen:
             let expression = try parseExpression()
@@ -2141,6 +2415,18 @@ private struct Parser {
         let expression = try parseExpression()
         guard match(.rightParen) else { throw syntax("Expected )") }
         return expression
+    }
+
+    private mutating func parseArgumentList() throws -> [Expression] {
+        guard match(.leftParen) else { throw syntax("Expected (") }
+        var arguments: [Expression] = []
+        if !match(.rightParen) {
+            repeat {
+                arguments.append(try parseExpression())
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+        return arguments
     }
 
     private mutating func consumeIdentifier(_ message: String) throws -> String {
@@ -2274,6 +2560,6 @@ private struct Parser {
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "GOTO", "GOSUB", "RETURN", "IF",
-        "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
+        "FUNCTION", "VOID", "VARIANT", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]
 }

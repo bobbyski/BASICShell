@@ -372,6 +372,142 @@ struct BASICCoreTests {
         #expect(host.output == ["thursday time"])
     }
 
+    @Test("Functions return typed values")
+    func functionsReturnTypedValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print Add(2, 3)
+        end
+
+        function Add(a as integer, b as integer) as integer
+            return a + b
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["5"])
+    }
+
+    @Test("Functions can return by assigning their name")
+    func functionsReturnByNameAssignment() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print Title$()
+        end
+
+        function Title$() as string
+            title$ = "AIBASIC"
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["AIBASIC"])
+    }
+
+    @Test("Functions default to VOID and are skipped in top-level flow")
+    func functionsDefaultVoidAndAreSkipped() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        function SayIt(message as string)
+            print message
+        end function
+        print "after"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["before", "after"])
+    }
+
+    @Test("Recursive functions work")
+    func recursiveFunctions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print Fact(5)
+        end
+
+        function Fact(n as integer) as integer
+            if n <= 1 then
+                return 1
+            else
+                return n * Fact(n - 1)
+            end if
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["120"])
+    }
+
+    @Test("Function parameters require explicit AS type")
+    func functionParametersRequireExplicitTypes() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function Bad(value)
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            """
+            function Bad(value)
+                              ^
+            Syntax error: Parameter value requires AS <type>
+            """
+        ])
+    }
+
+    @Test("VOID function cannot return a value")
+    func voidFunctionCannotReturnValue() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print Bad()
+        end
+
+        function Bad()
+            return 1
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: VOID function Bad cannot be used in an expression"])
+    }
+
+    @Test("Explicit VARIANT parameters keep runtime value kind")
+    func variantParametersKeepRuntimeKind() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print Echo$("AIBASIC")
+        print EchoNumber(7)
+        end
+
+        function Echo$(value as variant) as string
+            return value
+        end function
+
+        function EchoNumber(value as variant) as integer
+            return value
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["AIBASIC", "7"])
+    }
+
     @Test("FOR NEXT works on colon-separated lines")
     func forNextOnColonSeparatedLine() {
         let host = TestHost()
