@@ -857,7 +857,6 @@ final class StudioModel: ObservableObject {
             graphics.clear(color: nil)
             graphicsRevision += 1
             selectedPane = .editor
-            consoleText += prompt
             return
         }
 
