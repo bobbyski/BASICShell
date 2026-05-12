@@ -270,18 +270,28 @@ private struct BASICInterfaceMember: Equatable {
 private struct BASICInterfaceDefinition: Equatable {
     let displayName: String
     let normalizedName: String
+    let inheritedInterfaces: [String]
     let members: [BASICInterfaceMember]
+}
+
+private enum BASICMemberVisibility: String, Equatable {
+    case `public` = "PUBLIC"
+    case `private` = "PRIVATE"
+    case `protected` = "PROTECTED"
 }
 
 private struct BASICClassField: Equatable {
     let displayName: String
     let normalizedName: String
     let type: BASICType
+    let visibility: BASICMemberVisibility
+    let declaringClassName: String
 }
 
 private struct BASICClassDefinition: Equatable {
     let displayName: String
     let normalizedName: String
+    let baseClassName: String?
     let fields: [BASICClassField]
     let implementedInterfaces: [String]
     let methods: [String: FunctionDefinition]
@@ -341,6 +351,8 @@ private struct FunctionDefinition: Equatable {
     let startIndex: Int
     let endIndex: Int
     let ownerClassName: String?
+    let visibility: BASICMemberVisibility
+    let isOverride: Bool
 
     init(
         displayName: String,
@@ -349,7 +361,9 @@ private struct FunctionDefinition: Equatable {
         returnType: BASICType,
         startIndex: Int,
         endIndex: Int,
-        ownerClassName: String? = nil
+        ownerClassName: String? = nil,
+        visibility: BASICMemberVisibility = .public,
+        isOverride: Bool = false
     ) {
         self.displayName = displayName
         self.normalizedName = normalizedName
@@ -358,6 +372,8 @@ private struct FunctionDefinition: Equatable {
         self.startIndex = startIndex
         self.endIndex = endIndex
         self.ownerClassName = ownerClassName
+        self.visibility = visibility
+        self.isOverride = isOverride
     }
 }
 
@@ -401,7 +417,7 @@ private final class BASICRuntime {
         return defaultValue(for: inferredType(name: variable.name, value: nil))
     }
 
-    func value(for reference: VariableReference, indexes: [Int]) throws -> BASICValue {
+    func value(for reference: VariableReference, indexes: [Int], accessClassName: String? = nil) throws -> BASICValue {
         var value = value(for: reference.base)
         if !indexes.isEmpty {
             guard case .array(let array) = value else {
@@ -415,6 +431,7 @@ private final class BASICRuntime {
             }
             let (recordName, fields) = composite
             let normalized = field.uppercased()
+            try validateFieldAccess(typeName: recordName, fieldName: field, accessClassName: accessClassName)
             guard let fieldValue = fields[normalized] else {
                 throw BASICError.runtime("\(recordName) has no field \(field)")
             }
@@ -470,7 +487,7 @@ private final class BASICRuntime {
         set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
     }
 
-    func assign(reference: VariableReference, indexes: [Int], value: BASICValue?) throws {
+    func assign(reference: VariableReference, indexes: [Int], value: BASICValue?, accessClassName: String? = nil) throws {
         guard !reference.isSimple else {
             try assign(kind: .bare, variable: reference.base, declaredType: nil, value: value)
             return
@@ -490,14 +507,14 @@ private final class BASICRuntime {
             if reference.fields.isEmpty {
                 array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
             } else {
-                array.values[offset] = try assigningField(reference.fields, in: array.values[offset], value: value)
+                array.values[offset] = try assigningField(reference.fields, in: array.values[offset], value: value, accessClassName: accessClassName)
             }
             binding.value = .array(array)
             set(binding, in: context, normalized: normalized)
             return
         }
 
-        binding.value = try assigningField(reference.fields, in: binding.value, value: value)
+        binding.value = try assigningField(reference.fields, in: binding.value, value: value, accessClassName: accessClassName)
         set(binding, in: context, normalized: normalized)
     }
 
@@ -709,7 +726,7 @@ private final class BASICRuntime {
             guard let definition = classDefinitions[name.uppercased()] else {
                 return .object(name, [:])
             }
-            let fields = Dictionary(uniqueKeysWithValues: definition.fields.map {
+            let fields = Dictionary(uniqueKeysWithValues: inheritedFields(for: definition).map {
                 ($0.normalizedName, defaultValue(for: $0.type))
             })
             return .object(definition.displayName, fields)
@@ -736,7 +753,7 @@ private final class BASICRuntime {
         return offset
     }
 
-    private func assigningField(_ fields: [String], in recordValue: BASICValue, value: BASICValue?) throws -> BASICValue {
+    private func assigningField(_ fields: [String], in recordValue: BASICValue, value: BASICValue?, accessClassName: String?) throws -> BASICValue {
         guard let first = fields.first else {
             return value ?? recordValue
         }
@@ -751,11 +768,12 @@ private final class BASICRuntime {
         guard let field = fieldDefinitions.first(where: { $0.normalizedName == normalized }) else {
             throw BASICError.runtime("\(recordName) has no field \(first)")
         }
+        try validateAccess(to: field, from: accessClassName)
         let current = recordFields[normalized] ?? defaultValue(for: field.type)
         if fields.count == 1 {
             recordFields[normalized] = try coerce(value ?? defaultValue(for: field.type), to: field.type, variable: VariableName(name: field.displayName, column: 0))
         } else {
-            recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value)
+            recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value, accessClassName: accessClassName)
         }
         switch recordValue {
         case .object:
@@ -862,14 +880,59 @@ private final class BASICRuntime {
 
     private func compositeFieldDefinitions(for typeName: String) -> [BASICClassField] {
         if let classDefinition = classDefinitions[typeName.uppercased()] {
-            return classDefinition.fields
+            return inheritedFields(for: classDefinition)
         }
         if let recordDefinition = recordDefinitions[typeName.uppercased()] {
             return recordDefinition.fields.map {
-                BASICClassField(displayName: $0.displayName, normalizedName: $0.normalizedName, type: $0.type)
+                BASICClassField(displayName: $0.displayName, normalizedName: $0.normalizedName, type: $0.type, visibility: .public, declaringClassName: recordDefinition.normalizedName)
             }
         }
         return []
+    }
+
+    private func inheritedFields(for classDefinition: BASICClassDefinition) -> [BASICClassField] {
+        var fields: [BASICClassField] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            fields.append(contentsOf: inheritedFields(for: baseDefinition))
+        }
+        fields.append(contentsOf: classDefinition.fields)
+        return fields
+    }
+
+    private func validateFieldAccess(typeName: String, fieldName: String, accessClassName: String?) throws {
+        guard let field = compositeFieldDefinitions(for: typeName).first(where: { $0.normalizedName == fieldName.uppercased() }) else {
+            return
+        }
+        try validateAccess(to: field, from: accessClassName)
+    }
+
+    private func validateAccess(to field: BASICClassField, from accessClassName: String?) throws {
+        switch field.visibility {
+        case .public:
+            return
+        case .private:
+            guard accessClassName?.uppercased() == field.declaringClassName.uppercased() else {
+                throw BASICError.runtime("\(field.displayName) is PRIVATE")
+            }
+        case .protected:
+            guard let accessClassName,
+                  accessClassName.uppercased() == field.declaringClassName.uppercased()
+                    || isClass(accessClassName, subclassOf: field.declaringClassName) else {
+                throw BASICError.runtime("\(field.displayName) is PROTECTED")
+            }
+        }
+    }
+
+    private func isClass(_ className: String, subclassOf baseName: String) -> Bool {
+        var current = classDefinitions[className.uppercased()]?.baseClassName
+        while let currentName = current {
+            if currentName.uppercased() == baseName.uppercased() {
+                return true
+            }
+            current = classDefinitions[currentName.uppercased()]?.baseClassName
+        }
+        return false
     }
 
     private func arraySummary(_ array: BASICArray) -> String {
@@ -1577,6 +1640,7 @@ public final class BASICInterpreter {
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
         classDefinitions = try collectClasses(in: parsed)
+        try validateClassInheritance()
         try validateClassInterfaces()
         runtime.classDefinitions = classDefinitions
         functionDefinitions = try collectFunctions(in: parsed)
@@ -1672,6 +1736,10 @@ public final class BASICInterpreter {
         pausedDebugCallDepth ?? gosubStack.count + functionStack.count
     }
 
+    private var currentClassContext: String? {
+        functionStack.last?.definition.ownerClassName
+    }
+
     fileprivate var debugLocalVariables: [BASICVariableSnapshot] {
         pausedDebugLocalVariables ?? runtime.localSnapshots()
     }
@@ -1758,7 +1826,7 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("CLASS without END CLASS")
             }
             return .jump(index + 1)
-        case .classField, .implementsDeclaration, .endClass:
+        case .classField, .implementsDeclaration, .inheritsDeclaration, .endClass:
             return .next
         case .importDirective:
             return .next
@@ -1848,7 +1916,7 @@ public final class BASICInterpreter {
             return .next
         case .referenceAssignment(let reference, let expression):
             let value = try expression.map(evaluate)
-            try runtime.assign(reference: reference, indexes: try reference.indexes.map(integer), value: value)
+            try runtime.assign(reference: reference, indexes: try reference.indexes.map(integer), value: value, accessClassName: currentClassContext)
             return .next
         case .dim(let variable, let dimensions, let declaredType):
             try runtime.dim(variable: variable, dimensions: try dimensions.map(integer), declaredType: declaredType)
@@ -2012,7 +2080,7 @@ public final class BASICInterpreter {
                 }
                 index = endIndex + 1
                 continue
-            case .functionDeclaration(let name, let parameters, let returnType):
+            case .functionDeclaration(let name, let parameters, let returnType, _, _):
                 guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                     throw BASICError.runtime("FUNCTION without END FUNCTION")
                 }
@@ -2106,10 +2174,13 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("INTERFACE \(name) is already defined")
             }
 
+            var inheritedInterfaces: [String] = []
             var members: [BASICInterfaceMember] = []
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
+                case .inheritsDeclaration(let interfaceName):
+                    inheritedInterfaces.append(interfaceName)
                 case .interfaceFunctionSignature(let memberName, let parameters, let returnType):
                     let normalizedMember = memberName.normalized
                     guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
@@ -2123,7 +2194,7 @@ public final class BASICInterpreter {
                             returnType: returnType
                         )
                     )
-                case .functionDeclaration(let memberName, let parameters, let returnType):
+                case .functionDeclaration(let memberName, let parameters, let returnType, _, _):
                     let normalizedMember = memberName.normalized
                     guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
                         throw BASICError.runtime("INTERFACE \(name) member \(memberName.name) is already defined")
@@ -2140,6 +2211,7 @@ public final class BASICInterpreter {
                     definitions[normalized] = BASICInterfaceDefinition(
                         displayName: name,
                         normalizedName: normalized,
+                        inheritedInterfaces: inheritedInterfaces,
                         members: members
                     )
                     break
@@ -2176,24 +2248,30 @@ public final class BASICInterpreter {
             var fields: [BASICClassField] = []
             var interfaces: [String] = []
             var methods: [String: FunctionDefinition] = [:]
+            var baseClass: String?
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .classField(let fieldName, let type):
+                case .classField(let fieldName, let type, let visibility):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, visibility: visibility, declaringClassName: normalized))
                 case .typeField(let fieldName, let type, _):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, visibility: .public, declaringClassName: normalized))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
-                case .functionDeclaration(let methodName, let parameters, let returnType):
+                case .inheritsDeclaration(let baseClassName):
+                    guard baseClassName.uppercased() != normalized else {
+                        throw BASICError.runtime("CLASS \(name) cannot inherit itself")
+                    }
+                    baseClass = baseClassName
+                case .functionDeclaration(let methodName, let parameters, let returnType, let visibility, let isOverride):
                     guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                         throw BASICError.runtime("FUNCTION without END FUNCTION")
                     }
@@ -2207,13 +2285,16 @@ public final class BASICInterpreter {
                         returnType: returnType,
                         startIndex: index,
                         endIndex: endIndex,
-                        ownerClassName: name
+                        ownerClassName: name,
+                        visibility: visibility,
+                        isOverride: isOverride
                     )
                     index = endIndex
                 case .endClass:
                     definitions[normalized] = BASICClassDefinition(
                         displayName: name,
                         normalizedName: normalized,
+                        baseClassName: baseClass,
                         fields: fields,
                         implementedInterfaces: interfaces,
                         methods: methods
@@ -2237,12 +2318,12 @@ public final class BASICInterpreter {
 
     private func validateClassInterfaces() throws {
         for classDefinition in classDefinitions.values {
-            for interfaceName in classDefinition.implementedInterfaces {
+            for interfaceName in inheritedInterfaceNames(for: classDefinition) {
                 guard let interfaceDefinition = interfaceDefinitions[interfaceName.uppercased()] else {
                     throw BASICError.runtime("CLASS \(classDefinition.displayName) implements unknown INTERFACE \(interfaceName)")
                 }
-                for member in interfaceDefinition.members {
-                    guard let method = classDefinition.methods[member.normalizedName] else {
+                for member in interfaceMembers(for: interfaceDefinition) {
+                    guard let method = lookupMethod(named: member.normalizedName, in: classDefinition) else {
                         throw BASICError.runtime("CLASS \(classDefinition.displayName) does not implement \(interfaceDefinition.displayName).\(member.displayName)")
                     }
                     guard method.parameters.map(\.type) == member.parameters.map(\.type),
@@ -2252,6 +2333,90 @@ public final class BASICInterpreter {
                 }
             }
         }
+    }
+
+    private func validateClassInheritance() throws {
+        for classDefinition in classDefinitions.values {
+            if let baseName = classDefinition.baseClassName,
+               classDefinitions[baseName.uppercased()] == nil {
+                throw BASICError.runtime("CLASS \(classDefinition.displayName) inherits unknown CLASS \(baseName)")
+            }
+            var seen: Set<String> = []
+            var current = classDefinition.baseClassName
+            while let currentName = current {
+                let normalized = currentName.uppercased()
+                guard seen.insert(normalized).inserted else {
+                    throw BASICError.runtime("CLASS \(classDefinition.displayName) has an inheritance cycle")
+                }
+                current = classDefinitions[normalized]?.baseClassName
+            }
+
+            let inherited = inheritedFields(for: classDefinition).dropLast(classDefinition.fields.count)
+            for field in classDefinition.fields where inherited.contains(where: { $0.normalizedName == field.normalizedName }) {
+                throw BASICError.runtime("CLASS \(classDefinition.displayName) field \(field.displayName) shadows an inherited field")
+            }
+
+            for method in classDefinition.methods.values {
+                let inheritedMethod = inheritedMethod(named: method.normalizedName, for: classDefinition)
+                if method.isOverride {
+                    guard inheritedMethod != nil else {
+                        throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) is OVERRIDES but no inherited method exists")
+                    }
+                } else if inheritedMethod != nil {
+                    throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) overrides an inherited method; add OVERRIDES")
+                }
+            }
+        }
+    }
+
+    private func inheritedInterfaceNames(for classDefinition: BASICClassDefinition) -> [String] {
+        var names: [String] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            names.append(contentsOf: inheritedInterfaceNames(for: baseDefinition))
+        }
+        names.append(contentsOf: classDefinition.implementedInterfaces)
+        return names
+    }
+
+    private func interfaceMembers(for interfaceDefinition: BASICInterfaceDefinition) -> [BASICInterfaceMember] {
+        var members: [BASICInterfaceMember] = []
+        for inheritedName in interfaceDefinition.inheritedInterfaces {
+            if let inherited = interfaceDefinitions[inheritedName.uppercased()] {
+                members.append(contentsOf: interfaceMembers(for: inherited))
+            }
+        }
+        members.append(contentsOf: interfaceDefinition.members)
+        return members
+    }
+
+    private func lookupMethod(named normalizedName: String, in classDefinition: BASICClassDefinition) -> FunctionDefinition? {
+        if let method = classDefinition.methods[normalizedName] {
+            return method
+        }
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            return lookupMethod(named: normalizedName, in: baseDefinition)
+        }
+        return nil
+    }
+
+    private func inheritedMethod(named normalizedName: String, for classDefinition: BASICClassDefinition) -> FunctionDefinition? {
+        guard let baseName = classDefinition.baseClassName,
+              let baseDefinition = classDefinitions[baseName.uppercased()] else {
+            return nil
+        }
+        return lookupMethod(named: normalizedName, in: baseDefinition)
+    }
+
+    private func inheritedFields(for classDefinition: BASICClassDefinition) -> [BASICClassField] {
+        var fields: [BASICClassField] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            fields.append(contentsOf: inheritedFields(for: baseDefinition))
+        }
+        fields.append(contentsOf: classDefinition.fields)
+        return fields
     }
 
     private func matchingEndFunction(after pc: Int, in parsed: [ParsedLine]) -> Int? {
@@ -2322,10 +2487,40 @@ public final class BASICInterpreter {
         guard let classDefinition = classDefinitions[className.uppercased()] else {
             throw BASICError.runtime("Unknown CLASS \(className)")
         }
-        guard let definition = classDefinition.methods[method.normalized] else {
+        guard let definition = lookupMethod(named: method.normalized, in: classDefinition) else {
             throw BASICError.runtime("CLASS \(classDefinition.displayName) has no method \(method.name)")
         }
+        try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
         return try callFunction(definition: definition, receiver: receiverValue, arguments: arguments)
+    }
+
+    private func validateMethodAccess(_ method: FunctionDefinition, receiverClass: String) throws {
+        switch method.visibility {
+        case .public:
+            return
+        case .private:
+            guard currentClassContext?.uppercased() == method.ownerClassName?.uppercased() else {
+                throw BASICError.runtime("\(method.displayName) is PRIVATE")
+            }
+        case .protected:
+            guard let ownerClassName = method.ownerClassName,
+                  let currentClassContext,
+                  currentClassContext.uppercased() == ownerClassName.uppercased()
+                    || isClass(currentClassContext, subclassOf: ownerClassName) else {
+                throw BASICError.runtime("\(method.displayName) is PROTECTED")
+            }
+        }
+    }
+
+    private func isClass(_ className: String, subclassOf baseName: String) -> Bool {
+        var current = classDefinitions[className.uppercased()]?.baseClassName
+        while let currentName = current {
+            if currentName.uppercased() == baseName.uppercased() {
+                return true
+            }
+            current = classDefinitions[currentName.uppercased()]?.baseClassName
+        }
+        return false
     }
 
     private func callFunction(definition: FunctionDefinition, receiver: BASICValue?, arguments: [Expression]) throws -> BASICValue {
@@ -2738,12 +2933,12 @@ public final class BASICInterpreter {
         case .variable(let name):
             return runtime.value(for: name)
         case .variableReference(let reference):
-            return try runtime.value(for: reference, indexes: try reference.indexes.map(integer))
+            return try runtime.value(for: reference, indexes: try reference.indexes.map(integer), accessClassName: currentClassContext)
         case .callOrArray(let name, let arguments):
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
-            return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer))
+            return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className):
@@ -2921,9 +3116,10 @@ private indirect enum Statement: Equatable {
     case endInterface
     case classDeclaration(name: String)
     case implementsDeclaration(String)
-    case classField(name: String, type: BASICType)
+    case inheritsDeclaration(String)
+    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility)
     case endClass
-    case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
+    case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType, visibility: BASICMemberVisibility, isOverride: Bool)
     case endFunction
     case print([PrintPart])
     case screen(Expression)
@@ -3289,7 +3485,7 @@ private struct Parser {
             return .importDirective(path)
         }
         if matchIdentifier("FUNCTION") {
-            return try parseFunctionDeclaration()
+            return try parseFunctionDeclaration(visibility: .public, isOverride: false)
         }
         if matchIdentifier("TYPE") {
             let name = try consumeIdentifier("Expected TYPE name")
@@ -3306,6 +3502,13 @@ private struct Parser {
         if matchIdentifier("IMPLEMENTS") {
             let name = try consumeIdentifier("Expected interface name after IMPLEMENTS")
             return .implementsDeclaration(name)
+        }
+        if matchIdentifier("INHERITS") {
+            let name = try consumeIdentifier("Expected type name after INHERITS")
+            return .inheritsDeclaration(name)
+        }
+        if isMemberModifier {
+            return try parseModifiedMember()
         }
         if matchIdentifier("DIM") {
             return try parseDim()
@@ -3481,12 +3684,29 @@ private struct Parser {
         return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength)
     }
 
-    private mutating func parseClassField() throws -> Statement {
-        _ = matchIdentifier("PUBLIC") || matchIdentifier("PRIVATE") || matchIdentifier("PROTECTED")
+    private mutating func parseModifiedMember() throws -> Statement {
+        let visibility = parseVisibilityModifier() ?? .public
+        let isOverride = matchIdentifier("OVERRIDES")
+        _ = matchIdentifier("VIRTUAL")
+        if matchIdentifier("FUNCTION") {
+            return try parseFunctionDeclaration(visibility: visibility, isOverride: isOverride)
+        }
+        return try parseClassField(visibility: visibility)
+    }
+
+    private mutating func parseVisibilityModifier() -> BASICMemberVisibility? {
+        if matchIdentifier("PUBLIC") { return .public }
+        if matchIdentifier("PRIVATE") { return .private }
+        if matchIdentifier("PROTECTED") { return .protected }
+        return nil
+    }
+
+    private mutating func parseClassField(visibility: BASICMemberVisibility? = nil) throws -> Statement {
+        let visibility = visibility ?? parseVisibilityModifier() ?? .public
         let name = try consumeIdentifier("Expected class field name")
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
-        return .classField(name: name, type: typeSpec.type)
+        return .classField(name: name, type: typeSpec.type, visibility: visibility)
     }
 
     private mutating func parseForLoop() throws -> Statement {
@@ -3510,7 +3730,7 @@ private struct Parser {
         return .nextLoop(variables)
     }
 
-    private mutating func parseFunctionDeclaration() throws -> Statement {
+    private mutating func parseFunctionDeclaration(visibility: BASICMemberVisibility, isOverride: Bool) throws -> Statement {
         let name = try consumeVariableName("Expected function name")
         guard match(.leftParen) else { throw syntax("Expected (") }
         var parameters: [FunctionParameter] = []
@@ -3541,7 +3761,7 @@ private struct Parser {
             )
         }
 
-        return .functionDeclaration(name: name, parameters: parameters, returnType: returnType)
+        return .functionDeclaration(name: name, parameters: parameters, returnType: returnType, visibility: visibility, isOverride: isOverride)
     }
 
     private mutating func parseConditionalAction(stoppingAtElse: Bool) throws -> ConditionalAction {
@@ -3934,6 +4154,11 @@ private struct Parser {
         guard case .identifier(let asKeyword) = tokens[asIndex].token else { return false }
         return asKeyword.uppercased() == "AS"
     }
+
+    private var isMemberModifier: Bool {
+        guard case .identifier(let name) = peek else { return false }
+        return ["PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL"].contains(name.uppercased())
+    }
     private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1
@@ -3999,7 +4224,7 @@ private struct Parser {
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
-        "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "PUBLIC", "PRIVATE", "PROTECTED",
-        "FUNCTION", "VOID", "VARIANT", "NEW", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
+        "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
+        "FUNCTION", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]
 }

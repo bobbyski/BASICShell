@@ -1414,6 +1414,57 @@ struct BASICCoreTests {
 
         #expect(host.output == ["Quarterly"])
     }
+
+    @Test("CLASS supports inheritance and OVERRIDES")
+    func classSupportsInheritanceAndOverrides() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            public Title as string
+            function Summary$() as string
+                return ME.Title
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            public Badge as string
+            overrides function Summary$() as string
+                return ME.Title + " " + ME.Badge
+            end function
+        end class
+
+        dim report as FancyReport
+        report = new FancyReport()
+        report.Title = "Status"
+        report.Badge = "READY"
+        print report.Summary$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Status READY"])
+    }
+
+    @Test("CLASS enforces private fields outside the declaring class")
+    func classEnforcesPrivateFieldsOutsideDeclaringClass() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Vault
+            private Code as string
+        end class
+
+        dim vault as Vault
+        vault = new Vault()
+        vault.Code = "open"
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Code is PRIVATE"])
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost {
