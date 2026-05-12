@@ -1,10 +1,16 @@
-# NEW Command
+# NEW Operator
 
-![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen)
+![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![Shell](https://img.shields.io/badge/Shell-supported-brightgreen)
 
-Clears the current program.
+Creates a default instance of a `CLASS`. Constructor arguments are not supported yet, but empty parentheses are accepted.
 
 ```basic
-new
-list
+class Report
+    Title as string
+end class
+
+dim report as Report
+report = new Report
+report.Title = "Status"
+print report.Title
 ```

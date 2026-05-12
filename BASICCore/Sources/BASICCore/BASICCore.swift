@@ -122,6 +122,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
     case string(BASICString)
     case boolean(Bool)
     case record(String, [String: BASICValue])
+    case object(String, [String: BASICValue])
     case array(BASICArray)
 
     var description: String {
@@ -139,6 +140,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
             return value ? "TRUE" : "FALSE"
         case .record(let name, _):
             return "<\(name)>"
+        case .object(let name, _):
+            return "<\(name)>"
         case .array(let array):
             return "<ARRAY \(array.type.name)>"
         }
@@ -150,7 +153,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .record, .array: return true
+        case .record, .object, .array: return true
         }
     }
 
@@ -172,6 +175,15 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
             return value.description.isEmpty
         }
         return false
+    }
+
+    var compositeFields: (name: String, fields: [String: BASICValue])? {
+        switch self {
+        case .record(let name, let fields), .object(let name, let fields):
+            return (name, fields)
+        default:
+            return nil
+        }
     }
 }
 
@@ -235,6 +247,32 @@ private struct BASICRecordDefinition: Equatable {
     let displayName: String
     let normalizedName: String
     let fields: [BASICRecordField]
+}
+
+private struct BASICInterfaceMember: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let parameters: [FunctionParameter]
+    let returnType: BASICType
+}
+
+private struct BASICInterfaceDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let members: [BASICInterfaceMember]
+}
+
+private struct BASICClassField: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let type: BASICType
+}
+
+private struct BASICClassDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let fields: [BASICClassField]
+    let implementedInterfaces: [String]
 }
 
 private enum LetMode: Equatable {
@@ -302,6 +340,7 @@ private final class BASICRuntime {
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
+    var classDefinitions: [String: BASICClassDefinition] = [:]
     var letMode: LetMode = .global
 
     func resetForRun() {
@@ -340,9 +379,10 @@ private final class BASICRuntime {
             value = try arrayValue(array, at: indexes, name: reference.base.name)
         }
         for field in reference.fields {
-            guard case .record(let recordName, let fields) = value else {
+            guard let composite = value.compositeFields else {
                 throw BASICError.runtime("\(reference.base.name) has no field \(field)")
             }
+            let (recordName, fields) = composite
             let normalized = field.uppercased()
             guard let fieldValue = fields[normalized] else {
                 throw BASICError.runtime("\(recordName) has no field \(field)")
@@ -380,7 +420,7 @@ private final class BASICRuntime {
     func dim(variable: VariableName, dimensions: [Int], declaredType: BASICType?) throws {
         try validateSuffix(variable: variable, declaredType: declaredType)
         guard !dimensions.isEmpty else {
-            let type = declaredType ?? inferredType(name: variable.name, value: nil)
+            let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
             let binding = VariableBinding(displayName: variable.name, type: type, value: defaultValue(for: type))
             set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
             return
@@ -388,7 +428,7 @@ private final class BASICRuntime {
         guard dimensions.allSatisfy({ $0 >= 0 }) else {
             throw BASICError.runtime("DIM bounds must be non-negative")
         }
-        let type = declaredType ?? inferredType(name: variable.name, value: nil)
+        let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
         let elementCount = dimensions.reduce(1) { $0 * ($1 + 1) }
         let array = BASICArray(
             dimensions: dimensions,
@@ -503,15 +543,23 @@ private final class BASICRuntime {
         existing: VariableBinding?
     ) throws -> BASICType {
         if let declaredType {
-            if let existing, existing.type != declaredType {
-                throw BASICError.type(message: "Cannot redeclare \(variable.name) as \(declaredType.name)")
+            let resolvedDeclaredType = resolvedDeclaredType(declaredType)
+            if let existing, existing.type != resolvedDeclaredType {
+                throw BASICError.type(message: "Cannot redeclare \(variable.name) as \(resolvedDeclaredType.name)")
             }
-            return declaredType
+            return resolvedDeclaredType
         }
         if let existing {
             return existing.type
         }
         return inferredType(name: variable.name, value: value)
+    }
+
+    private func resolvedDeclaredType(_ type: BASICType) -> BASICType {
+        if case .record(let name) = type, classDefinitions[name.uppercased()] != nil {
+            return .classType(name)
+        }
+        return type
     }
 
     private func inferredType(name: String, value: BASICValue?) -> BASICType {
@@ -529,6 +577,8 @@ private final class BASICRuntime {
                 return .scalar(.double)
             case .record(let name, _):
                 return .record(name)
+            case .object(let name, _):
+                return .classType(name)
             case .array(let array):
                 return array.type
             }
@@ -557,10 +607,22 @@ private final class BASICRuntime {
             if case .record(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
                 return value
             }
+            if case .object(let valueName, let fields) = value, valueName.uppercased() == name.uppercased() {
+                return .record(valueName, fields)
+            }
             if case .empty = value {
                 return defaultValue(for: type)
             }
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
+        }
+        if case .classType(let name) = type {
+            if case .object(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
+                return value
+            }
+            if case .empty = value {
+                return defaultValue(for: type)
+            }
+            throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
         }
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
@@ -612,7 +674,14 @@ private final class BASICRuntime {
                 ($0.normalizedName, defaultValue(for: $0.type))
             })
             return .record(definition.displayName, fields)
-        case .classType: return .number(0)
+        case .classType(let name):
+            guard let definition = classDefinitions[name.uppercased()] else {
+                return .object(name, [:])
+            }
+            let fields = Dictionary(uniqueKeysWithValues: definition.fields.map {
+                ($0.normalizedName, defaultValue(for: $0.type))
+            })
+            return .object(definition.displayName, fields)
         }
     }
 
@@ -640,14 +709,15 @@ private final class BASICRuntime {
         guard let first = fields.first else {
             return value ?? recordValue
         }
-        guard case .record(let recordName, var recordFields) = recordValue else {
+        guard let composite = recordValue.compositeFields else {
             throw BASICError.runtime("Cannot assign field \(first) on non-record value")
         }
-        guard let definition = recordDefinitions[recordName.uppercased()] else {
-            throw BASICError.runtime("Unknown TYPE \(recordName)")
-        }
+        let recordName = composite.name
+        var recordFields = composite.fields
+        let fieldDefinitions = compositeFieldDefinitions(for: recordName)
+        guard !fieldDefinitions.isEmpty else { throw BASICError.runtime("Unknown TYPE or CLASS \(recordName)") }
         let normalized = first.uppercased()
-        guard let field = definition.fields.first(where: { $0.normalizedName == normalized }) else {
+        guard let field = fieldDefinitions.first(where: { $0.normalizedName == normalized }) else {
             throw BASICError.runtime("\(recordName) has no field \(first)")
         }
         let current = recordFields[normalized] ?? defaultValue(for: field.type)
@@ -656,7 +726,12 @@ private final class BASICRuntime {
         } else {
             recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value)
         }
-        return .record(recordName, recordFields)
+        switch recordValue {
+        case .object:
+            return .object(recordName, recordFields)
+        default:
+            return .record(recordName, recordFields)
+        }
     }
 
     private func snapshots(from bindings: [String: VariableBinding], scope: BASICVariableScope) -> [BASICVariableSnapshot] {
@@ -700,8 +775,8 @@ private final class BASICRuntime {
                 scope: scope,
                 children: children
             )
-        case .record(let recordName, let fields):
-            let children = recordFieldSnapshots(recordName: recordName, fields: fields, scope: scope, parentPath: path)
+        case .record(let recordName, let fields), .object(let recordName, let fields):
+            let children = compositeFieldSnapshots(typeName: recordName, fields: fields, scope: scope, parentPath: path)
             return BASICVariableSnapshot(
                 path: path,
                 name: name,
@@ -722,14 +797,15 @@ private final class BASICRuntime {
         }
     }
 
-    private func recordFieldSnapshots(
-        recordName: String,
+    private func compositeFieldSnapshots(
+        typeName: String,
         fields: [String: BASICValue],
         scope: BASICVariableScope,
         parentPath: String
     ) -> [BASICVariableSnapshot] {
-        if let definition = recordDefinitions[recordName.uppercased()] {
-            return definition.fields.map { field in
+        let definitions = compositeFieldDefinitions(for: typeName)
+        if !definitions.isEmpty {
+            return definitions.map { field in
                 let value = fields[field.normalizedName] ?? defaultValue(for: field.type)
                 return snapshot(
                     name: field.displayName,
@@ -751,6 +827,18 @@ private final class BASICRuntime {
                 path: "\(parentPath).\(key)"
             )
         }
+    }
+
+    private func compositeFieldDefinitions(for typeName: String) -> [BASICClassField] {
+        if let classDefinition = classDefinitions[typeName.uppercased()] {
+            return classDefinition.fields
+        }
+        if let recordDefinition = recordDefinitions[typeName.uppercased()] {
+            return recordDefinition.fields.map {
+                BASICClassField(displayName: $0.displayName, normalizedName: $0.normalizedName, type: $0.type)
+            }
+        }
+        return []
     }
 
     private func arraySummary(_ array: BASICArray) -> String {
@@ -1019,39 +1107,14 @@ public final class BASICProgram: @unchecked Sendable {
             if let index = lines.firstIndex(where: { $0.number == number }) {
                 lines[index].source = trimmed
             } else {
-                lines.append(ProgramLine(number: number, source: trimmed, sourceLineNumber: nil))
+                lines.append(ProgramLine(number: number, source: trimmed, sourceLineNumber: nil, isImported: false))
             }
             lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
         }
     }
 
     public func loadSource(_ source: String) {
-        var sourceLines = source
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        var sourceLineOffset = 0
-        if let firstLine = sourceLines.first,
-           firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("#!") {
-            sourceLines.removeFirst()
-            sourceLineOffset = 1
-        }
-
-        let lineRecords = Self.joinContinuationLines(
-            sourceLines.enumerated().map { (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element) }
-        )
-
-        lines = lineRecords
-            .map { record in
-                (lineNumber: record.lineNumber, source: record.source.trimmingCharacters(in: .whitespaces))
-            }
-            .filter { !$0.source.isEmpty }
-            .map { record in
-                if let numbered = Self.splitNumberedLine(record.source) {
-                    return ProgramLine(number: numbered.number, source: numbered.source, sourceLineNumber: record.lineNumber)
-                }
-                return ProgramLine(number: nil, source: record.source, sourceLineNumber: record.lineNumber)
-            }
+        lines = Self.parseLines(from: source, isImported: false)
     }
 
     public func clear() {
@@ -1067,8 +1130,12 @@ public final class BASICProgram: @unchecked Sendable {
         }.joined(separator: "\n")
     }
 
-    public var orderedLines: [(number: Int?, source: String, sourceLineNumber: Int?)] {
-        lines.map { ($0.number, $0.source, $0.sourceLineNumber) }
+    public var orderedLines: [(number: Int?, source: String, sourceLineNumber: Int?, isImported: Bool)] {
+        lines.map { ($0.number, $0.source, $0.sourceLineNumber, $0.isImported) }
+    }
+
+    fileprivate static func importedLines(from source: String) -> [ProgramLine] {
+        parseLines(from: source, isImported: true)
     }
 
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
@@ -1081,6 +1148,35 @@ public final class BASICProgram: @unchecked Sendable {
         guard !digits.isEmpty, let number = Int(digits) else { return nil }
         let rest = source[index...].trimmingCharacters(in: .whitespaces)
         return (number, rest)
+    }
+
+    private static func parseLines(from source: String, isImported: Bool) -> [ProgramLine] {
+        var sourceLines = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        var sourceLineOffset = 0
+        if let firstLine = sourceLines.first,
+           firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("#!") {
+            sourceLines.removeFirst()
+            sourceLineOffset = 1
+        }
+
+        let lineRecords = joinContinuationLines(
+            sourceLines.enumerated().map { (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element) }
+        )
+
+        return lineRecords
+            .map { record in
+                (lineNumber: record.lineNumber, source: record.source.trimmingCharacters(in: .whitespaces))
+            }
+            .filter { !$0.source.isEmpty }
+            .map { record in
+                if let numbered = splitNumberedLine(record.source) {
+                    return ProgramLine(number: numbered.number, source: numbered.source, sourceLineNumber: record.lineNumber, isImported: isImported)
+                }
+                return ProgramLine(number: nil, source: record.source, sourceLineNumber: record.lineNumber, isImported: isImported)
+            }
     }
 
     private static func joinContinuationLines(_ sourceLines: [(lineNumber: Int, source: String)]) -> [(lineNumber: Int, source: String)] {
@@ -1127,6 +1223,7 @@ private struct ProgramLine {
     let number: Int?
     var source: String
     var sourceLineNumber: Int?
+    var isImported: Bool
 }
 
 private final class BASICFileState {
@@ -1385,6 +1482,8 @@ public final class BASICInterpreter {
     private var functionStack: [FunctionFrame] = []
     private var functionDefinitions: [String: FunctionDefinition] = [:]
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
+    private var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
+    private var classDefinitions: [String: BASICClassDefinition] = [:]
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
@@ -1422,10 +1521,11 @@ public final class BASICInterpreter {
     }
 
     private func prepare(startLine: Int?) throws {
-        let parsed = try program.orderedLines.enumerated().flatMap { index, line in
+        let sourceLines = try expandedProgramLines()
+        let parsed = try sourceLines.enumerated().flatMap { index, line in
             var parser = try Parser(source: line.source)
             let statement = try parser.parseStatement()
-            return ParsedLine.flatten(number: line.number, sourceLineNumber: line.sourceLineNumber ?? index + 1, statement: statement)
+            return ParsedLine.flatten(number: line.number, sourceLineNumber: line.sourceLineNumber ?? index + 1, isImported: line.isImported, statement: statement)
         }
         parsedLines = parsed
         lineIndexByNumber = [:]
@@ -1440,6 +1540,10 @@ public final class BASICInterpreter {
         }
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions
+        interfaceDefinitions = try collectInterfaces(in: parsed)
+        classDefinitions = try collectClasses(in: parsed)
+        try validateClassInterfaces()
+        runtime.classDefinitions = classDefinitions
         functionDefinitions = try collectFunctions(in: parsed)
 
         pc = 0
@@ -1450,6 +1554,32 @@ public final class BASICInterpreter {
         isPrepared = true
     }
 
+    private func expandedProgramLines() throws -> [ProgramLine] {
+        try expandedProgramLines(from: program.orderedLines.map {
+            ProgramLine(number: $0.number, source: $0.source, sourceLineNumber: $0.sourceLineNumber, isImported: $0.isImported)
+        }, importedPaths: [])
+    }
+
+    private func expandedProgramLines(from lines: [ProgramLine], importedPaths: Set<String>) throws -> [ProgramLine] {
+        var expanded: [ProgramLine] = []
+        var importedPaths = importedPaths
+        for line in lines {
+            var parser = try Parser(source: line.source)
+            if case .importDirective(let path) = try parser.parseStatement() {
+                guard !importedPaths.contains(path) else { continue }
+                guard let fileHost = host as? BASICFileHost else {
+                    throw BASICError.runtime("IMPORT is not supported by this host")
+                }
+                importedPaths.insert(path)
+                let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: path))
+                expanded += try expandedProgramLines(from: imported, importedPaths: importedPaths)
+            } else {
+                expanded.append(line)
+            }
+        }
+        return expanded
+    }
+
     public func continueExecution() throws {
         if !isPrepared {
             try prepare(startLine: nil)
@@ -1457,6 +1587,10 @@ public final class BASICInterpreter {
 
         while pc < parsedLines.count {
             let current = parsedLines[pc]
+            if current.isImported {
+                pc += 1
+                continue
+            }
             updateExecutionLocation(current)
             try executionControl?.checkBreak()
             let next = try execute(current.statement, pc: pc, parsed: parsedLines)
@@ -1549,6 +1683,22 @@ public final class BASICInterpreter {
             }
             return .jump(index + 1)
         case .typeField, .endType:
+            return .next
+        case .interfaceDeclaration:
+            guard let index = matchingEndInterface(after: pc, in: parsed) else {
+                throw BASICError.runtime("INTERFACE without END INTERFACE")
+            }
+            return .jump(index + 1)
+        case .interfaceFunctionSignature, .endInterface:
+            return .next
+        case .classDeclaration:
+            guard let index = matchingEndClass(after: pc, in: parsed) else {
+                throw BASICError.runtime("CLASS without END CLASS")
+            }
+            return .jump(index + 1)
+        case .classField, .implementsDeclaration, .endClass:
+            return .next
+        case .importDirective:
             return .next
         case .label:
             return .next
@@ -1785,25 +1935,43 @@ public final class BASICInterpreter {
 
     private func collectFunctions(in parsed: [ParsedLine]) throws -> [String: FunctionDefinition] {
         var definitions: [String: FunctionDefinition] = [:]
-        for (index, line) in parsed.enumerated() {
-            guard case .functionDeclaration(let name, let parameters, let returnType) = line.statement else {
+        var index = 0
+        while index < parsed.count {
+            switch parsed[index].statement {
+            case .interfaceDeclaration:
+                guard let endIndex = matchingEndInterface(after: index, in: parsed) else {
+                    throw BASICError.runtime("INTERFACE without END INTERFACE")
+                }
+                index = endIndex + 1
                 continue
+            case .classDeclaration:
+                guard let endIndex = matchingEndClass(after: index, in: parsed) else {
+                    throw BASICError.runtime("CLASS without END CLASS")
+                }
+                index = endIndex + 1
+                continue
+            case .functionDeclaration(let name, let parameters, let returnType):
+                guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
+                    throw BASICError.runtime("FUNCTION without END FUNCTION")
+                }
+                let definition = FunctionDefinition(
+                    displayName: name.name,
+                    normalizedName: name.normalized,
+                    parameters: parameters,
+                    returnType: returnType,
+                    startIndex: index,
+                    endIndex: endIndex
+                )
+                if definitions[name.normalized] != nil {
+                    throw BASICError.runtime("Function \(name.name) is already defined")
+                }
+                definitions[name.normalized] = definition
+                index = endIndex + 1
+                continue
+            default:
+                break
             }
-            guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
-                throw BASICError.runtime("FUNCTION without END FUNCTION")
-            }
-            let definition = FunctionDefinition(
-                displayName: name.name,
-                normalizedName: name.normalized,
-                parameters: parameters,
-                returnType: returnType,
-                startIndex: index,
-                endIndex: endIndex
-            )
-            if definitions[name.normalized] != nil {
-                throw BASICError.runtime("Function \(name.name) is already defined")
-            }
-            definitions[name.normalized] = definition
+            index += 1
         }
         return definitions
     }
@@ -1862,6 +2030,145 @@ public final class BASICInterpreter {
         return definitions
     }
 
+    private func collectInterfaces(in parsed: [ParsedLine]) throws -> [String: BASICInterfaceDefinition] {
+        var definitions: [String: BASICInterfaceDefinition] = [:]
+        var index = 0
+        while index < parsed.count {
+            guard case .interfaceDeclaration(let name) = parsed[index].statement else {
+                index += 1
+                continue
+            }
+
+            let normalized = name.uppercased()
+            guard definitions[normalized] == nil else {
+                throw BASICError.runtime("INTERFACE \(name) is already defined")
+            }
+
+            var members: [BASICInterfaceMember] = []
+            index += 1
+            while index < parsed.count {
+                switch parsed[index].statement {
+                case .interfaceFunctionSignature(let memberName, let parameters, let returnType):
+                    let normalizedMember = memberName.normalized
+                    guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
+                        throw BASICError.runtime("INTERFACE \(name) member \(memberName.name) is already defined")
+                    }
+                    members.append(
+                        BASICInterfaceMember(
+                            displayName: memberName.name,
+                            normalizedName: normalizedMember,
+                            parameters: parameters,
+                            returnType: returnType
+                        )
+                    )
+                case .functionDeclaration(let memberName, let parameters, let returnType):
+                    let normalizedMember = memberName.normalized
+                    guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
+                        throw BASICError.runtime("INTERFACE \(name) member \(memberName.name) is already defined")
+                    }
+                    members.append(
+                        BASICInterfaceMember(
+                            displayName: memberName.name,
+                            normalizedName: normalizedMember,
+                            parameters: parameters,
+                            returnType: returnType
+                        )
+                    )
+                case .endInterface:
+                    definitions[normalized] = BASICInterfaceDefinition(
+                        displayName: name,
+                        normalizedName: normalized,
+                        members: members
+                    )
+                    break
+                default:
+                    throw BASICError.runtime("Unexpected statement inside INTERFACE \(name)")
+                }
+                if case .endInterface = parsed[index].statement {
+                    break
+                }
+                index += 1
+            }
+            guard index < parsed.count, case .endInterface = parsed[index].statement else {
+                throw BASICError.runtime("INTERFACE without END INTERFACE")
+            }
+            index += 1
+        }
+        return definitions
+    }
+
+    private func collectClasses(in parsed: [ParsedLine]) throws -> [String: BASICClassDefinition] {
+        var definitions: [String: BASICClassDefinition] = [:]
+        var index = 0
+        while index < parsed.count {
+            guard case .classDeclaration(let name) = parsed[index].statement else {
+                index += 1
+                continue
+            }
+
+            let normalized = name.uppercased()
+            guard definitions[normalized] == nil else {
+                throw BASICError.runtime("CLASS \(name) is already defined")
+            }
+
+            var fields: [BASICClassField] = []
+            var interfaces: [String] = []
+            index += 1
+            while index < parsed.count {
+                switch parsed[index].statement {
+                case .classField(let fieldName, let type):
+                    let normalizedField = fieldName.uppercased()
+                    guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
+                        throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
+                    }
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type))
+                case .typeField(let fieldName, let type, _):
+                    let normalizedField = fieldName.uppercased()
+                    guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
+                        throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
+                    }
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type))
+                case .implementsDeclaration(let interfaceName):
+                    interfaces.append(interfaceName)
+                case .functionDeclaration:
+                    guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
+                        throw BASICError.runtime("FUNCTION without END FUNCTION")
+                    }
+                    index = endIndex
+                case .endClass:
+                    definitions[normalized] = BASICClassDefinition(
+                        displayName: name,
+                        normalizedName: normalized,
+                        fields: fields,
+                        implementedInterfaces: interfaces
+                    )
+                    break
+                default:
+                    throw BASICError.runtime("Unexpected statement inside CLASS \(name)")
+                }
+                if case .endClass = parsed[index].statement {
+                    break
+                }
+                index += 1
+            }
+            guard index < parsed.count, case .endClass = parsed[index].statement else {
+                throw BASICError.runtime("CLASS without END CLASS")
+            }
+            index += 1
+        }
+        return definitions
+    }
+
+    private func validateClassInterfaces() throws {
+        for classDefinition in classDefinitions.values {
+            for interfaceName in classDefinition.implementedInterfaces {
+                guard interfaceDefinitions[interfaceName.uppercased()] != nil else {
+                    throw BASICError.runtime("CLASS \(classDefinition.displayName) implements unknown INTERFACE \(interfaceName)")
+                }
+            }
+        }
+    }
+
     private func matchingEndFunction(after pc: Int, in parsed: [ParsedLine]) -> Int? {
         var depth = 0
         var index = pc + 1
@@ -1886,6 +2193,28 @@ public final class BASICInterpreter {
         var index = pc + 1
         while index < parsed.count {
             if case .endType = parsed[index].statement {
+                return index
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func matchingEndInterface(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var index = pc + 1
+        while index < parsed.count {
+            if case .endInterface = parsed[index].statement {
+                return index
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func matchingEndClass(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var index = pc + 1
+        while index < parsed.count {
+            if case .endClass = parsed[index].statement {
                 return index
             }
             index += 1
@@ -2297,6 +2626,11 @@ public final class BASICInterpreter {
                 return try callFunction(name: name, arguments: arguments)
             }
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer))
+        case .newObject(let className):
+            guard classDefinitions[className.uppercased()] != nil else {
+                throw BASICError.runtime("Unknown CLASS \(className)")
+            }
+            return runtime.defaultValue(for: .classType(className))
         case .unaryMinus(let expression):
             guard let value = try evaluate(expression).number else {
                 throw BASICError.runtime("Unary minus requires a number")
@@ -2404,20 +2738,21 @@ private struct ParsedLine {
     let displayLineNumber: Int
     let sourceLineNumber: Int
     let statementNumber: Int
+    let isImported: Bool
     let statement: Statement
 
     var breakpointLocation: BASICBreakpointLocation {
         BASICBreakpointLocation(lineNumber: sourceLineNumber, statementNumber: statementNumber)
     }
 
-    static func flatten(number: Int?, sourceLineNumber: Int, statement: Statement) -> [ParsedLine] {
+    static func flatten(number: Int?, sourceLineNumber: Int, isImported: Bool, statement: Statement) -> [ParsedLine] {
         let displayLineNumber = number ?? sourceLineNumber
         guard case .sequence(let statements) = statement else {
-            return [ParsedLine(number: number, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: 0, statement: statement)]
+            return [ParsedLine(number: number, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: 0, isImported: isImported, statement: statement)]
         }
 
         return statements.enumerated().map { index, statement in
-            ParsedLine(number: index == 0 ? number : nil, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: index, statement: statement)
+            ParsedLine(number: index == 0 ? number : nil, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: index, isImported: isImported, statement: statement)
         }
     }
 }
@@ -2457,9 +2792,17 @@ private indirect enum Statement: Equatable {
     case label(String)
     case labeled(String, Statement)
     case sequence([Statement])
+    case importDirective(String)
     case typeDeclaration(name: String)
     case typeField(name: String, type: BASICType, fixedLength: Int?)
     case endType
+    case interfaceDeclaration(name: String)
+    case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
+    case endInterface
+    case classDeclaration(name: String)
+    case implementsDeclaration(String)
+    case classField(name: String, type: BASICType)
+    case endClass
     case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
     case endFunction
     case print([PrintPart])
@@ -2555,6 +2898,7 @@ private indirect enum Expression: Equatable {
     case variable(VariableName)
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
+    case newObject(String)
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
     case functionCall(VariableName, [Expression])
@@ -2819,12 +3163,28 @@ private struct Parser {
         if matchIdentifier("PRINT") {
             return .print(try parsePrintParts())
         }
+        if matchIdentifier("IMPORT") {
+            guard case .string(let path) = advance() else { throw syntax("Expected import path") }
+            return .importDirective(path)
+        }
         if matchIdentifier("FUNCTION") {
             return try parseFunctionDeclaration()
         }
         if matchIdentifier("TYPE") {
             let name = try consumeIdentifier("Expected TYPE name")
             return .typeDeclaration(name: name)
+        }
+        if matchIdentifier("INTERFACE") {
+            let name = try consumeIdentifier("Expected INTERFACE name")
+            return .interfaceDeclaration(name: name)
+        }
+        if matchIdentifier("CLASS") {
+            let name = try consumeIdentifier("Expected CLASS name")
+            return .classDeclaration(name: name)
+        }
+        if matchIdentifier("IMPLEMENTS") {
+            let name = try consumeIdentifier("Expected interface name after IMPLEMENTS")
+            return .implementsDeclaration(name)
         }
         if matchIdentifier("DIM") {
             return try parseDim()
@@ -2859,6 +3219,12 @@ private struct Parser {
             }
             if matchIdentifier("TYPE") {
                 return .endType
+            }
+            if matchIdentifier("INTERFACE") {
+                return .endInterface
+            }
+            if matchIdentifier("CLASS") {
+                return .endClass
             }
             if matchIdentifier("SELECT") {
                 return .endSelect
@@ -2962,6 +3328,9 @@ private struct Parser {
         if matchIdentifier("STOP") {
             return .end
         }
+        if isClassFieldDeclaration {
+            return try parseClassField()
+        }
         if isTypeFieldDeclaration {
             return try parseTypeField()
         }
@@ -2989,6 +3358,14 @@ private struct Parser {
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
         return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength)
+    }
+
+    private mutating func parseClassField() throws -> Statement {
+        _ = matchIdentifier("PUBLIC") || matchIdentifier("PRIVATE") || matchIdentifier("PROTECTED")
+        let name = try consumeIdentifier("Expected class field name")
+        guard matchIdentifier("AS") else { throw syntax("Expected AS") }
+        let typeSpec = try parseTypeSpec(allowVoid: false)
+        return .classField(name: name, type: typeSpec.type)
     }
 
     private mutating func parseForLoop() throws -> Statement {
@@ -3245,6 +3622,13 @@ private struct Parser {
             let uppercased = name.uppercased()
             if uppercased == "TRUE" { return .boolean(true) }
             if uppercased == "FALSE" { return .boolean(false) }
+            if uppercased == "NEW" {
+                let className = try consumeIdentifier("Expected class name after NEW")
+                if match(.leftParen), !match(.rightParen) {
+                    throw syntax("Constructors with arguments are not supported yet")
+                }
+                return .newObject(className)
+            }
             if uppercased == "POINT", peek == .leftParen {
                 return .pointFunction(try parsePoint(openParenAlreadyConsumed: false))
             }
@@ -3404,6 +3788,17 @@ private struct Parser {
         guard case .identifier(let next) = peekNext else { return false }
         return next.uppercased() == "AS"
     }
+
+    private var isClassFieldDeclaration: Bool {
+        guard case .identifier(let access) = peek else { return false }
+        guard ["PUBLIC", "PRIVATE", "PROTECTED"].contains(access.uppercased()) else { return false }
+        let nameIndex = current + 1
+        let asIndex = current + 2
+        guard asIndex < tokens.count else { return false }
+        guard case .identifier = tokens[nameIndex].token else { return false }
+        guard case .identifier(let asKeyword) = tokens[asIndex].token else { return false }
+        return asKeyword.uppercased() == "AS"
+    }
     private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1
@@ -3469,6 +3864,7 @@ private struct Parser {
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
-        "FUNCTION", "VOID", "VARIANT", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
+        "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "PUBLIC", "PRIVATE", "PROTECTED",
+        "FUNCTION", "VOID", "VARIANT", "NEW", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]
 }

@@ -1304,6 +1304,74 @@ struct BASICCoreTests {
 
         #expect(host.output == ["Ada", "Grace", "17"])
     }
+
+    @Test("IMPORT loads functions without running imported top-level statements")
+    func importLoadsFunctionsWithoutRunningTopLevelStatements() {
+        let host = TestHost()
+        host.files["math.bas"] = """
+        print "SHOULD NOT RUN"
+        function AddOne(value as integer) as integer
+            return value + 1
+        end function
+        """
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "math.bas"
+        print AddOne(4)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["5"])
+    }
+
+    @Test("CLASS supports fields and NEW object construction")
+    func classSupportsFieldsAndNewObjectConstruction() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            public Title as string
+            Count as integer
+        end class
+
+        dim report as Report
+        report = new Report()
+        report.Title = "May"
+        report.Count = 12
+        print report.Title
+        print report.Count
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["May", "12"])
+    }
+
+    @Test("CLASS validates implemented interfaces")
+    func classValidatesImplementedInterfaces() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Title() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+        end class
+
+        dim report as Report
+        report = new Report
+        report.Title = "Quarterly"
+        print report.Title
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Quarterly"])
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost {
