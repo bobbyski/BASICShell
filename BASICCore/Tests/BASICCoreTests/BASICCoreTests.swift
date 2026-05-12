@@ -1196,6 +1196,45 @@ struct BASICCoreTests {
         #expect(host.output == ["sub"])
     }
 
+    @Test("Debugger exposes method stack frame and ME local")
+    func debuggerExposesMethodStackFrameAndReceiverLocals() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            Title as string
+            function Summary$() as string
+                return ME.Title
+            end function
+        end class
+        dim report as Report
+        report = new Report()
+        report.Title = "Status"
+        print report.Summary$()
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected method breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+            #expect(session.debugCallStack.first?.kind == "Method")
+            #expect(session.debugCallStack.first?.name == "Report.Summary$")
+            #expect(session.debugLocalVariables.contains(where: { $0.name == "ME" && $0.typeName == "Report" }))
+            let meSnapshot = session.debugLocalVariables.first { $0.name == "ME" }
+            #expect(meSnapshot?.children.contains(where: { $0.name == "Title" && $0.value == "Status" }) == true)
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        try session.continueProgram(executionControl: control)
+        #expect(host.output == ["Status"])
+    }
+
     @Test("Loaded source ignores shebang")
     func shebangSource() throws {
         let host = TestHost()

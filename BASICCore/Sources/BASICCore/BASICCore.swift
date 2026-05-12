@@ -42,6 +42,17 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     }
 }
 
+private extension BASICError {
+    var isDebugPause: Bool {
+        switch self {
+        case .breakRequested, .breakpoint, .stepComplete:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 public struct BASICString: Equatable, CustomStringConvertible {
     private enum Storage: Equatable {
         case text(String)
@@ -1406,11 +1417,11 @@ public final class BASICSession: @unchecked Sendable {
     }
 
     public var debugLocalVariables: [BASICVariableSnapshot] {
-        runtime.localSnapshots()
+        activeInterpreter?.debugLocalVariables ?? runtime.localSnapshots()
     }
 
     public var debugGlobalVariables: [BASICVariableSnapshot] {
-        runtime.globalSnapshots()
+        activeInterpreter?.debugGlobalVariables ?? runtime.globalSnapshots()
     }
 
     public var debugCallStack: [BASICCallStackFrame] {
@@ -1507,6 +1518,10 @@ public final class BASICInterpreter {
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
+    private var pausedDebugCallStack: [BASICCallStackFrame]?
+    private var pausedDebugLocalVariables: [BASICVariableSnapshot]?
+    private var pausedDebugGlobalVariables: [BASICVariableSnapshot]?
+    private var pausedDebugCallDepth: Int?
     private var pc = 0
     private var isPrepared = false
 
@@ -1601,6 +1616,7 @@ public final class BASICInterpreter {
     }
 
     public func continueExecution() throws {
+        clearPausedDebugSnapshots()
         if !isPrepared {
             try prepare(startLine: nil)
         }
@@ -1653,10 +1669,22 @@ public final class BASICInterpreter {
     }
 
     fileprivate var debugCallDepth: Int {
-        gosubStack.count + functionStack.count
+        pausedDebugCallDepth ?? gosubStack.count + functionStack.count
+    }
+
+    fileprivate var debugLocalVariables: [BASICVariableSnapshot] {
+        pausedDebugLocalVariables ?? runtime.localSnapshots()
+    }
+
+    fileprivate var debugGlobalVariables: [BASICVariableSnapshot] {
+        pausedDebugGlobalVariables ?? runtime.globalSnapshots()
     }
 
     fileprivate var debugCallStack: [BASICCallStackFrame] {
+        pausedDebugCallStack ?? currentDebugCallStack()
+    }
+
+    private func currentDebugCallStack() -> [BASICCallStackFrame] {
         var frames: [BASICCallStackFrame] = []
 
         for (offset, frame) in functionStack.reversed().enumerated() {
@@ -1691,6 +1719,20 @@ public final class BASICInterpreter {
         )
 
         return frames
+    }
+
+    private func snapshotPausedDebugState() {
+        pausedDebugCallStack = currentDebugCallStack()
+        pausedDebugLocalVariables = runtime.localSnapshots()
+        pausedDebugGlobalVariables = runtime.globalSnapshots()
+        pausedDebugCallDepth = gosubStack.count + functionStack.count
+    }
+
+    private func clearPausedDebugSnapshots() {
+        pausedDebugCallStack = nil
+        pausedDebugLocalVariables = nil
+        pausedDebugGlobalVariables = nil
+        pausedDebugCallDepth = nil
     }
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
@@ -2319,40 +2361,47 @@ public final class BASICInterpreter {
 
         var pc = definition.startIndex + 1
         let parsed = parsedLines
-        while pc < definition.endIndex {
-            executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
-            try executionControl?.checkBreak()
-            let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
-            switch flow {
-            case .next:
-                pc += 1
-            case .jump(let index):
-                pc = index
-            case .goto(let line):
-                guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
-                pc = index
-            case .gotoLabel(let label):
-                guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
-                pc = index
-            case .returnTo(let index):
-                pc = index
-            case .exitSelect:
-                guard let index = matchingEndSelect(after: pc, in: parsed) else {
-                    throw BASICError.runtime("EXIT SELECT without SELECT")
+        do {
+            while pc < definition.endIndex {
+                executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
+                try executionControl?.checkBreak()
+                let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
+                switch flow {
+                case .next:
+                    pc += 1
+                case .jump(let index):
+                    pc = index
+                case .goto(let line):
+                    guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
+                    pc = index
+                case .gotoLabel(let label):
+                    guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+                    pc = index
+                case .returnTo(let index):
+                    pc = index
+                case .exitSelect:
+                    guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                        throw BASICError.runtime("EXIT SELECT without SELECT")
+                    }
+                    pc = index + 1
+                case .functionReturn:
+                    return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+                case .end:
+                    return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
                 }
-                pc = index + 1
-            case .functionReturn:
-                return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
-            case .end:
-                return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
-            }
 
-            if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
-                if pc < definition.endIndex {
-                    executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
-                    throw BASICError.stepComplete(parsed[pc].breakpointLocation)
+                if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
+                    if pc < definition.endIndex {
+                        executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
+                        throw BASICError.stepComplete(parsed[pc].breakpointLocation)
+                    }
                 }
             }
+        } catch let error as BASICError {
+            if error.isDebugPause {
+                snapshotPausedDebugState()
+            }
+            throw error
         }
 
         return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)

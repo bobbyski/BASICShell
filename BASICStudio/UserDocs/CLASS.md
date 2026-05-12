@@ -17,6 +17,10 @@ class Report
     function Title() as string
         return ME.Title
     end function
+
+    function Summary$() as string
+        return ME.Title + " READY"
+    end function
 end class
 
 dim report as Report
@@ -26,5 +30,6 @@ report.Count = 12
 
 print report.Title
 print report.Title()
+print report.Summary$()
 print report.Count
 ```
