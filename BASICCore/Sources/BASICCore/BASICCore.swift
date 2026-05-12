@@ -273,6 +273,7 @@ private struct BASICClassDefinition: Equatable {
     let normalizedName: String
     let fields: [BASICClassField]
     let implementedInterfaces: [String]
+    let methods: [String: FunctionDefinition]
 }
 
 private enum LetMode: Equatable {
@@ -328,6 +329,25 @@ private struct FunctionDefinition: Equatable {
     let returnType: BASICType
     let startIndex: Int
     let endIndex: Int
+    let ownerClassName: String?
+
+    init(
+        displayName: String,
+        normalizedName: String,
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        startIndex: Int,
+        endIndex: Int,
+        ownerClassName: String? = nil
+    ) {
+        self.displayName = displayName
+        self.normalizedName = normalizedName
+        self.parameters = parameters
+        self.returnType = returnType
+        self.startIndex = startIndex
+        self.endIndex = endIndex
+        self.ownerClassName = ownerClassName
+    }
 }
 
 private struct FunctionFrame {
@@ -1643,8 +1663,8 @@ public final class BASICInterpreter {
             frames.append(
                 BASICCallStackFrame(
                     index: offset,
-                    kind: "Function",
-                    name: frame.definition.displayName,
+                    kind: frame.definition.ownerClassName == nil ? "Function" : "Method",
+                    name: frame.definition.ownerClassName.map { "\($0).\((frame.definition.displayName))" } ?? frame.definition.displayName,
                     location: parsedLines[safe: frame.definition.startIndex]?.breakpointLocation
                 )
             )
@@ -2113,6 +2133,7 @@ public final class BASICInterpreter {
 
             var fields: [BASICClassField] = []
             var interfaces: [String] = []
+            var methods: [String: FunctionDefinition] = [:]
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
@@ -2130,17 +2151,30 @@ public final class BASICInterpreter {
                     fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
-                case .functionDeclaration:
+                case .functionDeclaration(let methodName, let parameters, let returnType):
                     guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                         throw BASICError.runtime("FUNCTION without END FUNCTION")
                     }
+                    guard methods[methodName.normalized] == nil else {
+                        throw BASICError.runtime("CLASS \(name) method \(methodName.name) is already defined")
+                    }
+                    methods[methodName.normalized] = FunctionDefinition(
+                        displayName: methodName.name,
+                        normalizedName: methodName.normalized,
+                        parameters: parameters,
+                        returnType: returnType,
+                        startIndex: index,
+                        endIndex: endIndex,
+                        ownerClassName: name
+                    )
                     index = endIndex
                 case .endClass:
                     definitions[normalized] = BASICClassDefinition(
                         displayName: name,
                         normalizedName: normalized,
                         fields: fields,
-                        implementedInterfaces: interfaces
+                        implementedInterfaces: interfaces,
+                        methods: methods
                     )
                     break
                 default:
@@ -2162,8 +2196,17 @@ public final class BASICInterpreter {
     private func validateClassInterfaces() throws {
         for classDefinition in classDefinitions.values {
             for interfaceName in classDefinition.implementedInterfaces {
-                guard interfaceDefinitions[interfaceName.uppercased()] != nil else {
+                guard let interfaceDefinition = interfaceDefinitions[interfaceName.uppercased()] else {
                     throw BASICError.runtime("CLASS \(classDefinition.displayName) implements unknown INTERFACE \(interfaceName)")
+                }
+                for member in interfaceDefinition.members {
+                    guard let method = classDefinition.methods[member.normalizedName] else {
+                        throw BASICError.runtime("CLASS \(classDefinition.displayName) does not implement \(interfaceDefinition.displayName).\(member.displayName)")
+                    }
+                    guard method.parameters.map(\.type) == member.parameters.map(\.type),
+                          method.returnType == member.returnType else {
+                        throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) does not match INTERFACE \(interfaceDefinition.displayName)")
+                    }
                 }
             }
         }
@@ -2226,6 +2269,24 @@ public final class BASICInterpreter {
         guard let definition = functionDefinitions[name.normalized] else {
             throw BASICError.runtime("Unknown function \(name.name)")
         }
+        return try callFunction(definition: definition, receiver: nil, arguments: arguments)
+    }
+
+    private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
+        let receiverValue = try runtime.value(for: receiver, indexes: try receiver.indexes.map(integer))
+        guard case .object(let className, _) = receiverValue else {
+            throw BASICError.runtime("\(receiver.base.name) is not an object")
+        }
+        guard let classDefinition = classDefinitions[className.uppercased()] else {
+            throw BASICError.runtime("Unknown CLASS \(className)")
+        }
+        guard let definition = classDefinition.methods[method.normalized] else {
+            throw BASICError.runtime("CLASS \(classDefinition.displayName) has no method \(method.name)")
+        }
+        return try callFunction(definition: definition, receiver: receiverValue, arguments: arguments)
+    }
+
+    private func callFunction(definition: FunctionDefinition, receiver: BASICValue?, arguments: [Expression]) throws -> BASICValue {
         guard definition.returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }
@@ -2238,6 +2299,14 @@ public final class BASICInterpreter {
 
         let values = try arguments.map(evaluate)
         runtime.pushLocalContext()
+        if let receiver {
+            try runtime.assign(
+                kind: .local,
+                variable: VariableName(name: "ME", column: 0),
+                declaredType: definition.ownerClassName.map(BASICType.classType),
+                value: receiver
+            )
+        }
         for (parameter, value) in zip(definition.parameters, values) {
             try runtime.assign(kind: .local, variable: parameter.variable, declaredType: parameter.type, value: value)
         }
@@ -2626,6 +2695,8 @@ public final class BASICInterpreter {
                 return try callFunction(name: name, arguments: arguments)
             }
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer))
+        case .methodCall(let receiver, let method, let arguments):
+            return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className):
             guard classDefinitions[className.uppercased()] != nil else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
@@ -2898,6 +2969,7 @@ private indirect enum Expression: Equatable {
     case variable(VariableName)
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
+    case methodCall(VariableReference, VariableName, [Expression])
     case newObject(String)
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
@@ -3646,7 +3718,16 @@ private struct Parser {
                 let arguments = try parseArgumentList()
                 var fields: [String] = []
                 while match(.dot) {
-                    fields.append(try consumeIdentifier("Expected field name after ."))
+                    let fieldColumn = tokens[current].column
+                    let fieldName = try consumeIdentifier("Expected field name after .")
+                    if peek == .leftParen {
+                        return .methodCall(
+                            VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields),
+                            VariableName(name: fieldName, column: fieldColumn),
+                            try parseArgumentList()
+                        )
+                    }
+                    fields.append(fieldName)
                 }
                 if !fields.isEmpty {
                     return .variableReference(VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields))
@@ -3655,7 +3736,12 @@ private struct Parser {
             }
             var reference = VariableReference(base: VariableName(name: name, column: column))
             while match(.dot) {
-                reference.fields.append(try consumeIdentifier("Expected field name after ."))
+                let fieldColumn = tokens[current].column
+                let fieldName = try consumeIdentifier("Expected field name after .")
+                if peek == .leftParen {
+                    return .methodCall(reference, VariableName(name: fieldName, column: fieldColumn), try parseArgumentList())
+                }
+                reference.fields.append(fieldName)
             }
             if !reference.fields.isEmpty {
                 return .variableReference(reference)

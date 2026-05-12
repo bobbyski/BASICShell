@@ -1361,12 +1361,15 @@ struct BASICCoreTests {
         class Report
             implements Printable
             public Title as string
+            function Title() as string
+                return ME.Title
+            end function
         end class
 
         dim report as Report
         report = new Report
         report.Title = "Quarterly"
-        print report.Title
+        print report.Title()
         """)
         session.submit("run")
 

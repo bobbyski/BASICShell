@@ -13,6 +13,10 @@ class Report
     implements Printable
     public Title as string
     Count as integer
+
+    function Title() as string
+        return ME.Title
+    end function
 end class
 
 dim report as Report
@@ -21,5 +25,6 @@ report.Title = "Status"
 report.Count = 12
 
 print report.Title
+print report.Title()
 print report.Count
 ```
