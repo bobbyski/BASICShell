@@ -562,7 +562,7 @@ public final class BASICExecutionControl: @unchecked Sendable {
     private var breakRequested = false
     private var currentLineNumber: Int?
     private var currentLocation: BASICBreakpointLocation?
-    private var breakpoints: Set<BASICBreakpointLocation> = []
+    private var breakpoints: [BASICBreakpointLocation] = []
     private var ignoredBreakpointLocation: BASICBreakpointLocation?
     private var mode: BASICExecutionMode = .run
 
@@ -596,7 +596,7 @@ public final class BASICExecutionControl: @unchecked Sendable {
 
     public func setBreakpoints(_ breakpoints: [BASICBreakpoint]) {
         lock.lock()
-        self.breakpoints = Set(breakpoints.filter(\.isEnabled).map(\.location))
+        self.breakpoints = breakpoints.filter(\.isEnabled).map(\.location)
         lock.unlock()
     }
 
@@ -624,11 +624,11 @@ public final class BASICExecutionControl: @unchecked Sendable {
         let shouldBreak = breakRequested
         let line = currentLineNumber
         var matchedBreakpoint: BASICBreakpointLocation?
-        if let currentLocation, breakpoints.contains(currentLocation) {
-            if ignoredBreakpointLocation == currentLocation {
+        if let currentLocation, let breakpoint = breakpoints.first(where: { $0.matches(currentLocation) }) {
+            if ignoredBreakpointLocation?.matches(currentLocation) == true {
                 ignoredBreakpointLocation = nil
             } else {
-                matchedBreakpoint = currentLocation
+                matchedBreakpoint = breakpoint
             }
         }
         lock.unlock()
@@ -665,6 +665,16 @@ public struct BASICBreakpointLocation: Hashable, Sendable {
         self.fileName = fileName
         self.lineNumber = lineNumber
         self.statementNumber = statementNumber
+    }
+
+    fileprivate func matches(_ currentLocation: BASICBreakpointLocation) -> Bool {
+        let sameFile = fileName == nil
+            || currentLocation.fileName == nil
+            || fileName == currentLocation.fileName
+        let sameLine = lineNumber == currentLocation.lineNumber
+        let sameStatement = statementNumber == currentLocation.statementNumber
+            || statementNumber == 0
+        return sameFile && sameLine && sameStatement
     }
 }
 
@@ -724,7 +734,7 @@ public final class BASICProgram: @unchecked Sendable {
             if let index = lines.firstIndex(where: { $0.number == number }) {
                 lines[index].source = trimmed
             } else {
-                lines.append(ProgramLine(number: number, source: trimmed))
+                lines.append(ProgramLine(number: number, source: trimmed, sourceLineNumber: nil))
             }
             lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
         }
@@ -735,21 +745,27 @@ public final class BASICProgram: @unchecked Sendable {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
 
+        var sourceLineOffset = 0
         if let firstLine = sourceLines.first,
            firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("#!") {
             sourceLines.removeFirst()
+            sourceLineOffset = 1
         }
 
-        sourceLines = Self.joinContinuationLines(sourceLines)
+        let lineRecords = Self.joinContinuationLines(
+            sourceLines.enumerated().map { (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element) }
+        )
 
-        lines = sourceLines
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .map { line in
-                if let numbered = Self.splitNumberedLine(line) {
-                    return ProgramLine(number: numbered.number, source: numbered.source)
+        lines = lineRecords
+            .map { record in
+                (lineNumber: record.lineNumber, source: record.source.trimmingCharacters(in: .whitespaces))
+            }
+            .filter { !$0.source.isEmpty }
+            .map { record in
+                if let numbered = Self.splitNumberedLine(record.source) {
+                    return ProgramLine(number: numbered.number, source: numbered.source, sourceLineNumber: record.lineNumber)
                 }
-                return ProgramLine(number: nil, source: line)
+                return ProgramLine(number: nil, source: record.source, sourceLineNumber: record.lineNumber)
             }
     }
 
@@ -766,8 +782,8 @@ public final class BASICProgram: @unchecked Sendable {
         }.joined(separator: "\n")
     }
 
-    public var orderedLines: [(number: Int?, source: String)] {
-        lines.map { ($0.number, $0.source) }
+    public var orderedLines: [(number: Int?, source: String, sourceLineNumber: Int?)] {
+        lines.map { ($0.number, $0.source, $0.sourceLineNumber) }
     }
 
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
@@ -782,20 +798,20 @@ public final class BASICProgram: @unchecked Sendable {
         return (number, rest)
     }
 
-    private static func joinContinuationLines(_ sourceLines: [String]) -> [String] {
-        var joinedLines: [String] = []
-        var pending: String?
+    private static func joinContinuationLines(_ sourceLines: [(lineNumber: Int, source: String)]) -> [(lineNumber: Int, source: String)] {
+        var joinedLines: [(lineNumber: Int, source: String)] = []
+        var pending: (lineNumber: Int, source: String)?
 
         for sourceLine in sourceLines {
-            let line = sourceLine.trimmingCharacters(in: .whitespaces)
-            let combined = [pending, line]
+            let line = sourceLine.source.trimmingCharacters(in: .whitespaces)
+            let combined = [pending?.source, line]
                 .compactMap { $0 }
                 .joined(separator: pending == nil ? "" : " ")
 
             if let continued = removingTrailingContinuation(from: combined) {
-                pending = continued
+                pending = (lineNumber: pending?.lineNumber ?? sourceLine.lineNumber, source: continued)
             } else {
-                joinedLines.append(combined)
+                joinedLines.append((lineNumber: pending?.lineNumber ?? sourceLine.lineNumber, source: combined))
                 pending = nil
             }
         }
@@ -825,6 +841,7 @@ public final class BASICProgram: @unchecked Sendable {
 private struct ProgramLine {
     let number: Int?
     var source: String
+    var sourceLineNumber: Int?
 }
 
 private final class BASICFileState {
@@ -1122,7 +1139,7 @@ public final class BASICInterpreter {
         let parsed = try program.orderedLines.enumerated().flatMap { index, line in
             var parser = try Parser(source: line.source)
             let statement = try parser.parseStatement()
-            return ParsedLine.flatten(number: line.number, sourceLineNumber: index + 1, statement: statement)
+            return ParsedLine.flatten(number: line.number, sourceLineNumber: line.sourceLineNumber ?? index + 1, statement: statement)
         }
         parsedLines = parsed
         lineIndexByNumber = [:]
@@ -1221,6 +1238,15 @@ public final class BASICInterpreter {
                 )
             )
         }
+
+        frames.append(
+            BASICCallStackFrame(
+                index: frames.count,
+                kind: "Program",
+                name: "[main]",
+                location: parsedLines[safe: pc]?.breakpointLocation
+            )
+        )
 
         return frames
     }

@@ -878,6 +878,115 @@ struct BASICCoreTests {
         #expect(host.output == ["before"])
     }
 
+    @Test("Execution control treats breakpoint file names as optional current-file metadata")
+    func executionControlTreatsBreakpointFileNamesAsOptionalCurrentFileMetadata() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(fileName: "Demo.bas", lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print "break"
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(fileName: "Demo.bas", lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == ["before"])
+    }
+
+    @Test("Execution control stops at breakpoint inside FOR NEXT loop")
+    func executionControlStopsAtBreakpointInsideForNextLoop() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 3
+        print i
+        next i
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == [])
+    }
+
+    @Test("Execution control uses physical source lines after blanks")
+    func executionControlUsesPhysicalSourceLinesAfterBlanks() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+
+        for i = 1 to 2
+        print i
+        next i
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        }
+
+        #expect(host.output == ["before"])
+    }
+
+    @Test("Execution control exposes GOSUB locals at breakpoint")
+    func executionControlExposesGosubLocalsAtBreakpoint() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        gosub "SubDemo"
+        end
+        LABEL "SubDemo"
+        option local-let
+        let scoped as integer = 7
+        print scoped
+        return
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+        }
+
+        #expect(host.output == [])
+        #expect(session.debugCallStack.contains(where: { $0.kind == "GOSUB" }))
+        #expect(session.debugLocalVariables.contains(where: { $0.name == "scoped" && $0.value == "7" }))
+    }
+
     @Test("Execution can continue after breakpoint")
     func executionCanContinueAfterBreakpoint() throws {
         let host = TestHost()
@@ -925,6 +1034,45 @@ struct BASICCoreTests {
         }
 
         #expect(host.output == ["one"])
+    }
+
+    @Test("Execution steps through FOR NEXT loops")
+    func executionStepsThroughForNextLoops() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setMode(.stepInto)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        for i = 1 to 2
+        print i
+        next i
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected pause after FOR")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+            #expect(session.debugCallStack.last?.name == "[main]")
+        }
+
+        do {
+            try session.continueProgram(executionControl: control)
+            Issue.record("Expected pause after PRINT")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 3, statementNumber: 0))
+        }
+
+        do {
+            try session.continueProgram(executionControl: control)
+            Issue.record("Expected pause after NEXT looping")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == ["1"])
     }
 
     @Test("Execution can step over function calls")
