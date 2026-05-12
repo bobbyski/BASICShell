@@ -49,6 +49,13 @@ struct BASICStudioApp: App {
                 }
                 .keyboardShortcut("f", modifiers: [.command, .option])
             }
+
+            CommandMenu("Debug") {
+                Button("Show Debugger") {
+                    model.openDebugger()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+            }
         }
     }
 }
@@ -107,6 +114,26 @@ struct StudioView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.runEditorProgram()
+                } label: {
+                    Image(systemName: "play.fill")
+                        .foregroundStyle(model.isProgramRunning ? Color.secondary : Color.primary)
+                }
+                .disabled(model.isProgramRunning)
+                .help("Run")
+
+                Button {
+                    model.stopProgram()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .foregroundStyle(model.isProgramRunning ? Color.red : Color.secondary)
+                }
+                .disabled(!model.isProgramRunning)
+                .help("Stop")
+
+                Divider()
+
                 Button {
                     model.selectedPane = .console
                 } label: {
@@ -213,8 +240,12 @@ struct StudioView: View {
                     showsLineNumbers: model.isEditorGutterVisible,
                     theme: model.editorTheme,
                     errorLine: model.editorErrorLine,
+                    executionLine: nil,
+                    breakpointLines: [],
+                    isReadOnly: false,
                     findRequest: model.editorFindRequest,
-                    replaceRequest: model.editorReplaceRequest
+                    replaceRequest: model.editorReplaceRequest,
+                    breakpointToggle: nil
                 )
             }
             .padding()
@@ -253,10 +284,13 @@ struct InspectorDivider: View {
             Rectangle()
                 .fill(Color(nsColor: .separatorColor))
                 .frame(width: 1)
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color(nsColor: .tertiaryLabelColor))
+                .frame(width: 3, height: 44)
             Color.clear
-                .frame(width: 8)
+                .frame(width: 12)
         }
-        .frame(width: 8)
+        .frame(width: 12)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
@@ -285,6 +319,19 @@ enum StudioPane {
 enum InspectorPane {
     case debug
     case docs
+}
+
+fileprivate enum TerminalInputOperation {
+    case append(String)
+    case submit(String)
+}
+
+@MainActor
+protocol StudioDebuggerInterface: AnyObject {
+    var debuggerBreakpointLines: Set<Int> { get }
+    var debuggerExecutionLine: Int? { get }
+    func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int)
+    func openDebugger()
 }
 
 enum EditorTheme: String, CaseIterable, Codable {
@@ -386,11 +433,15 @@ struct MonacoEditor: NSViewRepresentable {
     let showsLineNumbers: Bool
     let theme: EditorTheme
     let errorLine: Int?
+    let executionLine: Int?
+    let breakpointLines: Set<Int>
+    let isReadOnly: Bool
     let findRequest: Int
     let replaceRequest: Int
+    let breakpointToggle: ((Int) -> Void)?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, breakpointToggle: breakpointToggle)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -411,6 +462,9 @@ struct MonacoEditor: NSViewRepresentable {
             showsLineNumbers: showsLineNumbers,
             theme: theme,
             errorLine: errorLine,
+            executionLine: executionLine,
+            breakpointLines: breakpointLines,
+            isReadOnly: isReadOnly,
             findRequest: findRequest,
             replaceRequest: replaceRequest
         )
@@ -423,23 +477,31 @@ struct MonacoEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler {
         var text: Binding<String>
+        var breakpointToggle: ((Int) -> Void)?
         weak var webView: WKWebView?
         private var isReady = false
         private var pendingText: String?
         private var pendingShowsLineNumbers: Bool?
         private var pendingTheme: EditorTheme?
         private var pendingErrorLine: Int?
+        private var pendingExecutionLine: Int?
+        private var pendingBreakpointLines: Set<Int> = []
+        private var pendingIsReadOnly = false
         private var pendingFindRequest: Int?
         private var pendingReplaceRequest: Int?
         private var lastAppliedText: String?
         private var lastAppliedShowsLineNumbers: Bool?
         private var lastAppliedTheme: EditorTheme?
         private var lastAppliedErrorLine: Int?
+        private var lastAppliedExecutionLine: Int?
+        private var lastAppliedBreakpointLines: Set<Int> = []
+        private var lastAppliedIsReadOnly: Bool?
         private var lastAppliedFindRequest: Int?
         private var lastAppliedReplaceRequest: Int?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, breakpointToggle: ((Int) -> Void)?) {
             self.text = text
+            self.breakpointToggle = breakpointToggle
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -454,16 +516,32 @@ struct MonacoEditor: NSViewRepresentable {
                 guard let newText = body["text"] as? String else { return }
                 lastAppliedText = newText
                 text.wrappedValue = newText
+            case "toggleBreakpoint":
+                guard let lineNumber = body["lineNumber"] as? Int else { return }
+                breakpointToggle?(lineNumber)
             default:
                 break
             }
         }
 
-        func sync(text: String, showsLineNumbers: Bool, theme: EditorTheme, errorLine: Int?, findRequest: Int, replaceRequest: Int) {
+        func sync(
+            text: String,
+            showsLineNumbers: Bool,
+            theme: EditorTheme,
+            errorLine: Int?,
+            executionLine: Int?,
+            breakpointLines: Set<Int>,
+            isReadOnly: Bool,
+            findRequest: Int,
+            replaceRequest: Int
+        ) {
             pendingText = text
             pendingShowsLineNumbers = showsLineNumbers
             pendingTheme = theme
             pendingErrorLine = errorLine
+            pendingExecutionLine = executionLine
+            pendingBreakpointLines = breakpointLines
+            pendingIsReadOnly = isReadOnly
             pendingFindRequest = findRequest
             pendingReplaceRequest = replaceRequest
             applyPending()
@@ -494,6 +572,29 @@ struct MonacoEditor: NSViewRepresentable {
                     webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
                 }
                 lastAppliedErrorLine = pendingErrorLine
+            }
+
+            if pendingExecutionLine != lastAppliedExecutionLine {
+                if let pendingExecutionLine {
+                    webView.evaluateJavaScript("window.basicStudioSetExecutionLine(\(pendingExecutionLine));")
+                } else {
+                    webView.evaluateJavaScript("window.basicStudioSetExecutionLine(null);")
+                }
+                lastAppliedExecutionLine = pendingExecutionLine
+            }
+
+            if pendingBreakpointLines != lastAppliedBreakpointLines {
+                let sorted = pendingBreakpointLines.sorted()
+                if let data = try? JSONEncoder().encode(sorted),
+                   let json = String(data: data, encoding: .utf8) {
+                    webView.evaluateJavaScript("window.basicStudioSetBreakpoints(\(json));")
+                    lastAppliedBreakpointLines = pendingBreakpointLines
+                }
+            }
+
+            if pendingIsReadOnly != lastAppliedIsReadOnly {
+                webView.evaluateJavaScript("window.basicStudioSetReadOnly(\(pendingIsReadOnly ? "true" : "false"));")
+                lastAppliedIsReadOnly = pendingIsReadOnly
             }
 
             if let pendingFindRequest, pendingFindRequest != lastAppliedFindRequest {
@@ -537,6 +638,17 @@ struct MonacoEditor: NSViewRepresentable {
         .basic-error-line {
           background: rgba(255, 59, 48, 0.16);
         }
+        .basic-execution-line {
+          background: rgba(10, 132, 255, 0.18);
+        }
+        .basic-breakpoint-glyph {
+          background: #ff453a;
+          border-radius: 50%;
+          width: 10px !important;
+          height: 10px !important;
+          margin-left: 4px;
+          margin-top: 4px;
+        }
       </style>
       <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
     </head>
@@ -551,6 +663,8 @@ struct MonacoEditor: NSViewRepresentable {
         let pendingFindShowsReplace = false;
         let suppressChange = false;
         let errorDecorations = [];
+        let executionDecorations = [];
+        let breakpointDecorations = [];
 
         function post(message) {
           window.webkit.messageHandlers.basicStudio.postMessage(message);
@@ -569,9 +683,14 @@ struct MonacoEditor: NSViewRepresentable {
           if (!editor) { return; }
           editor.updateOptions({
             lineNumbers: show ? "on" : "off",
-            glyphMargin: false,
+            glyphMargin: show,
             folding: show
           });
+        };
+
+        window.basicStudioSetReadOnly = function(readOnly) {
+          if (!editor) { return; }
+          editor.updateOptions({ readOnly: readOnly, domReadOnly: readOnly });
         };
 
         function applyPageBackground(themeName) {
@@ -619,6 +738,37 @@ struct MonacoEditor: NSViewRepresentable {
           }
         };
 
+        window.basicStudioSetExecutionLine = function(lineNumber) {
+          if (!editor) { return; }
+          const decorations = lineNumber ? [{
+            range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+            options: {
+              isWholeLine: true,
+              className: "basic-execution-line",
+              overviewRuler: {
+                color: "rgba(10, 132, 255, 0.85)",
+                position: monaco.editor.OverviewRulerLane.Right
+              }
+            }
+          }] : [];
+          executionDecorations.splice(0, executionDecorations.length, ...editor.deltaDecorations(executionDecorations, decorations));
+          if (lineNumber) {
+            editor.revealLineInCenterIfOutsideViewport(lineNumber);
+          }
+        };
+
+        window.basicStudioSetBreakpoints = function(lineNumbers) {
+          if (!editor) { return; }
+          const decorations = lineNumbers.map((lineNumber) => ({
+            range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+            options: {
+              glyphMarginClassName: "basic-breakpoint-glyph",
+              stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+            }
+          }));
+          breakpointDecorations.splice(0, breakpointDecorations.length, ...editor.deltaDecorations(breakpointDecorations, decorations));
+        };
+
         require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs" } });
         require(["vs/editor/editor.main"], function() {
           monaco.languages.register({ id: "aibasic" });
@@ -626,7 +776,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -645,12 +795,21 @@ struct MonacoEditor: NSViewRepresentable {
             fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             fontSize: 13,
             lineNumbers: pendingLineNumbers ? "on" : "off",
-            glyphMargin: false,
+            glyphMargin: pendingLineNumbers,
             folding: pendingLineNumbers,
             lineDecorationsWidth: 8,
             lineNumbersMinChars: 3,
             renderLineHighlight: "line",
-            wordWrap: "off"
+            wordWrap: "off",
+            readOnly: false,
+            domReadOnly: false
+          });
+
+          editor.onMouseDown(function(event) {
+            if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+                event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) { return; }
+            if (!event.target.position) { return; }
+            post({ type: "toggleBreakpoint", lineNumber: event.target.position.lineNumber });
           });
 
           applyPageBackground(pendingTheme);
@@ -687,6 +846,7 @@ final class StudioModel: ObservableObject {
     @Published var editorErrorLine: Int?
     @Published var editorFindRequest = 0
     @Published var editorReplaceRequest = 0
+    @Published var isProgramRunning = false
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
@@ -694,10 +854,18 @@ final class StudioModel: ObservableObject {
     @Published var consoleText = BASICSession.defaultPrompt
     @Published var command = ""
     @Published var graphicsRevision = 0
+    @Published var debuggerBreakpoints: [BASICBreakpoint] = []
+    @Published var debuggerExecutionLine: Int?
+    @Published var isProgramPaused = false
+    @Published var debuggerCallStack: [BASICCallStackFrame] = []
+    @Published var debuggerLocalVariables: [BASICVariableSnapshot] = []
+    @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
     private var currentProgramURL: URL?
+    private let executionQueue = DispatchQueue(label: "AIBasic.Studio.Execution", qos: .userInitiated)
+    private var activeExecutionControl: BASICExecutionControl?
 
     private lazy var session = BASICSession(host: self)
 
@@ -729,6 +897,29 @@ final class StudioModel: ObservableObject {
 
     func toggleInspector(_ pane: InspectorPane) {
         inspectorPane = inspectorPane == pane ? nil : pane
+    }
+
+    func openDebugger() {
+        inspectorPane = .debug
+    }
+
+    var debuggerBreakpointLines: Set<Int> {
+        Set(debuggerBreakpoints
+            .filter(\.isEnabled)
+            .map(\.location.lineNumber))
+    }
+
+    func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
+        let location = BASICBreakpointLocation(
+            fileName: debuggerFileName,
+            lineNumber: lineNumber,
+            statementNumber: 0
+        )
+        if let index = debuggerBreakpoints.firstIndex(where: { $0.location == location }) {
+            debuggerBreakpoints.remove(at: index)
+        } else {
+            debuggerBreakpoints.append(BASICBreakpoint(location: location))
+        }
     }
 
     func showFind() {
@@ -782,9 +973,11 @@ final class StudioModel: ObservableObject {
     }
 
     func runEditorProgram() {
+        guard !isProgramRunning else { return }
         rebuildProgramFromEditor()
         selectedPane = .console
-        submitConsoleCommand("RUN", echo: true)
+        echoConsoleCommand("RUN")
+        startProgramRun(startLine: nil)
     }
 
     func listProgram() {
@@ -794,11 +987,18 @@ final class StudioModel: ObservableObject {
     }
 
     func clearProgram() {
+        guard !isProgramRunning else { return }
         _ = session.submit("NEW")
         programText = ""
         consoleText = prompt
         graphics.clear(color: nil)
         graphicsRevision += 1
+        isProgramPaused = false
+        debuggerExecutionLine = nil
+        debuggerCallStack = []
+        debuggerLocalVariables = []
+        debuggerGlobalVariables = []
+        activeExecutionControl = nil
     }
 
     func submitCommand() {
@@ -809,8 +1009,44 @@ final class StudioModel: ObservableObject {
         command = ""
     }
 
-    func submitConsoleLineFromTerminal(_ command: String) {
-        submitConsoleCommand(command, echo: false)
+    func stopProgram() {
+        activeExecutionControl?.requestBreak()
+    }
+
+    func continueDebugging() {
+        guard isProgramPaused else { return }
+        startProgramRun(startLine: nil, command: .continueExecution)
+    }
+
+    func stepDebugging() {
+        if !isProgramPaused {
+            rebuildProgramFromEditor()
+        }
+        startProgramRun(startLine: nil, command: isProgramPaused ? .stepInto : .runStep)
+    }
+
+    func stepOverDebugging() {
+        if !isProgramPaused {
+            rebuildProgramFromEditor()
+        }
+        startProgramRun(startLine: nil, command: isProgramPaused ? .stepOver : .runStep)
+    }
+
+    func stepOutDebugging() {
+        guard isProgramPaused else { return }
+        startProgramRun(startLine: nil, command: .stepOut)
+    }
+
+    fileprivate func handleTerminalInput(_ operations: [TerminalInputOperation]) {
+        for operation in operations {
+            switch operation {
+            case .append(let text):
+                consoleText += text
+            case .submit(let command):
+                consoleText += "\n"
+                submitConsoleCommand(command, echo: false)
+            }
+        }
     }
 
     private func rebuildProgramFromEditor() {
@@ -839,6 +1075,13 @@ final class StudioModel: ObservableObject {
         consoleText += text + terminator
     }
 
+    private func echoConsoleCommand(_ command: String) {
+        if !consoleText.hasSuffix(prompt) {
+            consoleText += prompt
+        }
+        consoleText += command + "\n"
+    }
+
     private func submitConsoleCommand(_ command: String, echo: Bool) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         editorErrorLine = nil
@@ -847,16 +1090,18 @@ final class StudioModel: ObservableObject {
         }
 
         if echo {
-            if !consoleText.hasSuffix(prompt) {
-                consoleText += prompt
-            }
-            consoleText += command + "\n"
+            echoConsoleCommand(command)
         }
 
         if trimmed.uppercased() == "EDIT" {
             graphics.clear(color: nil)
             graphicsRevision += 1
             selectedPane = .editor
+            return
+        }
+
+        if let startLine = runStartLine(from: trimmed) {
+            startProgramRun(startLine: startLine, command: .run)
             return
         }
 
@@ -874,9 +1119,126 @@ final class StudioModel: ObservableObject {
         consoleText += prompt
     }
 
+    private enum DebugRunCommand: Sendable {
+        case run
+        case continueExecution
+        case stepInto
+        case stepOver
+        case stepOut
+        case runStep
+    }
+
+    private func startProgramRun(startLine: Int?, command: DebugRunCommand = .run) {
+        guard !isProgramRunning else { return }
+        let control = BASICExecutionControl()
+        control.setBreakpoints(debuggerBreakpoints)
+        switch command {
+        case .run, .continueExecution:
+            control.setMode(.run)
+        case .stepInto, .runStep:
+            control.setMode(.stepInto)
+        case .stepOver:
+            control.setMode(.stepOver(depth: session.debugCallDepth))
+        case .stepOut:
+            control.setMode(.stepOut(depth: session.debugCallDepth))
+        }
+        if command == .continueExecution || command == .stepInto || command == .stepOver || command == .stepOut {
+            control.ignoreBreakpointOnce(at: activeExecutionControl?.location)
+        }
+        activeExecutionControl = control
+        isProgramRunning = true
+        isProgramPaused = false
+        if command == .run || command == .runStep {
+            debuggerExecutionLine = nil
+        }
+        let session = session
+
+        executionQueue.async { [weak self, session, control, startLine, command] in
+            let result: Result<Void, Error>
+            do {
+                switch command {
+                case .run, .runStep:
+                    try session.runProgram(startLine: startLine, executionControl: control)
+                case .continueExecution, .stepInto, .stepOver, .stepOut:
+                    try session.continueProgram(executionControl: control)
+                }
+                result = .success(())
+            } catch {
+                result = .failure(error)
+            }
+
+            DispatchQueue.main.async {
+                self?.finishProgramRun(result)
+            }
+        }
+    }
+
+    private func finishProgramRun(_ result: Result<Void, Error>) {
+        var paused = false
+        var consoleMessage: String?
+        switch result {
+        case .success:
+            debuggerExecutionLine = nil
+            isProgramPaused = false
+            debuggerCallStack = []
+            debuggerLocalVariables = []
+            debuggerGlobalVariables = session.debugGlobalVariables
+            break
+        case .failure(let error as BASICError):
+            switch error {
+            case .breakRequested(let line):
+                debuggerExecutionLine = line.flatMap(sourceLineNumber(forBasicLineNumber:))
+                paused = true
+            case .breakpoint(let location):
+                debuggerExecutionLine = location.lineNumber
+                paused = true
+            case .stepComplete(let location):
+                debuggerExecutionLine = location.lineNumber
+                paused = true
+            default:
+                isProgramPaused = false
+                break
+            }
+            consoleMessage = error.description
+        case .failure(let error):
+            isProgramPaused = false
+            consoleMessage = "Unexpected error: \(error)"
+        }
+
+        isProgramPaused = paused
+        if paused {
+            debuggerCallStack = session.debugCallStack
+            debuggerLocalVariables = session.debugLocalVariables
+            debuggerGlobalVariables = session.debugGlobalVariables
+        }
+        if !paused {
+            debuggerCallStack = []
+            activeExecutionControl = nil
+        }
+        isProgramRunning = false
+
+        let debuggerIsActive = inspectorPane == .debug
+        let shouldSuppressConsolePause = paused && debuggerIsActive
+        if let consoleMessage, !shouldSuppressConsolePause {
+            appendConsoleOutput(consoleMessage)
+        }
+        if !shouldSuppressConsolePause {
+            consoleText += prompt
+        }
+    }
+
+    private func runStartLine(from command: String) -> Int?? {
+        let uppercased = command.uppercased()
+        guard uppercased == "RUN" || uppercased.hasPrefix("RUN ") else { return nil }
+        let rest = command.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return .some(nil) }
+        guard let line = Int(rest) else { return nil }
+        return .some(line)
+    }
+
     private func shouldUseEditorProgram(for command: String) -> Bool {
         let keyword = command.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        return keyword == "LIST" || keyword == "RUN" || keyword == "SAVE" || keyword.hasPrefix("SAVE ")
+        return keyword == "LIST" || keyword == "RUN" || keyword.hasPrefix("RUN ") || keyword == "SAVE" || keyword.hasPrefix("SAVE ")
     }
 
     private func shouldSyncEditorAfterCommand(_ command: String) -> Bool {
@@ -888,6 +1250,18 @@ final class StudioModel: ObservableObject {
 
     private func syncEditorFromSession() {
         programText = session.program.listing()
+    }
+
+    private var debuggerFileName: String? {
+        currentProgramURL?.lastPathComponent
+    }
+
+    private func sourceLineNumber(forBasicLineNumber lineNumber: Int) -> Int? {
+        let lines = programText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return lines.firstIndex { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("\(lineNumber) ")
+                || line.trimmingCharacters(in: .whitespaces) == "\(lineNumber)"
+        }.map { $0 + 1 }
     }
 
     private func saveSettings() {
@@ -920,6 +1294,33 @@ final class StudioModel: ObservableObject {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
         return path
+    }
+
+    nonisolated private func runOnMainSync(_ body: @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                body()
+            }
+        } else {
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    body()
+                }
+            }
+        }
+    }
+
+    nonisolated private func valueOnMainSync<T: Sendable>(_ body: @MainActor () -> T) -> T {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                body()
+            }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                body()
+            }
+        }
     }
 
     private static var basicProgramContentTypes: [UTType] {
@@ -980,44 +1381,226 @@ final class StudioModel: ObservableObject {
 
 struct DebugPane: View {
     @ObservedObject var model: StudioModel
+    @State private var isCallStackExpanded = true
+    @State private var isLocalsExpanded = false
+    @State private var isGlobalsExpanded = false
+    @State private var codePaneHeight: CGFloat?
+    @State private var dragStartCodePaneHeight: CGFloat?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Debug")
-                .font(.headline)
+        VStack(spacing: 0) {
+            debuggerControls
+                .padding(10)
 
             Divider()
 
-            debugRow("View", value: model.selectedPane == .editor ? "Editor" : "Console")
-            debugRow("Program Lines", value: "\(model.programLineCount)")
-            debugRow("Console Lines", value: "\(model.consoleLineCount)")
-            debugRow("Screen Size", value: model.terminalScreenSize.label)
-            debugRow("Graphics Mode", value: "\(model.graphics.mode.number)")
-            debugRow("Graphics Size", value: graphicsSize)
-            debugRow("Graphics Colors", value: "\(model.graphics.mode.colorCount)")
-            debugRow("Current Color", value: "\(model.graphics.currentColor)")
-            debugRow("Revision", value: "\(model.graphicsRevision)")
+            GeometryReader { geometry in
+                let codeHeight = resolvedCodePaneHeight(totalHeight: geometry.size.height)
 
-            Spacer(minLength: 0)
+                VStack(spacing: 0) {
+                    MonacoEditor(
+                        text: .constant(model.programText),
+                        showsLineNumbers: true,
+                        theme: model.editorTheme,
+                        errorLine: model.editorErrorLine,
+                        executionLine: model.debuggerExecutionLine,
+                        breakpointLines: model.debuggerBreakpointLines,
+                        isReadOnly: true,
+                        findRequest: 0,
+                        replaceRequest: 0,
+                        breakpointToggle: { lineNumber in
+                            model.toggleDebuggerBreakpoint(atSourceLine: lineNumber)
+                        }
+                    )
+                    .frame(height: codeHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .padding([.top, .horizontal], 12)
+
+                    DebugHorizontalDivider(
+                        codePaneHeight: $codePaneHeight,
+                        dragStartHeight: $dragStartCodePaneHeight,
+                        availableHeight: geometry.size.height,
+                        minimumCodeHeight: 160,
+                        minimumVariablesHeight: 140
+                    )
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            DisclosureGroup("Call Stack", isExpanded: $isCallStackExpanded) {
+                                callStackList(model.debuggerCallStack)
+                            }
+
+                            DisclosureGroup("Local Variables", isExpanded: $isLocalsExpanded) {
+                                variableList(model.debuggerLocalVariables, emptyText: "No local variables are available.")
+                            }
+
+                            DisclosureGroup("Globals", isExpanded: $isGlobalsExpanded) {
+                                variableList(model.debuggerGlobalVariables, emptyText: "No globals are available.")
+                            }
+                        }
+                        .padding([.horizontal, .bottom], 12)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
         }
-        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private var graphicsSize: String {
-        guard model.graphics.isEnabled else { return "Off" }
-        return "\(model.graphics.mode.width) x \(model.graphics.mode.height)"
+    private var debuggerControls: some View {
+        HStack(spacing: 10) {
+            debugButton("Run", systemImage: "play.fill", isEnabled: !model.isProgramRunning) {
+                model.runEditorProgram()
+            }
+            debugButton("Continue", systemImage: "forward.frame.fill", isEnabled: model.isProgramPaused && !model.isProgramRunning) {
+                model.continueDebugging()
+            }
+            debugButton("Pause", systemImage: "pause.fill", isEnabled: model.isProgramRunning) {
+                model.stopProgram()
+            }
+            debugButton("Step", systemImage: "arrow.down.to.line", isEnabled: !model.isProgramRunning) {
+                model.stepDebugging()
+            }
+            debugButton("Step Over", systemImage: "arrow.turn.down.right", isEnabled: !model.isProgramRunning) {
+                model.stepOverDebugging()
+            }
+            debugButton("Step Out", systemImage: "arrow.up.to.line", isEnabled: model.isProgramPaused && !model.isProgramRunning) {
+                model.stepOutDebugging()
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 
-    private func debugRow(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .monospacedDigit()
+    private func debugButton(_ title: String, systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 22, height: 22)
         }
-        .font(.callout)
+        .buttonStyle(.borderless)
+        .disabled(!isEnabled)
+        .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+        .help(title)
+    }
+
+    private func resolvedCodePaneHeight(totalHeight: CGFloat) -> CGFloat {
+        let minimumCodeHeight: CGFloat = 160
+        let minimumVariablesHeight: CGFloat = 140
+        let maximumCodeHeight = max(minimumCodeHeight, totalHeight - minimumVariablesHeight)
+        let preferredHeight = codePaneHeight ?? max(260, totalHeight * 0.62)
+        return min(max(preferredHeight, minimumCodeHeight), maximumCodeHeight)
+    }
+
+    @ViewBuilder
+    private func callStackList(_ frames: [BASICCallStackFrame]) -> some View {
+        if frames.isEmpty {
+            Text("No active stack frames.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(frames) { frame in
+                    HStack(spacing: 8) {
+                        Text(frame.kind)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 64, alignment: .leading)
+                        Text(frame.name)
+                            .fontWeight(.medium)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let location = frame.location {
+                            Text("\(location.lineNumber)")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption)
+                    .padding(.vertical, 5)
+
+                    Divider()
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func variableList(_ variables: [BASICVariableSnapshot], emptyText: String) -> some View {
+        if variables.isEmpty {
+            Text(emptyText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(variables) { variable in
+                    HStack(spacing: 8) {
+                        Text(variable.name)
+                            .fontWeight(.medium)
+                            .frame(minWidth: 70, alignment: .leading)
+                        Text(variable.typeName)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 72, alignment: .leading)
+                        Text(variable.value)
+                            .monospaced()
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption)
+                    .padding(.vertical, 5)
+
+                    Divider()
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+struct DebugHorizontalDivider: View {
+    @Binding var codePaneHeight: CGFloat?
+    @Binding var dragStartHeight: CGFloat?
+    let availableHeight: CGFloat
+    let minimumCodeHeight: CGFloat
+    let minimumVariablesHeight: CGFloat
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 1)
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color(nsColor: .tertiaryLabelColor))
+                .frame(width: 44, height: 3)
+            Color.clear
+                .frame(height: 12)
+        }
+        .frame(height: 12)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if dragStartHeight == nil {
+                        dragStartHeight = codePaneHeight ?? defaultCodeHeight
+                    }
+                    let maximumHeight = max(minimumCodeHeight, availableHeight - minimumVariablesHeight)
+                    let proposedHeight = (dragStartHeight ?? defaultCodeHeight) + value.translation.height
+                    codePaneHeight = min(max(proposedHeight, minimumCodeHeight), maximumHeight)
+                }
+                .onEnded { _ in
+                    dragStartHeight = nil
+                }
+        )
+        .help("Resize debugger panes")
+    }
+
+    private var defaultCodeHeight: CGFloat {
+        min(max(max(260, availableHeight * 0.62), minimumCodeHeight), max(minimumCodeHeight, availableHeight - minimumVariablesHeight))
     }
 }
 
@@ -1135,16 +1718,18 @@ struct UserDoc: Identifiable, Hashable {
     }
 }
 
+extension StudioModel: StudioDebuggerInterface {}
+
 extension StudioModel: BASICHost {
     nonisolated func print(_ text: String, terminator: String) {
-        MainActor.assumeIsolated {
+        runOnMainSync {
             highlightErrorIfPresent(text)
             appendConsoleOutput(text, terminator: terminator)
         }
     }
 
     nonisolated func printLine(_ text: String) {
-        MainActor.assumeIsolated {
+        runOnMainSync {
             highlightErrorIfPresent(text)
             appendConsoleOutput(text)
         }
@@ -1155,7 +1740,7 @@ extension StudioModel: BASICHost {
     }
 }
 
-extension StudioModel: BASICFileHost {
+extension StudioModel: BASICFileHost, BASICSystemHost {
     nonisolated func loadTextFile(path: String) throws -> String {
         try String(contentsOfFile: expandedPath(path), encoding: .utf8)
     }
@@ -1172,33 +1757,45 @@ extension StudioModel: BASICFileHost {
     }
 }
 
-extension StudioModel: @preconcurrency BASICGraphicsHost {
-    func setScreenMode(_ mode: BASICScreenMode) {
-        graphics.setMode(mode)
-        graphicsRevision += 1
+extension StudioModel: BASICGraphicsHost {
+    nonisolated func setScreenMode(_ mode: BASICScreenMode) {
+        runOnMainSync {
+            graphics.setMode(mode)
+            graphicsRevision += 1
+        }
     }
 
-    func setGraphicsColor(_ color: Int) {
-        graphics.currentColor = color
+    nonisolated func setGraphicsColor(_ color: Int) {
+        runOnMainSync {
+            graphics.currentColor = color
+        }
     }
 
-    func clearGraphics(color: Int?) {
-        graphics.clear(color: color)
-        graphicsRevision += 1
+    nonisolated func clearGraphics(color: Int?) {
+        runOnMainSync {
+            graphics.clear(color: color)
+            graphicsRevision += 1
+        }
     }
 
-    func setPixel(x: Int, y: Int, color: Int) {
-        graphics.setPixel(x: x, y: y, color: color)
-        graphicsRevision += 1
+    nonisolated func setPixel(x: Int, y: Int, color: Int) {
+        runOnMainSync {
+            graphics.setPixel(x: x, y: y, color: color)
+            graphicsRevision += 1
+        }
     }
 
-    func getPixel(x: Int, y: Int) -> Int {
-        graphics.getPixel(x: x, y: y)
+    nonisolated func getPixel(x: Int, y: Int) -> Int {
+        valueOnMainSync {
+            graphics.getPixel(x: x, y: y)
+        }
     }
 
-    func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
-        graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color)
-        graphicsRevision += 1
+    nonisolated func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
+        runOnMainSync {
+            graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color)
+            graphicsRevision += 1
+        }
     }
 }
 
@@ -1409,27 +2006,31 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        var operations: [TerminalInputOperation] = []
+
         for byte in data {
             switch byte {
             case 10, 13:
-                feedTerminal("\r\n")
                 let command = inputBuffer
                 inputBuffer = ""
-                Task { @MainActor [weak model] in
-                    model?.submitConsoleLineFromTerminal(command)
-                }
+                operations.append(.submit(command))
             case 8, 127:
                 guard !inputBuffer.isEmpty else { continue }
                 inputBuffer.removeLast()
-                feedTerminal("\u{8} \u{20}\u{8}")
+                operations.append(.append("\u{8} \u{20}\u{8}"))
             case 32...126:
                 let scalar = UnicodeScalar(byte)
                 let character = String(Character(scalar))
                 inputBuffer.append(character)
-                feedTerminal(character)
+                operations.append(.append(character))
             default:
                 break
             }
+        }
+
+        guard !operations.isEmpty else { return }
+        Task { @MainActor [weak model] in
+            model?.handleTerminalInput(operations)
         }
     }
     func scrolled(source: TerminalView, position: Double) {}

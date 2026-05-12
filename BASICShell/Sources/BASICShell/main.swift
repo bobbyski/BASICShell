@@ -2,7 +2,7 @@ import BASICCore
 import Darwin
 import Foundation
 
-final class ConsoleHost: BASICFileHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost {
     func print(_ text: String, terminator: String) {
         Swift.print(text, terminator: terminator)
     }

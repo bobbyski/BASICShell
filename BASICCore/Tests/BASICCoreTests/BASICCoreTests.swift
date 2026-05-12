@@ -793,6 +793,30 @@ struct BASICCoreTests {
         #expect(host.files["saved.bas"] == "10 print \"loaded\"")
     }
 
+    @Test("SYSTEM statement prints command output")
+    func systemStatementPrintsCommandOutput() {
+        let host = TestHost()
+        host.systemOutputs["printf hello"] = "hello"
+        let session = BASICSession(host: host)
+
+        session.submit("system \"printf hello\"")
+
+        #expect(host.systemCommands == ["printf hello"])
+        #expect(host.output == ["hello"])
+    }
+
+    @Test("SYSTEM$ function returns command output")
+    func systemFunctionReturnsCommandOutput() {
+        let host = TestHost()
+        host.systemOutputs["printf hello"] = "hello"
+        let session = BASICSession(host: host)
+
+        session.submit("print \"result=\"; system$(\"printf hello\")")
+
+        #expect(host.systemCommands == ["printf hello"])
+        #expect(host.output == ["result=hello"])
+    }
+
     @Test("RUN can start at a line for safe SAVE shortcuts")
     func runCanStartAtLineForSaveShortcut() {
         let host = TestHost()
@@ -807,6 +831,176 @@ struct BASICCoreTests {
         10 print "do not run"
         65535 save"shortcut.bas"
         """)
+    }
+
+    @Test("Execution control breaks at current line")
+    func executionControlBreaksAtCurrentLine() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        host.breakAfterOutputCount = 1
+        host.executionControl = control
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        10 print "tick": goto 10
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected break")
+        } catch BASICError.breakRequested(let line) {
+            #expect(line == 10)
+        }
+    }
+
+    @Test("Execution control stops at source line breakpoint")
+    func executionControlStopsAtSourceLineBreakpoint() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print "break"
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == ["before"])
+    }
+
+    @Test("Execution can continue after breakpoint")
+    func executionCanContinueAfterBreakpoint() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print "break"
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == ["before", "break", "after"])
+    }
+
+    @Test("Execution can step one statement")
+    func executionCanStepOneStatement() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setMode(.stepInto)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "one"
+        print "two"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected step pause")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == ["one"])
+    }
+
+    @Test("Execution can step over function calls")
+    func executionCanStepOverFunctionCalls() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setMode(.stepInto)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function Add(a as integer, b as integer) as integer
+            return a + b
+        end function
+        print Add(1, 2)
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected first step pause")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        }
+
+        control.setMode(.stepOver(depth: session.debugCallDepth))
+
+        do {
+            try session.continueProgram(executionControl: control)
+            Issue.record("Expected step-over pause")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        }
+
+        #expect(host.output == ["3"])
+    }
+
+    @Test("Execution can step out of GOSUB frames")
+    func executionCanStepOutOfGosubFrames() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        gosub "SubDemo"
+        print "after"
+        end
+        SubDemo:
+            local x as integer = 7
+            print "sub"
+            return
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected subroutine breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+            #expect(session.debugCallDepth == 1)
+            #expect(session.debugCallStack.first?.kind == "GOSUB")
+            #expect(session.debugLocalVariables.first?.name == "x")
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        control.setMode(.stepOut(depth: session.debugCallDepth))
+
+        do {
+            try session.continueProgram(executionControl: control)
+            Issue.record("Expected step-out pause")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(host.output == ["sub"])
     }
 
     @Test("Loaded source ignores shebang")
@@ -850,12 +1044,16 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
     var input: [String] = []
     var files: [String: String] = [:]
+    var systemCommands: [String] = []
+    var systemOutputs: [String: String] = [:]
+    var breakAfterOutputCount: Int?
+    weak var executionControl: BASICExecutionControl?
     var screenMode: BASICScreenMode?
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
@@ -872,6 +1070,7 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
             output.append(pendingOutput)
             hasPendingUnterminatedOutput = true
         }
+        requestBreakIfNeeded()
     }
 
     func printLine(_ text: String) {
@@ -883,6 +1082,7 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
             pendingOutput = ""
             hasPendingUnterminatedOutput = false
         }
+        requestBreakIfNeeded()
     }
 
     func readLine(prompt: String) -> String? {
@@ -899,6 +1099,11 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
 
     func listFiles() throws -> [String] {
         files.keys.sorted()
+    }
+
+    func runSystemCommand(_ command: String) throws -> String {
+        systemCommands.append(command)
+        return systemOutputs[command] ?? ""
     }
 
     func setScreenMode(_ mode: BASICScreenMode) {
@@ -922,6 +1127,11 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost {
 
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
         lines.append((x1, y1, x2, y2, color))
+    }
+
+    private func requestBreakIfNeeded() {
+        guard let breakAfterOutputCount, output.count >= breakAfterOutputCount else { return }
+        executionControl?.requestBreak()
     }
 }
 
