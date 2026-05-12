@@ -116,13 +116,15 @@ public struct BASICString: Equatable, CustomStringConvertible {
     }
 }
 
-public enum BASICValue: Equatable, CustomStringConvertible {
+indirect enum BASICValue: Equatable, CustomStringConvertible {
     case empty
     case number(Double)
     case string(BASICString)
     case boolean(Bool)
+    case record(String, [String: BASICValue])
+    case array(BASICArray)
 
-    public var description: String {
+    var description: String {
         switch self {
         case .empty:
             return ""
@@ -135,6 +137,10 @@ public enum BASICValue: Equatable, CustomStringConvertible {
             return value.description
         case .boolean(let value):
             return value ? "TRUE" : "FALSE"
+        case .record(let name, _):
+            return "<\(name)>"
+        case .array(let array):
+            return "<ARRAY \(array.type.name)>"
         }
     }
 
@@ -144,6 +150,7 @@ public enum BASICValue: Equatable, CustomStringConvertible {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
+        case .record, .array: return true
         }
     }
 
@@ -168,6 +175,12 @@ public enum BASICValue: Equatable, CustomStringConvertible {
     }
 }
 
+struct BASICArray: Equatable {
+    let dimensions: [Int]
+    let type: BASICType
+    var values: [BASICValue]
+}
+
 public enum BASICVariableScope: String, Sendable {
     case local = "Local"
     case global = "Global"
@@ -189,7 +202,7 @@ public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
     public let location: BASICBreakpointLocation?
 }
 
-private enum BASICScalarType: String, Equatable {
+enum BASICScalarType: String, Equatable {
     case integer = "INTEGER"
     case double = "DOUBLE"
     case string = "STRING"
@@ -197,11 +210,29 @@ private enum BASICScalarType: String, Equatable {
     case variant = "VARIANT"
 }
 
-private enum BASICType: Equatable {
+enum BASICType: Equatable {
     case scalar(BASICScalarType)
     case void
     case record(String)
     case classType(String)
+}
+
+private struct BASICTypeSpec: Equatable {
+    let type: BASICType
+    let fixedLength: Int?
+}
+
+private struct BASICRecordField: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let type: BASICType
+    let fixedLength: Int?
+}
+
+private struct BASICRecordDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let fields: [BASICRecordField]
 }
 
 private enum LetMode: Equatable {
@@ -221,6 +252,22 @@ private struct VariableName: Equatable {
     let column: Int
 
     var normalized: String { name.uppercased() }
+}
+
+private struct VariableReference: Equatable {
+    let base: VariableName
+    var indexes: [Expression]
+    var fields: [String]
+
+    init(base: VariableName, indexes: [Expression] = [], fields: [String] = []) {
+        self.base = base
+        self.indexes = indexes
+        self.fields = fields
+    }
+
+    var isSimple: Bool {
+        indexes.isEmpty && fields.isEmpty
+    }
 }
 
 private struct VariableBinding: Equatable {
@@ -252,6 +299,7 @@ private struct FunctionFrame {
 private final class BASICRuntime {
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
+    var recordDefinitions: [String: BASICRecordDefinition] = [:]
     var letMode: LetMode = .global
 
     func resetForRun() {
@@ -281,6 +329,27 @@ private final class BASICRuntime {
         return defaultValue(for: inferredType(name: variable.name, value: nil))
     }
 
+    func value(for reference: VariableReference, indexes: [Int]) throws -> BASICValue {
+        var value = value(for: reference.base)
+        if !indexes.isEmpty {
+            guard case .array(let array) = value else {
+                throw BASICError.runtime("\(reference.base.name) is not an array")
+            }
+            value = try arrayValue(array, at: indexes, name: reference.base.name)
+        }
+        for field in reference.fields {
+            guard case .record(let recordName, let fields) = value else {
+                throw BASICError.runtime("\(reference.base.name) has no field \(field)")
+            }
+            let normalized = field.uppercased()
+            guard let fieldValue = fields[normalized] else {
+                throw BASICError.runtime("\(recordName) has no field \(field)")
+            }
+            value = fieldValue
+        }
+        return value
+    }
+
     func localSnapshots() -> [BASICVariableSnapshot] {
         guard let local = locals.last else { return [] }
         return snapshots(from: local, scope: .local)
@@ -304,6 +373,59 @@ private final class BASICRuntime {
         let coerced = try coerce(value ?? defaultValue(for: type), to: type, variable: variable)
         let binding = VariableBinding(displayName: variable.name, type: type, value: coerced)
         set(binding, in: target, normalized: normalized)
+    }
+
+    func dim(variable: VariableName, dimensions: [Int], declaredType: BASICType?) throws {
+        try validateSuffix(variable: variable, declaredType: declaredType)
+        guard !dimensions.isEmpty else {
+            let type = declaredType ?? inferredType(name: variable.name, value: nil)
+            let binding = VariableBinding(displayName: variable.name, type: type, value: defaultValue(for: type))
+            set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
+            return
+        }
+        guard dimensions.allSatisfy({ $0 >= 0 }) else {
+            throw BASICError.runtime("DIM bounds must be non-negative")
+        }
+        let type = declaredType ?? inferredType(name: variable.name, value: nil)
+        let elementCount = dimensions.reduce(1) { $0 * ($1 + 1) }
+        let array = BASICArray(
+            dimensions: dimensions,
+            type: type,
+            values: Array(repeating: defaultValue(for: type), count: elementCount)
+        )
+        let binding = VariableBinding(displayName: variable.name, type: type, value: .array(array))
+        set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
+    }
+
+    func assign(reference: VariableReference, indexes: [Int], value: BASICValue?) throws {
+        guard !reference.isSimple else {
+            try assign(kind: .bare, variable: reference.base, declaredType: nil, value: value)
+            return
+        }
+
+        let normalized = reference.base.normalized
+        let context = targetContext(kind: .bare, normalized: normalized)
+        guard var binding = binding(in: context, normalized: normalized) else {
+            throw BASICError.runtime("\(reference.base.name) is not defined")
+        }
+
+        if !indexes.isEmpty {
+            guard case .array(var array) = binding.value else {
+                throw BASICError.runtime("\(reference.base.name) is not an array")
+            }
+            let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: reference.base.name)
+            if reference.fields.isEmpty {
+                array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
+            } else {
+                array.values[offset] = try assigningField(reference.fields, in: array.values[offset], value: value)
+            }
+            binding.value = .array(array)
+            set(binding, in: context, normalized: normalized)
+            return
+        }
+
+        binding.value = try assigningField(reference.fields, in: binding.value, value: value)
+        set(binding, in: context, normalized: normalized)
     }
 
     private enum TargetContext {
@@ -403,6 +525,10 @@ private final class BASICRuntime {
                 return .scalar(.double)
             case .number:
                 return .scalar(.double)
+            case .record(let name, _):
+                return .record(name)
+            case .array(let array):
+                return array.type
             }
         }
         return .scalar(.double)
@@ -425,10 +551,18 @@ private final class BASICRuntime {
     }
 
     func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
+        if case .record(let name) = type {
+            if case .record(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
+                return value
+            }
+            if case .empty = value {
+                return defaultValue(for: type)
+            }
+            throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
+        }
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
         }
-
         switch scalar {
         case .variant:
             return value
@@ -468,8 +602,59 @@ private final class BASICRuntime {
         case .scalar(.boolean): return .boolean(false)
         case .scalar(.variant): return .empty
         case .scalar: return .number(0)
-        case .record, .classType: return .number(0)
+        case .record(let name):
+            guard let definition = recordDefinitions[name.uppercased()] else {
+                return .record(name, [:])
+            }
+            let fields = Dictionary(uniqueKeysWithValues: definition.fields.map {
+                ($0.normalizedName, defaultValue(for: $0.type))
+            })
+            return .record(definition.displayName, fields)
+        case .classType: return .number(0)
         }
+    }
+
+    private func arrayValue(_ array: BASICArray, at indexes: [Int], name: String) throws -> BASICValue {
+        try array.values[arrayOffset(dimensions: array.dimensions, indexes: indexes, name: name)]
+    }
+
+    private func arrayOffset(dimensions: [Int], indexes: [Int], name: String) throws -> Int {
+        guard indexes.count == dimensions.count else {
+            throw BASICError.runtime("\(name) expects \(dimensions.count) indexes")
+        }
+        var multiplier = 1
+        var offset = 0
+        for (index, upperBound) in zip(indexes.reversed(), dimensions.reversed()) {
+            guard (0...upperBound).contains(index) else {
+                throw BASICError.runtime("\(name) subscript out of range")
+            }
+            offset += index * multiplier
+            multiplier *= upperBound + 1
+        }
+        return offset
+    }
+
+    private func assigningField(_ fields: [String], in recordValue: BASICValue, value: BASICValue?) throws -> BASICValue {
+        guard let first = fields.first else {
+            return value ?? recordValue
+        }
+        guard case .record(let recordName, var recordFields) = recordValue else {
+            throw BASICError.runtime("Cannot assign field \(first) on non-record value")
+        }
+        guard let definition = recordDefinitions[recordName.uppercased()] else {
+            throw BASICError.runtime("Unknown TYPE \(recordName)")
+        }
+        let normalized = first.uppercased()
+        guard let field = definition.fields.first(where: { $0.normalizedName == normalized }) else {
+            throw BASICError.runtime("\(recordName) has no field \(first)")
+        }
+        let current = recordFields[normalized] ?? defaultValue(for: field.type)
+        if fields.count == 1 {
+            recordFields[normalized] = try coerce(value ?? defaultValue(for: field.type), to: field.type, variable: VariableName(name: field.displayName, column: 0))
+        } else {
+            recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value)
+        }
+        return .record(recordName, recordFields)
     }
 
     private func snapshots(from bindings: [String: VariableBinding], scope: BASICVariableScope) -> [BASICVariableSnapshot] {
@@ -1099,6 +1284,7 @@ public final class BASICInterpreter {
     private var forStack: [ForFrame] = []
     private var functionStack: [FunctionFrame] = []
     private var functionDefinitions: [String: FunctionDefinition] = [:]
+    private var recordDefinitions: [String: BASICRecordDefinition] = [:]
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
@@ -1152,6 +1338,8 @@ public final class BASICInterpreter {
                 lineIndexByLabel[label.uppercased()] = index
             }
         }
+        recordDefinitions = try collectRecords(in: parsed)
+        runtime.recordDefinitions = recordDefinitions
         functionDefinitions = try collectFunctions(in: parsed)
 
         pc = 0
@@ -1255,6 +1443,13 @@ public final class BASICInterpreter {
         switch statement {
         case .empty, .remark:
             return .next
+        case .typeDeclaration:
+            guard let index = matchingEndType(after: pc, in: parsed) else {
+                throw BASICError.runtime("TYPE without END TYPE")
+            }
+            return .jump(index + 1)
+        case .typeField, .endType:
+            return .next
         case .label:
             return .next
         case .labeled(_, let statement):
@@ -1338,6 +1533,13 @@ public final class BASICInterpreter {
                 return .next
             }
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
+            return .next
+        case .referenceAssignment(let reference, let expression):
+            let value = try expression.map(evaluate)
+            try runtime.assign(reference: reference, indexes: try reference.indexes.map(integer), value: value)
+            return .next
+        case .dim(let variable, let dimensions, let declaredType):
+            try runtime.dim(variable: variable, dimensions: try dimensions.map(integer), declaredType: declaredType)
             return .next
         case .optionLetMode(let mode):
             runtime.letMode = mode
@@ -1506,6 +1708,60 @@ public final class BASICInterpreter {
         return definitions
     }
 
+    private func collectRecords(in parsed: [ParsedLine]) throws -> [String: BASICRecordDefinition] {
+        var definitions: [String: BASICRecordDefinition] = [:]
+        var index = 0
+        while index < parsed.count {
+            guard case .typeDeclaration(let name) = parsed[index].statement else {
+                index += 1
+                continue
+            }
+
+            let normalized = name.uppercased()
+            guard definitions[normalized] == nil else {
+                throw BASICError.runtime("TYPE \(name) is already defined")
+            }
+
+            var fields: [BASICRecordField] = []
+            index += 1
+            while index < parsed.count {
+                switch parsed[index].statement {
+                case .typeField(let fieldName, let type, let fixedLength):
+                    let normalizedField = fieldName.uppercased()
+                    guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
+                        throw BASICError.runtime("TYPE \(name) field \(fieldName) is already defined")
+                    }
+                    fields.append(
+                        BASICRecordField(
+                            displayName: fieldName,
+                            normalizedName: normalizedField,
+                            type: type,
+                            fixedLength: fixedLength
+                        )
+                    )
+                case .endType:
+                    definitions[normalized] = BASICRecordDefinition(
+                        displayName: name,
+                        normalizedName: normalized,
+                        fields: fields
+                    )
+                    break
+                default:
+                    throw BASICError.runtime("Unexpected statement inside TYPE \(name)")
+                }
+                if case .endType = parsed[index].statement {
+                    break
+                }
+                index += 1
+            }
+            guard index < parsed.count, case .endType = parsed[index].statement else {
+                throw BASICError.runtime("TYPE without END TYPE")
+            }
+            index += 1
+        }
+        return definitions
+    }
+
     private func matchingEndFunction(after pc: Int, in parsed: [ParsedLine]) -> Int? {
         var depth = 0
         var index = pc + 1
@@ -1520,6 +1776,17 @@ public final class BASICInterpreter {
                 depth -= 1
             default:
                 break
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func matchingEndType(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var index = pc + 1
+        while index < parsed.count {
+            if case .endType = parsed[index].statement {
+                return index
             }
             index += 1
         }
@@ -1923,6 +2190,13 @@ public final class BASICInterpreter {
             return .boolean(value)
         case .variable(let name):
             return runtime.value(for: name)
+        case .variableReference(let reference):
+            return try runtime.value(for: reference, indexes: try reference.indexes.map(integer))
+        case .callOrArray(let name, let arguments):
+            if functionDefinitions[name.normalized] != nil {
+                return try callFunction(name: name, arguments: arguments)
+            }
+            return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer))
         case .unaryMinus(let expression):
             guard let value = try evaluate(expression).number else {
                 throw BASICError.runtime("Unary minus requires a number")
@@ -2083,6 +2357,9 @@ private indirect enum Statement: Equatable {
     case label(String)
     case labeled(String, Statement)
     case sequence([Statement])
+    case typeDeclaration(name: String)
+    case typeField(name: String, type: BASICType, fixedLength: Int?)
+    case endType
     case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
     case endFunction
     case print([PrintPart])
@@ -2093,6 +2370,8 @@ private indirect enum Statement: Equatable {
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
+    case referenceAssignment(VariableReference, Expression?)
+    case dim(VariableName, [Expression], BASICType?)
     case optionLetMode(LetMode)
     case input(String)
     case load(Expression)
@@ -2174,6 +2453,8 @@ private indirect enum Expression: Equatable {
     case string(String)
     case boolean(Bool)
     case variable(VariableName)
+    case variableReference(VariableReference)
+    case callOrArray(VariableName, [Expression])
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
     case functionCall(VariableName, [Expression])
@@ -2211,6 +2492,7 @@ private enum Token: Equatable {
     case minus
     case star
     case slash
+    case dot
     case leftParen
     case rightParen
     case eof
@@ -2250,7 +2532,7 @@ private struct Lexer {
             index = source.endIndex
             return emit(.eof, column: column)
         }
-        if character.isNumber || character == "." {
+        if character.isNumber || (character == "." && nextCharacter?.isNumber == true) {
             return try scanNumber()
         }
         if character == "\"" {
@@ -2271,6 +2553,7 @@ private struct Lexer {
         case "-": token = .minus
         case "*": token = .star
         case "/": token = .slash
+        case ".": token = .dot
         case "(": token = .leftParen
         case ")": token = .rightParen
         case "<":
@@ -2381,6 +2664,11 @@ private struct Lexer {
         source[..<index].allSatisfy(\.isWhitespace)
     }
 
+    private var nextCharacter: Character? {
+        let next = source.index(after: index)
+        return next < source.endIndex ? source[next] : nil
+    }
+
     private var column: Int {
         source.distance(from: source.startIndex, to: index)
     }
@@ -2434,6 +2722,13 @@ private struct Parser {
         if matchIdentifier("FUNCTION") {
             return try parseFunctionDeclaration()
         }
+        if matchIdentifier("TYPE") {
+            let name = try consumeIdentifier("Expected TYPE name")
+            return .typeDeclaration(name: name)
+        }
+        if matchIdentifier("DIM") {
+            return try parseDim()
+        }
         if matchIdentifier("FOR") {
             return try parseForLoop()
         }
@@ -2461,6 +2756,9 @@ private struct Parser {
         if matchIdentifier("END") {
             if matchIdentifier("FUNCTION") {
                 return .endFunction
+            }
+            if matchIdentifier("TYPE") {
+                return .endType
             }
             if matchIdentifier("SELECT") {
                 return .endSelect
@@ -2564,10 +2862,33 @@ private struct Parser {
         if matchIdentifier("STOP") {
             return .end
         }
+        if isTypeFieldDeclaration {
+            return try parseTypeField()
+        }
         if case .identifier = peek {
             return try parseAssignment(kind: .bare, requiresEquals: true)
         }
         throw syntax("Unknown statement")
+    }
+
+    private mutating func parseDim() throws -> Statement {
+        let variable = try consumeVariableName("Expected variable name after DIM")
+        var dimensions: [Expression] = []
+        if match(.leftParen) {
+            repeat {
+                dimensions.append(try parseExpression())
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+        let declaredType = try parseOptionalType(for: variable)
+        return .dim(variable, dimensions, declaredType)
+    }
+
+    private mutating func parseTypeField() throws -> Statement {
+        let name = try consumeIdentifier("Expected field name")
+        guard matchIdentifier("AS") else { throw syntax("Expected AS") }
+        let typeSpec = try parseTypeSpec(allowVoid: false)
+        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength)
     }
 
     private mutating func parseForLoop() throws -> Statement {
@@ -2672,8 +2993,9 @@ private struct Parser {
     }
 
     private mutating func parseAssignment(kind: AssignmentKind, requiresEquals: Bool) throws -> Statement {
-        let variable = try consumeVariableName("Expected variable name")
-        let declaredType = try parseOptionalType(for: variable)
+        let reference = try parseVariableReference(message: "Expected variable name")
+        let variable = reference.base
+        let declaredType = reference.isSimple ? try parseOptionalType(for: variable) : nil
         let expression: Expression?
         if match(.equals) {
             expression = try parseExpression()
@@ -2681,6 +3003,12 @@ private struct Parser {
             throw syntax("Expected =")
         } else {
             expression = nil
+        }
+        if !reference.isSimple {
+            guard kind == .bare || kind == .letValue else {
+                throw syntax("GLOBAL and LOCAL require simple variable names")
+            }
+            return .referenceAssignment(reference, expression)
         }
         return .assignment(kind, variable, declaredType, expression)
     }
@@ -2711,13 +3039,19 @@ private struct Parser {
     }
 
     private mutating func parseType(allowVoid: Bool) throws -> BASICType {
+        try parseTypeSpec(allowVoid: allowVoid).type
+    }
+
+    private mutating func parseTypeSpec(allowVoid: Bool) throws -> BASICTypeSpec {
         let typeToken = tokens[current]
         guard case .identifier(let name) = advance() else {
             throw syntax("Expected type name")
         }
         let type: BASICType
+        var fixedLength: Int?
         switch name.uppercased() {
         case "INTEGER": type = .scalar(.integer)
+        case "SINGLE": type = .scalar(.double)
         case "DOUBLE": type = .scalar(.double)
         case "STRING": type = .scalar(.string)
         case "BOOLEAN": type = .scalar(.boolean)
@@ -2731,9 +3065,15 @@ private struct Parser {
             guard case .identifier(let className) = advance() else { throw syntax("Expected CLASS type name") }
             type = .classType(className)
         default:
-            throw BASICError.contextualType(message: "Unknown type \(name)", source: source, column: typeToken.column)
+            type = .record(name)
         }
-        return type
+        if case .scalar(.string) = type, match(.star) {
+            guard case .number(let length) = advance(), length.rounded() == length, length > 0 else {
+                throw syntax("Expected fixed string length")
+            }
+            fixedLength = Int(length)
+        }
+        return BASICTypeSpec(type: type, fixedLength: fixedLength)
     }
 
     private mutating func parseExpression() throws -> Expression {
@@ -2819,9 +3159,24 @@ private struct Parser {
             }
             let column = tokens[max(0, current - 1)].column
             if peek == .leftParen {
-                return .functionCall(VariableName(name: name, column: column), try parseArgumentList())
+                let arguments = try parseArgumentList()
+                var fields: [String] = []
+                while match(.dot) {
+                    fields.append(try consumeIdentifier("Expected field name after ."))
+                }
+                if !fields.isEmpty {
+                    return .variableReference(VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields))
+                }
+                return .callOrArray(VariableName(name: name, column: column), arguments)
             }
-            return .variable(VariableName(name: name, column: column))
+            var reference = VariableReference(base: VariableName(name: name, column: column))
+            while match(.dot) {
+                reference.fields.append(try consumeIdentifier("Expected field name after ."))
+            }
+            if !reference.fields.isEmpty {
+                return .variableReference(reference)
+            }
+            return .variable(reference.base)
         case .leftParen:
             let expression = try parseExpression()
             guard match(.rightParen) else { throw syntax("Expected )") }
@@ -2859,6 +3214,22 @@ private struct Parser {
             guard match(.rightParen) else { throw syntax("Expected )") }
         }
         return arguments
+    }
+
+    private mutating func parseVariableReference(message: String) throws -> VariableReference {
+        let base = try consumeVariableName(message)
+        var indexes: [Expression] = []
+        if match(.leftParen) {
+            repeat {
+                indexes.append(try parseExpression())
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+        var fields: [String] = []
+        while match(.dot) {
+            fields.append(try consumeIdentifier("Expected field name after ."))
+        }
+        return VariableReference(base: base, indexes: indexes, fields: fields)
     }
 
     private mutating func consumeIdentifier(_ message: String) throws -> String {
@@ -2927,6 +3298,12 @@ private struct Parser {
 
     private var isAtEnd: Bool { peek == .eof }
     private var isStatementEnd: Bool { peek == .eof || peek == .colon || (stopsAtElse && isElse(peek)) }
+
+    private var isTypeFieldDeclaration: Bool {
+        guard case .identifier = peek else { return false }
+        guard case .identifier(let next) = peekNext else { return false }
+        return next.uppercased() == "AS"
+    }
     private var peek: Token { tokens[current].token }
     private var peekNext: Token {
         let next = current + 1

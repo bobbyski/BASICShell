@@ -1190,6 +1190,75 @@ struct BASICCoreTests {
         #expect(host.lines.first?.3 == 4)
         #expect(host.lines.first?.4 == 3)
     }
+
+    @Test("DIM supports numeric and string arrays")
+    func dimSupportsArrays() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        dim scores(2) as integer
+        scores(0) = 10
+        scores(1) = 20
+        scores(2) = scores(0) + scores(1)
+        print scores(2)
+        dim names$(1)
+        names$(0) = "Ada"
+        names$(1) = names$(0) + " Lovelace"
+        print names$(1)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["30", "Ada Lovelace"])
+    }
+
+    @Test("TYPE supports record variables")
+    func typeSupportsRecordVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string * 20
+            Age as integer
+            Grade as single
+        end type
+        dim s as Student
+        s.Name = "Grace"
+        s.Age = 17
+        s.Grade = 98.5
+        print s.Name
+        print s.Age
+        print s.Grade
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Grace", "17", "98.5"])
+    }
+
+    @Test("DIM supports arrays of TYPE records")
+    func dimSupportsArraysOfRecords() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string * 20
+            Age as integer
+        end type
+        dim students(1) as Student
+        students(0).Name = "Ada"
+        students(0).Age = 16
+        students(1).Name = "Grace"
+        students(1).Age = students(0).Age + 1
+        print students(0).Name
+        print students(1).Name
+        print students(1).Age
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Ada", "Grace", "17"])
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost {
