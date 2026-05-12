@@ -187,11 +187,13 @@ public enum BASICVariableScope: String, Sendable {
 }
 
 public struct BASICVariableSnapshot: Identifiable, Equatable, Sendable {
-    public var id: String { "\(scope.rawValue):\(name)" }
+    public var id: String { path }
+    public let path: String
     public let name: String
     public let typeName: String
     public let value: String
     public let scope: BASICVariableScope
+    public let children: [BASICVariableSnapshot]
 }
 
 public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
@@ -661,13 +663,111 @@ private final class BASICRuntime {
         bindings.values
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
             .map {
-                BASICVariableSnapshot(
+                snapshot(
                     name: $0.displayName,
-                    typeName: $0.type.name,
-                    value: $0.value.description,
-                    scope: scope
+                    type: $0.type,
+                    value: $0.value,
+                    scope: scope,
+                    path: "\(scope.rawValue):\($0.displayName)"
                 )
             }
+    }
+
+    private func snapshot(
+        name: String,
+        type: BASICType,
+        value: BASICValue,
+        scope: BASICVariableScope,
+        path: String
+    ) -> BASICVariableSnapshot {
+        switch value {
+        case .array(let array):
+            let children = array.values.enumerated().map { offset, element in
+                let elementName = elementName(for: offset, dimensions: array.dimensions)
+                return snapshot(
+                    name: elementName,
+                    type: array.type,
+                    value: element,
+                    scope: scope,
+                    path: "\(path)\(elementName)"
+                )
+            }
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: "ARRAY OF \(array.type.name)",
+                value: arraySummary(array),
+                scope: scope,
+                children: children
+            )
+        case .record(let recordName, let fields):
+            let children = recordFieldSnapshots(recordName: recordName, fields: fields, scope: scope, parentPath: path)
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: recordName,
+                value: "\(children.count) fields",
+                scope: scope,
+                children: children
+            )
+        default:
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: type.name,
+                value: value.description,
+                scope: scope,
+                children: []
+            )
+        }
+    }
+
+    private func recordFieldSnapshots(
+        recordName: String,
+        fields: [String: BASICValue],
+        scope: BASICVariableScope,
+        parentPath: String
+    ) -> [BASICVariableSnapshot] {
+        if let definition = recordDefinitions[recordName.uppercased()] {
+            return definition.fields.map { field in
+                let value = fields[field.normalizedName] ?? defaultValue(for: field.type)
+                return snapshot(
+                    name: field.displayName,
+                    type: field.type,
+                    value: value,
+                    scope: scope,
+                    path: "\(parentPath).\(field.displayName)"
+                )
+            }
+        }
+
+        return fields.keys.sorted().map { key in
+            let value = fields[key] ?? .empty
+            return snapshot(
+                name: key,
+                type: inferredType(name: key, value: value),
+                value: value,
+                scope: scope,
+                path: "\(parentPath).\(key)"
+            )
+        }
+    }
+
+    private func arraySummary(_ array: BASICArray) -> String {
+        let bounds = array.dimensions.map { "0...\($0)" }.joined(separator: " x ")
+        return "\(array.values.count) elements (\(bounds))"
+    }
+
+    private func elementName(for offset: Int, dimensions: [Int]) -> String {
+        guard !dimensions.isEmpty else { return "(0)" }
+        var remainder = offset
+        var indexes = Array(repeating: 0, count: dimensions.count)
+        for dimensionIndex in stride(from: dimensions.count - 1, through: 0, by: -1) {
+            let size = dimensions[dimensionIndex] + 1
+            indexes[dimensionIndex] = remainder % size
+            remainder /= size
+        }
+        return "(\(indexes.map(String.init).joined(separator: ",")))"
     }
 }
 

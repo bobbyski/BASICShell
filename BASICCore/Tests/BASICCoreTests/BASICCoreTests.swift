@@ -987,6 +987,51 @@ struct BASICCoreTests {
         #expect(session.debugLocalVariables.contains(where: { $0.name == "scoped" && $0.value == "7" }))
     }
 
+    @Test("Debugger snapshots expand arrays and TYPE records")
+    func debuggerSnapshotsExpandArraysAndTypeRecords() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 13, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string * 20
+            Age as integer
+        end type
+        dim scores(1) as integer
+        scores(0) = 10
+        scores(1) = 20
+        dim students(1) as Student
+        students(0).Name = "Ada"
+        students(0).Age = 16
+        students(1).Name = "Grace"
+        students(1).Age = 17
+        print "pause"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 13, statementNumber: 0))
+        }
+
+        let globals = session.debugGlobalVariables
+        let scores = globals.first { $0.name == "scores" }
+        #expect(scores?.typeName == "ARRAY OF INTEGER")
+        #expect(scores?.children.map(\.name) == ["(0)", "(1)"])
+        #expect(scores?.children.map(\.value) == ["10", "20"])
+
+        let students = globals.first { $0.name == "students" }
+        #expect(students?.typeName == "ARRAY OF Student")
+        #expect(students?.children.count == 2)
+        #expect(students?.children.first?.children.first { $0.name == "Name" }?.value == "Ada")
+        #expect(students?.children.last?.children.first { $0.name == "Age" }?.value == "17")
+    }
+
     @Test("Execution can continue after breakpoint")
     func executionCanContinueAfterBreakpoint() throws {
         let host = TestHost()

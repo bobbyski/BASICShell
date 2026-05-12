@@ -1538,27 +1538,49 @@ struct DebugPane: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(variables) { variable in
-                    HStack(spacing: 8) {
-                        Text(variable.name)
-                            .fontWeight(.medium)
-                            .frame(minWidth: 70, alignment: .leading)
-                        Text(variable.typeName)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 72, alignment: .leading)
-                        Text(variable.value)
-                            .monospaced()
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 5)
-
+                    variableNode(variable, indent: 0)
                     Divider()
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private func variableNode(_ variable: BASICVariableSnapshot, indent: CGFloat) -> AnyView {
+        if variable.children.isEmpty {
+            return AnyView(variableRow(variable, indent: indent))
+        } else {
+            return AnyView(DisclosureGroup {
+                VStack(spacing: 0) {
+                    ForEach(variable.children) { child in
+                        variableNode(child, indent: indent + 14)
+                        Divider()
+                    }
+                }
+            } label: {
+                variableRow(variable, indent: indent)
+            }
+            .disclosureGroupStyle(.automatic))
+        }
+    }
+
+    private func variableRow(_ variable: BASICVariableSnapshot, indent: CGFloat) -> some View {
+        HStack(spacing: 8) {
+            Text(variable.name)
+                .fontWeight(.medium)
+                .padding(.leading, indent)
+                .frame(minWidth: 70 + indent, alignment: .leading)
+            Text(variable.typeName)
+                .foregroundStyle(.secondary)
+                .frame(width: 96, alignment: .leading)
+            Text(variable.value)
+                .monospaced()
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.caption)
+        .padding(.vertical, 5)
     }
 }
 
