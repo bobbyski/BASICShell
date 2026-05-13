@@ -14,6 +14,9 @@ let package = Package(
             name: "BASICShell",
             dependencies: [
                 "BASICCore",
+            ],
+            resources: [
+                .copy("Resources/Demos")
             ]
         ),
         .executableTarget(

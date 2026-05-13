@@ -1032,6 +1032,45 @@ struct BASICCoreTests {
         #expect(students?.children.last?.children.first { $0.name == "Age" }?.value == "17")
     }
 
+    @Test("Debugger snapshots group inherited CLASS fields")
+    func debuggerSnapshotsGroupInheritedClassFields() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 12, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            public Title as string
+        end class
+        class FancyReport
+            inherits Report
+            public Badge as string
+        end class
+        dim report as FancyReport
+        report = new FancyReport()
+        report.Title = "Status"
+        report.Badge = "READY"
+        print "pause"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 12, statementNumber: 0))
+        }
+
+        let report = session.debugGlobalVariables.first { $0.name == "report" }
+        #expect(report?.typeName == "FancyReport")
+        #expect(report?.value == "2 fields")
+        #expect(report?.children.map(\.name) == ["Report", "FancyReport"])
+        #expect(report?.children.first { $0.name == "Report" }?.children.first { $0.name == "Title" }?.value == "Status")
+        #expect(report?.children.first { $0.name == "FancyReport" }?.children.first { $0.name == "Badge" }?.value == "READY")
+    }
+
     @Test("Execution can continue after breakpoint")
     func executionCanContinueAfterBreakpoint() throws {
         let host = TestHost()
@@ -1225,6 +1264,7 @@ struct BASICCoreTests {
             #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
             #expect(session.debugCallStack.first?.kind == "Method")
             #expect(session.debugCallStack.first?.name == "Report.Summary$")
+            #expect(session.debugPauseDescription(for: .breakpoint(location)) == "Break at 4 in Method Report.Summary$")
             #expect(session.debugLocalVariables.contains(where: { $0.name == "ME" && $0.typeName == "Report" }))
             let meSnapshot = session.debugLocalVariables.first { $0.name == "ME" }
             #expect(meSnapshot?.children.contains(where: { $0.name == "Title" && $0.value == "Status" }) == true)
@@ -1233,6 +1273,234 @@ struct BASICCoreTests {
 
         try session.continueProgram(executionControl: control)
         #expect(host.output == ["Status"])
+    }
+
+    @Test("Debugger identifies constructor stack frames")
+    func debuggerIdentifiesConstructorStackFrames() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            Title as string
+            function New(title as string)
+                ME.Title = title
+            end function
+        end class
+        dim report as Report
+        report = new Report("Status")
+        print report.Title
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected constructor breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+            #expect(session.debugCallStack.first?.kind == "Constructor")
+            #expect(session.debugCallStack.first?.name == "Report.New")
+            #expect(session.debugPauseDescription(for: .breakpoint(location)) == "Break at 4 in Constructor Report.New")
+            #expect(session.debugLocalVariables.contains(where: { $0.name == "ME" && $0.typeName == "Report" }))
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        try session.continueProgram(executionControl: control)
+        #expect(host.output == ["Status"])
+    }
+
+    @Test("Debugger describes inherited and overridden method frames")
+    func debuggerDescribesInheritedAndOverriddenMethodFrames() throws {
+        let inheritedHost = TestHost()
+        let inheritedControl = BASICExecutionControl()
+        inheritedControl.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        ])
+        let inheritedSession = BASICSession(host: inheritedHost)
+
+        inheritedSession.program.loadSource("""
+        class Report
+            function Label$() as string
+                local baseValue as string = "BASE"
+                print baseValue
+                return baseValue
+            end function
+        end class
+        class FancyReport
+            inherits Report
+        end class
+        dim fancy as FancyReport
+        fancy = new FancyReport()
+        print fancy.Label$()
+        """)
+
+        do {
+            try inheritedSession.runProgram(executionControl: inheritedControl)
+            Issue.record("Expected inherited method breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+            let frame = inheritedSession.debugCallStack.first
+            #expect(frame?.kind == "Method")
+            #expect(frame?.name == "Report.Label$")
+            #expect(frame?.declaringClassName == "Report")
+            #expect(frame?.receiverClassName == "FancyReport")
+            #expect(frame?.isOverride == false)
+            inheritedControl.ignoreBreakpointOnce(at: location)
+        }
+
+        try inheritedSession.continueProgram(executionControl: inheritedControl)
+        #expect(inheritedHost.output == ["BASE", "BASE"])
+
+        let overrideHost = TestHost()
+        let overrideControl = BASICExecutionControl()
+        overrideControl.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 10, statementNumber: 0))
+        ])
+        let overrideSession = BASICSession(host: overrideHost)
+
+        overrideSession.program.loadSource("""
+        class Report
+            function Summary$() as string
+                return "BASE"
+            end function
+        end class
+        class FancyReport
+            inherits Report
+            overrides function Summary$() as string
+                local summaryValue as string = "DERIVED"
+                print summaryValue
+                return summaryValue
+            end function
+        end class
+        dim fancy as FancyReport
+        fancy = new FancyReport()
+        print fancy.Summary$()
+        """)
+
+        do {
+            try overrideSession.runProgram(executionControl: overrideControl)
+            Issue.record("Expected overridden method breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 10, statementNumber: 0))
+            let frame = overrideSession.debugCallStack.first
+            #expect(frame?.kind == "Method")
+            #expect(frame?.name == "FancyReport.Summary$")
+            #expect(frame?.declaringClassName == "FancyReport")
+            #expect(frame?.receiverClassName == "FancyReport")
+            #expect(frame?.isOverride == true)
+            overrideControl.ignoreBreakpointOnce(at: location)
+        }
+
+        try overrideSession.continueProgram(executionControl: overrideControl)
+        #expect(overrideHost.output == ["DERIVED", "DERIVED"])
+    }
+
+    @Test("Debugger exposes locals for a deep mixed stack")
+    func debuggerExposesLocalsForDeepMixedStack() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 26, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        gosub "Outer"
+        end
+        LABEL "Outer"
+        option local-let
+        let outerSubValue as integer = 40
+        dim runner as Runner
+        runner = new Runner()
+        let result = runner.Start()
+        return
+        class Runner
+            function Start() as integer
+                local startValue as integer = 10
+                return StandardFunction(ME)
+            end function
+            function MethodTwo() as integer
+                local methodTwoValue as integer = 20
+                return InnerFunction()
+            end function
+        end class
+        function StandardFunction(r as Runner) as integer
+            local standardValue as integer = 30
+            return r.MethodTwo()
+        end function
+        function InnerFunction() as integer
+            local innerValue as integer = 50
+            print "pause"
+            return innerValue
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected mixed stack breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 26, statementNumber: 0))
+            #expect(session.debugCallStack.map(\.kind) == ["Function", "Method", "Function", "Method", "GOSUB", "Program"])
+            #expect(session.debugCallStack.map(\.name) == ["InnerFunction", "Runner.MethodTwo", "StandardFunction", "Runner.Start", "Return", "[main]"])
+            #expect(session.debugFrameLocalVariables.count == 6)
+            #expect(session.debugFrameLocalVariables[0].contains(where: { $0.name == "innerValue" && $0.value == "50" }))
+            #expect(session.debugFrameLocalVariables[1].contains(where: { $0.name == "methodTwoValue" && $0.value == "20" }))
+            #expect(session.debugFrameLocalVariables[1].contains(where: { $0.name == "ME" && $0.typeName == "Runner" }))
+            #expect(session.debugFrameLocalVariables[2].contains(where: { $0.name == "standardValue" && $0.value == "30" }))
+            #expect(session.debugFrameLocalVariables[2].contains(where: { $0.name == "r" && $0.typeName == "Runner" }))
+            #expect(session.debugFrameLocalVariables[3].contains(where: { $0.name == "startValue" && $0.value == "10" }))
+            #expect(session.debugFrameLocalVariables[3].contains(where: { $0.name == "ME" && $0.typeName == "Runner" }))
+            #expect(session.debugFrameLocalVariables[4].contains(where: { $0.name == "outerSubValue" && $0.value == "40" }))
+            #expect(session.debugFrameLocalVariables[4].contains(where: { $0.name == "runner" && $0.typeName == "Runner" }))
+            #expect(session.debugFrameLocalVariables[5].isEmpty)
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        try session.continueProgram(executionControl: control)
+        #expect(host.output == ["pause"])
+    }
+
+    @Test("Debugger exposes locals for selected GOSUB stack frames")
+    func debuggerExposesLocalsForSelectedGosubStackFrames() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 10, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        gosub "Outer"
+        end
+        LABEL "Outer"
+        option local-let
+        let outerValue as integer = 7
+        gosub "Inner"
+        return
+        LABEL "Inner"
+        let innerValue as integer = 3
+        print "pause"
+        return
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected nested GOSUB breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 10, statementNumber: 0))
+            #expect(session.debugCallStack.map(\.kind) == ["GOSUB", "GOSUB", "Program"])
+            #expect(session.debugFrameLocalVariables.count == 3)
+            #expect(session.debugFrameLocalVariables[0].contains(where: { $0.name == "innerValue" && $0.value == "3" }))
+            #expect(session.debugFrameLocalVariables[1].contains(where: { $0.name == "outerValue" && $0.value == "7" }))
+            #expect(session.debugFrameLocalVariables[2].isEmpty)
+            control.ignoreBreakpointOnce(at: location)
+        }
+
+        try session.continueProgram(executionControl: control)
+        #expect(host.output == ["pause"])
     }
 
     @Test("Loaded source ignores shebang")

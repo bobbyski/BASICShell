@@ -859,7 +859,9 @@ final class StudioModel: ObservableObject {
     @Published var debuggerExecutionLine: Int?
     @Published var isProgramPaused = false
     @Published var debuggerCallStack: [BASICCallStackFrame] = []
+    @Published var debuggerSelectedCallStackFrameIndex: Int?
     @Published var debuggerLocalVariables: [BASICVariableSnapshot] = []
+    @Published var debuggerFrameLocalVariables: [[BASICVariableSnapshot]] = []
     @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
 
     let graphics = GraphicsFramebuffer()
@@ -880,7 +882,12 @@ final class StudioModel: ObservableObject {
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
 
-        if let path = CommandLine.arguments.dropFirst().first,
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == "--demo", arguments.count >= 2 {
+            if let source = Self.bundledDemoSource(named: arguments[1]) {
+                programText = source
+            }
+        } else if let path = arguments.first,
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
             currentProgramURL = URL(fileURLWithPath: expandedPath(path))
@@ -908,6 +915,18 @@ final class StudioModel: ObservableObject {
         Set(debuggerBreakpoints
             .filter(\.isEnabled)
             .map(\.location.lineNumber))
+    }
+
+    var debuggerSelectedLocalVariables: [BASICVariableSnapshot] {
+        guard let index = debuggerSelectedCallStackFrameIndex,
+              debuggerFrameLocalVariables.indices.contains(index) else {
+            return debuggerLocalVariables
+        }
+        return debuggerFrameLocalVariables[index]
+    }
+
+    func selectDebuggerCallStackFrame(_ frame: BASICCallStackFrame) {
+        debuggerSelectedCallStackFrameIndex = frame.index
     }
 
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
@@ -997,7 +1016,9 @@ final class StudioModel: ObservableObject {
         isProgramPaused = false
         debuggerExecutionLine = nil
         debuggerCallStack = []
+        debuggerSelectedCallStackFrameIndex = nil
         debuggerLocalVariables = []
+        debuggerFrameLocalVariables = []
         debuggerGlobalVariables = []
         activeExecutionControl = nil
     }
@@ -1182,7 +1203,9 @@ final class StudioModel: ObservableObject {
             debuggerExecutionLine = nil
             isProgramPaused = false
             debuggerCallStack = []
+            debuggerSelectedCallStackFrameIndex = nil
             debuggerLocalVariables = []
+            debuggerFrameLocalVariables = []
             debuggerGlobalVariables = session.debugGlobalVariables
             break
         case .failure(let error as BASICError):
@@ -1200,7 +1223,7 @@ final class StudioModel: ObservableObject {
                 isProgramPaused = false
                 break
             }
-            consoleMessage = error.description
+            consoleMessage = session.debugPauseDescription(for: error)
         case .failure(let error):
             isProgramPaused = false
             consoleMessage = "Unexpected error: \(error)"
@@ -1210,10 +1233,17 @@ final class StudioModel: ObservableObject {
         if paused {
             debuggerCallStack = session.debugCallStack
             debuggerLocalVariables = session.debugLocalVariables
+            debuggerFrameLocalVariables = session.debugFrameLocalVariables
+            if debuggerSelectedCallStackFrameIndex == nil ||
+                !debuggerCallStack.contains(where: { $0.index == debuggerSelectedCallStackFrameIndex }) {
+                debuggerSelectedCallStackFrameIndex = debuggerCallStack.first?.index
+            }
             debuggerGlobalVariables = session.debugGlobalVariables
         }
         if !paused {
             debuggerCallStack = []
+            debuggerSelectedCallStackFrameIndex = nil
+            debuggerFrameLocalVariables = []
             activeExecutionControl = nil
         }
         isProgramRunning = false
@@ -1334,12 +1364,17 @@ final class StudioModel: ObservableObject {
 
     private static func defaultProgramSource() -> String {
         let fileManager = FileManager.default
-        let relativePath = "basicPrograms/BASICStudio/test-suite.bas"
+        if let source = bundledDemoSource(named: "studio/test-suite") {
+            return source
+        }
+
+        let relativePath = "basicPrograms/demos/studio/test-suite.bas"
         let sourcePath = String(#filePath)
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let candidates = [
             fileManager.currentDirectoryPath + "/" + relativePath,
             fileManager.currentDirectoryPath + "/../../" + relativePath,
+            fileManager.currentDirectoryPath + "/basicPrograms/BASICStudio/test-suite.bas",
             sourceURL
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
@@ -1368,6 +1403,56 @@ final class StudioModel: ObservableObject {
         print "CENTER =", point(160,100)
         end
         """
+    }
+
+    private static func bundledDemoSource(named name: String) -> String? {
+        let normalized = name.hasSuffix(".bas") ? String(name.dropLast(4)) : name
+        for candidate in [
+            normalized,
+            "studio/\(normalized)",
+            "shell/\(normalized)"
+        ] {
+            let url = URL(fileURLWithPath: candidate)
+            let directory = url.deletingLastPathComponent().relativePath
+            let subdirectory = directory == "." || directory.isEmpty ? "Demos" : "Demos/\(directory)"
+            for resource in demoResourceCandidates(named: url.lastPathComponent, subdirectory: subdirectory) {
+                if let source = try? String(contentsOf: resource, encoding: .utf8) {
+                    return source
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func demoResourceCandidates(named name: String, subdirectory: String) -> [URL] {
+        let fileManager = FileManager.default
+        let sourceURL = URL(fileURLWithPath: String(#filePath))
+        let packageRoot = sourceURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        return [
+            Bundle.main.url(forResource: name, withExtension: "bas"),
+            Bundle.main.url(forResource: name, withExtension: "bas", subdirectory: subdirectory),
+            Bundle.main.resourceURL?
+                .appendingPathComponent(subdirectory)
+                .appendingPathComponent("\(name).bas"),
+            packageRoot
+                .appendingPathComponent("Sources/BASICStudio/Resources")
+                .appendingPathComponent(subdirectory)
+                .appendingPathComponent("\(name).bas"),
+            packageRoot
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("basicPrograms/demos")
+                .appendingPathComponent(String(subdirectory.dropFirst("Demos".count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+                .appendingPathComponent("\(name).bas"),
+            URL(fileURLWithPath: fileManager.currentDirectoryPath)
+                .appendingPathComponent("Resources")
+                .appendingPathComponent(subdirectory)
+                .appendingPathComponent("\(name).bas")
+        ].compactMap { $0 }
     }
 
     var programLineCount: Int {
@@ -1428,11 +1513,15 @@ struct DebugPane: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 10) {
                             DisclosureGroup("Call Stack", isExpanded: $isCallStackExpanded) {
-                                callStackList(model.debuggerCallStack)
+                                callStackList(
+                                    model.debuggerCallStack,
+                                    selectedIndex: model.debuggerSelectedCallStackFrameIndex,
+                                    selectFrame: model.selectDebuggerCallStackFrame
+                                )
                             }
 
                             DisclosureGroup("Local Variables", isExpanded: $isLocalsExpanded) {
-                                variableList(model.debuggerLocalVariables, emptyText: "No local variables are available.")
+                                variableList(model.debuggerSelectedLocalVariables, emptyText: "No local variables are available.")
                             }
 
                             DisclosureGroup("Globals", isExpanded: $isGlobalsExpanded) {
@@ -1495,7 +1584,11 @@ struct DebugPane: View {
     }
 
     @ViewBuilder
-    private func callStackList(_ frames: [BASICCallStackFrame]) -> some View {
+    private func callStackList(
+        _ frames: [BASICCallStackFrame],
+        selectedIndex: Int?,
+        selectFrame: @escaping (BASICCallStackFrame) -> Void
+    ) -> some View {
         if frames.isEmpty {
             Text("No active stack frames.")
                 .font(.callout)
@@ -1505,27 +1598,56 @@ struct DebugPane: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(frames) { frame in
-                    HStack(spacing: 8) {
-                        Text(frame.kind)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 64, alignment: .leading)
-                        Text(frame.name)
-                            .fontWeight(.medium)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if let location = frame.location {
-                            Text("\(location.lineNumber)")
-                                .monospacedDigit()
+                    Button {
+                        selectFrame(frame)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(frame.kind)
                                 .foregroundStyle(.secondary)
+                                .frame(width: 72, alignment: .leading)
+                            Text(frame.name)
+                                .fontWeight(.medium)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if let metadata = callStackMetadata(for: frame) {
+                                Text(metadata)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            if let location = frame.location {
+                                Text("\(location.lineNumber)")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .font(.caption)
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(frame.index == selectedIndex ? Color.accentColor.opacity(0.18) : Color.clear)
+                        )
                     }
-                    .font(.caption)
-                    .padding(.vertical, 5)
+                    .buttonStyle(.plain)
 
                     Divider()
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private func callStackMetadata(for frame: BASICCallStackFrame) -> String? {
+        var parts: [String] = []
+        if frame.isOverride {
+            parts.append("override")
+        }
+        if let receiverClassName = frame.receiverClassName,
+           let declaringClassName = frame.declaringClassName,
+           receiverClassName.caseInsensitiveCompare(declaringClassName) != .orderedSame {
+            parts.append("on \(receiverClassName)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     @ViewBuilder

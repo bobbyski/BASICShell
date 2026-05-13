@@ -137,7 +137,92 @@ enum SelfPackage {
     }
 }
 
-if let scriptPath = CommandLine.arguments.dropFirst().first {
+enum BundledDemos {
+    static func names() -> [String] {
+        guard let root = Bundle.module.resourceURL?.appendingPathComponent("Demos"),
+              let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            return []
+        }
+
+        return enumerator
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "bas" }
+            .compactMap { url -> String? in
+                guard let relative = pathRelativeToDemos(url) else { return nil }
+                return String(relative.dropLast(4))
+            }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    static func source(named name: String) -> String? {
+        let normalized = name.hasSuffix(".bas") ? String(name.dropLast(4)) : name
+        for candidate in [
+            normalized,
+            "shell/\(normalized)",
+            "studio/\(normalized)"
+        ] {
+            guard let url = Bundle.module.url(forResource: URL(fileURLWithPath: candidate).lastPathComponent, withExtension: "bas", subdirectory: demoSubdirectory(for: candidate)),
+                  let source = try? String(contentsOf: url, encoding: .utf8) else {
+                continue
+            }
+            return source
+        }
+        return nil
+    }
+
+    private static func demoSubdirectory(for candidate: String) -> String {
+        let url = URL(fileURLWithPath: candidate)
+        let directory = url.deletingLastPathComponent().relativePath
+        if directory == "." || directory.isEmpty { return "Demos" }
+        return "Demos/\(directory)"
+    }
+
+    private static func pathRelativeToDemos(_ url: URL) -> String? {
+        guard let root = Bundle.module.resourceURL?.appendingPathComponent("Demos").standardizedFileURL.path else {
+            return nil
+        }
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(root + "/") else { return nil }
+        return String(path.dropFirst(root.count + 1))
+    }
+}
+
+let arguments = Array(CommandLine.arguments.dropFirst())
+
+if arguments.first == "--list-demos" {
+    for name in BundledDemos.names() {
+        host.printLine(name)
+    }
+    exit(0)
+}
+
+if arguments.first == "--demo" {
+    guard arguments.count >= 2 else {
+        host.printLine("Usage: BASICShell --demo <name>")
+        exit(1)
+    }
+    guard let source = BundledDemos.source(named: arguments[1]) else {
+        host.printLine("Unknown demo: \(arguments[1])")
+        host.printLine("Available demos:")
+        for name in BundledDemos.names() {
+            host.printLine("  \(name)")
+        }
+        exit(1)
+    }
+    do {
+        session.program.loadSource(source)
+        try BASICInterpreter(program: session.program, host: host).run()
+        exit(0)
+    } catch let error as BASICError {
+        host.printLine(error.description)
+        exit(1)
+    } catch {
+        host.printLine("Error: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
+if let scriptPath = arguments.first {
     do {
         session.program.loadSource(try host.loadTextFile(path: scriptPath))
         try BASICInterpreter(program: session.program, host: host).run()

@@ -225,6 +225,9 @@ public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
     public let kind: String
     public let name: String
     public let location: BASICBreakpointLocation?
+    public let declaringClassName: String?
+    public let receiverClassName: String?
+    public let isOverride: Bool
 }
 
 enum BASICScalarType: String, Equatable {
@@ -389,8 +392,15 @@ private struct FunctionDefinition: Equatable {
 
 private struct FunctionFrame {
     let definition: FunctionDefinition
+    let receiverClassName: String?
+    let localContextIndex: Int
     var returnValue: BASICValue
     var didReturn: Bool = false
+}
+
+private struct GosubFrame {
+    let returnIndex: Int
+    let localContextIndex: Int
 }
 
 private struct FunctionCallResult {
@@ -415,8 +425,9 @@ private final class BASICRuntime {
         letMode = .global
     }
 
-    func pushLocalContext() {
+    func pushLocalContext() -> Int {
         locals.append([:])
+        return locals.count - 1
     }
 
     func popLocalContext() {
@@ -458,6 +469,17 @@ private final class BASICRuntime {
     func localSnapshots() -> [BASICVariableSnapshot] {
         guard let local = locals.last else { return [] }
         return snapshots(from: local, scope: .local)
+    }
+
+    func localSnapshots(depthFromTop: Int) -> [BASICVariableSnapshot] {
+        let index = locals.count - 1 - depthFromTop
+        guard locals.indices.contains(index) else { return [] }
+        return snapshots(from: locals[index], scope: .local)
+    }
+
+    func localSnapshots(contextIndex: Int) -> [BASICVariableSnapshot] {
+        guard locals.indices.contains(contextIndex) else { return [] }
+        return snapshots(from: locals[contextIndex], scope: .local)
     }
 
     func globalSnapshots() -> [BASICVariableSnapshot] {
@@ -679,8 +701,10 @@ private final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
         }
         if case .classType(let name) = type {
-            if case .object(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
-                return value
+            if case .object(let valueName, _) = value {
+                if valueName.uppercased() == name.uppercased() || isClass(valueName, subclassOf: name) {
+                    return value
+                }
             }
             if case .empty = value {
                 return defaultValue(for: type)
@@ -839,13 +863,24 @@ private final class BASICRuntime {
                 scope: scope,
                 children: children
             )
-        case .record(let recordName, let fields), .object(let recordName, let fields):
+        case .record(let recordName, let fields):
             let children = compositeFieldSnapshots(typeName: recordName, fields: fields, scope: scope, parentPath: path)
             return BASICVariableSnapshot(
                 path: path,
                 name: name,
                 typeName: recordName,
                 value: "\(children.count) fields",
+                scope: scope,
+                children: children
+            )
+        case .object(let className, let fields):
+            let fieldCount = compositeFieldDefinitions(for: className).count
+            let children = objectFieldSnapshots(typeName: className, fields: fields, scope: scope, parentPath: path)
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: className,
+                value: "\(fieldCount > 0 ? fieldCount : children.count) fields",
                 scope: scope,
                 children: children
             )
@@ -857,6 +892,45 @@ private final class BASICRuntime {
                 value: value.description,
                 scope: scope,
                 children: []
+            )
+        }
+    }
+
+    private func objectFieldSnapshots(
+        typeName: String,
+        fields: [String: BASICValue],
+        scope: BASICVariableScope,
+        parentPath: String
+    ) -> [BASICVariableSnapshot] {
+        guard let classDefinition = classDefinitions[typeName.uppercased()] else {
+            return compositeFieldSnapshots(typeName: typeName, fields: fields, scope: scope, parentPath: parentPath)
+        }
+
+        let chain = inheritanceChain(for: classDefinition)
+        guard chain.count > 1 else {
+            return compositeFieldSnapshots(typeName: typeName, fields: fields, scope: scope, parentPath: parentPath)
+        }
+
+        return chain.compactMap { definition in
+            let classFields = definition.fields
+            guard !classFields.isEmpty else { return nil }
+            let children = classFields.map { field in
+                let value = fields[field.normalizedName] ?? defaultValue(for: field.type)
+                return snapshot(
+                    name: field.displayName,
+                    type: field.type,
+                    value: value,
+                    scope: scope,
+                    path: "\(parentPath).\(definition.displayName).\(field.displayName)"
+                )
+            }
+            return BASICVariableSnapshot(
+                path: "\(parentPath).\(definition.displayName)",
+                name: definition.displayName,
+                typeName: "CLASS",
+                value: "\(children.count) fields",
+                scope: scope,
+                children: children
             )
         }
     }
@@ -913,6 +987,16 @@ private final class BASICRuntime {
         }
         fields.append(contentsOf: classDefinition.fields)
         return fields
+    }
+
+    private func inheritanceChain(for classDefinition: BASICClassDefinition) -> [BASICClassDefinition] {
+        var chain: [BASICClassDefinition] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            chain.append(contentsOf: inheritanceChain(for: baseDefinition))
+        }
+        chain.append(classDefinition)
+        return chain
     }
 
     private func validateFieldAccess(typeName: String, fieldName: String, accessClassName: String?) throws {
@@ -1506,8 +1590,33 @@ public final class BASICSession: @unchecked Sendable {
         activeInterpreter?.debugCallStack ?? []
     }
 
+    public var debugFrameLocalVariables: [[BASICVariableSnapshot]] {
+        activeInterpreter?.debugFrameLocalVariables ?? []
+    }
+
     public var debugCallDepth: Int {
         activeInterpreter?.debugCallDepth ?? 0
+    }
+
+    public func debugPauseDescription(for error: BASICError) -> String {
+        let baseDescription: String
+        switch error {
+        case .breakRequested(let line):
+            if let line {
+                baseDescription = "Break at \(line)"
+            } else {
+                baseDescription = "Break at unnumbered line"
+            }
+        case .breakpoint(let location), .stepComplete(let location):
+            baseDescription = "Break at \(location.lineNumber)"
+        default:
+            return error.description
+        }
+
+        guard let frame = debugCallStack.first, frame.kind != "Program" else {
+            return baseDescription
+        }
+        return "\(baseDescription) in \(frame.kind) \(frame.name)"
     }
 
     private func immediateProgram(for source: String) -> BASICProgram {
@@ -1586,7 +1695,7 @@ public final class BASICInterpreter {
     private let runtime: BASICRuntime
     private let fileState: BASICFileState
     private var executionControl: BASICExecutionControl?
-    private var gosubStack: [Int] = []
+    private var gosubStack: [GosubFrame] = []
     private var forStack: [ForFrame] = []
     private var functionStack: [FunctionFrame] = []
     private var functionDefinitions: [String: FunctionDefinition] = [:]
@@ -1598,6 +1707,7 @@ public final class BASICInterpreter {
     private var parsedLines: [ParsedLine] = []
     private var pausedDebugCallStack: [BASICCallStackFrame]?
     private var pausedDebugLocalVariables: [BASICVariableSnapshot]?
+    private var pausedDebugFrameLocalVariables: [[BASICVariableSnapshot]]?
     private var pausedDebugGlobalVariables: [BASICVariableSnapshot]?
     private var pausedDebugCallDepth: Int?
     private var pc = 0
@@ -1767,6 +1877,10 @@ public final class BASICInterpreter {
         pausedDebugCallStack ?? currentDebugCallStack()
     }
 
+    fileprivate var debugFrameLocalVariables: [[BASICVariableSnapshot]] {
+        pausedDebugFrameLocalVariables ?? currentDebugFrameLocalVariables()
+    }
+
     private func currentDebugCallStack() -> [BASICCallStackFrame] {
         var frames: [BASICCallStackFrame] = []
 
@@ -1774,20 +1888,26 @@ public final class BASICInterpreter {
             frames.append(
                 BASICCallStackFrame(
                     index: offset,
-                    kind: frame.definition.ownerClassName == nil ? "Function" : "Method",
+                    kind: debugFrameKind(for: frame.definition),
                     name: frame.definition.ownerClassName.map { "\($0).\((frame.definition.displayName))" } ?? frame.definition.displayName,
-                    location: parsedLines[safe: frame.definition.startIndex]?.breakpointLocation
+                    location: parsedLines[safe: frame.definition.startIndex]?.breakpointLocation,
+                    declaringClassName: frame.definition.ownerClassName,
+                    receiverClassName: frame.receiverClassName,
+                    isOverride: frame.definition.isOverride
                 )
             )
         }
 
-        for (offset, returnIndex) in gosubStack.reversed().enumerated() {
+        for (offset, frame) in gosubStack.reversed().enumerated() {
             frames.append(
                 BASICCallStackFrame(
                     index: frames.count + offset,
                     kind: "GOSUB",
                     name: "Return",
-                    location: parsedLines[safe: returnIndex]?.breakpointLocation
+                    location: parsedLines[safe: frame.returnIndex]?.breakpointLocation,
+                    declaringClassName: nil,
+                    receiverClassName: nil,
+                    isOverride: false
                 )
             )
         }
@@ -1797,16 +1917,42 @@ public final class BASICInterpreter {
                 index: frames.count,
                 kind: "Program",
                 name: "[main]",
-                location: parsedLines[safe: pc]?.breakpointLocation
+                location: parsedLines[safe: pc]?.breakpointLocation,
+                declaringClassName: nil,
+                receiverClassName: nil,
+                isOverride: false
             )
         )
 
         return frames
     }
 
+    private func currentDebugFrameLocalVariables() -> [[BASICVariableSnapshot]] {
+        var snapshots: [[BASICVariableSnapshot]] = []
+
+        for frame in functionStack.reversed() {
+            snapshots.append(runtime.localSnapshots(contextIndex: frame.localContextIndex))
+        }
+
+        for frame in gosubStack.reversed() {
+            snapshots.append(runtime.localSnapshots(contextIndex: frame.localContextIndex))
+        }
+
+        snapshots.append([])
+        return snapshots
+    }
+
+    private func debugFrameKind(for definition: FunctionDefinition) -> String {
+        guard definition.ownerClassName != nil else { return "Function" }
+        if definition.normalizedName == "NEW" { return "Constructor" }
+        return "Method"
+    }
+
     private func snapshotPausedDebugState() {
+        guard pausedDebugCallStack == nil else { return }
         pausedDebugCallStack = currentDebugCallStack()
         pausedDebugLocalVariables = runtime.localSnapshots()
+        pausedDebugFrameLocalVariables = currentDebugFrameLocalVariables()
         pausedDebugGlobalVariables = runtime.globalSnapshots()
         pausedDebugCallDepth = gosubStack.count + functionStack.count
     }
@@ -1814,6 +1960,7 @@ public final class BASICInterpreter {
     private func clearPausedDebugSnapshots() {
         pausedDebugCallStack = nil
         pausedDebugLocalVariables = nil
+        pausedDebugFrameLocalVariables = nil
         pausedDebugGlobalVariables = nil
         pausedDebugCallDepth = nil
     }
@@ -1974,19 +2121,19 @@ public final class BASICInterpreter {
         case .gotoLabel(let label):
             return .gotoLabel(label)
         case .gosub(let target):
-            gosubStack.append(pc + 1)
-            runtime.pushLocalContext()
+            let localContextIndex = runtime.pushLocalContext()
+            gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
             return target.flow
         case .returnFromSubroutine:
             if !functionStack.isEmpty {
                 try setFunctionReturn(nil)
                 return .functionReturn
             }
-            guard let index = gosubStack.popLast() else {
+            guard let frame = gosubStack.popLast() else {
                 throw BASICError.runtime("RETURN without GOSUB")
             }
             runtime.popLocalContext()
-            return .returnTo(index)
+            return .returnTo(frame.returnIndex)
         case .returnValue(let expression):
             guard !functionStack.isEmpty else {
                 throw BASICError.runtime("RETURN value outside FUNCTION")
@@ -2518,7 +2665,7 @@ public final class BASICInterpreter {
         guard let definition = functionDefinitions[name.normalized] else {
             throw BASICError.runtime("Unknown function \(name.name)")
         }
-        return try callFunction(definition: definition, receiver: nil, arguments: arguments, allowVoid: false).value
+        return try callFunction(definition: definition, receiver: nil, receiverClassName: nil, arguments: arguments, allowVoid: false).value
     }
 
     private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -2533,7 +2680,13 @@ public final class BASICInterpreter {
             throw BASICError.runtime("CLASS \(classDefinition.displayName) has no method \(method.name)")
         }
         try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
-        let result = try callFunction(definition: definition, receiver: receiverValue, arguments: arguments, allowVoid: false)
+        let result = try callFunction(
+            definition: definition,
+            receiver: receiverValue,
+            receiverClassName: classDefinition.displayName,
+            arguments: arguments,
+            allowVoid: false
+        )
         if let updatedReceiver = result.receiver {
             try runtime.assign(reference: receiver, indexes: try receiver.indexes.map(integer), value: updatedReceiver, accessClassName: currentClassContext)
         }
@@ -2569,7 +2722,13 @@ public final class BASICInterpreter {
         return false
     }
 
-    private func callFunction(definition: FunctionDefinition, receiver: BASICValue?, arguments: [Expression], allowVoid: Bool) throws -> FunctionCallResult {
+    private func callFunction(
+        definition: FunctionDefinition,
+        receiver: BASICValue?,
+        receiverClassName: String?,
+        arguments: [Expression],
+        allowVoid: Bool
+    ) throws -> FunctionCallResult {
         guard allowVoid || definition.returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }
@@ -2581,7 +2740,7 @@ public final class BASICInterpreter {
         }
 
         let values = try arguments.map(evaluate)
-        runtime.pushLocalContext()
+        let localContextIndex = runtime.pushLocalContext()
         if let receiver {
             try runtime.assign(
                 kind: .local,
@@ -2594,7 +2753,12 @@ public final class BASICInterpreter {
             try runtime.assign(kind: .local, variable: parameter.variable, declaredType: parameter.type, value: value)
         }
 
-        functionStack.append(FunctionFrame(definition: definition, returnValue: runtime.defaultValue(for: definition.returnType)))
+        functionStack.append(FunctionFrame(
+            definition: definition,
+            receiverClassName: receiverClassName,
+            localContextIndex: localContextIndex,
+            returnValue: runtime.defaultValue(for: definition.returnType)
+        ))
         defer {
             _ = functionStack.popLast()
             runtime.popLocalContext()
@@ -3004,7 +3168,13 @@ public final class BASICInterpreter {
             guard let constructor = lookupMethod(named: "NEW", in: classDefinition) else {
                 throw BASICError.runtime("CLASS \(classDefinition.displayName) has no constructor")
             }
-            let result = try callFunction(definition: constructor, receiver: object, arguments: arguments, allowVoid: true)
+            let result = try callFunction(
+                definition: constructor,
+                receiver: object,
+                receiverClassName: classDefinition.displayName,
+                arguments: arguments,
+                allowVoid: true
+            )
             return result.receiver ?? object
         case .unaryMinus(let expression):
             guard let value = try evaluate(expression).number else {

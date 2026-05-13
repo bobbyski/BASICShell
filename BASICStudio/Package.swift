@@ -17,6 +17,9 @@ let package = Package(
                 "BASICCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm"
+            ],
+            resources: [
+                .copy("Resources/Demos")
             ]
         )
     ]

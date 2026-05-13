@@ -23,6 +23,10 @@ targets:
     platform: macOS
     sources:
       - path: Sources/BASICStudio
+        excludes:
+          - Resources
+    resources:
+      - path: Sources/BASICStudio/Resources/Demos/studio
     dependencies:
       - package: BASICCore
         product: BASICCore
