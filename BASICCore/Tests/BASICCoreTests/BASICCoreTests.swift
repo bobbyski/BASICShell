@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BASICCore
 
@@ -1632,6 +1633,103 @@ struct BASICCoreTests {
         #expect(host.output == ["5"])
     }
 
+    @Test("IMPORT directory recursively loads BAS files for classes and interfaces")
+    func importDirectoryRecursivelyLoadsBasFilesForClassesAndInterfaces() {
+        let host = TestHost()
+        host.files["lib/interfaces.bas"] = """
+        interface Printable
+            function Summary$() as string
+        end interface
+        """
+        host.files["lib/models/report.bas"] = """
+        print "SHOULD NOT RUN"
+        class Report
+            implements Printable
+            public Title as string
+
+            function New(title as string)
+                ME.Title = title
+            end function
+
+            function Summary$() as string
+                return ME.Title
+            end function
+        end class
+        """
+        host.files["lib/readme.txt"] = "ignore me"
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "lib/"
+        dim report as Report
+        report = new Report("Imported")
+        print report.Summary$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Imported"])
+    }
+
+    @Test("DATA READ and RESTORE feed scalar variables")
+    func dataReadAndRestoreFeedScalarVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        data Ada, 18, TRUE
+        read name$, score%, passed
+        print name$, score%, passed
+        restore
+        read again$
+        print again$
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "Ada           18            TRUE",
+            "Ada"
+        ])
+    }
+
+    @Test("READ can fill arrays and TYPE fields")
+    func readCanFillArraysAndTypeFields() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string
+            Score as integer
+        end type
+        dim scores(2) as integer
+        dim student as Student
+        data 10, 20, 30, Grace, 94
+        read scores(0), scores(1), scores(2), student.Name, student.Score
+        print scores(0), scores(1), scores(2)
+        print student.Name, student.Score
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "10            20            30",
+            "Grace         94"
+        ])
+    }
+
+    @Test("READ reports out of DATA")
+    func readReportsOutOfData() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        data 1
+        read a, b
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Out of DATA"])
+    }
+
     @Test("CLASS supports fields and NEW object construction")
     func classSupportsFieldsAndNewObjectConstruction() {
         let host = TestHost()
@@ -1851,6 +1949,15 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
         files.keys.sorted()
     }
 
+    func listFiles(path: String) throws -> [String] {
+        let prefix = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\")) + "/"
+        return files.keys
+            .filter { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+            .filter { !$0.isEmpty }
+            .sorted()
+    }
+
     func runSystemCommand(_ command: String) throws -> String {
         systemCommands.append(command)
         return systemOutputs[command] ?? ""
@@ -1930,5 +2037,14 @@ private final class TextOnlyHost: BASICFileHost {
 
     func listFiles() throws -> [String] {
         files.keys.sorted()
+    }
+
+    func listFiles(path: String) throws -> [String] {
+        let prefix = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\")) + "/"
+        return files.keys
+            .filter { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+            .filter { !$0.isEmpty }
+            .sorted()
     }
 }

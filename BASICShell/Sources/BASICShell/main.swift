@@ -17,7 +17,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
     }
 
     func loadTextFile(path: String) throws -> String {
-        try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+        do {
+            return try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+        } catch {
+            guard let url = bundledDemoURL(path: path) else { throw error }
+            return try String(contentsOf: url, encoding: .utf8)
+        }
     }
 
     func saveTextFile(path: String, text: String) throws {
@@ -29,6 +34,57 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
             .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
             .filter { !$0.hasPrefix(".") }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func listFiles(path: String) throws -> [String] {
+        let root = URL(fileURLWithPath: expandedPath(path), isDirectory: true).standardizedFileURL
+        if let diskFiles = try recursiveFiles(at: root) {
+            return diskFiles
+        }
+
+        guard let bundledRoot = bundledDemoURL(path: path),
+              let bundledFiles = try recursiveFiles(at: bundledRoot.standardizedFileURL) else {
+            return []
+        }
+        return bundledFiles
+    }
+
+    private func recursiveFiles(at root: URL) throws -> [String]? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        return try enumerator
+            .compactMap { $0 as? URL }
+            .filter { url in
+                try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+            }
+            .map { url in
+                String(url.standardizedFileURL.path.dropFirst(root.path.count + 1))
+            }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private func bundledDemoURL(path: String) -> URL? {
+        let normalized = normalizedDemoPath(path)
+        let url = Bundle.module.resourceURL?
+            .appendingPathComponent("Demos")
+            .appendingPathComponent(normalized)
+        guard let url, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    private func normalizedDemoPath(_ path: String) -> String {
+        var normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        if normalized.hasPrefix("basicPrograms/demos/") {
+            normalized.removeFirst("basicPrograms/demos/".count)
+        }
+        return normalized
     }
 
     private func expandedPath(_ path: String) -> String {

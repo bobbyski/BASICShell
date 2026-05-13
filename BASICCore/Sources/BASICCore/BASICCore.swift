@@ -408,6 +408,11 @@ private struct FunctionCallResult {
     let receiver: BASICValue?
 }
 
+private enum ReadTarget: Equatable {
+    case variable(VariableName)
+    case reference(VariableReference)
+}
+
 private final class BASICRuntime {
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
@@ -1073,6 +1078,7 @@ public protocol BASICFileHost: BASICHost {
     func loadTextFile(path: String) throws -> String
     func saveTextFile(path: String, text: String) throws
     func listFiles() throws -> [String]
+    func listFiles(path: String) throws -> [String]
 }
 
 public protocol BASICSystemHost: BASICHost {
@@ -1086,6 +1092,10 @@ public extension BASICFileHost {
 
     func listFiles() throws -> [String] {
         throw BASICError.runtime("FILES is not supported by this host")
+    }
+
+    func listFiles(path: String) throws -> [String] {
+        throw BASICError.runtime("Directory IMPORT is not supported by this host")
     }
 }
 
@@ -1710,6 +1720,8 @@ public final class BASICInterpreter {
     private var pausedDebugFrameLocalVariables: [[BASICVariableSnapshot]]?
     private var pausedDebugGlobalVariables: [BASICVariableSnapshot]?
     private var pausedDebugCallDepth: Int?
+    private var dataValues: [BASICValue] = []
+    private var dataIndex = 0
     private var pc = 0
     private var isPrepared = false
 
@@ -1769,6 +1781,8 @@ public final class BASICInterpreter {
         try validateClassInterfaces()
         runtime.classDefinitions = classDefinitions
         functionDefinitions = try collectFunctions(in: parsed)
+        dataValues = collectData(in: parsed)
+        dataIndex = 0
 
         pc = 0
         if let startLine {
@@ -1779,29 +1793,56 @@ public final class BASICInterpreter {
     }
 
     private func expandedProgramLines() throws -> [ProgramLine] {
-        try expandedProgramLines(from: program.orderedLines.map {
+        var importedPaths: Set<String> = []
+        return try expandedProgramLines(from: program.orderedLines.map {
             ProgramLine(number: $0.number, source: $0.source, sourceLineNumber: $0.sourceLineNumber, isImported: $0.isImported)
-        }, importedPaths: [])
+        }, importedPaths: &importedPaths)
     }
 
-    private func expandedProgramLines(from lines: [ProgramLine], importedPaths: Set<String>) throws -> [ProgramLine] {
+    private func expandedProgramLines(from lines: [ProgramLine], importedPaths: inout Set<String>) throws -> [ProgramLine] {
         var expanded: [ProgramLine] = []
-        var importedPaths = importedPaths
         for line in lines {
             var parser = try Parser(source: line.source)
             if case .importDirective(let path) = try parser.parseStatement() {
-                guard !importedPaths.contains(path) else { continue }
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("IMPORT is not supported by this host")
                 }
-                importedPaths.insert(path)
-                let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: path))
-                expanded += try expandedProgramLines(from: imported, importedPaths: importedPaths)
+                if Self.isDirectoryImportPath(path) {
+                    for importedFile in try Self.importedBasFiles(in: path, using: fileHost) {
+                        guard !importedPaths.contains(importedFile) else { continue }
+                        importedPaths.insert(importedFile)
+                        let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: importedFile))
+                        expanded += try expandedProgramLines(from: imported, importedPaths: &importedPaths)
+                    }
+                } else {
+                    guard !importedPaths.contains(path) else { continue }
+                    importedPaths.insert(path)
+                    let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: path))
+                    expanded += try expandedProgramLines(from: imported, importedPaths: &importedPaths)
+                }
             } else {
                 expanded.append(line)
             }
         }
         return expanded
+    }
+
+    private static func isDirectoryImportPath(_ path: String) -> Bool {
+        path.hasSuffix("/") || path.hasSuffix("\\")
+    }
+
+    private static func importedBasFiles(in path: String, using fileHost: BASICFileHost) throws -> [String] {
+        let directory = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        return try fileHost.listFiles(path: path)
+            .filter { $0.lowercased().hasSuffix(".bas") }
+            .map { joinImportPath(directory: directory, relativePath: $0) }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private static func joinImportPath(directory: String, relativePath: String) -> String {
+        let cleanRelative = relativePath.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        guard !directory.isEmpty else { return cleanRelative }
+        return "\(directory)/\(cleanRelative)"
     }
 
     public func continueExecution() throws {
@@ -1967,7 +2008,7 @@ public final class BASICInterpreter {
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
-        case .empty, .remark:
+        case .empty, .remark, .data:
             return .next
         case .typeDeclaration:
             guard let index = matchingEndType(after: pc, in: parsed) else {
@@ -2097,6 +2138,12 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("Expected numeric input for \(name)")
             }
             try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
+            return .next
+        case .read(let targets):
+            try readData(into: targets)
+            return .next
+        case .restore:
+            dataIndex = 0
             return .next
         case .load(let path):
             let resolvedPath = try string(path)
@@ -2266,6 +2313,38 @@ public final class BASICInterpreter {
             index += 1
         }
         return definitions
+    }
+
+    private func collectData(in parsed: [ParsedLine]) -> [BASICValue] {
+        parsed
+            .filter { !$0.isImported }
+            .flatMap { line -> [BASICValue] in
+                if case .data(let values) = line.statement {
+                    return values
+                }
+                return []
+            }
+    }
+
+    private func readData(into targets: [ReadTarget]) throws {
+        for target in targets {
+            guard dataIndex < dataValues.count else {
+                throw BASICError.runtime("Out of DATA")
+            }
+            let value = dataValues[dataIndex]
+            dataIndex += 1
+            switch target {
+            case .variable(let variable):
+                try runtime.assign(kind: .bare, variable: variable, declaredType: nil, value: value)
+            case .reference(let reference):
+                try runtime.assign(
+                    reference: reference,
+                    indexes: try reference.indexes.map(integer),
+                    value: value,
+                    accessClassName: currentClassContext
+                )
+            }
+        }
     }
 
     private func collectRecords(in parsed: [ParsedLine]) throws -> [String: BASICRecordDefinition] {
@@ -3358,6 +3437,9 @@ private indirect enum Statement: Equatable {
         explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
     )
     case endFunction
+    case data([BASICValue])
+    case read([ReadTarget])
+    case restore
     case print([PrintPart])
     case screen(Expression)
     case color(Expression)
@@ -3721,6 +3803,15 @@ private struct Parser {
             guard case .string(let path) = advance() else { throw syntax("Expected import path") }
             return .importDirective(path)
         }
+        if matchIdentifier("DATA") {
+            return .data(try parseDataValues())
+        }
+        if matchIdentifier("READ") {
+            return .read(try parseReadTargets())
+        }
+        if matchIdentifier("RESTORE") {
+            return .restore
+        }
         if matchIdentifier("FUNCTION") {
             return try parseFunctionDeclaration(visibility: .public, isOverride: false)
         }
@@ -4051,6 +4142,50 @@ private struct Parser {
             }
         }
         return parts
+    }
+
+    private mutating func parseDataValues() throws -> [BASICValue] {
+        var values: [BASICValue] = []
+        repeat {
+            if isStatementEnd {
+                values.append(.string(BASICString("")))
+                break
+            }
+            values.append(try parseDataValue())
+        } while match(.comma)
+        return values
+    }
+
+    private mutating func parseDataValue() throws -> BASICValue {
+        if match(.minus) {
+            guard case .number(let value) = advance() else { throw syntax("Expected number after - in DATA") }
+            return .number(-value)
+        }
+        switch advance() {
+        case .number(let value):
+            return .number(value)
+        case .string(let value):
+            return .string(BASICString(value))
+        case .identifier(let value):
+            if value.uppercased() == "TRUE" { return .boolean(true) }
+            if value.uppercased() == "FALSE" { return .boolean(false) }
+            return .string(BASICString(value))
+        default:
+            throw syntax("Expected DATA value")
+        }
+    }
+
+    private mutating func parseReadTargets() throws -> [ReadTarget] {
+        var targets: [ReadTarget] = []
+        repeat {
+            let reference = try parseVariableReference(message: "Expected variable after READ")
+            if reference.isSimple {
+                targets.append(.variable(reference.base))
+            } else {
+                targets.append(.reference(reference))
+            }
+        } while match(.comma)
+        return targets
     }
 
     private mutating func parseCaseClauses() throws -> [CaseClause] {
@@ -4485,7 +4620,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "LOAD", "SAVE", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]

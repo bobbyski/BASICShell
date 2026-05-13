@@ -810,7 +810,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -2000,7 +2000,12 @@ extension StudioModel: BASICHost {
 
 extension StudioModel: BASICFileHost, BASICSystemHost {
     nonisolated func loadTextFile(path: String) throws -> String {
-        try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+        do {
+            return try String(contentsOfFile: expandedPath(path), encoding: .utf8)
+        } catch {
+            guard let url = bundledDemoURL(path: path) else { throw error }
+            return try String(contentsOf: url, encoding: .utf8)
+        }
     }
 
     nonisolated func saveTextFile(path: String, text: String) throws {
@@ -2012,6 +2017,82 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
             .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
             .filter { !$0.hasPrefix(".") }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    nonisolated func listFiles(path: String) throws -> [String] {
+        let root = URL(fileURLWithPath: expandedPath(path), isDirectory: true).standardizedFileURL
+        if let diskFiles = try recursiveFiles(at: root) {
+            return diskFiles
+        }
+
+        for root in bundledDemoRootCandidates(path: path) {
+            if let files = try recursiveFiles(at: root.standardizedFileURL) {
+                return files
+            }
+        }
+        return []
+    }
+
+    nonisolated private func recursiveFiles(at root: URL) throws -> [String]? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        return try enumerator
+            .compactMap { $0 as? URL }
+            .filter { url in
+                try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+            }
+            .map { url in
+                String(url.standardizedFileURL.path.dropFirst(root.path.count + 1))
+            }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    nonisolated private func bundledDemoURL(path: String) -> URL? {
+        for root in bundledDemoRootCandidates(path: "") {
+            let url = root.appendingPathComponent(normalizedDemoPath(path))
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    nonisolated private func bundledDemoRootCandidates(path: String) -> [URL] {
+        let normalized = normalizedDemoPath(path)
+        let fileManager = FileManager.default
+        let sourceURL = URL(fileURLWithPath: String(#filePath))
+        let packageRoot = sourceURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        return [
+            Bundle.main.resourceURL?.appendingPathComponent("Demos").appendingPathComponent(normalized),
+            Bundle.main.resourceURL?.appendingPathComponent(normalized),
+            packageRoot.appendingPathComponent("Sources/BASICStudio/Resources/Demos").appendingPathComponent(normalized),
+            packageRoot
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("basicPrograms/demos")
+                .appendingPathComponent(normalized)
+        ]
+        .compactMap { $0 }
+        .filter { fileManager.fileExists(atPath: $0.path) }
+    }
+
+    nonisolated private func normalizedDemoPath(_ path: String) -> String {
+        var normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        if normalized.hasPrefix("basicPrograms/demos/") {
+            normalized.removeFirst("basicPrograms/demos/".count)
+        }
+        return normalized
     }
 }
 
