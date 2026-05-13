@@ -686,6 +686,18 @@ struct MonacoEditor: NSViewRepresentable {
         .basic-error-line {
           background: rgba(255, 59, 48, 0.16);
         }
+        .basic-diagnostic-range {
+          background: rgba(255, 59, 48, 0.38);
+          outline: 1px solid rgba(255, 69, 58, 0.95);
+        }
+        .basic-diagnostic-line {
+          background: rgba(255, 59, 48, 0.10);
+        }
+        .basic-diagnostic-message {
+          color: #ff8a80;
+          font-style: italic;
+          margin-left: 1.5em;
+        }
         .basic-execution-line {
           background: rgba(48, 209, 88, 0.22);
           border-left: 3px solid rgba(48, 209, 88, 0.95);
@@ -712,6 +724,7 @@ struct MonacoEditor: NSViewRepresentable {
         let pendingFindShowsReplace = false;
         let suppressChange = false;
         let errorDecorations = [];
+        let diagnosticDecorations = [];
         let executionDecorations = [];
         let breakpointDecorations = [];
 
@@ -805,6 +818,41 @@ struct MonacoEditor: NSViewRepresentable {
             };
           });
           monaco.editor.setModelMarkers(editor.getModel(), "aibasic", markers);
+
+          const model = editor.getModel();
+          const decorations = (diagnostics || []).flatMap((diagnostic) => {
+            const lineCount = model ? model.getLineCount() : 1;
+            const lineNumber = Math.min(Math.max(1, diagnostic.lineNumber || 1), lineCount);
+            const lineLength = model ? model.getLineLength(lineNumber) : 1;
+            const column = Math.min(Math.max(1, (diagnostic.column || 0) + 1), Math.max(1, lineLength + 1));
+            const message = diagnostic.message || "Diagnostic";
+            return [
+              {
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                  isWholeLine: true,
+                  className: "basic-diagnostic-line",
+                  overviewRuler: {
+                    color: "rgba(255, 59, 48, 0.85)",
+                    position: monaco.editor.OverviewRulerLane.Right
+                  }
+                }
+              },
+              {
+                range: new monaco.Range(lineNumber, column, lineNumber, Math.min(column + 1, lineLength + 1)),
+                options: {
+                  inlineClassName: "basic-diagnostic-range",
+                  hoverMessage: { value: message },
+                  after: {
+                    contentText: "  " + message,
+                    inlineClassName: "basic-diagnostic-message"
+                  },
+                  stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+                }
+              }
+            ];
+          });
+          diagnosticDecorations.splice(0, diagnosticDecorations.length, ...editor.deltaDecorations(diagnosticDecorations, decorations));
         };
 
         window.basicStudioSetExecutionLine = function(lineNumber) {

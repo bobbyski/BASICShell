@@ -1865,6 +1865,62 @@ struct BASICCoreTests {
         #expect(host.output == ["Quarterly", "Report: Quarterly"])
     }
 
+    @Test("INTERFACE typed variables accept conforming objects and dispatch methods")
+    func interfaceTypedVariablesAcceptConformingObjectsAndDispatchMethods() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+
+            function New(title as string)
+                ME.Title = title
+            end function
+
+            function Text$() as string
+                return "Report: " + ME.Title
+            end function
+        end class
+
+        dim item as Printable
+        item = new Report("Quarterly")
+        print item.Text$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Report: Quarterly"])
+    }
+
+    @Test("INTERFACE typed variables reject nonconforming objects")
+    func interfaceTypedVariablesRejectNonconformingObjects() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Text$() as string
+        end interface
+
+        class Report
+            function Text$() as string
+                return "Report"
+            end function
+        end class
+
+        dim item as Printable
+        item = new Report()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Type error: Cannot assign non-Printable object to item"])
+    }
+
     @Test("INTERFACE rejects unknown inherited interfaces")
     func interfaceRejectsUnknownInheritedInterfaces() {
         let host = TestHost()

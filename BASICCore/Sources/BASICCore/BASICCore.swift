@@ -267,6 +267,7 @@ enum BASICType: Equatable {
     case void
     case record(String)
     case classType(String)
+    case interfaceType(String)
 }
 
 private struct BASICTypeSpec: Equatable {
@@ -441,6 +442,7 @@ private final class BASICRuntime {
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
+    var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
     var letMode: LetMode = .global
 
@@ -673,6 +675,9 @@ private final class BASICRuntime {
         if case .record(let name) = type, classDefinitions[name.uppercased()] != nil {
             return .classType(name)
         }
+        if case .record(let name) = type, interfaceDefinitions[name.uppercased()] != nil {
+            return .interfaceType(name)
+        }
         return type
     }
 
@@ -740,6 +745,16 @@ private final class BASICRuntime {
             }
             throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
         }
+        if case .interfaceType(let name) = type {
+            if case .object(let valueName, _) = value,
+               classConforms(valueName, toInterface: name) {
+                return value
+            }
+            if case .empty = value {
+                return .empty
+            }
+            throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
+        }
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
         }
@@ -798,6 +813,8 @@ private final class BASICRuntime {
                 ($0.normalizedName, defaultValue(for: $0.type))
             })
             return .object(definition.displayName, fields)
+        case .interfaceType:
+            return .empty
         }
     }
 
@@ -1063,6 +1080,39 @@ private final class BASICRuntime {
         return false
     }
 
+    private func classConforms(_ className: String, toInterface interfaceName: String) -> Bool {
+        guard let classDefinition = classDefinitions[className.uppercased()] else { return false }
+        return inheritedInterfaceNames(for: classDefinition).contains {
+            $0.uppercased() == interfaceName.uppercased()
+        }
+    }
+
+    private func inheritedInterfaceNames(for classDefinition: BASICClassDefinition) -> [String] {
+        var names: [String] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            names.append(contentsOf: inheritedInterfaceNames(for: baseDefinition))
+        }
+        for interfaceName in classDefinition.implementedInterfaces {
+            names.append(interfaceName)
+            if let interfaceDefinition = interfaceDefinitions[interfaceName.uppercased()] {
+                names.append(contentsOf: inheritedInterfaceNames(for: interfaceDefinition))
+            }
+        }
+        return names
+    }
+
+    private func inheritedInterfaceNames(for interfaceDefinition: BASICInterfaceDefinition) -> [String] {
+        var names: [String] = []
+        for interfaceName in interfaceDefinition.inheritedInterfaces {
+            names.append(interfaceName)
+            if let inheritedDefinition = interfaceDefinitions[interfaceName.uppercased()] {
+                names.append(contentsOf: inheritedInterfaceNames(for: inheritedDefinition))
+            }
+        }
+        return names
+    }
+
     private func arraySummary(_ array: BASICArray) -> String {
         let bounds = array.dimensions.map { "0...\($0)" }.joined(separator: " x ")
         return "\(array.values.count) elements (\(bounds))"
@@ -1088,6 +1138,7 @@ private extension BASICType {
         case .void: return "VOID"
         case .record(let name): return name
         case .classType(let name): return name
+        case .interfaceType(let name): return name
         }
     }
 }
@@ -1829,6 +1880,7 @@ public final class BASICInterpreter {
                 recordDefinitions = try collectRecords(in: parsed)
                 runtime.recordDefinitions = recordDefinitions
                 interfaceDefinitions = try collectInterfaces(in: parsed)
+                runtime.interfaceDefinitions = interfaceDefinitions
                 classDefinitions = try collectClasses(in: parsed)
                 try validateInterfaceInheritance()
                 try validateClassInheritance()
@@ -1935,6 +1987,7 @@ public final class BASICInterpreter {
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
+        runtime.interfaceDefinitions = interfaceDefinitions
         classDefinitions = try collectClasses(in: parsed)
         try validateInterfaceInheritance()
         try validateClassInheritance()
@@ -4471,6 +4524,9 @@ private struct Parser {
         case "CLASS":
             guard case .identifier(let className) = advance() else { throw syntax("Expected CLASS type name") }
             type = .classType(className)
+        case "INTERFACE":
+            guard case .identifier(let interfaceName) = advance() else { throw syntax("Expected INTERFACE type name") }
+            type = .interfaceType(interfaceName)
         default:
             type = .record(name)
         }
