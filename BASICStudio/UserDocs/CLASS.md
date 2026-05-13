@@ -7,6 +7,7 @@ Defines an object type. Classes support public/private/protected fields and meth
 ```basic
 interface Printable
     function Title() as string
+    function ToText$() as string
 end interface
 
 class Report
@@ -22,14 +23,28 @@ class Report
     function Summary$() as string
         return ME.Title + " READY"
     end function
+
+    function Text$() as string implements Printable.ToText$
+        return ME.Title
+    end function
 end class
 
 class FancyReport
     inherits Report
     public Badge as string
 
+    function New(title as string, badge as string)
+        ME.Title = title
+        ME.Badge = badge
+    end function
+
     overrides function Summary$() as string
         return ME.Title + " " + ME.Badge
+    end function
+
+    function Rename$(title as string) as string
+        ME.Title = title
+        return ME.Title
     end function
 end class
 
@@ -41,11 +56,12 @@ report.Count = 12
 print report.Title
 print report.Title()
 print report.Summary$()
+print report.Text$()
 print report.Count
 
 dim fancy as FancyReport
-fancy = new FancyReport()
-fancy.Title = "Phase2"
-fancy.Badge = "OK"
+fancy = new FancyReport("Phase2", "OK")
+print fancy.Summary$()
+print fancy.Rename$("Phase2B")
 print fancy.Summary$()
 ```

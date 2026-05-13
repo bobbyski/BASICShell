@@ -274,6 +274,13 @@ private struct BASICInterfaceDefinition: Equatable {
     let members: [BASICInterfaceMember]
 }
 
+private struct BASICExplicitInterfaceImplementation: Equatable {
+    let interfaceName: String
+    let normalizedInterfaceName: String
+    let memberName: String
+    let normalizedMemberName: String
+}
+
 private enum BASICMemberVisibility: String, Equatable {
     case `public` = "PUBLIC"
     case `private` = "PRIVATE"
@@ -353,6 +360,7 @@ private struct FunctionDefinition: Equatable {
     let ownerClassName: String?
     let visibility: BASICMemberVisibility
     let isOverride: Bool
+    let explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
 
     init(
         displayName: String,
@@ -363,7 +371,8 @@ private struct FunctionDefinition: Equatable {
         endIndex: Int,
         ownerClassName: String? = nil,
         visibility: BASICMemberVisibility = .public,
-        isOverride: Bool = false
+        isOverride: Bool = false,
+        explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation] = []
     ) {
         self.displayName = displayName
         self.normalizedName = normalizedName
@@ -374,6 +383,7 @@ private struct FunctionDefinition: Equatable {
         self.ownerClassName = ownerClassName
         self.visibility = visibility
         self.isOverride = isOverride
+        self.explicitInterfaceImplementations = explicitInterfaceImplementations
     }
 }
 
@@ -381,6 +391,11 @@ private struct FunctionFrame {
     let definition: FunctionDefinition
     var returnValue: BASICValue
     var didReturn: Bool = false
+}
+
+private struct FunctionCallResult {
+    let value: BASICValue
+    let receiver: BASICValue?
 }
 
 private final class BASICRuntime {
@@ -2080,7 +2095,7 @@ public final class BASICInterpreter {
                 }
                 index = endIndex + 1
                 continue
-            case .functionDeclaration(let name, let parameters, let returnType, _, _):
+            case .functionDeclaration(let name, let parameters, let returnType, _, _, _):
                 guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                     throw BASICError.runtime("FUNCTION without END FUNCTION")
                 }
@@ -2194,7 +2209,7 @@ public final class BASICInterpreter {
                             returnType: returnType
                         )
                     )
-                case .functionDeclaration(let memberName, let parameters, let returnType, _, _):
+                case .functionDeclaration(let memberName, let parameters, let returnType, _, _, _):
                     let normalizedMember = memberName.normalized
                     guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
                         throw BASICError.runtime("INTERFACE \(name) member \(memberName.name) is already defined")
@@ -2271,7 +2286,7 @@ public final class BASICInterpreter {
                         throw BASICError.runtime("CLASS \(name) cannot inherit itself")
                     }
                     baseClass = baseClassName
-                case .functionDeclaration(let methodName, let parameters, let returnType, let visibility, let isOverride):
+                case .functionDeclaration(let methodName, let parameters, let returnType, let visibility, let isOverride, let explicitInterfaceImplementations):
                     guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                         throw BASICError.runtime("FUNCTION without END FUNCTION")
                     }
@@ -2287,7 +2302,8 @@ public final class BASICInterpreter {
                         endIndex: endIndex,
                         ownerClassName: name,
                         visibility: visibility,
-                        isOverride: isOverride
+                        isOverride: isOverride,
+                        explicitInterfaceImplementations: explicitInterfaceImplementations
                     )
                     index = endIndex
                 case .endClass:
@@ -2323,7 +2339,7 @@ public final class BASICInterpreter {
                     throw BASICError.runtime("CLASS \(classDefinition.displayName) implements unknown INTERFACE \(interfaceName)")
                 }
                 for member in interfaceMembers(for: interfaceDefinition) {
-                    guard let method = lookupMethod(named: member.normalizedName, in: classDefinition) else {
+                    guard let method = method(for: member, interface: interfaceDefinition, in: classDefinition) else {
                         throw BASICError.runtime("CLASS \(classDefinition.displayName) does not implement \(interfaceDefinition.displayName).\(member.displayName)")
                     }
                     guard method.parameters.map(\.type) == member.parameters.map(\.type),
@@ -2401,6 +2417,32 @@ public final class BASICInterpreter {
         return nil
     }
 
+    private func method(
+        for member: BASICInterfaceMember,
+        interface: BASICInterfaceDefinition,
+        in classDefinition: BASICClassDefinition
+    ) -> FunctionDefinition? {
+        if let direct = lookupMethod(named: member.normalizedName, in: classDefinition) {
+            return direct
+        }
+        return allMethods(in: classDefinition).first { method in
+            method.explicitInterfaceImplementations.contains {
+                $0.normalizedInterfaceName == interface.normalizedName
+                    && $0.normalizedMemberName == member.normalizedName
+            }
+        }
+    }
+
+    private func allMethods(in classDefinition: BASICClassDefinition) -> [FunctionDefinition] {
+        var methods: [FunctionDefinition] = []
+        if let baseName = classDefinition.baseClassName,
+           let baseDefinition = classDefinitions[baseName.uppercased()] {
+            methods.append(contentsOf: allMethods(in: baseDefinition))
+        }
+        methods.append(contentsOf: classDefinition.methods.values)
+        return methods
+    }
+
     private func inheritedMethod(named normalizedName: String, for classDefinition: BASICClassDefinition) -> FunctionDefinition? {
         guard let baseName = classDefinition.baseClassName,
               let baseDefinition = classDefinitions[baseName.uppercased()] else {
@@ -2476,7 +2518,7 @@ public final class BASICInterpreter {
         guard let definition = functionDefinitions[name.normalized] else {
             throw BASICError.runtime("Unknown function \(name.name)")
         }
-        return try callFunction(definition: definition, receiver: nil, arguments: arguments)
+        return try callFunction(definition: definition, receiver: nil, arguments: arguments, allowVoid: false).value
     }
 
     private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -2491,7 +2533,11 @@ public final class BASICInterpreter {
             throw BASICError.runtime("CLASS \(classDefinition.displayName) has no method \(method.name)")
         }
         try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
-        return try callFunction(definition: definition, receiver: receiverValue, arguments: arguments)
+        let result = try callFunction(definition: definition, receiver: receiverValue, arguments: arguments, allowVoid: false)
+        if let updatedReceiver = result.receiver {
+            try runtime.assign(reference: receiver, indexes: try receiver.indexes.map(integer), value: updatedReceiver, accessClassName: currentClassContext)
+        }
+        return result.value
     }
 
     private func validateMethodAccess(_ method: FunctionDefinition, receiverClass: String) throws {
@@ -2523,8 +2569,8 @@ public final class BASICInterpreter {
         return false
     }
 
-    private func callFunction(definition: FunctionDefinition, receiver: BASICValue?, arguments: [Expression]) throws -> BASICValue {
-        guard definition.returnType != .void else {
+    private func callFunction(definition: FunctionDefinition, receiver: BASICValue?, arguments: [Expression], allowVoid: Bool) throws -> FunctionCallResult {
+        guard allowVoid || definition.returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }
         guard arguments.count == definition.parameters.count else {
@@ -2554,6 +2600,12 @@ public final class BASICInterpreter {
             runtime.popLocalContext()
         }
 
+        func resultValue() -> FunctionCallResult {
+            let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+            let receiver = receiver == nil ? nil : runtime.value(for: VariableName(name: "ME", column: 0))
+            return FunctionCallResult(value: value, receiver: receiver)
+        }
+
         var pc = definition.startIndex + 1
         let parsed = parsedLines
         do {
@@ -2580,9 +2632,9 @@ public final class BASICInterpreter {
                     }
                     pc = index + 1
                 case .functionReturn:
-                    return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+                    return resultValue()
                 case .end:
-                    return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+                    return resultValue()
                 }
 
                 if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
@@ -2599,7 +2651,7 @@ public final class BASICInterpreter {
             throw error
         }
 
-        return functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+        return resultValue()
     }
 
     private func assignFunctionReturnIfNeeded(variable: VariableName, declaredType: BASICType?, value: BASICValue?) throws -> Bool {
@@ -2941,11 +2993,19 @@ public final class BASICInterpreter {
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
-        case .newObject(let className):
-            guard classDefinitions[className.uppercased()] != nil else {
+        case .newObject(let className, let arguments):
+            guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
             }
-            return runtime.defaultValue(for: .classType(className))
+            let object = runtime.defaultValue(for: .classType(className))
+            guard !arguments.isEmpty || lookupMethod(named: "NEW", in: classDefinition) != nil else {
+                return object
+            }
+            guard let constructor = lookupMethod(named: "NEW", in: classDefinition) else {
+                throw BASICError.runtime("CLASS \(classDefinition.displayName) has no constructor")
+            }
+            let result = try callFunction(definition: constructor, receiver: object, arguments: arguments, allowVoid: true)
+            return result.receiver ?? object
         case .unaryMinus(let expression):
             guard let value = try evaluate(expression).number else {
                 throw BASICError.runtime("Unary minus requires a number")
@@ -3119,7 +3179,14 @@ private indirect enum Statement: Equatable {
     case inheritsDeclaration(String)
     case classField(name: String, type: BASICType, visibility: BASICMemberVisibility)
     case endClass
-    case functionDeclaration(name: VariableName, parameters: [FunctionParameter], returnType: BASICType, visibility: BASICMemberVisibility, isOverride: Bool)
+    case functionDeclaration(
+        name: VariableName,
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        visibility: BASICMemberVisibility,
+        isOverride: Bool,
+        explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
+    )
     case endFunction
     case print([PrintPart])
     case screen(Expression)
@@ -3215,7 +3282,7 @@ private indirect enum Expression: Equatable {
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
     case methodCall(VariableReference, VariableName, [Expression])
-    case newObject(String)
+    case newObject(String, [Expression])
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
     case functionCall(VariableName, [Expression])
@@ -3761,7 +3828,34 @@ private struct Parser {
             )
         }
 
-        return .functionDeclaration(name: name, parameters: parameters, returnType: returnType, visibility: visibility, isOverride: isOverride)
+        let explicitInterfaceImplementations = try parseExplicitInterfaceImplementations()
+        return .functionDeclaration(
+            name: name,
+            parameters: parameters,
+            returnType: returnType,
+            visibility: visibility,
+            isOverride: isOverride,
+            explicitInterfaceImplementations: explicitInterfaceImplementations
+        )
+    }
+
+    private mutating func parseExplicitInterfaceImplementations() throws -> [BASICExplicitInterfaceImplementation] {
+        guard matchIdentifier("IMPLEMENTS") else { return [] }
+        var implementations: [BASICExplicitInterfaceImplementation] = []
+        repeat {
+            let interfaceName = try consumeIdentifier("Expected interface name after IMPLEMENTS")
+            guard match(.dot) else { throw syntax("Expected . in interface implementation") }
+            let memberName = try consumeIdentifier("Expected interface member name after .")
+            implementations.append(
+                BASICExplicitInterfaceImplementation(
+                    interfaceName: interfaceName,
+                    normalizedInterfaceName: interfaceName.uppercased(),
+                    memberName: memberName,
+                    normalizedMemberName: memberName.uppercased()
+                )
+            )
+        } while match(.comma)
+        return implementations
     }
 
     private mutating func parseConditionalAction(stoppingAtElse: Bool) throws -> ConditionalAction {
@@ -3965,10 +4059,8 @@ private struct Parser {
             if uppercased == "FALSE" { return .boolean(false) }
             if uppercased == "NEW" {
                 let className = try consumeIdentifier("Expected class name after NEW")
-                if match(.leftParen), !match(.rightParen) {
-                    throw syntax("Constructors with arguments are not supported yet")
-                }
-                return .newObject(className)
+                let arguments = peek == .leftParen ? try parseArgumentList() : []
+                return .newObject(className, arguments)
             }
             if uppercased == "POINT", peek == .leftParen {
                 return .pointFunction(try parsePoint(openParenAlreadyConsumed: false))

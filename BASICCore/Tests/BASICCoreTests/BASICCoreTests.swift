@@ -1415,6 +1415,35 @@ struct BASICCoreTests {
         #expect(host.output == ["Quarterly"])
     }
 
+    @Test("CLASS supports explicit interface implementation mapping")
+    func classSupportsExplicitInterfaceImplementationMapping() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function ToText$() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+
+            function Text$() as string implements Printable.ToText$
+                return ME.Title
+            end function
+        end class
+
+        dim report as Report
+        report = new Report()
+        report.Title = "Mapped"
+        print report.Text$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Mapped"])
+    }
+
     @Test("CLASS supports inheritance and OVERRIDES")
     func classSupportsInheritanceAndOverrides() {
         let host = TestHost()
@@ -1445,6 +1474,36 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["Status READY"])
+    }
+
+    @Test("CLASS constructors initialize objects and methods persist ME changes")
+    func classConstructorsInitializeObjectsAndMethodsPersistMeChanges() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            public Title as string
+
+            function New(title as string)
+                ME.Title = title
+            end function
+
+            function Rename$(title as string) as string
+                ME.Title = title
+                return ME.Title
+            end function
+        end class
+
+        dim report as Report
+        report = new Report("Initial")
+        print report.Title
+        print report.Rename$("Changed")
+        print report.Title
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Initial", "Changed", "Changed"])
     }
 
     @Test("CLASS enforces private fields outside the declaring class")

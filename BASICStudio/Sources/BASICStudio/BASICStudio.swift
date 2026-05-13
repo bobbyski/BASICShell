@@ -639,7 +639,8 @@ struct MonacoEditor: NSViewRepresentable {
           background: rgba(255, 59, 48, 0.16);
         }
         .basic-execution-line {
-          background: rgba(10, 132, 255, 0.18);
+          background: rgba(48, 209, 88, 0.22);
+          border-left: 3px solid rgba(48, 209, 88, 0.95);
         }
         .basic-breakpoint-glyph {
           background: #ff453a;
@@ -746,7 +747,7 @@ struct MonacoEditor: NSViewRepresentable {
               isWholeLine: true,
               className: "basic-execution-line",
               overviewRuler: {
-                color: "rgba(10, 132, 255, 0.85)",
+                color: "rgba(48, 209, 88, 0.95)",
                 position: monaco.editor.OverviewRulerLane.Right
               }
             }

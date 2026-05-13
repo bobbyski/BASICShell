@@ -17,14 +17,17 @@ class FancyReport
     inherits Report
     public Badge as string
 
+    function New(title as string, badge as string)
+        ME.Title = title
+        ME.Badge = badge
+    end function
+
     overrides function Summary$() as string
         return ME.Title + " " + ME.Badge
     end function
 end class
 
 dim fancy as FancyReport
-fancy = new FancyReport()
-fancy.Title = "Phase2"
-fancy.Badge = "OK"
+fancy = new FancyReport("Phase2", "OK")
 print fancy.Summary$()
 ```
