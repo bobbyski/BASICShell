@@ -42,6 +42,30 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     }
 }
 
+public enum BASICDiagnosticSeverity: String, Codable, Sendable {
+    case error
+    case warning
+}
+
+public struct BASICDiagnostic: Codable, Equatable, Sendable {
+    public let lineNumber: Int
+    public let column: Int
+    public let message: String
+    public let severity: BASICDiagnosticSeverity
+
+    public init(
+        lineNumber: Int,
+        column: Int,
+        message: String,
+        severity: BASICDiagnosticSeverity = .error
+    ) {
+        self.lineNumber = lineNumber
+        self.column = column
+        self.message = message
+        self.severity = severity
+    }
+}
+
 private extension BASICError {
     var isDebugPause: Bool {
         switch self {
@@ -1596,6 +1620,10 @@ public final class BASICSession: @unchecked Sendable {
         activeInterpreter?.debugGlobalVariables ?? runtime.globalSnapshots()
     }
 
+    public func diagnostics() -> [BASICDiagnostic] {
+        BASICInterpreter(program: program, host: host, runtime: runtime, fileState: fileState).diagnostics()
+    }
+
     public var debugCallStack: [BASICCallStackFrame] {
         activeInterpreter?.debugCallStack ?? []
     }
@@ -1755,6 +1783,137 @@ public final class BASICInterpreter {
         self.executionControl = executionControl
     }
 
+    public func diagnostics() -> [BASICDiagnostic] {
+        var diagnostics: [BASICDiagnostic] = []
+        let rootLines = program.orderedLines
+
+        for (index, line) in rootLines.enumerated() {
+            do {
+                var parser = try Parser(source: line.source)
+                _ = try parser.parseStatement()
+            } catch let error as BASICError {
+                diagnostics.append(
+                    diagnostic(
+                        for: error,
+                        sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                        fallbackColumn: 0
+                    )
+                )
+            } catch {
+                diagnostics.append(
+                    BASICDiagnostic(
+                        lineNumber: line.sourceLineNumber ?? index + 1,
+                        column: 0,
+                        message: "Unexpected error: \(error)"
+                    )
+                )
+            }
+        }
+
+        guard diagnostics.isEmpty else { return diagnostics }
+
+        do {
+            let sourceLines = try expandedProgramLines()
+            let parsed = try sourceLines.enumerated().flatMap { index, line in
+                var parser = try Parser(source: line.source)
+                let statement = try parser.parseStatement()
+                return ParsedLine.flatten(
+                    number: line.number,
+                    sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                    isImported: line.isImported,
+                    statement: statement
+                )
+            }
+
+            do {
+                recordDefinitions = try collectRecords(in: parsed)
+                runtime.recordDefinitions = recordDefinitions
+                interfaceDefinitions = try collectInterfaces(in: parsed)
+                classDefinitions = try collectClasses(in: parsed)
+                try validateInterfaceInheritance()
+                try validateClassInheritance()
+                try validateClassInterfaces()
+                _ = try collectFunctions(in: parsed)
+            } catch let error as BASICError {
+                diagnostics.append(diagnostic(for: error, parsed: parsed))
+            } catch {
+                diagnostics.append(BASICDiagnostic(lineNumber: 1, column: 0, message: "Unexpected error: \(error)"))
+            }
+
+            return diagnostics
+        } catch let error as BASICError {
+            return [diagnostic(for: error, sourceLineNumber: 1, fallbackColumn: 0)]
+        } catch {
+            return [BASICDiagnostic(lineNumber: 1, column: 0, message: "Unexpected error: \(error)")]
+        }
+    }
+
+    private func diagnostic(
+        for error: BASICError,
+        sourceLineNumber: Int,
+        fallbackColumn: Int
+    ) -> BASICDiagnostic {
+        switch error {
+        case .contextualSyntax(let message, _, let column):
+            return BASICDiagnostic(lineNumber: sourceLineNumber, column: column, message: "Syntax error: \(message)")
+        case .contextualType(let message, _, let column):
+            return BASICDiagnostic(lineNumber: sourceLineNumber, column: column, message: "Type error: \(message)")
+        case .syntax(let message):
+            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: "Syntax error: \(message)")
+        case .type(let message):
+            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: "Type error: \(message)")
+        default:
+            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: error.description)
+        }
+    }
+
+    private func diagnostic(for error: BASICError, parsed: [ParsedLine]) -> BASICDiagnostic {
+        let line = sourceLineNumber(for: error, parsed: parsed) ?? 1
+        return diagnostic(for: error, sourceLineNumber: line, fallbackColumn: 0)
+    }
+
+    private func sourceLineNumber(for error: BASICError, parsed: [ParsedLine]) -> Int? {
+        let message = error.description
+        var currentClassName: String?
+
+        for line in parsed where !line.isImported {
+            switch line.statement {
+            case .classDeclaration(let name):
+                currentClassName = name
+                if message.contains("CLASS \(name)") && !message.contains(" method ") {
+                    return line.sourceLineNumber
+                }
+            case .endClass:
+                currentClassName = nil
+            case .interfaceDeclaration(let name):
+                if message.contains("INTERFACE \(name)") {
+                    return line.sourceLineNumber
+                }
+            case .typeDeclaration(let name):
+                if message.contains("TYPE \(name)") {
+                    return line.sourceLineNumber
+                }
+            case .functionDeclaration(let name, _, _, _, _, _):
+                let classMatches = currentClassName.map { message.contains("CLASS \($0)") } ?? true
+                if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
+                    return line.sourceLineNumber
+                }
+            case .classField(let name, _, _), .typeField(let name, _, _):
+                if message.contains("field \(name)") || message.contains(" \(name) ") {
+                    return line.sourceLineNumber
+                }
+            case .interfaceFunctionSignature(let name, _, _):
+                if message.contains(".\(name.name)") || message.contains("member \(name.name)") {
+                    return line.sourceLineNumber
+                }
+            default:
+                continue
+            }
+        }
+
+        return parsed.first(where: { !$0.isImported })?.sourceLineNumber
+    }
+
     private func prepare(startLine: Int?) throws {
         let sourceLines = try expandedProgramLines()
         let parsed = try sourceLines.enumerated().flatMap { index, line in
@@ -1777,6 +1936,7 @@ public final class BASICInterpreter {
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
         classDefinitions = try collectClasses(in: parsed)
+        try validateInterfaceInheritance()
         try validateClassInheritance()
         try validateClassInterfaces()
         runtime.classDefinitions = classDefinitions
@@ -2577,6 +2737,28 @@ public final class BASICInterpreter {
         }
     }
 
+    private func validateInterfaceInheritance() throws {
+        for interfaceDefinition in interfaceDefinitions.values.sorted(by: { $0.displayName < $1.displayName }) {
+            for inheritedName in interfaceDefinition.inheritedInterfaces {
+                guard interfaceDefinitions[inheritedName.uppercased()] != nil else {
+                    throw BASICError.runtime("INTERFACE \(interfaceDefinition.displayName) inherits unknown INTERFACE \(inheritedName)")
+                }
+            }
+            try validateInterfaceCycle(interfaceDefinition, path: [])
+        }
+    }
+
+    private func validateInterfaceCycle(_ interfaceDefinition: BASICInterfaceDefinition, path: [String]) throws {
+        if path.contains(interfaceDefinition.normalizedName) {
+            throw BASICError.runtime("INTERFACE \(interfaceDefinition.displayName) has an inheritance cycle")
+        }
+        let nextPath = path + [interfaceDefinition.normalizedName]
+        for inheritedName in interfaceDefinition.inheritedInterfaces {
+            guard let inherited = interfaceDefinitions[inheritedName.uppercased()] else { continue }
+            try validateInterfaceCycle(inherited, path: nextPath)
+        }
+    }
+
     private func validateClassInheritance() throws {
         for classDefinition in classDefinitions.values {
             if let baseName = classDefinition.baseClassName,
@@ -2601,14 +2783,22 @@ public final class BASICInterpreter {
             for method in classDefinition.methods.values {
                 let inheritedMethod = inheritedMethod(named: method.normalizedName, for: classDefinition)
                 if method.isOverride {
-                    guard inheritedMethod != nil else {
+                    guard let inheritedMethod else {
                         throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) is OVERRIDES but no inherited method exists")
+                    }
+                    guard methodSignature(method, matches: inheritedMethod) else {
+                        throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) OVERRIDES signature does not match inherited method")
                     }
                 } else if inheritedMethod != nil {
                     throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) overrides an inherited method; add OVERRIDES")
                 }
             }
         }
+    }
+
+    private func methodSignature(_ method: FunctionDefinition, matches inheritedMethod: FunctionDefinition) -> Bool {
+        method.parameters.map(\.type) == inheritedMethod.parameters.map(\.type)
+            && method.returnType == inheritedMethod.returnType
     }
 
     private func inheritedInterfaceNames(for classDefinition: BASICClassDefinition) -> [String] {

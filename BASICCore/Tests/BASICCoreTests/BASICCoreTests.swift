@@ -644,6 +644,51 @@ struct BASICCoreTests {
         ])
     }
 
+    @Test("Diagnostics collect multiple source syntax errors")
+    func diagnosticsCollectMultipleSourceSyntaxErrors() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "ok"
+        print @
+        let x =
+        """)
+
+        let diagnostics = session.diagnostics()
+
+        #expect(diagnostics.map(\.lineNumber) == [2, 3])
+        #expect(diagnostics.allSatisfy { $0.severity == .error })
+        #expect(diagnostics.map(\.message).allSatisfy { $0.hasPrefix("Syntax error:") })
+    }
+
+    @Test("Diagnostics report class and interface validation errors")
+    func diagnosticsReportClassAndInterfaceValidationErrors() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            function Summary$(count as integer) as string
+                return "base"
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            overrides function Summary$(count as string) as string
+                return count
+            end function
+        end class
+        """)
+
+        let diagnostics = session.diagnostics()
+
+        #expect(diagnostics.count == 1)
+        #expect(diagnostics[0].lineNumber == 9)
+        #expect(diagnostics[0].message == "Runtime error: CLASS FancyReport method Summary$ OVERRIDES signature does not match inherited method")
+    }
+
     @Test("Graphics commands explain they require BASICStudio on text-only hosts")
     func studioOnlyGraphicsError() {
         let host = TextOnlyHost()
@@ -1781,6 +1826,99 @@ struct BASICCoreTests {
         #expect(host.output == ["Quarterly"])
     }
 
+    @Test("INTERFACE inheritance requires inherited members")
+    func interfaceInheritanceRequiresInheritedMembers() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Named
+            function Name$() as string
+        end interface
+
+        interface Printable
+            inherits Named
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+
+            function Name$() as string
+                return ME.Title
+            end function
+
+            function Text$() as string
+                return "Report: " + ME.Title
+            end function
+        end class
+
+        dim report as Report
+        report = new Report()
+        report.Title = "Quarterly"
+        print report.Name$()
+        print report.Text$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Quarterly", "Report: Quarterly"])
+    }
+
+    @Test("INTERFACE rejects unknown inherited interfaces")
+    func interfaceRejectsUnknownInheritedInterfaces() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            inherits Missing
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            function Text$() as string
+                return "report"
+            end function
+        end class
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: INTERFACE Printable inherits unknown INTERFACE Missing"])
+    }
+
+    @Test("INTERFACE rejects inheritance cycles")
+    func interfaceRejectsInheritanceCycles() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface A
+            inherits B
+            function Text$() as string
+        end interface
+
+        interface B
+            inherits A
+            function Name$() as string
+        end interface
+
+        class Report
+            implements A
+            function Text$() as string
+                return "text"
+            end function
+            function Name$() as string
+                return "name"
+            end function
+        end class
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: INTERFACE A has an inheritance cycle"])
+    }
+
     @Test("CLASS supports explicit interface implementation mapping")
     func classSupportsExplicitInterfaceImplementationMapping() {
         let host = TestHost()
@@ -1842,6 +1980,62 @@ struct BASICCoreTests {
         #expect(host.output == ["Status READY"])
     }
 
+    @Test("CLASS rejects OVERRIDES with mismatched signatures")
+    func classRejectsOverridesWithMismatchedSignatures() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            function Summary$(count as integer) as string
+                return "base"
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            overrides function Summary$(count as string) as string
+                return count
+            end function
+        end class
+
+        dim report as FancyReport
+        report = new FancyReport()
+        print report.Summary$("bad")
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: CLASS FancyReport method Summary$ OVERRIDES signature does not match inherited method"])
+    }
+
+    @Test("CLASS requires OVERRIDES when replacing inherited methods")
+    func classRequiresOverridesWhenReplacingInheritedMethods() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Report
+            function Summary$() as string
+                return "base"
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            function Summary$() as string
+                return "child"
+            end function
+        end class
+
+        dim report as FancyReport
+        report = new FancyReport()
+        print report.Summary$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: CLASS FancyReport method Summary$ overrides an inherited method; add OVERRIDES"])
+    }
+
     @Test("CLASS constructors initialize objects and methods persist ME changes")
     func classConstructorsInitializeObjectsAndMethodsPersistMeChanges() {
         let host = TestHost()
@@ -1889,6 +2083,107 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["Runtime error: Code is PRIVATE"])
+    }
+
+    @Test("CLASS allows protected base fields and methods from subclasses")
+    func classAllowsProtectedBaseFieldsAndMethodsFromSubclasses() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class BaseReport
+            protected Code as string
+
+            protected function CodeText$() as string
+                return ME.Code
+            end function
+        end class
+
+        class ChildReport
+            inherits BaseReport
+
+            function New(code as string)
+                ME.Code = code
+            end function
+
+            function Reveal$() as string
+                return ME.CodeText$()
+            end function
+        end class
+
+        dim report as ChildReport
+        report = new ChildReport("visible inside")
+        print report.Reveal$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["visible inside"])
+    }
+
+    @Test("CLASS blocks protected fields and methods outside inheritance boundary")
+    func classBlocksProtectedFieldsAndMethodsOutsideInheritanceBoundary() {
+        let fieldHost = TestHost()
+        let fieldSession = BASICSession(host: fieldHost)
+
+        fieldSession.program.loadSource("""
+        class BaseReport
+            protected Code as string
+        end class
+
+        class ChildReport
+            inherits BaseReport
+        end class
+
+        dim report as ChildReport
+        report = new ChildReport()
+        print report.Code
+        """)
+        fieldSession.submit("run")
+
+        #expect(fieldHost.output == ["Runtime error: Code is PROTECTED"])
+
+        let methodHost = TestHost()
+        let methodSession = BASICSession(host: methodHost)
+
+        methodSession.program.loadSource("""
+        class BaseReport
+            protected function CodeText$() as string
+                return "hidden"
+            end function
+        end class
+
+        class ChildReport
+            inherits BaseReport
+        end class
+
+        dim report as ChildReport
+        report = new ChildReport()
+        print report.CodeText$()
+        """)
+        methodSession.submit("run")
+
+        #expect(methodHost.output == ["Runtime error: CodeText$ is PROTECTED"])
+    }
+
+    @Test("CLASS blocks private methods outside the declaring class")
+    func classBlocksPrivateMethodsOutsideDeclaringClass() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class Vault
+            private function Code$() as string
+                return "open"
+            end function
+        end class
+
+        dim vault as Vault
+        vault = new Vault()
+        print vault.Code$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Code$ is PRIVATE"])
     }
 }
 

@@ -252,6 +252,7 @@ struct StudioView: View {
                     showsLineNumbers: model.isEditorGutterVisible,
                     theme: model.editorTheme,
                     errorLine: model.editorErrorLine,
+                    diagnostics: model.editorDiagnostics,
                     executionLine: nil,
                     breakpointLines: [],
                     isReadOnly: false,
@@ -466,6 +467,7 @@ struct MonacoEditor: NSViewRepresentable {
     let showsLineNumbers: Bool
     let theme: EditorTheme
     let errorLine: Int?
+    let diagnostics: [BASICDiagnostic]
     let executionLine: Int?
     let breakpointLines: Set<Int>
     let isReadOnly: Bool
@@ -495,6 +497,7 @@ struct MonacoEditor: NSViewRepresentable {
             showsLineNumbers: showsLineNumbers,
             theme: theme,
             errorLine: errorLine,
+            diagnostics: diagnostics,
             executionLine: executionLine,
             breakpointLines: breakpointLines,
             isReadOnly: isReadOnly,
@@ -517,6 +520,7 @@ struct MonacoEditor: NSViewRepresentable {
         private var pendingShowsLineNumbers: Bool?
         private var pendingTheme: EditorTheme?
         private var pendingErrorLine: Int?
+        private var pendingDiagnostics: [BASICDiagnostic] = []
         private var pendingExecutionLine: Int?
         private var pendingBreakpointLines: Set<Int> = []
         private var pendingIsReadOnly = false
@@ -526,6 +530,7 @@ struct MonacoEditor: NSViewRepresentable {
         private var lastAppliedShowsLineNumbers: Bool?
         private var lastAppliedTheme: EditorTheme?
         private var lastAppliedErrorLine: Int?
+        private var lastAppliedDiagnostics: [BASICDiagnostic] = []
         private var lastAppliedExecutionLine: Int?
         private var lastAppliedBreakpointLines: Set<Int> = []
         private var lastAppliedIsReadOnly: Bool?
@@ -562,6 +567,7 @@ struct MonacoEditor: NSViewRepresentable {
             showsLineNumbers: Bool,
             theme: EditorTheme,
             errorLine: Int?,
+            diagnostics: [BASICDiagnostic],
             executionLine: Int?,
             breakpointLines: Set<Int>,
             isReadOnly: Bool,
@@ -572,6 +578,7 @@ struct MonacoEditor: NSViewRepresentable {
             pendingShowsLineNumbers = showsLineNumbers
             pendingTheme = theme
             pendingErrorLine = errorLine
+            pendingDiagnostics = diagnostics
             pendingExecutionLine = executionLine
             pendingBreakpointLines = breakpointLines
             pendingIsReadOnly = isReadOnly
@@ -605,6 +612,14 @@ struct MonacoEditor: NSViewRepresentable {
                     webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
                 }
                 lastAppliedErrorLine = pendingErrorLine
+            }
+
+            if pendingDiagnostics != lastAppliedDiagnostics {
+                if let data = try? JSONEncoder().encode(pendingDiagnostics),
+                   let json = String(data: data, encoding: .utf8) {
+                    webView.evaluateJavaScript("window.basicStudioSetDiagnostics(\(json));")
+                    lastAppliedDiagnostics = pendingDiagnostics
+                }
             }
 
             if pendingExecutionLine != lastAppliedExecutionLine {
@@ -772,6 +787,26 @@ struct MonacoEditor: NSViewRepresentable {
           }
         };
 
+        window.basicStudioSetDiagnostics = function(diagnostics) {
+          if (!editor || !window.monaco) { return; }
+          const markers = (diagnostics || []).map((diagnostic) => {
+            const lineNumber = Math.max(1, diagnostic.lineNumber || 1);
+            const column = Math.max(1, (diagnostic.column || 0) + 1);
+            const severity = diagnostic.severity === "warning"
+              ? monaco.MarkerSeverity.Warning
+              : monaco.MarkerSeverity.Error;
+            return {
+              severity: severity,
+              message: diagnostic.message || "Diagnostic",
+              startLineNumber: lineNumber,
+              startColumn: column,
+              endLineNumber: lineNumber,
+              endColumn: column + 1
+            };
+          });
+          monaco.editor.setModelMarkers(editor.getModel(), "aibasic", markers);
+        };
+
         window.basicStudioSetExecutionLine = function(lineNumber) {
           if (!editor) { return; }
           const decorations = lineNumber ? [{
@@ -878,13 +913,19 @@ final class StudioModel: ObservableObject {
         didSet { saveSettings() }
     }
     @Published var editorErrorLine: Int?
+    @Published var editorDiagnostics: [BASICDiagnostic] = []
     @Published var editorFindRequest = 0
     @Published var editorReplaceRequest = 0
     @Published var isProgramRunning = false
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
-    @Published var programText = StudioModel.defaultProgramSource()
+    @Published var programText = StudioModel.defaultProgramSource() {
+        didSet {
+            editorErrorLine = nil
+            updateEditorDiagnostics()
+        }
+    }
     @Published var consoleText = BASICSession.defaultPrompt
     @Published var command = ""
     @Published var graphicsRevision = 0
@@ -929,6 +970,7 @@ final class StudioModel: ObservableObject {
         }
 
         saveSettings()
+        updateEditorDiagnostics()
     }
 
     func runStartupProgramIfNeeded() {
@@ -1126,6 +1168,13 @@ final class StudioModel: ObservableObject {
 
     private func rebuildProgramFromEditor() {
         session.program.loadSource(programText)
+        updateEditorDiagnostics()
+    }
+
+    private func updateEditorDiagnostics() {
+        let program = BASICProgram()
+        program.loadSource(programText)
+        editorDiagnostics = BASICInterpreter(program: program, host: self).diagnostics()
     }
 
     private func saveProgram(to url: URL) {
@@ -1602,6 +1651,7 @@ struct DebugPane: View {
                         showsLineNumbers: true,
                         theme: model.editorTheme,
                         errorLine: model.editorErrorLine,
+                        diagnostics: [],
                         executionLine: model.debuggerExecutionLine,
                         breakpointLines: model.debuggerBreakpointLines,
                         isReadOnly: true,

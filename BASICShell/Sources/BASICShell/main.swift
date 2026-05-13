@@ -243,6 +243,40 @@ enum BundledDemos {
     }
 }
 
+func isRunCommand(_ input: String) -> Bool {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    let uppercased = trimmed.uppercased()
+    return uppercased == "RUN" || uppercased.hasPrefix("RUN ")
+}
+
+@MainActor
+func printDiagnosticsIfNeeded() -> Bool {
+    let diagnostics = session.diagnostics()
+    guard !diagnostics.isEmpty else { return false }
+
+    host.printLine("Diagnostics:")
+    let indexedLines = session.program.orderedLines.enumerated().map { index, line in
+        (
+            sourceLineNumber: line.sourceLineNumber ?? index + 1,
+            displayLineNumber: line.number ?? line.sourceLineNumber ?? index + 1,
+            source: line.number.map { "\($0) \(line.source)" } ?? line.source
+        )
+    }
+
+    for diagnostic in diagnostics {
+        let source = indexedLines.first { $0.sourceLineNumber == diagnostic.lineNumber }
+        let displayLineNumber = source?.displayLineNumber ?? diagnostic.lineNumber
+        let sourceText = source?.source
+        host.printLine("Line \(displayLineNumber), column \(diagnostic.column + 1): \(diagnostic.message)")
+        if let sourceText {
+            host.printLine(sourceText)
+            host.printLine(String(repeating: " ", count: max(0, diagnostic.column)) + "^")
+        }
+    }
+
+    return true
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.first == "--list-demos" {
@@ -267,6 +301,9 @@ if arguments.first == "--demo" {
     }
     do {
         session.program.loadSource(source)
+        if printDiagnosticsIfNeeded() {
+            exit(1)
+        }
         try BASICInterpreter(program: session.program, host: host).run()
         exit(0)
     } catch let error as BASICError {
@@ -281,6 +318,9 @@ if arguments.first == "--demo" {
 if let scriptPath = arguments.first {
     do {
         session.program.loadSource(try host.loadTextFile(path: scriptPath))
+        if printDiagnosticsIfNeeded() {
+            exit(1)
+        }
         try BASICInterpreter(program: session.program, host: host).run()
         exit(0)
     } catch let error as BASICError {
@@ -300,6 +340,9 @@ while true {
     guard let line = readLine() else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()
+        continue
+    }
+    if isRunCommand(line), printDiagnosticsIfNeeded() {
         continue
     }
     if !session.submit(line) { break }
