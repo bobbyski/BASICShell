@@ -26,7 +26,7 @@ targets:
         excludes:
           - Resources
     resources:
-      - path: Sources/BASICStudio/Resources/Demos/studio
+      - path: Sources/BASICStudio/Resources/Demos
     dependencies:
       - package: BASICCore
         product: BASICCore

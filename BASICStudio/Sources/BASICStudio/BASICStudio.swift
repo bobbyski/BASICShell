@@ -36,6 +36,18 @@ struct BASICStudioApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .shift])
             }
 
+            CommandMenu("Examples") {
+                if model.bundledExamples.isEmpty {
+                    Text("No Examples Found")
+                } else {
+                    ForEach(model.bundledExamples) { example in
+                        Button(example.menuTitle) {
+                            model.loadBundledExample(example)
+                        }
+                    }
+                }
+            }
+
             CommandGroup(after: .textEditing) {
                 Divider()
 
@@ -319,6 +331,27 @@ enum StudioPane {
 enum InspectorPane {
     case debug
     case docs
+}
+
+struct BundledExample: Identifiable, Hashable {
+    let path: String
+
+    var id: String { path }
+
+    var menuTitle: String {
+        path
+            .split(separator: "/")
+            .map { part in
+                part
+                    .split(separator: "-")
+                    .map { word in
+                        guard let first = word.first else { return "" }
+                        return first.uppercased() + word.dropFirst()
+                    }
+                    .joined(separator: " ")
+            }
+            .joined(separator: " / ")
+    }
 }
 
 fileprivate enum TerminalInputOperation {
@@ -863,6 +896,7 @@ final class StudioModel: ObservableObject {
     @Published var debuggerLocalVariables: [BASICVariableSnapshot] = []
     @Published var debuggerFrameLocalVariables: [[BASICVariableSnapshot]] = []
     @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
+    let bundledExamples = StudioModel.availableBundledExamples()
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
@@ -972,6 +1006,25 @@ final class StudioModel: ObservableObject {
         } catch {
             presentFileError("Unable to load \(url.lastPathComponent).", error: error)
         }
+    }
+
+    func loadBundledExample(_ example: BundledExample) {
+        guard let source = Self.bundledDemoSource(named: example.path) else {
+            let alert = NSAlert()
+            alert.messageText = "Unable to load \(example.menuTitle)."
+            alert.informativeText = "The bundled example could not be found."
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+
+        programText = source
+        currentProgramURL = nil
+        editorErrorLine = nil
+        debuggerExecutionLine = nil
+        debuggerBreakpoints = []
+        rebuildProgramFromEditor()
+        selectedPane = .editor
     }
 
     func saveProgramFromMenu() {
@@ -1422,6 +1475,66 @@ final class StudioModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    private static func availableBundledExamples() -> [BundledExample] {
+        var examplesByPath: [String: BundledExample] = [:]
+        for root in demoRootCandidates() {
+            guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+                continue
+            }
+
+            for case let url as URL in enumerator where url.pathExtension.lowercased() == "bas" {
+                guard let path = pathRelativeToDemoRoot(url, root: root) else { continue }
+                examplesByPath[path] = BundledExample(path: path)
+            }
+        }
+
+        return examplesByPath.values.sorted {
+            $0.menuTitle.localizedStandardCompare($1.menuTitle) == .orderedAscending
+        }
+    }
+
+    private static func demoRootCandidates() -> [URL] {
+        let fileManager = FileManager.default
+        let sourceURL = URL(fileURLWithPath: String(#filePath))
+        let packageRoot = sourceURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bundleDemoRoot = Bundle.main.resourceURL?.appendingPathComponent("Demos")
+        let bundleRootFallback = bundleDemoRoot.map { fileManager.fileExists(atPath: $0.path) } == true
+            ? nil
+            : Bundle.main.resourceURL
+
+        let candidateURLs = [
+            bundleDemoRoot,
+            bundleRootFallback,
+            packageRoot.appendingPathComponent("Sources/BASICStudio/Resources/Demos"),
+            packageRoot
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("basicPrograms/demos"),
+            URL(fileURLWithPath: fileManager.currentDirectoryPath)
+                .appendingPathComponent("Resources/Demos")
+        ].compactMap { $0 }
+
+        var seen: Set<String> = []
+        return candidateURLs.filter { url in
+            let key = url.standardizedFileURL.path
+            guard fileManager.fileExists(atPath: key), !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private static func pathRelativeToDemoRoot(_ url: URL, root: URL) -> String? {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(rootPath + "/") else { return nil }
+        let relative = String(path.dropFirst(rootPath.count + 1))
+        guard relative.hasSuffix(".bas") else { return nil }
+        return String(relative.dropLast(4))
     }
 
     private static func demoResourceCandidates(named name: String, subdirectory: String) -> [URL] {
