@@ -264,10 +264,13 @@ func printDiagnosticsIfNeeded() -> Bool {
     }
 
     for diagnostic in diagnostics {
-        let source = indexedLines.first { $0.sourceLineNumber == diagnostic.lineNumber }
+        let source = diagnostic.fileName == nil
+            ? indexedLines.first { $0.sourceLineNumber == diagnostic.lineNumber }
+            : nil
         let displayLineNumber = source?.displayLineNumber ?? diagnostic.lineNumber
         let sourceText = source?.source
-        host.printLine("Line \(displayLineNumber), column \(diagnostic.column + 1): \(diagnostic.message)")
+        let filePrefix = diagnostic.fileName.map { "\($0):" } ?? ""
+        host.printLine("\(filePrefix)Line \(displayLineNumber), column \(diagnostic.column + 1): \(diagnostic.message)")
         if let sourceText {
             host.printLine(sourceText)
             host.printLine(String(repeating: " ", count: max(0, diagnostic.column)) + "^")

@@ -626,6 +626,87 @@ struct BASICCoreTests {
         #expect(host.output == ["x=5", "A             B"])
     }
 
+    @Test("PRINT supports TAB and SPC")
+    func printSupportsTabAndSpc() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PRINT \"A\";SPC(3);\"B\";TAB(10);\"C\"")
+
+        #expect(host.output == ["A   B    C"])
+    }
+
+    @Test("GW BASIC numeric intrinsics")
+    func gwBasicNumericIntrinsics() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print ABS(-3)
+        print CINT(2.6)
+        print FIX(-2.6)
+        print INT(-2.1)
+        print SGN(-5),SGN(0),SGN(5)
+        print SIN(0),COS(0),TAN(0)
+        print ATN(0),EXP(0),LOG(1),SQR(9)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "3",
+            "3",
+            "-2",
+            "-3",
+            "-1            0             1",
+            "0             1             0",
+            "0             1             0             3"
+        ])
+    }
+
+    @Test("GW BASIC string intrinsics")
+    func gwBasicStringIntrinsics() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print ASC("A")
+        print INSTR("BANANA","NA"),INSTR(4,"BANANA","NA")
+        print LEFT$("ABCDE",2),MID$("ABCDE",2,3),RIGHT$("ABCDE",2)
+        print "X";SPACE$(3);"Y"
+        print STR$(12)
+        print STRING$(3,"A"),STRING$(2,66)
+        print VAL(" -12.5ABC")
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "65",
+            "3             5",
+            "AB            BCD           DE",
+            "X   Y",
+            " 12",
+            "AAA           BB",
+            "-12.5"
+        ])
+    }
+
+    @Test("RND and RANDOMIZE are repeatable with explicit seed")
+    func rndAndRandomizeAreRepeatableWithExplicitSeed() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        randomize 123
+        let a = RND(1)
+        print RND(0) = a
+        randomize 123
+        print RND = a
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["1", "1"])
+    }
+
     @Test("Syntax errors include source and caret context")
     func syntaxErrorContext() {
         let host = TestHost()
@@ -1076,6 +1157,37 @@ struct BASICCoreTests {
         #expect(students?.children.count == 2)
         #expect(students?.children.first?.children.first { $0.name == "Name" }?.value == "Ada")
         #expect(students?.children.last?.children.first { $0.name == "Age" }?.value == "17")
+    }
+
+    @Test("Debugger snapshots expand dictionaries")
+    func debuggerSnapshotsExpandDictionaries() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        dim scores as dictionary
+        scores("Ada") = 98
+        scores("Grace") = "A"
+        scores("Zero") = false
+        print "pause"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        }
+
+        let scores = session.debugGlobalVariables.first { $0.name == "scores" }
+        #expect(scores?.typeName == "DICTIONARY")
+        #expect(scores?.value == "3 entries")
+        #expect(scores?.children.map(\.name) == ["\"Ada\"", "\"Grace\"", "\"Zero\""])
+        #expect(scores?.children.map(\.value) == ["98", "A", "FALSE"])
     }
 
     @Test("Debugger snapshots group inherited CLASS fields")
@@ -1610,6 +1722,26 @@ struct BASICCoreTests {
         #expect(host.output == ["30", "Ada Lovelace"])
     }
 
+    @Test("DIM supports dictionary variables")
+    func dimSupportsDictionaryVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        dim scores as dictionary
+        scores("Ada") = 98
+        scores("Grace") = scores("Ada") + 1
+        print scores("Ada")
+        print scores("Grace")
+        print scores("Missing")
+        scores(42) = "answer"
+        print scores("42")
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["98", "99", "", "answer"])
+    }
+
     @Test("TYPE supports record variables")
     func typeSupportsRecordVariables() {
         let host = TestHost()
@@ -1713,6 +1845,104 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["Imported"])
+    }
+
+    @Test("IMPORT preserves file metadata for breakpoints")
+    func importPreservesFileMetadataForBreakpoints() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(fileName: "lib/debug.bas", lineNumber: 3, statementNumber: 0))
+        ])
+        host.files["lib/debug.bas"] = """
+        function HitMe() as integer
+            print "before"
+            print "break"
+            return 1
+        end function
+        """
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "lib/debug.bas"
+        print HitMe()
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected imported breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(fileName: "lib/debug.bas", lineNumber: 3, statementNumber: 0))
+        }
+
+        #expect(host.output == ["before"])
+    }
+
+    @Test("IMPORT diagnostics report imported file names")
+    func importDiagnosticsReportImportedFileNames() {
+        let host = TestHost()
+        host.files["lib/bad.bas"] = """
+        @
+        """
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "lib/bad.bas"
+        print "root"
+        """)
+        let diagnostics = session.diagnostics()
+
+        #expect(diagnostics.first?.fileName == "lib/bad.bas")
+        #expect(diagnostics.first?.lineNumber == 1)
+    }
+
+    @Test("IMPORT resolves nested paths relative to importing file")
+    func importResolvesNestedPathsRelativeToImportingFile() {
+        let host = TestHost()
+        host.files["lib/main.bas"] = """
+        import "models/student.bas"
+        """
+        host.files["lib/models/student.bas"] = """
+        class Student
+            public Name as string
+            function New(name as string)
+                ME.Name = name
+            end function
+        end class
+        """
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "lib/main.bas"
+        dim student as Student
+        student = new Student("Ada")
+        print student.Name
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Ada"])
+    }
+
+    @Test("IMPORT reports cycles")
+    func importReportsCycles() {
+        let host = TestHost()
+        host.files["lib/a.bas"] = """
+        import "b.bas"
+        """
+        host.files["lib/b.bas"] = """
+        import "a.bas"
+        """
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        import "lib/a.bas"
+        print "never"
+        """)
+        let diagnostics = session.diagnostics()
+
+        #expect(diagnostics.first?.message.contains("Import cycle detected") == true)
+        #expect(diagnostics.first?.message.contains("lib/a.bas -> lib/b.bas -> lib/a.bas") == true)
     }
 
     @Test("DATA READ and RESTORE feed scalar variables")
@@ -1897,6 +2127,67 @@ struct BASICCoreTests {
         #expect(host.output == ["Report: Quarterly"])
     }
 
+    @Test("INTERFACE typed variables dispatch explicit implementation mappings")
+    func interfaceTypedVariablesDispatchExplicitImplementationMappings() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+
+            function New(title as string)
+                ME.Title = title
+            end function
+
+            function Render$() as string implements Printable.Text$
+                return "Mapped: " + ME.Title
+            end function
+        end class
+
+        dim item as Printable
+        item = new Report("Quarterly")
+        print item.Text$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Mapped: Quarterly"])
+    }
+
+    @Test("INTERFACE typed variables expose only interface members")
+    func interfaceTypedVariablesExposeOnlyInterfaceMembers() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            function Text$() as string
+                return "Report"
+            end function
+            function Internal$() as string
+                return "Internal"
+            end function
+        end class
+
+        dim item as Printable
+        item = new Report()
+        print item.Internal$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: INTERFACE Printable has no method Internal$"])
+    }
+
     @Test("INTERFACE typed variables reject nonconforming objects")
     func interfaceTypedVariablesRejectNonconformingObjects() {
         let host = TestHost()
@@ -2034,6 +2325,141 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["Status READY"])
+    }
+
+    @Test("CLASS base variables dispatch overrides but expose base surface")
+    func classBaseVariablesDispatchOverridesButExposeBaseSurface() {
+        let overrideHost = TestHost()
+        let overrideSession = BASICSession(host: overrideHost)
+
+        overrideSession.program.loadSource("""
+        class Report
+            public Title as string
+            function Summary$() as string
+                return ME.Title
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            public Badge as string
+            function New(title as string, badge as string)
+                ME.Title = title
+                ME.Badge = badge
+            end function
+            overrides function Summary$() as string
+                return ME.Title + " " + ME.Badge
+            end function
+            function BadgeText$() as string
+                return ME.Badge
+            end function
+        end class
+
+        dim report as Report
+        report = new FancyReport("Status", "READY")
+        print report.Summary$()
+        """)
+        overrideSession.submit("run")
+
+        #expect(overrideHost.output == ["Status READY"])
+
+        let surfaceHost = TestHost()
+        let surfaceSession = BASICSession(host: surfaceHost)
+
+        surfaceSession.program.loadSource("""
+        class Report
+            function Summary$() as string
+                return "Report"
+            end function
+        end class
+
+        class FancyReport
+            inherits Report
+            function BadgeText$() as string
+                return "READY"
+            end function
+        end class
+
+        dim report as Report
+        report = new FancyReport()
+        print report.BadgeText$()
+        """)
+        surfaceSession.submit("run")
+
+        #expect(surfaceHost.output == ["Runtime error: CLASS Report has no method BadgeText$"])
+    }
+
+    @Test("CLASS base variables expose only base fields")
+    func classBaseVariablesExposeOnlyBaseFields() {
+        let baseHost = TestHost()
+        let baseSession = BASICSession(host: baseHost)
+
+        baseSession.program.loadSource("""
+        class Report
+            public Title as string
+        end class
+
+        class FancyReport
+            inherits Report
+            public Badge as string
+        end class
+
+        dim report as Report
+        report = new FancyReport()
+        report.Title = "Status"
+        print report.Title
+        """)
+        baseSession.submit("run")
+
+        #expect(baseHost.output == ["Status"])
+
+        let derivedHost = TestHost()
+        let derivedSession = BASICSession(host: derivedHost)
+
+        derivedSession.program.loadSource("""
+        class Report
+            public Title as string
+        end class
+
+        class FancyReport
+            inherits Report
+            public Badge as string
+        end class
+
+        dim report as Report
+        report = new FancyReport()
+        report.Badge = "READY"
+        """)
+        derivedSession.submit("run")
+
+        #expect(derivedHost.output == ["Runtime error: CLASS Report has no field Badge"])
+    }
+
+    @Test("INTERFACE typed variables do not expose fields")
+    func interfaceTypedVariablesDoNotExposeFields() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        interface Printable
+            function Text$() as string
+        end interface
+
+        class Report
+            implements Printable
+            public Title as string
+            function Text$() as string
+                return ME.Title
+            end function
+        end class
+
+        dim item as Printable
+        item = new Report()
+        print item.Title
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: INTERFACE Printable has no field Title"])
     }
 
     @Test("CLASS rejects OVERRIDES with mismatched signatures")

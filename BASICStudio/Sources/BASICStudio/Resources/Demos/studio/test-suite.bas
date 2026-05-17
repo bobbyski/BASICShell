@@ -72,6 +72,13 @@ scores(1) = 20
 scores(2) = scores(0) + scores(1)
 print "SCORE TOTAL =", scores(2)
 
+print "DICTIONARY"
+dim lookup as dictionary
+lookup("Ada") = "Lovelace"
+lookup("Score") = scores(2)
+print "LOOKUP ADA =", lookup("Ada")
+print "LOOKUP SCORE =", lookup("Score")
+
 print "USER TYPES"
 type Student
     Name as string * 20

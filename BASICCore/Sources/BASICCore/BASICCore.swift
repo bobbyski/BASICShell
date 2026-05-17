@@ -48,17 +48,20 @@ public enum BASICDiagnosticSeverity: String, Codable, Sendable {
 }
 
 public struct BASICDiagnostic: Codable, Equatable, Sendable {
+    public let fileName: String?
     public let lineNumber: Int
     public let column: Int
     public let message: String
     public let severity: BASICDiagnosticSeverity
 
     public init(
+        fileName: String? = nil,
         lineNumber: Int,
         column: Int,
         message: String,
         severity: BASICDiagnosticSeverity = .error
     ) {
+        self.fileName = fileName
         self.lineNumber = lineNumber
         self.column = column
         self.message = message
@@ -159,6 +162,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
     case record(String, [String: BASICValue])
     case object(String, [String: BASICValue])
     case array(BASICArray)
+    case dictionary(BASICDictionary)
 
     var description: String {
         switch self {
@@ -179,6 +183,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
             return "<\(name)>"
         case .array(let array):
             return "<ARRAY \(array.type.name)>"
+        case .dictionary(let dictionary):
+            return "<DICTIONARY \(dictionary.values.count) entries>"
         }
     }
 
@@ -188,7 +194,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .record, .object, .array: return true
+        case .record, .object, .array, .dictionary: return true
         }
     }
 
@@ -226,6 +232,39 @@ struct BASICArray: Equatable {
     let dimensions: [Int]
     let type: BASICType
     var values: [BASICValue]
+}
+
+struct BASICDictionary: Equatable {
+    var values: [String: BASICValue] = [:]
+}
+
+private struct BASICRandomGenerator {
+    private var state: UInt64 = 0x4d595df4d0f33173
+    private var lastValue: Double = 0
+
+    mutating func randomize(seed: Double) {
+        let bits = seed.bitPattern
+        state = bits ^ 0x9e3779b97f4a7c15
+        if state == 0 {
+            state = 0x4d595df4d0f33173
+        }
+        lastValue = 0
+    }
+
+    mutating func next(argument: Double?) -> Double {
+        if let argument {
+            if argument == 0 {
+                return lastValue
+            }
+            if argument < 0 {
+                randomize(seed: argument)
+            }
+        }
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        let value = Double(state >> 11) / Double(1 << 53)
+        lastValue = value
+        return value
+    }
 }
 
 public enum BASICVariableScope: String, Sendable {
@@ -268,6 +307,7 @@ enum BASICType: Equatable {
     case record(String)
     case classType(String)
     case interfaceType(String)
+    case dictionary
 }
 
 private struct BASICTypeSpec: Equatable {
@@ -445,6 +485,7 @@ private final class BASICRuntime {
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
     var letMode: LetMode = .global
+    var randomGenerator = BASICRandomGenerator()
 
     func resetForRun() {
         globals.removeAll()
@@ -474,21 +515,34 @@ private final class BASICRuntime {
         return defaultValue(for: inferredType(name: variable.name, value: nil))
     }
 
-    func value(for reference: VariableReference, indexes: [Int], accessClassName: String? = nil) throws -> BASICValue {
+    func declaredType(for reference: VariableReference) -> BASICType? {
+        binding(for: reference.base.normalized)?.type
+    }
+
+    func value(for reference: VariableReference, indexes: [BASICValue], accessClassName: String? = nil) throws -> BASICValue {
+        let declaredFieldType = fieldSurfaceType(for: reference)
         var value = value(for: reference.base)
         if !indexes.isEmpty {
-            guard case .array(let array) = value else {
+            switch value {
+            case .array(let array):
+                value = try arrayValue(array, at: indexes, name: reference.base.name)
+            case .dictionary(let dictionary):
+                value = try dictionaryValue(dictionary, at: indexes, name: reference.base.name)
+            default:
                 throw BASICError.runtime("\(reference.base.name) is not an array")
             }
-            value = try arrayValue(array, at: indexes, name: reference.base.name)
         }
-        for field in reference.fields {
+        for (fieldIndex, field) in reference.fields.enumerated() {
             guard let composite = value.compositeFields else {
                 throw BASICError.runtime("\(reference.base.name) has no field \(field)")
             }
             let (recordName, fields) = composite
             let normalized = field.uppercased()
-            try validateFieldAccess(typeName: recordName, fieldName: field, accessClassName: accessClassName)
+            let lookupTypeName = fieldIndex == 0 ? declaredFieldType?.name ?? recordName : recordName
+            try validateFieldAccess(typeName: lookupTypeName, fieldName: field, accessClassName: accessClassName)
+            guard fieldExists(typeName: lookupTypeName, fieldName: field) else {
+                throw BASICError.runtime("\(fieldLookupTypeName(declaredFieldType, fallbackTypeName: recordName)) has no field \(field)")
+            }
             guard let fieldValue = fields[normalized] else {
                 throw BASICError.runtime("\(recordName) has no field \(field)")
             }
@@ -555,7 +609,7 @@ private final class BASICRuntime {
         set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
     }
 
-    func assign(reference: VariableReference, indexes: [Int], value: BASICValue?, accessClassName: String? = nil) throws {
+    func assign(reference: VariableReference, indexes: [BASICValue], value: BASICValue?, accessClassName: String? = nil) throws {
         guard !reference.isSimple else {
             try assign(kind: .bare, variable: reference.base, declaredType: nil, value: value)
             return
@@ -568,21 +622,52 @@ private final class BASICRuntime {
         }
 
         if !indexes.isEmpty {
-            guard case .array(var array) = binding.value else {
+            switch binding.value {
+            case .array(var array):
+                let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: reference.base.name)
+                if reference.fields.isEmpty {
+                    array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
+                } else {
+                    array.values[offset] = try assigningField(
+                        reference.fields,
+                        in: array.values[offset],
+                        value: value,
+                        accessClassName: accessClassName,
+                        declaredType: fieldSurfaceType(for: reference)
+                    )
+                }
+                binding.value = .array(array)
+                set(binding, in: context, normalized: normalized)
+                return
+            case .dictionary(var dictionary):
+                let key = try dictionaryKey(from: indexes, name: reference.base.name)
+                let currentValue = dictionary.values[key] ?? .empty
+                if reference.fields.isEmpty {
+                    dictionary.values[key] = value ?? .empty
+                } else {
+                    dictionary.values[key] = try assigningField(
+                        reference.fields,
+                        in: currentValue,
+                        value: value,
+                        accessClassName: accessClassName,
+                        declaredType: fieldSurfaceType(for: reference)
+                    )
+                }
+                binding.value = .dictionary(dictionary)
+                set(binding, in: context, normalized: normalized)
+                return
+            default:
                 throw BASICError.runtime("\(reference.base.name) is not an array")
             }
-            let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: reference.base.name)
-            if reference.fields.isEmpty {
-                array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
-            } else {
-                array.values[offset] = try assigningField(reference.fields, in: array.values[offset], value: value, accessClassName: accessClassName)
-            }
-            binding.value = .array(array)
-            set(binding, in: context, normalized: normalized)
-            return
         }
 
-        binding.value = try assigningField(reference.fields, in: binding.value, value: value, accessClassName: accessClassName)
+        binding.value = try assigningField(
+            reference.fields,
+            in: binding.value,
+            value: value,
+            accessClassName: accessClassName,
+            declaredType: fieldSurfaceType(for: reference)
+        )
         set(binding, in: context, normalized: normalized)
     }
 
@@ -700,6 +785,8 @@ private final class BASICRuntime {
                 return .classType(name)
             case .array(let array):
                 return array.type
+            case .dictionary:
+                return .dictionary
             }
         }
         return .scalar(.double)
@@ -754,6 +841,15 @@ private final class BASICRuntime {
                 return .empty
             }
             throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
+        }
+        if case .dictionary = type {
+            if case .dictionary = value {
+                return value
+            }
+            if case .empty = value {
+                return defaultValue(for: type)
+            }
+            throw BASICError.type(message: "Cannot assign non-dictionary value to \(variable.name)")
         }
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
@@ -815,20 +911,27 @@ private final class BASICRuntime {
             return .object(definition.displayName, fields)
         case .interfaceType:
             return .empty
+        case .dictionary:
+            return .dictionary(BASICDictionary())
         }
     }
 
-    private func arrayValue(_ array: BASICArray, at indexes: [Int], name: String) throws -> BASICValue {
+    private func arrayValue(_ array: BASICArray, at indexes: [BASICValue], name: String) throws -> BASICValue {
         try array.values[arrayOffset(dimensions: array.dimensions, indexes: indexes, name: name)]
     }
 
-    private func arrayOffset(dimensions: [Int], indexes: [Int], name: String) throws -> Int {
+    private func dictionaryValue(_ dictionary: BASICDictionary, at indexes: [BASICValue], name: String) throws -> BASICValue {
+        dictionary.values[try dictionaryKey(from: indexes, name: name)] ?? .empty
+    }
+
+    private func arrayOffset(dimensions: [Int], indexes: [BASICValue], name: String) throws -> Int {
         guard indexes.count == dimensions.count else {
             throw BASICError.runtime("\(name) expects \(dimensions.count) indexes")
         }
         var multiplier = 1
         var offset = 0
-        for (index, upperBound) in zip(indexes.reversed(), dimensions.reversed()) {
+        for (indexValue, upperBound) in zip(indexes.reversed(), dimensions.reversed()) {
+            let index = try arrayIndex(from: indexValue, name: name)
             guard (0...upperBound).contains(index) else {
                 throw BASICError.runtime("\(name) subscript out of range")
             }
@@ -838,7 +941,33 @@ private final class BASICRuntime {
         return offset
     }
 
-    private func assigningField(_ fields: [String], in recordValue: BASICValue, value: BASICValue?, accessClassName: String?) throws -> BASICValue {
+    private func arrayIndex(from value: BASICValue, name: String) throws -> Int {
+        guard let number = value.number, number.rounded() == number else {
+            throw BASICError.runtime("\(name) array index must be numeric")
+        }
+        return Int(number)
+    }
+
+    private func dictionaryKey(from indexes: [BASICValue], name: String) throws -> String {
+        guard indexes.count == 1 else {
+            throw BASICError.runtime("\(name) expects 1 key")
+        }
+        if let string = indexes[0].string {
+            return string.description
+        }
+        if let number = indexes[0].number {
+            return BASICValue.number(number).description
+        }
+        throw BASICError.runtime("\(name) dictionary key must be a string or number")
+    }
+
+    private func assigningField(
+        _ fields: [String],
+        in recordValue: BASICValue,
+        value: BASICValue?,
+        accessClassName: String?,
+        declaredType: BASICType? = nil
+    ) throws -> BASICValue {
         guard let first = fields.first else {
             return value ?? recordValue
         }
@@ -847,11 +976,12 @@ private final class BASICRuntime {
         }
         let recordName = composite.name
         var recordFields = composite.fields
-        let fieldDefinitions = compositeFieldDefinitions(for: recordName)
+        let surfaceTypeName = declaredType?.name ?? recordName
+        let fieldDefinitions = compositeFieldDefinitions(for: surfaceTypeName)
         guard !fieldDefinitions.isEmpty else { throw BASICError.runtime("Unknown TYPE or CLASS \(recordName)") }
         let normalized = first.uppercased()
         guard let field = fieldDefinitions.first(where: { $0.normalizedName == normalized }) else {
-            throw BASICError.runtime("\(recordName) has no field \(first)")
+            throw BASICError.runtime("\(fieldLookupTypeName(declaredType, fallbackTypeName: recordName)) has no field \(first)")
         }
         try validateAccess(to: field, from: accessClassName)
         let current = recordFields[normalized] ?? defaultValue(for: field.type)
@@ -865,6 +995,18 @@ private final class BASICRuntime {
             return .object(recordName, recordFields)
         default:
             return .record(recordName, recordFields)
+        }
+    }
+
+    private func fieldSurfaceType(for reference: VariableReference) -> BASICType? {
+        guard !reference.fields.isEmpty else { return nil }
+        switch declaredType(for: reference) {
+        case .classType(let name):
+            return .classType(name)
+        case .interfaceType(let name):
+            return .interfaceType(name)
+        default:
+            return nil
         }
     }
 
@@ -906,6 +1048,25 @@ private final class BASICRuntime {
                 name: name,
                 typeName: "ARRAY OF \(array.type.name)",
                 value: arraySummary(array),
+                scope: scope,
+                children: children
+            )
+        case .dictionary(let dictionary):
+            let children = dictionary.values.keys.sorted().map { key in
+                let value = dictionary.values[key] ?? .empty
+                return snapshot(
+                    name: "\"\(key)\"",
+                    type: inferredType(name: key, value: value),
+                    value: value,
+                    scope: scope,
+                    path: "\(path)(\"\(key)\")"
+                )
+            }
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: "DICTIONARY",
+                value: "\(dictionary.values.count) entries",
                 scope: scope,
                 children: children
             )
@@ -1052,6 +1213,23 @@ private final class BASICRuntime {
         try validateAccess(to: field, from: accessClassName)
     }
 
+    private func fieldExists(typeName: String, fieldName: String) -> Bool {
+        compositeFieldDefinitions(for: typeName).contains {
+            $0.normalizedName == fieldName.uppercased()
+        }
+    }
+
+    private func fieldLookupTypeName(_ declaredType: BASICType?, fallbackTypeName: String) -> String {
+        switch declaredType {
+        case .interfaceType(let name):
+            return "INTERFACE \(name)"
+        case .classType(let name):
+            return "CLASS \(name)"
+        default:
+            return fallbackTypeName
+        }
+    }
+
     private func validateAccess(to field: BASICClassField, from accessClassName: String?) throws {
         switch field.visibility {
         case .public:
@@ -1139,6 +1317,7 @@ private extension BASICType {
         case .record(let name): return name
         case .classType(let name): return name
         case .interfaceType(let name): return name
+        case .dictionary: return "DICTIONARY"
         }
     }
 }
@@ -1385,14 +1564,14 @@ public final class BASICProgram: @unchecked Sendable {
             if let index = lines.firstIndex(where: { $0.number == number }) {
                 lines[index].source = trimmed
             } else {
-                lines.append(ProgramLine(number: number, source: trimmed, sourceLineNumber: nil, isImported: false))
+                lines.append(ProgramLine(number: number, source: trimmed, fileName: nil, sourceLineNumber: nil, isImported: false))
             }
             lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
         }
     }
 
     public func loadSource(_ source: String) {
-        lines = Self.parseLines(from: source, isImported: false)
+        lines = Self.parseLines(from: source, fileName: nil, isImported: false)
     }
 
     public func clear() {
@@ -1408,12 +1587,12 @@ public final class BASICProgram: @unchecked Sendable {
         }.joined(separator: "\n")
     }
 
-    public var orderedLines: [(number: Int?, source: String, sourceLineNumber: Int?, isImported: Bool)] {
-        lines.map { ($0.number, $0.source, $0.sourceLineNumber, $0.isImported) }
+    public var orderedLines: [(number: Int?, source: String, fileName: String?, sourceLineNumber: Int?, isImported: Bool)] {
+        lines.map { ($0.number, $0.source, $0.fileName, $0.sourceLineNumber, $0.isImported) }
     }
 
-    fileprivate static func importedLines(from source: String) -> [ProgramLine] {
-        parseLines(from: source, isImported: true)
+    fileprivate static func importedLines(from source: String, fileName: String) -> [ProgramLine] {
+        parseLines(from: source, fileName: fileName, isImported: true)
     }
 
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
@@ -1428,7 +1607,7 @@ public final class BASICProgram: @unchecked Sendable {
         return (number, rest)
     }
 
-    private static func parseLines(from source: String, isImported: Bool) -> [ProgramLine] {
+    private static func parseLines(from source: String, fileName: String?, isImported: Bool) -> [ProgramLine] {
         var sourceLines = source
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
@@ -1451,9 +1630,9 @@ public final class BASICProgram: @unchecked Sendable {
             .filter { !$0.source.isEmpty }
             .map { record in
                 if let numbered = splitNumberedLine(record.source) {
-                    return ProgramLine(number: numbered.number, source: numbered.source, sourceLineNumber: record.lineNumber, isImported: isImported)
+                    return ProgramLine(number: numbered.number, source: numbered.source, fileName: fileName, sourceLineNumber: record.lineNumber, isImported: isImported)
                 }
-                return ProgramLine(number: nil, source: record.source, sourceLineNumber: record.lineNumber, isImported: isImported)
+                return ProgramLine(number: nil, source: record.source, fileName: fileName, sourceLineNumber: record.lineNumber, isImported: isImported)
             }
     }
 
@@ -1500,6 +1679,7 @@ public final class BASICProgram: @unchecked Sendable {
 private struct ProgramLine {
     let number: Int?
     var source: String
+    var fileName: String?
     var sourceLineNumber: Int?
     var isImported: Bool
 }
@@ -1846,6 +2026,7 @@ public final class BASICInterpreter {
                 diagnostics.append(
                     diagnostic(
                         for: error,
+                        fileName: line.fileName,
                         sourceLineNumber: line.sourceLineNumber ?? index + 1,
                         fallbackColumn: 0
                     )
@@ -1853,6 +2034,7 @@ public final class BASICInterpreter {
             } catch {
                 diagnostics.append(
                     BASICDiagnostic(
+                        fileName: line.fileName,
                         lineNumber: line.sourceLineNumber ?? index + 1,
                         column: 0,
                         message: "Unexpected error: \(error)"
@@ -1865,16 +2047,39 @@ public final class BASICInterpreter {
 
         do {
             let sourceLines = try expandedProgramLines()
-            let parsed = try sourceLines.enumerated().flatMap { index, line in
-                var parser = try Parser(source: line.source)
-                let statement = try parser.parseStatement()
-                return ParsedLine.flatten(
-                    number: line.number,
-                    sourceLineNumber: line.sourceLineNumber ?? index + 1,
-                    isImported: line.isImported,
-                    statement: statement
-                )
+            var parsed: [ParsedLine] = []
+            for (index, line) in sourceLines.enumerated() {
+                do {
+                    var parser = try Parser(source: line.source)
+                    let statement = try parser.parseStatement()
+                    parsed += ParsedLine.flatten(
+                        number: line.number,
+                        fileName: line.fileName,
+                        sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                        isImported: line.isImported,
+                        statement: statement
+                    )
+                } catch let error as BASICError {
+                    diagnostics.append(
+                        diagnostic(
+                            for: error,
+                            fileName: line.fileName,
+                            sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                            fallbackColumn: 0
+                        )
+                    )
+                } catch {
+                    diagnostics.append(
+                        BASICDiagnostic(
+                            fileName: line.fileName,
+                            lineNumber: line.sourceLineNumber ?? index + 1,
+                            column: 0,
+                            message: "Unexpected error: \(error)"
+                        )
+                    )
+                }
             }
+            guard diagnostics.isEmpty else { return diagnostics }
 
             do {
                 recordDefinitions = try collectRecords(in: parsed)
@@ -1902,68 +2107,77 @@ public final class BASICInterpreter {
 
     private func diagnostic(
         for error: BASICError,
+        fileName: String? = nil,
         sourceLineNumber: Int,
         fallbackColumn: Int
     ) -> BASICDiagnostic {
         switch error {
         case .contextualSyntax(let message, _, let column):
-            return BASICDiagnostic(lineNumber: sourceLineNumber, column: column, message: "Syntax error: \(message)")
+            return BASICDiagnostic(fileName: fileName, lineNumber: sourceLineNumber, column: column, message: "Syntax error: \(message)")
         case .contextualType(let message, _, let column):
-            return BASICDiagnostic(lineNumber: sourceLineNumber, column: column, message: "Type error: \(message)")
+            return BASICDiagnostic(fileName: fileName, lineNumber: sourceLineNumber, column: column, message: "Type error: \(message)")
         case .syntax(let message):
-            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: "Syntax error: \(message)")
+            return BASICDiagnostic(fileName: fileName, lineNumber: sourceLineNumber, column: fallbackColumn, message: "Syntax error: \(message)")
         case .type(let message):
-            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: "Type error: \(message)")
+            return BASICDiagnostic(fileName: fileName, lineNumber: sourceLineNumber, column: fallbackColumn, message: "Type error: \(message)")
         default:
-            return BASICDiagnostic(lineNumber: sourceLineNumber, column: fallbackColumn, message: error.description)
+            return BASICDiagnostic(fileName: fileName, lineNumber: sourceLineNumber, column: fallbackColumn, message: error.description)
         }
     }
 
     private func diagnostic(for error: BASICError, parsed: [ParsedLine]) -> BASICDiagnostic {
-        let line = sourceLineNumber(for: error, parsed: parsed) ?? 1
-        return diagnostic(for: error, sourceLineNumber: line, fallbackColumn: 0)
+        let location = sourceLocation(for: error, parsed: parsed)
+        return diagnostic(
+            for: error,
+            fileName: location?.fileName,
+            sourceLineNumber: location?.lineNumber ?? 1,
+            fallbackColumn: 0
+        )
     }
 
-    private func sourceLineNumber(for error: BASICError, parsed: [ParsedLine]) -> Int? {
+    private func sourceLocation(for error: BASICError, parsed: [ParsedLine]) -> (fileName: String?, lineNumber: Int)? {
         let message = error.description
         var currentClassName: String?
 
-        for line in parsed where !line.isImported {
+        for line in parsed {
             switch line.statement {
             case .classDeclaration(let name):
                 currentClassName = name
                 if message.contains("CLASS \(name)") && !message.contains(" method ") {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             case .endClass:
                 currentClassName = nil
             case .interfaceDeclaration(let name):
                 if message.contains("INTERFACE \(name)") {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             case .typeDeclaration(let name):
                 if message.contains("TYPE \(name)") {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             case .functionDeclaration(let name, _, _, _, _, _):
                 let classMatches = currentClassName.map { message.contains("CLASS \($0)") } ?? true
                 if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             case .classField(let name, _, _), .typeField(let name, _, _):
                 if message.contains("field \(name)") || message.contains(" \(name) ") {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             case .interfaceFunctionSignature(let name, _, _):
                 if message.contains(".\(name.name)") || message.contains("member \(name.name)") {
-                    return line.sourceLineNumber
+                    return (line.fileName, line.sourceLineNumber)
                 }
             default:
                 continue
             }
         }
 
-        return parsed.first(where: { !$0.isImported })?.sourceLineNumber
+        if let rootLine = parsed.first(where: { !$0.isImported }) {
+            return (rootLine.fileName, rootLine.sourceLineNumber)
+        }
+        return parsed.first.map { ($0.fileName, $0.sourceLineNumber) }
     }
 
     private func prepare(startLine: Int?) throws {
@@ -1971,7 +2185,13 @@ public final class BASICInterpreter {
         let parsed = try sourceLines.enumerated().flatMap { index, line in
             var parser = try Parser(source: line.source)
             let statement = try parser.parseStatement()
-            return ParsedLine.flatten(number: line.number, sourceLineNumber: line.sourceLineNumber ?? index + 1, isImported: line.isImported, statement: statement)
+            return ParsedLine.flatten(
+                number: line.number,
+                fileName: line.fileName,
+                sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                isImported: line.isImported,
+                statement: statement
+            )
         }
         parsedLines = parsed
         lineIndexByNumber = [:]
@@ -2007,37 +2227,133 @@ public final class BASICInterpreter {
 
     private func expandedProgramLines() throws -> [ProgramLine] {
         var importedPaths: Set<String> = []
+        var activeImportStack: [String] = []
         return try expandedProgramLines(from: program.orderedLines.map {
-            ProgramLine(number: $0.number, source: $0.source, sourceLineNumber: $0.sourceLineNumber, isImported: $0.isImported)
-        }, importedPaths: &importedPaths)
+            ProgramLine(number: $0.number, source: $0.source, fileName: $0.fileName, sourceLineNumber: $0.sourceLineNumber, isImported: $0.isImported)
+        }, importedPaths: &importedPaths, activeImportStack: &activeImportStack)
     }
 
-    private func expandedProgramLines(from lines: [ProgramLine], importedPaths: inout Set<String>) throws -> [ProgramLine] {
+    private func expandedProgramLines(
+        from lines: [ProgramLine],
+        importedPaths: inout Set<String>,
+        activeImportStack: inout [String]
+    ) throws -> [ProgramLine] {
         var expanded: [ProgramLine] = []
         for line in lines {
-            var parser = try Parser(source: line.source)
-            if case .importDirective(let path) = try parser.parseStatement() {
+            let parsedStatement: Statement
+            do {
+                var parser = try Parser(source: line.source)
+                parsedStatement = try parser.parseStatement()
+            } catch {
+                if line.isImported {
+                    expanded.append(line)
+                    continue
+                }
+                throw error
+            }
+
+            if case .importDirective(let path) = parsedStatement {
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("IMPORT is not supported by this host")
                 }
+                let resolvedPath = Self.resolvedImportPath(path, relativeTo: line.fileName)
                 if Self.isDirectoryImportPath(path) {
-                    for importedFile in try Self.importedBasFiles(in: path, using: fileHost) {
-                        guard !importedPaths.contains(importedFile) else { continue }
-                        importedPaths.insert(importedFile)
-                        let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: importedFile))
-                        expanded += try expandedProgramLines(from: imported, importedPaths: &importedPaths)
+                    for importedFile in try Self.importedBasFiles(in: resolvedPath, using: fileHost) {
+                        let normalizedImportedFile = Self.normalizedImportPath(importedFile)
+                        try Self.validateImportCycle(for: normalizedImportedFile, activeImportStack: activeImportStack)
+                        guard !importedPaths.contains(normalizedImportedFile) else { continue }
+                        importedPaths.insert(normalizedImportedFile)
+                        activeImportStack.append(normalizedImportedFile)
+                        do {
+                            let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: importedFile), fileName: importedFile)
+                            expanded += try expandedProgramLines(
+                                from: imported,
+                                importedPaths: &importedPaths,
+                                activeImportStack: &activeImportStack
+                            )
+                            _ = activeImportStack.popLast()
+                        } catch {
+                            _ = activeImportStack.popLast()
+                            throw error
+                        }
                     }
                 } else {
-                    guard !importedPaths.contains(path) else { continue }
-                    importedPaths.insert(path)
-                    let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: path))
-                    expanded += try expandedProgramLines(from: imported, importedPaths: &importedPaths)
+                    try Self.validateImportCycle(for: resolvedPath, activeImportStack: activeImportStack)
+                    guard !importedPaths.contains(resolvedPath) else { continue }
+                    importedPaths.insert(resolvedPath)
+                    activeImportStack.append(resolvedPath)
+                    do {
+                        let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: resolvedPath), fileName: resolvedPath)
+                        expanded += try expandedProgramLines(
+                            from: imported,
+                            importedPaths: &importedPaths,
+                            activeImportStack: &activeImportStack
+                        )
+                        _ = activeImportStack.popLast()
+                    } catch {
+                        _ = activeImportStack.popLast()
+                        throw error
+                    }
                 }
             } else {
                 expanded.append(line)
             }
         }
         return expanded
+    }
+
+    private static func validateImportCycle(for path: String, activeImportStack: [String]) throws {
+        guard activeImportStack.contains(path) else { return }
+        let cycle = (activeImportStack + [path]).joined(separator: " -> ")
+        throw BASICError.runtime("Import cycle detected: \(cycle)")
+    }
+
+    private static func resolvedImportPath(_ path: String, relativeTo importer: String?) -> String {
+        let normalizedPath = normalizedImportPath(path)
+        guard !normalizedPath.hasPrefix("/"),
+              let importer,
+              let base = importDirectory(for: importer),
+              !base.isEmpty
+        else {
+            return normalizedPath
+        }
+        return normalizedImportPath(base + "/" + normalizedPath)
+    }
+
+    private static func importDirectory(for fileName: String) -> String? {
+        let normalized = normalizedImportPath(fileName)
+        guard let separator = normalized.lastIndex(of: "/") else { return nil }
+        return String(normalized[..<separator])
+    }
+
+    private static func normalizedImportPath(_ path: String) -> String {
+        let usesTrailingSlash = path.hasSuffix("/") || path.hasSuffix("\\")
+        let isAbsolute = path.hasPrefix("/") || path.hasPrefix("\\")
+        let components = path
+            .replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        var stack: [String] = []
+
+        for component in components {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                if let last = stack.last, last != ".." {
+                    stack.removeLast()
+                } else if !isAbsolute {
+                    stack.append(component)
+                }
+            default:
+                stack.append(component)
+            }
+        }
+
+        let prefix = isAbsolute ? "/" : ""
+        let joined = prefix + stack.joined(separator: "/")
+        guard usesTrailingSlash, !joined.isEmpty, !joined.hasSuffix("/") else { return joined }
+        return joined + "/"
     }
 
     private static func isDirectoryImportPath(_ path: String) -> Bool {
@@ -2332,7 +2648,7 @@ public final class BASICInterpreter {
             return .next
         case .referenceAssignment(let reference, let expression):
             let value = try expression.map(evaluate)
-            try runtime.assign(reference: reference, indexes: try reference.indexes.map(integer), value: value, accessClassName: currentClassContext)
+            try runtime.assign(reference: reference, indexes: try reference.indexes.map(evaluate), value: value, accessClassName: currentClassContext)
             return .next
         case .dim(let variable, let dimensions, let declaredType):
             try runtime.dim(variable: variable, dimensions: try dimensions.map(integer), declaredType: declaredType)
@@ -2375,6 +2691,10 @@ public final class BASICInterpreter {
             if !output.isEmpty {
                 host?.print(output, terminator: "")
             }
+            return .next
+        case .randomize(let expression):
+            let seed = try expression.map { try numeric(try evaluate($0)) } ?? Date().timeIntervalSince1970
+            runtime.randomGenerator.randomize(seed: seed)
             return .next
         case .goto(let line):
             return .goto(line)
@@ -2552,7 +2872,7 @@ public final class BASICInterpreter {
             case .reference(let reference):
                 try runtime.assign(
                     reference: reference,
-                    indexes: try reference.indexes.map(integer),
+                    indexes: try reference.indexes.map(evaluate),
                     value: value,
                     accessClassName: currentClassContext
                 )
@@ -2983,23 +3303,230 @@ public final class BASICInterpreter {
         return nil
     }
 
+    private static let intrinsicFunctionNames: Set<String> = [
+        "ABS", "ASC", "ATN", "CINT", "COS", "EXP", "FIX", "INSTR", "INT",
+        "LEFT$", "LOG", "MID$", "RIGHT$", "RND", "SGN", "SIN", "SPACE$",
+        "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "VAL"
+    ]
+
+    private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
+        let normalized = name.normalized
+
+        switch normalized {
+        case "ABS":
+            let value = try singleNumericArgument(name: name.name, arguments: arguments)
+            return .number(abs(value))
+        case "ASC":
+            let value = try singleStringArgument(name: name.name, arguments: arguments)
+            guard let scalar = value.unicodeScalars.first else {
+                throw BASICError.runtime("ASC requires a non-empty string")
+            }
+            return .number(Double(scalar.value))
+        case "ATN":
+            return .number(atan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "CINT":
+            return .number(try singleNumericArgument(name: name.name, arguments: arguments).rounded())
+        case "COS":
+            return .number(cos(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "EXP":
+            return .number(exp(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "FIX":
+            let value = try singleNumericArgument(name: name.name, arguments: arguments)
+            return .number(value < 0 ? ceil(value) : floor(value))
+        case "INSTR":
+            return .number(Double(try intrinsicInstr(arguments: arguments)))
+        case "INT":
+            return .number(floor(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "LEFT$":
+            try requireArgumentCount(name.name, arguments, 2)
+            let value = try string(arguments[0])
+            let count = max(0, try integer(arguments[1]))
+            return .string(BASICString(String(value.prefix(count))))
+        case "LOG":
+            return .number(log(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "MID$":
+            return try intrinsicMid(arguments: arguments)
+        case "RIGHT$":
+            try requireArgumentCount(name.name, arguments, 2)
+            let value = try string(arguments[0])
+            let count = max(0, try integer(arguments[1]))
+            return .string(BASICString(String(value.suffix(count))))
+        case "RND":
+            try requireArgumentRange(name.name, arguments, 0...1)
+            let argument = try arguments.first.map { try numeric(try evaluate($0)) }
+            return .number(runtime.randomGenerator.next(argument: argument))
+        case "SGN":
+            let value = try singleNumericArgument(name: name.name, arguments: arguments)
+            return .number(value == 0 ? 0 : (value < 0 ? -1 : 1))
+        case "SIN":
+            return .number(sin(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "SPACE$":
+            let count = max(0, try singleIntegerArgument(name: name.name, arguments: arguments))
+            return .string(BASICString(String(repeating: " ", count: count)))
+        case "SPC":
+            let count = max(0, try singleIntegerArgument(name: name.name, arguments: arguments))
+            return .string(BASICString(String(repeating: " ", count: count)))
+        case "SQR":
+            return .number(sqrt(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "STR$":
+            let value = try singleNumericArgument(name: name.name, arguments: arguments)
+            let rendered = BASICValue.number(value).description
+            return .string(BASICString(value >= 0 ? " " + rendered : rendered))
+        case "STRING$":
+            return try intrinsicString(arguments: arguments)
+        case "TAB":
+            let target = max(1, try singleIntegerArgument(name: name.name, arguments: arguments))
+            return .string(BASICString(String(repeating: " ", count: target - 1)))
+        case "TAN":
+            return .number(tan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "VAL":
+            let value = try singleStringArgument(name: name.name, arguments: arguments)
+            return .number(Self.leadingNumber(in: value) ?? 0)
+        default:
+            throw BASICError.runtime("Unknown function \(name.name)")
+        }
+    }
+
     private func callFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
+        if Self.intrinsicFunctionNames.contains(name.normalized) {
+            return try callIntrinsicFunction(name: name, arguments: arguments)
+        }
         guard let definition = functionDefinitions[name.normalized] else {
             throw BASICError.runtime("Unknown function \(name.name)")
         }
         return try callFunction(definition: definition, receiver: nil, receiverClassName: nil, arguments: arguments, allowVoid: false).value
     }
 
+    private func singleNumericArgument(name: String, arguments: [Expression]) throws -> Double {
+        try requireArgumentCount(name, arguments, 1)
+        return try numeric(try evaluate(arguments[0]))
+    }
+
+    private func singleIntegerArgument(name: String, arguments: [Expression]) throws -> Int {
+        try requireArgumentCount(name, arguments, 1)
+        return try integer(arguments[0])
+    }
+
+    private func singleStringArgument(name: String, arguments: [Expression]) throws -> String {
+        try requireArgumentCount(name, arguments, 1)
+        return try string(arguments[0])
+    }
+
+    private func requireArgumentCount(_ name: String, _ arguments: [Expression], _ count: Int) throws {
+        guard arguments.count == count else {
+            throw BASICError.runtime("\(name) expects \(count) argument\(count == 1 ? "" : "s")")
+        }
+    }
+
+    private func requireArgumentRange(_ name: String, _ arguments: [Expression], _ range: ClosedRange<Int>) throws {
+        guard range.contains(arguments.count) else {
+            throw BASICError.runtime("\(name) expects \(range.lowerBound) to \(range.upperBound) arguments")
+        }
+    }
+
+    private func intrinsicInstr(arguments: [Expression]) throws -> Int {
+        try requireArgumentRange("INSTR", arguments, 2...3)
+        let start: Int
+        let haystack: String
+        let needle: String
+        if arguments.count == 2 {
+            start = 1
+            haystack = try string(arguments[0])
+            needle = try string(arguments[1])
+        } else {
+            start = max(1, try integer(arguments[0]))
+            haystack = try string(arguments[1])
+            needle = try string(arguments[2])
+        }
+
+        guard !needle.isEmpty else { return start }
+        guard start <= haystack.count else { return 0 }
+        let startIndex = haystack.index(haystack.startIndex, offsetBy: start - 1)
+        guard let range = haystack[startIndex...].range(of: needle) else { return 0 }
+        return haystack.distance(from: haystack.startIndex, to: range.lowerBound) + 1
+    }
+
+    private func intrinsicMid(arguments: [Expression]) throws -> BASICValue {
+        try requireArgumentRange("MID$", arguments, 2...3)
+        let value = try string(arguments[0])
+        let start = max(1, try integer(arguments[1]))
+        guard start <= value.count else { return .string(BASICString("")) }
+        let startIndex = value.index(value.startIndex, offsetBy: start - 1)
+        let suffix = value[startIndex...]
+        if arguments.count == 2 {
+            return .string(BASICString(String(suffix)))
+        }
+        let count = max(0, try integer(arguments[2]))
+        return .string(BASICString(String(suffix.prefix(count))))
+    }
+
+    private func intrinsicString(arguments: [Expression]) throws -> BASICValue {
+        try requireArgumentCount("STRING$", arguments, 2)
+        let count = max(0, try integer(arguments[0]))
+        let value = try evaluate(arguments[1])
+        let character: String
+        if let number = value.number {
+            let code = Int(number.rounded())
+            character = code == 0 ? "\0" : try BASICString.character(code: code).description
+        } else if let string = value.string?.description, let first = string.first {
+            character = String(first)
+        } else {
+            throw BASICError.runtime("STRING$ requires a character code or non-empty string")
+        }
+        return .string(BASICString(String(repeating: character, count: count)))
+    }
+
+    private static func leadingNumber(in value: String) -> Double? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        var index = trimmed.startIndex
+        if index < trimmed.endIndex, trimmed[index] == "+" || trimmed[index] == "-" {
+            index = trimmed.index(after: index)
+        }
+
+        var hasDigits = false
+        while index < trimmed.endIndex, trimmed[index].isNumber {
+            hasDigits = true
+            index = trimmed.index(after: index)
+        }
+        if index < trimmed.endIndex, trimmed[index] == "." {
+            index = trimmed.index(after: index)
+            while index < trimmed.endIndex, trimmed[index].isNumber {
+                hasDigits = true
+                index = trimmed.index(after: index)
+            }
+        }
+        guard hasDigits else { return nil }
+        if index < trimmed.endIndex, trimmed[index].uppercased() == "E" {
+            var exponentIndex = trimmed.index(after: index)
+            if exponentIndex < trimmed.endIndex, trimmed[exponentIndex] == "+" || trimmed[exponentIndex] == "-" {
+                exponentIndex = trimmed.index(after: exponentIndex)
+            }
+            let exponentStart = exponentIndex
+            while exponentIndex < trimmed.endIndex, trimmed[exponentIndex].isNumber {
+                exponentIndex = trimmed.index(after: exponentIndex)
+            }
+            if exponentIndex > exponentStart {
+                index = exponentIndex
+            }
+        }
+        return Double(trimmed[..<index])
+    }
+
     private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
-        let receiverValue = try runtime.value(for: receiver, indexes: try receiver.indexes.map(integer))
+        let receiverDeclaredType = runtime.declaredType(for: receiver)
+        let receiverValue = try runtime.value(for: receiver, indexes: try receiver.indexes.map(evaluate))
         guard case .object(let className, _) = receiverValue else {
             throw BASICError.runtime("\(receiver.base.name) is not an object")
         }
         guard let classDefinition = classDefinitions[className.uppercased()] else {
             throw BASICError.runtime("Unknown CLASS \(className)")
         }
-        guard let definition = lookupMethod(named: method.normalized, in: classDefinition) else {
-            throw BASICError.runtime("CLASS \(classDefinition.displayName) has no method \(method.name)")
+        guard let definition = lookupMethod(
+            named: method.normalized,
+            receiverDeclaredType: receiverDeclaredType,
+            in: classDefinition
+        ) else {
+            throw BASICError.runtime("\(methodLookupTypeName(receiverDeclaredType, fallbackClassName: classDefinition.displayName)) has no method \(method.name)")
         }
         try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
         let result = try callFunction(
@@ -3010,9 +3537,75 @@ public final class BASICInterpreter {
             allowVoid: false
         )
         if let updatedReceiver = result.receiver {
-            try runtime.assign(reference: receiver, indexes: try receiver.indexes.map(integer), value: updatedReceiver, accessClassName: currentClassContext)
+            try runtime.assign(reference: receiver, indexes: try receiver.indexes.map(evaluate), value: updatedReceiver, accessClassName: currentClassContext)
         }
         return result.value
+    }
+
+    private func lookupMethod(
+        named normalizedName: String,
+        receiverDeclaredType: BASICType?,
+        in classDefinition: BASICClassDefinition
+    ) -> FunctionDefinition? {
+        switch receiverDeclaredType {
+        case .interfaceType(let interfaceName):
+            return lookupInterfaceMethod(
+                named: normalizedName,
+                interfaceName: interfaceName,
+                in: classDefinition
+            )
+        case .classType(let declaredClassName):
+            guard let declaredClass = classDefinitions[declaredClassName.uppercased()],
+                  lookupMethod(named: normalizedName, in: declaredClass) != nil else {
+                return nil
+            }
+            return lookupMethod(named: normalizedName, in: classDefinition)
+        default:
+            if let direct = lookupMethod(named: normalizedName, in: classDefinition) {
+                return direct
+            }
+            return nil
+        }
+    }
+
+    private func methodLookupTypeName(_ receiverDeclaredType: BASICType?, fallbackClassName: String) -> String {
+        switch receiverDeclaredType {
+        case .interfaceType(let name):
+            return "INTERFACE \(name)"
+        case .classType(let name):
+            return "CLASS \(name)"
+        default:
+            return "CLASS \(fallbackClassName)"
+        }
+    }
+
+    private func lookupInterfaceMethod(
+        named normalizedName: String,
+        interfaceName: String,
+        in classDefinition: BASICClassDefinition
+    ) -> FunctionDefinition? {
+        guard let interfaceDefinition = interfaceDefinitions[interfaceName.uppercased()] else {
+            return nil
+        }
+        return interfaceMember(named: normalizedName, in: interfaceDefinition).flatMap {
+            method(for: $0.member, interface: $0.interface, in: classDefinition)
+        }
+    }
+
+    private func interfaceMember(
+        named normalizedName: String,
+        in interfaceDefinition: BASICInterfaceDefinition
+    ) -> (member: BASICInterfaceMember, interface: BASICInterfaceDefinition)? {
+        for inheritedName in interfaceDefinition.inheritedInterfaces {
+            if let inherited = interfaceDefinitions[inheritedName.uppercased()],
+               let match = interfaceMember(named: normalizedName, in: inherited) {
+                return match
+            }
+        }
+        if let member = interfaceDefinition.members.first(where: { $0.normalizedName == normalizedName }) {
+            return (member, interfaceDefinition)
+        }
+        return nil
     }
 
     private func validateMethodAccess(_ method: FunctionDefinition, receiverClass: String) throws {
@@ -3303,6 +3896,11 @@ public final class BASICInterpreter {
         for part in parts {
             switch part {
             case .expression(let expression):
+                if let spacing = try printSpacing(for: expression, column: column) {
+                    output += spacing
+                    column += spacing.count
+                    continue
+                }
                 let text = try evaluate(expression).description
                 output += text
                 column += text.count
@@ -3317,6 +3915,29 @@ public final class BASICInterpreter {
 
         let terminator = parts.last?.suppressesNewline == true ? "" : "\n"
         return PrintOutput(text: output, terminator: terminator)
+    }
+
+    private func printSpacing(for expression: Expression, column: Int) throws -> String? {
+        let name: VariableName
+        let arguments: [Expression]
+        switch expression {
+        case .callOrArray(let callName, let callArguments), .functionCall(let callName, let callArguments):
+            name = callName
+            arguments = callArguments
+        default:
+            return nil
+        }
+
+        switch name.normalized {
+        case "SPC":
+            let count = max(0, try singleIntegerArgument(name: name.name, arguments: arguments))
+            return String(repeating: " ", count: count)
+        case "TAB":
+            let targetColumn = max(0, try singleIntegerArgument(name: name.name, arguments: arguments) - 1)
+            return String(repeating: " ", count: max(0, targetColumn - column))
+        default:
+            return nil
+        }
     }
 
     private func execute(_ action: ConditionalAction, pc: Int, parsed: [ParsedLine]) throws -> Flow {
@@ -3471,12 +4092,15 @@ public final class BASICInterpreter {
         case .variable(let name):
             return runtime.value(for: name)
         case .variableReference(let reference):
-            return try runtime.value(for: reference, indexes: try reference.indexes.map(integer), accessClassName: currentClassContext)
+            return try runtime.value(for: reference, indexes: try reference.indexes.map(evaluate), accessClassName: currentClassContext)
         case .callOrArray(let name, let arguments):
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
-            return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(integer), accessClassName: currentClassContext)
+            if Self.intrinsicFunctionNames.contains(name.normalized) {
+                return try callIntrinsicFunction(name: name, arguments: arguments)
+            }
+            return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(evaluate), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className, let arguments):
@@ -3603,23 +4227,42 @@ public final class BASICInterpreter {
 private struct ParsedLine {
     let number: Int?
     let displayLineNumber: Int
+    let fileName: String?
     let sourceLineNumber: Int
     let statementNumber: Int
     let isImported: Bool
     let statement: Statement
 
     var breakpointLocation: BASICBreakpointLocation {
-        BASICBreakpointLocation(lineNumber: sourceLineNumber, statementNumber: statementNumber)
+        BASICBreakpointLocation(fileName: fileName, lineNumber: sourceLineNumber, statementNumber: statementNumber)
     }
 
-    static func flatten(number: Int?, sourceLineNumber: Int, isImported: Bool, statement: Statement) -> [ParsedLine] {
+    static func flatten(number: Int?, fileName: String?, sourceLineNumber: Int, isImported: Bool, statement: Statement) -> [ParsedLine] {
         let displayLineNumber = number ?? sourceLineNumber
         guard case .sequence(let statements) = statement else {
-            return [ParsedLine(number: number, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: 0, isImported: isImported, statement: statement)]
+            return [
+                ParsedLine(
+                    number: number,
+                    displayLineNumber: displayLineNumber,
+                    fileName: fileName,
+                    sourceLineNumber: sourceLineNumber,
+                    statementNumber: 0,
+                    isImported: isImported,
+                    statement: statement
+                )
+            ]
         }
 
         return statements.enumerated().map { index, statement in
-            ParsedLine(number: index == 0 ? number : nil, displayLineNumber: displayLineNumber, sourceLineNumber: sourceLineNumber, statementNumber: index, isImported: isImported, statement: statement)
+            ParsedLine(
+                number: index == 0 ? number : nil,
+                displayLineNumber: displayLineNumber,
+                fileName: fileName,
+                sourceLineNumber: sourceLineNumber,
+                statementNumber: index,
+                isImported: isImported,
+                statement: statement
+            )
         }
     }
 }
@@ -3699,6 +4342,7 @@ private indirect enum Statement: Equatable {
     case save(Expression?)
     case files
     case system(Expression)
+    case randomize(Expression?)
     case goto(Int)
     case gotoLabel(String)
     case gosub(BranchTarget)
@@ -4193,6 +4837,9 @@ private struct Parser {
         if matchIdentifier("SYSTEM") {
             return .system(try parseExpression())
         }
+        if matchIdentifier("RANDOMIZE") {
+            return .randomize(isStatementEnd ? nil : try parseExpression())
+        }
         if matchIdentifier("GOTO") {
             let target = try consumeBranchTarget("Expected line number or label after GOTO")
             switch target {
@@ -4516,6 +5163,7 @@ private struct Parser {
         case "STRING": type = .scalar(.string)
         case "BOOLEAN": type = .scalar(.boolean)
         case "VARIANT": type = .scalar(.variant)
+        case "DICTIONARY": type = .dictionary
         case "VOID" where allowVoid: type = .void
         case "VOID": throw BASICError.contextualType(message: "VOID is only valid as a function return type", source: source, column: typeToken.column)
         case "RECORD":
@@ -4612,6 +5260,9 @@ private struct Parser {
                 let className = try consumeIdentifier("Expected class name after NEW")
                 let arguments = peek == .leftParen ? try parseArgumentList() : []
                 return .newObject(className, arguments)
+            }
+            if uppercased == "RND", peek != .leftParen {
+                return .functionCall(VariableName(name: name, column: tokens[max(0, current - 1)].column), [])
             }
             if uppercased == "POINT", peek == .leftParen {
                 return .pointFunction(try parsePoint(openParenAlreadyConsumed: false))
