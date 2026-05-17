@@ -1525,6 +1525,21 @@ struct BASICCoreTests {
         #expect(host.output == ["10 PRINT \"HELLO\""])
     }
 
+    @Test("PROMPT command updates the session prompt template")
+    func promptCommandUpdatesSessionPromptTemplate() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PROMPT \"BASIC:%cwd%nl> \"")
+        host.currentDirectory = "/tmp/aibasic"
+
+        #expect(session.promptTemplate == "BASIC:%cwd%nl> ")
+        #expect(session.prompt == "BASIC:/tmp/aibasic\n> ")
+
+        session.submit("PROMPT \"${user}:${currentdir}> \"")
+        #expect(session.prompt == "\(NSUserName()):/tmp/aibasic> ")
+    }
+
     @Test("Debugger snapshots group inherited CLASS fields")
     func debuggerSnapshotsGroupInheritedClassFields() throws {
         let host = TestHost()

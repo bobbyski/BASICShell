@@ -2364,19 +2364,23 @@ private final class BASICFileState {
 }
 
 public final class BASICSession: @unchecked Sendable {
-    public static let defaultPrompt = "READY\n> "
+    public static let defaultPromptTemplate = "    %cwd %gitSegment "
+    public static let defaultPrompt = "    ~  "
 
     public let program = BASICProgram()
-    public var prompt: String
+    public var promptTemplate: String
+    public var prompt: String {
+        renderedPrompt()
+    }
 
     private let host: BASICHost
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
     private var activeInterpreter: BASICInterpreter?
 
-    public init(host: BASICHost, prompt: String = BASICSession.defaultPrompt) {
+    public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
         self.host = host
-        self.prompt = prompt
+        self.promptTemplate = promptTemplate
     }
 
     @discardableResult
@@ -2436,6 +2440,14 @@ public final class BASICSession: @unchecked Sendable {
                 }
                 return true
             }
+            if let promptCommand = try Self.promptString(from: trimmed) {
+                if let promptCommand {
+                    promptTemplate = promptCommand
+                } else {
+                    host.printLine(promptTemplate)
+                }
+                return true
+            }
             if Self.isFilesCommand(trimmed) {
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("FILES is not supported by this host")
@@ -2469,7 +2481,7 @@ public final class BASICSession: @unchecked Sendable {
             case "CLEAR":
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, FILES, SYSTEM, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PROMPT, FILES, SYSTEM, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             case "QUIT", "EXIT":
                 return false
@@ -2612,6 +2624,11 @@ public final class BASICSession: @unchecked Sendable {
         return try commandPath(keyword: "CD", from: source, requiresPath: false)
     }
 
+    private static func promptString(from source: String) throws -> String?? {
+        guard keywordPrefix("PROMPT", matches: source) else { return nil }
+        return try commandPath(keyword: "PROMPT", from: source, requiresPath: false)
+    }
+
     private static func commandPath(keyword: String, from source: String, requiresPath: Bool) throws -> String? {
         guard keywordPrefix(keyword, matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: keyword.count)
@@ -2652,6 +2669,84 @@ public final class BASICSession: @unchecked Sendable {
         guard source[source.startIndex..<end].uppercased() == keyword else { return false }
         guard end < source.endIndex else { return true }
         return source[end].isWhitespace || source[end] == "\""
+    }
+
+    private func renderedPrompt() -> String {
+        let cwd = currentWorkingDirectoryForPrompt()
+        var rendered = promptTemplate
+        rendered = rendered.replacingOccurrences(of: "${currentdir}", with: abbreviatedPath(cwd))
+        rendered = rendered.replacingOccurrences(of: "${gitstatus}", with: gitPrompt(for: cwd))
+        rendered = rendered.replacingOccurrences(of: "${user}", with: NSUserName())
+        rendered = rendered.replacingOccurrences(of: "%cwd", with: abbreviatedPath(cwd))
+        rendered = rendered.replacingOccurrences(of: "%gitSegment", with: gitSegment(for: cwd))
+        rendered = rendered.replacingOccurrences(of: "%git", with: gitPrompt(for: cwd))
+        rendered = rendered.replacingOccurrences(of: "%nl", with: "\n")
+        rendered = rendered.replacingOccurrences(of: "%%", with: "%")
+        return rendered
+    }
+
+    private func currentWorkingDirectoryForPrompt() -> String {
+        guard let fileHost = host as? BASICFileHost,
+              let path = try? fileHost.currentDirectoryPath() else {
+            return FileManager.default.currentDirectoryPath
+        }
+        return path
+    }
+
+    private func abbreviatedPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home {
+            return "~"
+        }
+        if path.hasPrefix(home + "/") {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+
+    private func gitSegment(for path: String) -> String {
+        let git = gitPrompt(for: path)
+        guard !git.isEmpty else { return "" }
+        return "   \(git) "
+    }
+
+    private func gitPrompt(for path: String) -> String {
+        guard let branch = Self.gitOutput(arguments: ["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty,
+              branch != "HEAD" else { return "" }
+
+        let status = Self.gitOutput(arguments: ["-C", path, "status", "--porcelain=v2", "--branch"]) ?? ""
+        var suffix = ""
+        for line in status.split(separator: "\n") where line.hasPrefix("# branch.ab ") {
+            let pieces = line.split(separator: " ")
+            for piece in pieces {
+                if piece.hasPrefix("+"), piece.count > 1, piece != "+0" {
+                    suffix += " ⇡\(piece.dropFirst())"
+                } else if piece.hasPrefix("-"), piece.count > 1, piece != "-0" {
+                    suffix += " ⇣\(piece.dropFirst())"
+                }
+            }
+        }
+        return branch + suffix
+    }
+
+    private static func gitOutput(arguments: [String]) -> String? {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["git"] + arguments
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 }
 

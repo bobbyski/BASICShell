@@ -75,6 +75,11 @@ struct BASICStudioApp: App {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             }
         }
+
+        Settings {
+            SettingsView(model: model)
+                .frame(width: 560, height: 380)
+        }
     }
 }
 
@@ -262,6 +267,8 @@ struct StudioView: View {
                     executionLine: nil,
                     breakpointLines: [],
                     isReadOnly: false,
+                    fontFamily: model.fontFamily,
+                    fontSize: model.fontSize,
                     findRequest: model.editorFindRequest,
                     replaceRequest: model.editorReplaceRequest,
                     breakpointToggle: nil
@@ -426,6 +433,48 @@ struct StudioSettings: Codable {
     var isEditorGutterVisible = false
     var terminalScreenSize: TerminalScreenSize = .flexible
     var workingDirectoryPath: String?
+    var promptTemplate: String = BASICSession.defaultPromptTemplate
+    var fontFamily: String = "SF Mono"
+    var fontSize: Double = 13
+
+    private enum CodingKeys: String, CodingKey {
+        case editorTheme
+        case isEditorGutterVisible
+        case terminalScreenSize
+        case workingDirectoryPath
+        case promptTemplate
+        case fontFamily
+        case fontSize
+    }
+
+    init(
+        editorTheme: EditorTheme = .dark,
+        isEditorGutterVisible: Bool = false,
+        terminalScreenSize: TerminalScreenSize = .flexible,
+        workingDirectoryPath: String? = nil,
+        promptTemplate: String = BASICSession.defaultPromptTemplate,
+        fontFamily: String = "SF Mono",
+        fontSize: Double = 13
+    ) {
+        self.editorTheme = editorTheme
+        self.isEditorGutterVisible = isEditorGutterVisible
+        self.terminalScreenSize = terminalScreenSize
+        self.workingDirectoryPath = workingDirectoryPath
+        self.promptTemplate = promptTemplate
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        editorTheme = try container.decodeIfPresent(EditorTheme.self, forKey: .editorTheme) ?? .dark
+        isEditorGutterVisible = try container.decodeIfPresent(Bool.self, forKey: .isEditorGutterVisible) ?? false
+        terminalScreenSize = try container.decodeIfPresent(TerminalScreenSize.self, forKey: .terminalScreenSize) ?? .flexible
+        workingDirectoryPath = try container.decodeIfPresent(String.self, forKey: .workingDirectoryPath)
+        promptTemplate = try container.decodeIfPresent(String.self, forKey: .promptTemplate) ?? BASICSession.defaultPromptTemplate
+        fontFamily = try container.decodeIfPresent(String.self, forKey: .fontFamily) ?? "SF Mono"
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+    }
 }
 
 struct StudioSettingsStore {
@@ -469,6 +518,91 @@ private extension JSONEncoder {
     }
 }
 
+struct SettingsView: View {
+    @ObservedObject var model: StudioModel
+
+    var body: some View {
+        TabView {
+            generalPage
+                .tabItem {
+                    Label("General", systemImage: "gearshape")
+                }
+
+            fontPage
+                .tabItem {
+                    Label("Font", systemImage: "textformat")
+                }
+        }
+        .padding()
+    }
+
+    private var generalPage: some View {
+        Form {
+            Section("Prompt") {
+                TextField("Prompt string", text: $model.promptTemplate, axis: .vertical)
+                    .lineLimit(3...5)
+                    .textFieldStyle(.roundedBorder)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Supported prompt tokens")
+                        .font(.caption.weight(.semibold))
+                    Text("${currentdir}, ${gitstatus}, ${user}, %cwd, %git, %gitSegment, %nl")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                Button("Use Styled Default") {
+                    model.promptTemplate = BASICSession.defaultPromptTemplate
+                }
+
+                Button("Use Classic BASIC") {
+                    model.promptTemplate = "READY%nl> "
+                }
+            }
+        }
+    }
+
+    private var fontPage: some View {
+        Form {
+            Section("Editor And Console Font") {
+                Picker("Font", selection: $model.fontFamily) {
+                    ForEach(Self.availableFontFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack {
+                    Text("Size")
+                    Slider(value: $model.fontSize, in: 10...24, step: 1)
+                    Text("\(Int(model.fontSize))")
+                        .frame(width: 32, alignment: .trailing)
+                        .monospacedDigit()
+                }
+
+                Text("The selected font is used by Monaco and the SwiftTerm console. Prompt symbols need a Nerd Font or a font with matching glyph coverage.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static var availableFontFamilies: [String] {
+        let families = NSFontManager.shared.availableFontFamilies.sorted {
+            $0.localizedStandardCompare($1) == .orderedAscending
+        }
+        let preferred = ["SF Mono", "MesloLGS NF", "Hack Nerd Font", "JetBrains Mono", "Menlo", "Monaco"]
+        var result: [String] = []
+        for family in preferred where !result.contains(family) {
+            result.append(family)
+        }
+        for family in families where !result.contains(family) {
+            result.append(family)
+        }
+        return result
+    }
+}
+
 struct MonacoEditor: NSViewRepresentable {
     @Binding var text: String
     let showsLineNumbers: Bool
@@ -478,6 +612,8 @@ struct MonacoEditor: NSViewRepresentable {
     let executionLine: Int?
     let breakpointLines: Set<Int>
     let isReadOnly: Bool
+    let fontFamily: String
+    let fontSize: Double
     let findRequest: Int
     let replaceRequest: Int
     let breakpointToggle: ((Int) -> Void)?
@@ -508,6 +644,8 @@ struct MonacoEditor: NSViewRepresentable {
             executionLine: executionLine,
             breakpointLines: breakpointLines,
             isReadOnly: isReadOnly,
+            fontFamily: fontFamily,
+            fontSize: fontSize,
             findRequest: findRequest,
             replaceRequest: replaceRequest
         )
@@ -531,6 +669,8 @@ struct MonacoEditor: NSViewRepresentable {
         private var pendingExecutionLine: Int?
         private var pendingBreakpointLines: Set<Int> = []
         private var pendingIsReadOnly = false
+        private var pendingFontFamily = "SF Mono"
+        private var pendingFontSize = 13.0
         private var pendingFindRequest: Int?
         private var pendingReplaceRequest: Int?
         private var lastAppliedText: String?
@@ -541,6 +681,8 @@ struct MonacoEditor: NSViewRepresentable {
         private var lastAppliedExecutionLine: Int?
         private var lastAppliedBreakpointLines: Set<Int> = []
         private var lastAppliedIsReadOnly: Bool?
+        private var lastAppliedFontFamily: String?
+        private var lastAppliedFontSize: Double?
         private var lastAppliedFindRequest: Int?
         private var lastAppliedReplaceRequest: Int?
 
@@ -578,6 +720,8 @@ struct MonacoEditor: NSViewRepresentable {
             executionLine: Int?,
             breakpointLines: Set<Int>,
             isReadOnly: Bool,
+            fontFamily: String,
+            fontSize: Double,
             findRequest: Int,
             replaceRequest: Int
         ) {
@@ -589,6 +733,8 @@ struct MonacoEditor: NSViewRepresentable {
             pendingExecutionLine = executionLine
             pendingBreakpointLines = breakpointLines
             pendingIsReadOnly = isReadOnly
+            pendingFontFamily = fontFamily
+            pendingFontSize = fontSize
             pendingFindRequest = findRequest
             pendingReplaceRequest = replaceRequest
             applyPending()
@@ -650,6 +796,12 @@ struct MonacoEditor: NSViewRepresentable {
             if pendingIsReadOnly != lastAppliedIsReadOnly {
                 webView.evaluateJavaScript("window.basicStudioSetReadOnly(\(pendingIsReadOnly ? "true" : "false"));")
                 lastAppliedIsReadOnly = pendingIsReadOnly
+            }
+
+            if pendingFontFamily != lastAppliedFontFamily || pendingFontSize != lastAppliedFontSize {
+                webView.evaluateJavaScript("window.basicStudioSetFont(\(json(pendingFontFamily)), \(pendingFontSize));")
+                lastAppliedFontFamily = pendingFontFamily
+                lastAppliedFontSize = pendingFontSize
             }
 
             if let pendingFindRequest, pendingFindRequest != lastAppliedFindRequest {
@@ -760,6 +912,11 @@ struct MonacoEditor: NSViewRepresentable {
         window.basicStudioSetReadOnly = function(readOnly) {
           if (!editor) { return; }
           editor.updateOptions({ readOnly: readOnly, domReadOnly: readOnly });
+        };
+
+        window.basicStudioSetFont = function(fontFamily, fontSize) {
+          if (!editor) { return; }
+          editor.updateOptions({ fontFamily: fontFamily, fontSize: fontSize });
         };
 
         function applyPageBackground(themeName) {
@@ -900,7 +1057,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|PROMPT|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -916,7 +1073,7 @@ struct MonacoEditor: NSViewRepresentable {
             automaticLayout: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            fontFamily: "SF Mono",
             fontSize: 13,
             lineNumbers: pendingLineNumbers ? "on" : "off",
             glyphMargin: pendingLineNumbers,
@@ -978,6 +1135,28 @@ final class StudioModel: ObservableObject {
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
+    @Published var promptTemplate = BASICSession.defaultPromptTemplate {
+        didSet {
+            guard !isLoadingSettings else { return }
+            let oldPrompt = session.prompt
+            session.promptTemplate = promptTemplate
+            let newPrompt = session.prompt
+            if consoleText.hasSuffix(oldPrompt) {
+                consoleText.removeLast(oldPrompt.count)
+                consoleText += newPrompt
+            }
+            saveSettings()
+        }
+    }
+    @Published var fontFamily = "SF Mono" {
+        didSet { saveSettings() }
+    }
+    @Published var fontSize = 13.0 {
+        didSet {
+            saveSettings()
+            graphicsRevision += 1
+        }
+    }
     @Published var programText = StudioModel.defaultProgramSource() {
         didSet {
             editorErrorLine = nil
@@ -999,11 +1178,12 @@ final class StudioModel: ObservableObject {
 
     let graphics = GraphicsFramebuffer()
     private var shouldRunStartupProgram = false
+    private var isLoadingSettings = true
     private var currentProgramURL: URL?
     private let executionQueue = DispatchQueue(label: "AIBasic.Studio.Execution", qos: .userInitiated)
     private var activeExecutionControl: BASICExecutionControl?
 
-    private lazy var session = BASICSession(host: self)
+    private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
 
     private var prompt: String {
         session.prompt
@@ -1015,6 +1195,11 @@ final class StudioModel: ObservableObject {
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
         workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
+        promptTemplate = settings.promptTemplate
+        fontFamily = settings.fontFamily
+        fontSize = min(max(settings.fontSize, 10), 24)
+        isLoadingSettings = false
+        consoleText = session.prompt
 
         let arguments = Array(CommandLine.arguments.dropFirst())
         if arguments.first == "--demo", arguments.count >= 2 {
@@ -1307,6 +1492,9 @@ final class StudioModel: ObservableObject {
 
         if !trimmed.isEmpty {
             let shouldContinue = session.submit(command)
+            if promptTemplate != session.promptTemplate {
+                promptTemplate = session.promptTemplate
+            }
             if shouldSyncEditorAfterCommand(trimmed) {
                 syncEditorFromSession()
             }
@@ -1479,7 +1667,10 @@ final class StudioModel: ObservableObject {
                 editorTheme: editorTheme,
                 isEditorGutterVisible: isEditorGutterVisible,
                 terminalScreenSize: terminalScreenSize,
-                workingDirectoryPath: workingDirectoryURL.path
+                workingDirectoryPath: workingDirectoryURL.path,
+                promptTemplate: promptTemplate,
+                fontFamily: fontFamily,
+                fontSize: fontSize
             )
         )
     }
@@ -1763,6 +1954,8 @@ struct DebugPane: View {
                         executionLine: model.debuggerExecutionLine,
                         breakpointLines: model.debuggerBreakpointLines,
                         isReadOnly: true,
+                        fontFamily: model.fontFamily,
+                        fontSize: model.fontSize,
                         findRequest: 0,
                         replaceRequest: 0,
                         breakpointToggle: { lineNumber in
@@ -2395,7 +2588,9 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
             consoleText: model.consoleText,
             graphics: model.graphics,
             revision: model.graphicsRevision,
-            screenSize: model.terminalScreenSize
+            screenSize: model.terminalScreenSize,
+            fontFamily: model.fontFamily,
+            fontSize: model.fontSize
         )
     }
 }
@@ -2408,6 +2603,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var renderedCharacterCount = 0
     private var renderedRevision = -1
     private var renderedScreenSize: TerminalScreenSize?
+    private var renderedFontFamily: String?
+    private var renderedFontSize: Double?
     private var inputBuffer = ""
 
     override init(frame frameRect: NSRect) {
@@ -2433,6 +2630,14 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         addSubview(overlayView, positioned: .above, relativeTo: terminalView)
     }
 
+    private func applyFont(family: String, size: Double) {
+        let font = NSFont(name: family, size: CGFloat(size))
+            ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+        terminalView.font = font
+        applyScreenSize(force: true)
+        refreshTerminalDisplay()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(terminalView)
@@ -2443,7 +2648,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         applyScreenSize(force: false)
     }
 
-    func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int, screenSize: TerminalScreenSize) {
+    func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int, screenSize: TerminalScreenSize, fontFamily: String, fontSize: Double) {
+        if renderedFontFamily != fontFamily || renderedFontSize != fontSize {
+            applyFont(family: fontFamily, size: fontSize)
+            renderedFontFamily = fontFamily
+            renderedFontSize = fontSize
+        }
+
         if renderedScreenSize != screenSize {
             renderedScreenSize = screenSize
             applyScreenSize(force: true)
