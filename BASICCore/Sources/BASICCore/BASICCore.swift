@@ -169,6 +169,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
     case boolean(Bool)
     case record(String, [String: BASICValue])
     case object(String, [String: BASICValue])
+    case systemObject(String, Int)
     case array(BASICArray)
     case dictionary(BASICDictionary)
 
@@ -191,6 +192,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
             return "<\(name)>"
         case .object(let name, _):
             return "<\(name)>"
+        case .systemObject(let name, _):
+            return "<\(name)>"
         case .array(let array):
             return "<ARRAY \(array.type.name)>"
         case .dictionary(let dictionary):
@@ -204,7 +207,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .record, .object, .array, .dictionary: return true
+        case .record, .object, .systemObject, .array, .dictionary: return true
         }
     }
 
@@ -247,6 +250,27 @@ struct BASICArray: Equatable {
 
 struct BASICDictionary: Equatable {
     var values: [String: BASICValue] = [:]
+}
+
+private enum BASICFileAccess: String, Equatable {
+    case read = "READ"
+    case write = "WRITE"
+    case both = "BOTH"
+}
+
+private enum BASICFileContentType: String, Equatable {
+    case raw = "RAW"
+    case text = "TEXT"
+    case json = "JSON"
+}
+
+private struct BASICOpenFile: Equatable {
+    var path: String?
+    var access: BASICFileAccess?
+    var contentType: BASICFileContentType?
+    var isOpen = false
+    var content = BASICString("")
+    var position = 0
 }
 
 private struct BASICRandomGenerator {
@@ -520,10 +544,14 @@ private final class BASICRuntime {
     var classDefinitions: [String: BASICClassDefinition] = [:]
     var letMode: LetMode = .global
     var randomGenerator = BASICRandomGenerator()
+    private var fileObjects: [Int: BASICOpenFile] = [:]
+    private var nextFileObjectID = 1
 
     func resetForRun() {
         globals.removeAll()
         locals.removeAll()
+        fileObjects.removeAll()
+        nextFileObjectID = 1
     }
 
     func clearAll() {
@@ -553,6 +581,17 @@ private final class BASICRuntime {
         binding(for: reference.base.normalized)?.type
     }
 
+    static func isBuiltInClass(_ name: String) -> Bool {
+        name.uppercased() == "FILE"
+    }
+
+    func fileObject(isOpen: Bool = false) -> BASICValue {
+        let id = nextFileObjectID
+        nextFileObjectID += 1
+        fileObjects[id] = BASICOpenFile(isOpen: isOpen)
+        return .systemObject("File", id)
+    }
+
     func value(
         for reference: VariableReference,
         indexes: [BASICValue],
@@ -572,6 +611,13 @@ private final class BASICRuntime {
             }
         }
         for (fieldIndex, field) in reference.fields.enumerated() {
+            if case .systemObject(let typeName, let id) = value {
+                guard reference.fields.count == 1 else {
+                    throw BASICError.runtime("\(typeName) has no field \(field)")
+                }
+                value = try callSystemObjectMethod(typeName: typeName, id: id, method: field, arguments: [])
+                continue
+            }
             guard let composite = value.compositeFields else {
                 throw BASICError.runtime("\(reference.base.name) has no field \(field)")
             }
@@ -599,6 +645,13 @@ private final class BASICRuntime {
             }
         }
         return value
+    }
+
+    func callSystemObjectMethod(typeName: String, id: Int, method: String, arguments: [BASICValue], fileHost: BASICFileHost? = nil, jsonDecoder: ((String) throws -> BASICValue)? = nil, jsonEncoder: ((BASICValue, Bool) throws -> String)? = nil) throws -> BASICValue {
+        guard typeName.uppercased() == "FILE" else {
+            throw BASICError.runtime("\(typeName) has no method \(method)")
+        }
+        return try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
     }
 
     func localSnapshots() -> [BASICVariableSnapshot] {
@@ -834,6 +887,8 @@ private final class BASICRuntime {
             return string.rawString
         case .boolean(let boolean):
             return boolean
+        case .systemObject:
+            throw BASICError.runtime("System objects cannot be encoded as JSON")
         case .array(let array):
             return try jsonArrayObject(for: array)
         case .dictionary(let dictionary):
@@ -940,7 +995,7 @@ private final class BASICRuntime {
     }
 
     private func resolvedDeclaredType(_ type: BASICType) -> BASICType {
-        if case .record(let name) = type, classDefinitions[name.uppercased()] != nil {
+        if case .record(let name) = type, classDefinitions[name.uppercased()] != nil || Self.isBuiltInClass(name) {
             return .classType(name)
         }
         if case .record(let name) = type, interfaceDefinitions[name.uppercased()] != nil {
@@ -965,6 +1020,8 @@ private final class BASICRuntime {
             case .record(let name, _):
                 return .record(name)
             case .object(let name, _):
+                return .classType(name)
+            case .systemObject(let name, _):
                 return .classType(name)
             case .array(let array):
                 return array.type
@@ -1008,6 +1065,9 @@ private final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
         }
         if case .classType(let name) = type {
+            if Self.isBuiltInClass(name), case .systemObject(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
+                return value
+            }
             if case .null = value {
                 return .null
             }
@@ -1203,6 +1263,161 @@ private final class BASICRuntime {
         return try coerce(value, to: field.type, variable: variable)
     }
 
+    private func callFileMethod(id: Int, method: String, arguments: [BASICValue], fileHost: BASICFileHost?, jsonDecoder: ((String) throws -> BASICValue)?, jsonEncoder: ((BASICValue, Bool) throws -> String)?) throws -> BASICValue {
+        let normalized = method.uppercased()
+        guard var file = fileObjects[id] else {
+            throw BASICError.runtime("Bad file object")
+        }
+
+        func requireHost() throws -> BASICFileHost {
+            guard let fileHost else { throw BASICError.runtime("File I/O is not supported by this host") }
+            return fileHost
+        }
+
+        func requireOpen() throws {
+            guard file.isOpen else { throw BASICError.runtime("File is not open") }
+        }
+
+        func requireAccess(_ allowed: Set<BASICFileAccess>) throws {
+            guard let access = file.access, allowed.contains(access) else {
+                throw BASICError.runtime("Bad file mode")
+            }
+        }
+
+        switch normalized {
+        case "OPEN":
+            guard arguments.count == 4 else { throw BASICError.runtime("open expects 4 arguments") }
+            guard !file.isOpen else { throw BASICError.runtime("File Already Open") }
+            let path = try filePath(from: arguments[0])
+            let access = try fileAccess(from: arguments[1])
+            let contentType = try fileContentType(from: arguments[2])
+            let requireNew = try fileBoolean(from: arguments[3])
+            let host = try requireHost()
+            let exists = try host.fileExists(path: path)
+            if requireNew && exists {
+                throw BASICError.runtime("File Already Exists")
+            }
+            if access == .read && !exists {
+                throw BASICError.runtime("File Not Found")
+            }
+            let initialContent: BASICString
+            if exists, access != .write || contentType == .json && access == .read {
+                initialContent = BASICString(try host.loadTextFile(path: path))
+            } else {
+                initialContent = BASICString("")
+                if access == .write || access == .both {
+                    try host.saveTextFile(path: path, text: "")
+                }
+            }
+            file = BASICOpenFile(path: path, access: access, contentType: contentType, isOpen: true, content: initialContent, position: 0)
+            fileObjects[id] = file
+            return .empty
+        case "READ":
+            try requireOpen()
+            try requireAccess([.read, .both])
+            guard file.contentType != .json else { throw BASICError.runtime("Bad file mode") }
+            let raw = file.content.rawString
+            let remaining = String(raw.dropFirst(file.position))
+            let result: String
+            if arguments.isEmpty {
+                result = remaining
+                file.position = raw.count
+            } else {
+                guard arguments.count == 1 else { throw BASICError.runtime("read expects 0 or 1 arguments") }
+                let maxCount = max(0, try fileInteger(from: arguments[0]))
+                result = String(remaining.prefix(maxCount))
+                file.position += result.count
+            }
+            fileObjects[id] = file
+            return .string(BASICString(result))
+        case "JSON":
+            try requireOpen()
+            try requireAccess([.read, .both])
+            guard file.contentType == .json else { throw BASICError.runtime("Bad file mode") }
+            guard arguments.isEmpty else { throw BASICError.runtime("json expects 0 arguments") }
+            guard let jsonDecoder else { throw BASICError.runtime("JSON is not available") }
+            return try jsonDecoder(file.content.rawString)
+        case "WRITE":
+            try requireOpen()
+            try requireAccess([.write, .both])
+            guard file.contentType != .json else { throw BASICError.runtime("Bad file mode") }
+            guard arguments.count == 1, let text = arguments[0].string else {
+                throw BASICError.runtime("write expects a string")
+            }
+            let path = try openPath(file)
+            file.content = file.content.concatenating(text)
+            file.position = file.content.rawString.count
+            try requireHost().saveTextFile(path: path, text: file.content.rawString)
+            fileObjects[id] = file
+            return .empty
+        case "WRITEJSON":
+            try requireOpen()
+            try requireAccess([.write, .both])
+            guard file.contentType == .json else { throw BASICError.runtime("Bad file mode") }
+            guard arguments.count == 2 else { throw BASICError.runtime("writeJson expects 2 arguments") }
+            guard let jsonEncoder else { throw BASICError.runtime("JSON is not available") }
+            let pretty = try fileBoolean(from: arguments[1])
+            let text = try jsonEncoder(arguments[0], pretty)
+            let path = try openPath(file)
+            try requireHost().saveTextFile(path: path, text: text)
+            file.content = BASICString(text)
+            file.position = text.count
+            fileObjects[id] = file
+            return .empty
+        case "SIZE":
+            try requireOpen()
+            guard arguments.isEmpty else { throw BASICError.runtime("size expects 0 arguments") }
+            return .number(Double(file.content.byteCount))
+        case "CLOSE":
+            guard arguments.isEmpty else { throw BASICError.runtime("close expects 0 arguments") }
+            file.isOpen = false
+            fileObjects[id] = file
+            return .empty
+        default:
+            throw BASICError.runtime("File has no method \(method)")
+        }
+    }
+
+    private func openPath(_ file: BASICOpenFile) throws -> String {
+        guard let path = file.path else { throw BASICError.runtime("File is not open") }
+        return path
+    }
+
+    private func filePath(from value: BASICValue) throws -> String {
+        guard let string = value.string else { throw BASICError.runtime("Expected a string") }
+        return string.description
+    }
+
+    private func fileInteger(from value: BASICValue) throws -> Int {
+        guard let number = value.number, number.rounded() == number else { throw BASICError.runtime("Expected an integer") }
+        return Int(number)
+    }
+
+    private func fileBoolean(from value: BASICValue) throws -> Bool {
+        switch value {
+        case .boolean(let boolean): return boolean
+        case .number(let number) where number == 0: return false
+        case .number(let number) where number == 1: return true
+        default: throw BASICError.runtime("Expected a boolean")
+        }
+    }
+
+    private func fileAccess(from value: BASICValue) throws -> BASICFileAccess {
+        guard let string = value.string else { throw BASICError.runtime("Expected file access") }
+        guard let access = BASICFileAccess(rawValue: string.description.uppercased()) else {
+            throw BASICError.runtime("Expected READ, WRITE, or BOTH")
+        }
+        return access
+    }
+
+    private func fileContentType(from value: BASICValue) throws -> BASICFileContentType {
+        guard let string = value.string else { throw BASICError.runtime("Expected file type") }
+        guard let type = BASICFileContentType(rawValue: string.description.uppercased()) else {
+            throw BASICError.runtime("Expected RAW, TEXT, or JSON")
+        }
+        return type
+    }
+
     func defaultValue(for type: BASICType) -> BASICValue {
         switch type {
         case .void: return .empty
@@ -1219,6 +1434,9 @@ private final class BASICRuntime {
             })
             return .record(definition.displayName, fields)
         case .classType(let name):
+            if Self.isBuiltInClass(name) {
+                return fileObject()
+            }
             guard let definition = classDefinitions[name.uppercased()] else {
                 return .object(name, [:])
             }
@@ -1512,6 +1730,15 @@ private final class BASICRuntime {
                 scope: scope,
                 children: children
             )
+        case .systemObject(let typeName, _):
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: typeName,
+                value: value.description,
+                scope: scope,
+                children: []
+            )
         default:
             return BASICVariableSnapshot(
                 path: path,
@@ -1761,6 +1988,9 @@ public protocol BASICHost: AnyObject {
 public protocol BASICFileHost: BASICHost {
     func loadTextFile(path: String) throws -> String
     func saveTextFile(path: String, text: String) throws
+    func fileExists(path: String) throws -> Bool
+    func currentDirectoryPath() throws -> String
+    func changeDirectory(path: String) throws
     func listFiles() throws -> [String]
     func listFiles(path: String) throws -> [String]
 }
@@ -1772,6 +2002,20 @@ public protocol BASICSystemHost: BASICHost {
 public extension BASICFileHost {
     func saveTextFile(path: String, text: String) throws {
         throw BASICError.runtime("SAVE is not supported by this host")
+    }
+
+    func fileExists(path: String) throws -> Bool {
+        false
+    }
+
+    func currentDirectoryPath() throws -> String {
+        FileManager.default.currentDirectoryPath
+    }
+
+    func changeDirectory(path: String) throws {
+        guard FileManager.default.changeCurrentDirectoryPath(path) else {
+            throw BASICError.runtime("Could not change directory to \(path)")
+        }
     }
 
     func listFiles() throws -> [String] {
@@ -1790,11 +2034,12 @@ public extension BASICSystemHost {
 }
 
 public enum BASICSystemCommand {
-    public static func run(_ command: String) throws -> String {
+    public static func run(_ command: String, workingDirectory: URL? = nil) throws -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-lc", command]
+        process.currentDirectoryURL = workingDirectory
         process.standardOutput = pipe
         process.standardError = pipe
 
@@ -2174,6 +2419,23 @@ public final class BASICSession: @unchecked Sendable {
                 }
                 return true
             }
+            if let cdCommand = try Self.cdPath(from: trimmed) {
+                guard let fileHost = host as? BASICFileHost else {
+                    throw BASICError.runtime("CD is not supported by this host")
+                }
+                if let path = cdCommand {
+                    do {
+                        try fileHost.changeDirectory(path: path)
+                    } catch let error as BASICError {
+                        throw error
+                    } catch {
+                        throw BASICError.runtime("Could not change directory to \(path): \(error.localizedDescription)")
+                    }
+                } else {
+                    host.printLine(try fileHost.currentDirectoryPath())
+                }
+                return true
+            }
             if Self.isFilesCommand(trimmed) {
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("FILES is not supported by this host")
@@ -2207,7 +2469,7 @@ public final class BASICSession: @unchecked Sendable {
             case "CLEAR":
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, FILES, SYSTEM, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, FILES, SYSTEM, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             case "QUIT", "EXIT":
                 return false
@@ -2343,6 +2605,11 @@ public final class BASICSession: @unchecked Sendable {
     private static func savePath(from source: String) throws -> String?? {
         guard keywordPrefix("SAVE", matches: source) else { return nil }
         return try commandPath(keyword: "SAVE", from: source, requiresPath: false)
+    }
+
+    private static func cdPath(from source: String) throws -> String?? {
+        guard keywordPrefix("CD", matches: source) else { return nil }
+        return try commandPath(keyword: "CD", from: source, requiresPath: false)
     }
 
     private static func commandPath(keyword: String, from source: String, requiresPath: Bool) throws -> String? {
@@ -3086,6 +3353,9 @@ public final class BASICInterpreter {
                 accessClassName: currentClassContext
             )
             return .next
+        case .expression(let expression):
+            _ = try evaluate(expression)
+            return .next
         case .dim(let kind, let variable, let dimensions, let declaredType):
             try runtime.dim(kind: kind, variable: variable, dimensions: try dimensions.map { try $0.map(integer) }, declaredType: declaredType)
             return .next
@@ -3118,6 +3388,9 @@ public final class BASICInterpreter {
             let resolvedPath = try path.map(string) ?? fileState.lastFilePath
             guard let resolvedPath else { throw BASICError.syntax("Expected path after SAVE") }
             try saveProgram(path: resolvedPath)
+            return .next
+        case .cd(let path):
+            try changeDirectory(path: path)
             return .next
         case .files:
             try listFiles()
@@ -3983,6 +4256,17 @@ public final class BASICInterpreter {
             fieldIndexes: try evaluatedFieldIndexes(for: receiver),
             accessClassName: currentClassContext
         )
+        if case .systemObject(let typeName, let id) = receiverValue {
+            return try runtime.callSystemObjectMethod(
+                typeName: typeName,
+                id: id,
+                method: method.name,
+                arguments: try arguments.map(evaluate),
+                fileHost: host as? BASICFileHost,
+                jsonDecoder: { [runtime] source in try runtime.valueFromJSONString(source, permissive: true) },
+                jsonEncoder: { [runtime] value, pretty in try runtime.jsonString(for: value, pretty: pretty) }
+            )
+        }
         var missingMethodError: BASICError?
         if case .object(let className, _) = receiverValue {
             guard let classDefinition = classDefinitions[className.uppercased()] else {
@@ -4330,6 +4614,24 @@ public final class BASICInterpreter {
         }
     }
 
+    private func changeDirectory(path: Expression?) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("CD is not supported by this host")
+        }
+        guard let path else {
+            host?.printLine(try fileHost.currentDirectoryPath())
+            return
+        }
+        let resolvedPath = try string(path)
+        do {
+            try fileHost.changeDirectory(path: resolvedPath)
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not change directory to \(resolvedPath): \(error.localizedDescription)")
+        }
+    }
+
     private func listFiles() throws {
         guard let fileHost = host as? BASICFileHost else {
             throw BASICError.runtime("FILES is not supported by this host")
@@ -4578,6 +4880,9 @@ public final class BASICInterpreter {
         case .null:
             return .null
         case .variable(let name):
+            if let constant = builtInConstant(named: name.normalized) {
+                return constant
+            }
             return runtime.value(for: name)
         case .variableReference(let reference):
             return try runtime.value(
@@ -4587,6 +4892,9 @@ public final class BASICInterpreter {
                 accessClassName: currentClassContext
             )
         case .callOrArray(let name, let arguments):
+            if name.normalized == "FILE" {
+                return try constructFile(arguments: arguments)
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -4597,6 +4905,9 @@ public final class BASICInterpreter {
         case .methodCall(let receiver, let method, let arguments):
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className, let arguments):
+            if className.uppercased() == "FILE" {
+                return try constructFile(arguments: arguments)
+            }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
             }
@@ -4652,7 +4963,40 @@ public final class BASICInterpreter {
         }
     }
 
+    private func builtInConstant(named normalized: String) -> BASICValue? {
+        switch normalized {
+        case "READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON":
+            return .string(BASICString(normalized))
+        default:
+            return nil
+        }
+    }
+
+    private func constructFile(arguments: [Expression]) throws -> BASICValue {
+        let file = runtime.fileObject()
+        guard arguments.isEmpty || arguments.count == 4 else {
+            throw BASICError.runtime("File expects 0 or 4 arguments")
+        }
+        if arguments.count == 4 {
+            guard case .systemObject(let typeName, let id) = file else { return file }
+            _ = try runtime.callSystemObjectMethod(
+                typeName: typeName,
+                id: id,
+                method: "open",
+                arguments: try arguments.map(evaluate),
+                fileHost: host as? BASICFileHost,
+                jsonDecoder: { [runtime] source in try runtime.valueFromJSONString(source, permissive: true) },
+                jsonEncoder: { [runtime] value, pretty in try runtime.jsonString(for: value, pretty: pretty) }
+            )
+        }
+        return file
+    }
+
     private func evaluateBinary(_ leftExpression: Expression, _ operation: BinaryOperation, _ rightExpression: Expression) throws -> BASICValue {
+        if operation == .add {
+            return try evaluateAddChain(leftExpression, rightExpression)
+        }
+
         let left = try evaluate(leftExpression)
         let right = try evaluate(rightExpression)
 
@@ -4687,6 +5031,27 @@ public final class BASICInterpreter {
         case .or:
             return .number(left.truthy || right.truthy ? 1 : 0)
         }
+    }
+
+    private func evaluateAddChain(_ leftExpression: Expression, _ rightExpression: Expression) throws -> BASICValue {
+        var terms: [Expression] = [rightExpression]
+        var cursor = leftExpression
+
+        while case .binary(let left, .add, let right) = cursor {
+            terms.append(right)
+            cursor = left
+        }
+
+        var value = try evaluate(cursor)
+        for expression in terms.reversed() {
+            let right = try evaluate(expression)
+            if let leftString = value.string, let rightString = right.string {
+                value = .string(leftString.concatenating(rightString))
+            } else {
+                value = .number(try numeric(value) + numeric(right))
+            }
+        }
+        return value
     }
 
     private func numeric(_ value: BASICValue) throws -> Double {
@@ -4851,11 +5216,13 @@ private indirect enum Statement: Equatable {
     case line(GraphicsPoint, GraphicsPoint, Expression?)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
     case referenceAssignment(VariableReference, Expression?)
+    case expression(Expression)
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case input(String)
     case load(Expression)
     case save(Expression?)
+    case cd(Expression?)
     case files
     case system(Expression)
     case randomize(Expression?)
@@ -5345,7 +5712,7 @@ private struct Parser {
         if matchIdentifier("LET") {
             return try parseAssignment(kind: .letValue, requiresEquals: false)
         }
-        if matchIdentifier("INPUT") {
+        if isKeywordStatement("INPUT") && matchIdentifier("INPUT") {
             let name = try consumeIdentifier("Expected variable name after INPUT")
             return .input(name)
         }
@@ -5354,6 +5721,9 @@ private struct Parser {
         }
         if matchIdentifier("SAVE") {
             return .save(isStatementEnd ? nil : try parseExpression())
+        }
+        if matchIdentifier("CD") {
+            return .cd(isStatementEnd ? nil : try parseExpression())
         }
         if matchIdentifier("FILES") {
             return .files
@@ -5401,9 +5771,66 @@ private struct Parser {
             return try parseTypeField()
         }
         if case .identifier = peek {
+            if hasTopLevelEqualsBeforeStatementEnd() {
+                return try parseAssignment(kind: .bare, requiresEquals: true)
+            }
+            if hasTopLevelDotBeforeStatementEnd() {
+                return .expression(try parseExpression())
+            }
             return try parseAssignment(kind: .bare, requiresEquals: true)
         }
         throw syntax("Unknown statement")
+    }
+
+    private func hasTopLevelDotBeforeStatementEnd() -> Bool {
+        var index = current
+        var depth = 0
+        while index < tokens.count {
+            switch tokens[index].token {
+            case .eof:
+                return false
+            case .colon where depth == 0:
+                return false
+            case .leftParen:
+                depth += 1
+            case .rightParen:
+                depth = max(0, depth - 1)
+            case .dot where depth == 0:
+                return true
+            default:
+                break
+            }
+            index += 1
+        }
+        return false
+    }
+
+    private func isKeywordStatement(_ keyword: String) -> Bool {
+        guard case .identifier(let name) = peek, name.uppercased() == keyword else { return false }
+        return tokens[safe: current + 1]?.token != .dot
+    }
+
+    private func hasTopLevelEqualsBeforeStatementEnd() -> Bool {
+        var index = current
+        var depth = 0
+        while index < tokens.count {
+            switch tokens[index].token {
+            case .eof:
+                return false
+            case .colon where depth == 0:
+                return false
+            case .leftParen:
+                depth += 1
+            case .rightParen:
+                depth = max(0, depth - 1)
+            case .equals where depth == 0:
+                return true
+            default:
+                break
+            }
+            index += 1
+        }
+        return false
     }
 
     private mutating func parseDim(kind: AssignmentKind) throws -> Statement {
@@ -6157,7 +6584,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]

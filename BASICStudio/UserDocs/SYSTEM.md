@@ -4,6 +4,8 @@
 
 Runs a command through the host shell. `SYSTEM` writes the command output to the console. `SYSTEM$()` runs the command and returns its output as a string.
 
+Relative paths are evaluated from the current BASIC working directory. Use `CD` to change it.
+
 ```basic
 system "pwd"
 print system$("date")

@@ -34,6 +34,12 @@ struct BASICStudioApp: App {
                     model.saveProgramAsFromMenu()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Set Working Directory...") {
+                    model.setWorkingDirectoryFromMenu()
+                }
             }
 
             CommandMenu("Examples") {
@@ -419,6 +425,7 @@ struct StudioSettings: Codable {
     var editorTheme: EditorTheme = .dark
     var isEditorGutterVisible = false
     var terminalScreenSize: TerminalScreenSize = .flexible
+    var workingDirectoryPath: String?
 }
 
 struct StudioSettingsStore {
@@ -893,7 +900,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
+                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -968,6 +975,9 @@ final class StudioModel: ObservableObject {
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
+    @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
+        didSet { saveSettings() }
+    }
     @Published var programText = StudioModel.defaultProgramSource() {
         didSet {
             editorErrorLine = nil
@@ -1004,6 +1014,7 @@ final class StudioModel: ObservableObject {
         editorTheme = settings.editorTheme
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
+        workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
 
         let arguments = Array(CommandLine.arguments.dropFirst())
         if arguments.first == "--demo", arguments.count >= 2 {
@@ -1014,6 +1025,7 @@ final class StudioModel: ObservableObject {
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
             currentProgramURL = URL(fileURLWithPath: expandedPath(path))
+            workingDirectoryURL = currentProgramURL?.deletingLastPathComponent().standardizedFileURL ?? workingDirectoryURL
             shouldRunStartupProgram = true
         }
 
@@ -1083,6 +1095,7 @@ final class StudioModel: ObservableObject {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = Self.basicProgramContentTypes
+        panel.directoryURL = currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
@@ -1090,6 +1103,7 @@ final class StudioModel: ObservableObject {
             let source = try String(contentsOf: url, encoding: .utf8)
             programText = source
             currentProgramURL = url
+            workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
             editorErrorLine = nil
             rebuildProgramFromEditor()
             selectedPane = .editor
@@ -1130,9 +1144,22 @@ final class StudioModel: ObservableObject {
         panel.title = "Save BASIC Program"
         panel.allowedContentTypes = Self.basicProgramContentTypes
         panel.nameFieldStringValue = currentProgramURL?.lastPathComponent ?? "Untitled.bas"
+        panel.directoryURL = currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         saveProgram(to: url)
+    }
+
+    func setWorkingDirectoryFromMenu() {
+        let panel = NSOpenPanel()
+        panel.title = "Set BASIC Working Directory"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = workingDirectoryURL
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        workingDirectoryURL = url.standardizedFileURL
     }
 
     func runEditorProgram() {
@@ -1229,6 +1256,7 @@ final class StudioModel: ObservableObject {
         do {
             try programText.write(to: url, atomically: true, encoding: .utf8)
             currentProgramURL = url
+            workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
             rebuildProgramFromEditor()
         } catch {
             presentFileError("Unable to save \(url.lastPathComponent).", error: error)
@@ -1450,9 +1478,24 @@ final class StudioModel: ObservableObject {
             StudioSettings(
                 editorTheme: editorTheme,
                 isEditorGutterVisible: isEditorGutterVisible,
-                terminalScreenSize: terminalScreenSize
+                terminalScreenSize: terminalScreenSize,
+                workingDirectoryPath: workingDirectoryURL.path
             )
         )
+    }
+
+    private static func defaultWorkingDirectoryURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static func validWorkingDirectory(from path: String?) -> URL {
+        guard let path, !path.isEmpty else { return defaultWorkingDirectoryURL() }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return defaultWorkingDirectoryURL()
+        }
+        return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
     }
 
     private func highlightErrorIfPresent(_ text: String) {
@@ -1474,7 +1517,24 @@ final class StudioModel: ObservableObject {
         if path == "~" || path.hasPrefix("~/") {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
-        return path
+        if path.hasPrefix("/") {
+            return path
+        }
+        if let url = URL(string: path), url.isFileURL {
+            return url.path
+        }
+        return workingDirectorySnapshot().appendingPathComponent(path).standardizedFileURL.path
+    }
+
+    nonisolated private func ensureParentDirectory(for path: String) throws {
+        let url = URL(fileURLWithPath: expandedPath(path))
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    }
+
+    nonisolated private func workingDirectorySnapshot() -> URL {
+        valueOnMainSync {
+            workingDirectoryURL
+        }
     }
 
     nonisolated private func runOnMainSync(_ body: @MainActor () -> Void) {
@@ -2107,12 +2167,33 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
     }
 
     nonisolated func saveTextFile(path: String, text: String) throws {
+        try ensureParentDirectory(for: path)
         try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+    }
+
+    nonisolated func fileExists(path: String) throws -> Bool {
+        FileManager.default.fileExists(atPath: expandedPath(path))
+    }
+
+    nonisolated func currentDirectoryPath() throws -> String {
+        workingDirectorySnapshot().path
+    }
+
+    nonisolated func changeDirectory(path: String) throws {
+        let resolvedPath = expandedPath(path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw BASICError.runtime("Could not change directory to \(path)")
+        }
+        runOnMainSync {
+            workingDirectoryURL = URL(fileURLWithPath: resolvedPath, isDirectory: true).standardizedFileURL
+        }
     }
 
     nonisolated func listFiles() throws -> [String] {
         try FileManager.default
-            .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
+            .contentsOfDirectory(atPath: workingDirectorySnapshot().path)
             .filter { !$0.hasPrefix(".") }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
@@ -2191,6 +2272,10 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
             normalized.removeFirst("basicPrograms/demos/".count)
         }
         return normalized
+    }
+
+    nonisolated func runSystemCommand(_ command: String) throws -> String {
+        try BASICSystemCommand.run(command, workingDirectory: workingDirectorySnapshot())
     }
 }
 

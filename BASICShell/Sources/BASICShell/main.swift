@@ -26,7 +26,26 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
     }
 
     func saveTextFile(path: String, text: String) throws {
+        try ensureParentDirectory(for: path)
         try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+    }
+
+    func fileExists(path: String) throws -> Bool {
+        FileManager.default.fileExists(atPath: expandedPath(path))
+    }
+
+    func currentDirectoryPath() throws -> String {
+        FileManager.default.currentDirectoryPath
+    }
+
+    func changeDirectory(path: String) throws {
+        let resolvedPath = expandedPath(path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              FileManager.default.changeCurrentDirectoryPath(resolvedPath) else {
+            throw BASICError.runtime("Could not change directory to \(path)")
+        }
     }
 
     func listFiles() throws -> [String] {
@@ -92,6 +111,11 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
             return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
         }
         return path
+    }
+
+    private func ensureParentDirectory(for path: String) throws {
+        let url = URL(fileURLWithPath: expandedPath(path))
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     }
 }
 

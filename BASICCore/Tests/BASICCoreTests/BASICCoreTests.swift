@@ -29,6 +29,21 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Evaluates long string concatenation without recursive stack growth")
+    func evaluatesLongStringConcatenation() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        let pieces = Array(repeating: "\"A\"", count: 600).joined(separator: " + ")
+        session.program.loadSource("""
+        let text$ = \(pieces)
+        print len(text$)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["600"])
+    }
+
     @Test("RUN clears direct-mode variables before starting")
     func runClearsVariables() {
         let host = TestHost()
@@ -1419,6 +1434,95 @@ struct BASICCoreTests {
             "4",
             "4"
         ])
+    }
+
+    @Test("Modern File class writes reads and decodes JSON")
+    func modernFileClassWritesReadsAndDecodesJSON() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        record GradeReport
+            Course as string json name "course"
+            Scores(*) as integer json name "scores"
+        end record
+
+        let report as GradeReport
+        report.Course = "Intro"
+        report.Scores = FromJsonString("[90,95]", true)
+
+        let output = File()
+        output.open("grade-report.json", WRITE, JSON, true)
+        output.writeJson(report, true)
+        print output.size()
+        output.close
+
+        let input = File("grade-report.json", READ, JSON, false)
+        let loaded as GradeReport
+        loaded = input.json()
+        input.close
+        print loaded.Course
+        print len(loaded.Scores)
+        print loaded.Scores(1)
+
+        let text = File("notes.txt", WRITE, TEXT, true)
+        text.write("ABCDEF")
+        print text.size()
+        text.close
+
+        let readback = File("notes.txt", READ, TEXT, false)
+        print readback.read(3)
+        print readback.read()
+        readback.close
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "59",
+            "Intro",
+            "2",
+            "95",
+            "6",
+            "ABC",
+            "DEF"
+        ])
+    }
+
+    @Test("Modern File class reports create and read errors")
+    func modernFileClassReportsCreateAndReadErrors() {
+        let existingHost = TestHost()
+        existingHost.files["exists.txt"] = "already"
+        let existingSession = BASICSession(host: existingHost)
+        existingSession.program.loadSource("""
+        let f = File("exists.txt", WRITE, TEXT, true)
+        """)
+        existingSession.submit("run")
+        #expect(existingHost.output == ["Runtime error: File Already Exists"])
+
+        let missingHost = TestHost()
+        let missingSession = BASICSession(host: missingHost)
+        missingSession.program.loadSource("""
+        let f = File("missing.txt", READ, TEXT, false)
+        """)
+        missingSession.submit("run")
+        #expect(missingHost.output == ["Runtime error: File Not Found"])
+    }
+
+    @Test("CD changes the base directory for BASIC file commands")
+    func cdChangesBaseDirectoryForFileCommands() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("CD \"work\"")
+        session.submit("10 PRINT \"HELLO\"")
+        session.submit("SAVE \"hello.bas\"")
+        session.submit("NEW")
+        session.submit("LOAD \"hello.bas\"")
+        session.submit("LIST")
+
+        #expect(host.currentDirectory == "work")
+        #expect(host.files["work/hello.bas"] == "10 PRINT \"HELLO\"")
+        #expect(host.output == ["10 PRINT \"HELLO\""])
     }
 
     @Test("Debugger snapshots group inherited CLASS fields")
@@ -2906,6 +3010,7 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
     var hasPendingUnterminatedOutput = false
     var input: [String] = []
     var files: [String: String] = [:]
+    var currentDirectory = "."
     var systemCommands: [String] = []
     var systemOutputs: [String: String] = [:]
     var breakAfterOutputCount: Int?
@@ -2946,15 +3051,31 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
     }
 
     func loadTextFile(path: String) throws -> String {
-        files[path] ?? ""
+        files[resolvedPath(path)] ?? ""
     }
 
     func saveTextFile(path: String, text: String) throws {
-        files[path] = text
+        files[resolvedPath(path)] = text
+    }
+
+    func fileExists(path: String) throws -> Bool {
+        files[resolvedPath(path)] != nil
+    }
+
+    func currentDirectoryPath() throws -> String {
+        currentDirectory
+    }
+
+    func changeDirectory(path: String) throws {
+        currentDirectory = resolvedPath(path)
     }
 
     func listFiles() throws -> [String] {
-        files.keys.sorted()
+        let prefix = currentDirectory == "." ? "" : currentDirectory + "/"
+        return files.keys
+            .filter { prefix.isEmpty || $0.hasPrefix(prefix) }
+            .map { prefix.isEmpty ? $0 : String($0.dropFirst(prefix.count)) }
+            .sorted()
     }
 
     func listFiles(path: String) throws -> [String] {
@@ -2964,6 +3085,13 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
             .map { String($0.dropFirst(prefix.count)) }
             .filter { !$0.isEmpty }
             .sorted()
+    }
+
+    private func resolvedPath(_ path: String) -> String {
+        if path.hasPrefix("/") || currentDirectory == "." {
+            return path
+        }
+        return currentDirectory + "/" + path
     }
 
     func runSystemCommand(_ command: String) throws -> String {
@@ -3005,6 +3133,7 @@ private final class TextOnlyHost: BASICFileHost {
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
     var files: [String: String] = [:]
+    var currentDirectory = "."
 
     func print(_ text: String, terminator: String) {
         pendingOutput += text
@@ -3036,15 +3165,31 @@ private final class TextOnlyHost: BASICFileHost {
     }
 
     func loadTextFile(path: String) throws -> String {
-        files[path] ?? ""
+        files[resolvedPath(path)] ?? ""
     }
 
     func saveTextFile(path: String, text: String) throws {
-        files[path] = text
+        files[resolvedPath(path)] = text
+    }
+
+    func fileExists(path: String) throws -> Bool {
+        files[resolvedPath(path)] != nil
+    }
+
+    func currentDirectoryPath() throws -> String {
+        currentDirectory
+    }
+
+    func changeDirectory(path: String) throws {
+        currentDirectory = resolvedPath(path)
     }
 
     func listFiles() throws -> [String] {
-        files.keys.sorted()
+        let prefix = currentDirectory == "." ? "" : currentDirectory + "/"
+        return files.keys
+            .filter { prefix.isEmpty || $0.hasPrefix(prefix) }
+            .map { prefix.isEmpty ? $0 : String($0.dropFirst(prefix.count)) }
+            .sorted()
     }
 
     func listFiles(path: String) throws -> [String] {
@@ -3054,5 +3199,12 @@ private final class TextOnlyHost: BASICFileHost {
             .map { String($0.dropFirst(prefix.count)) }
             .filter { !$0.isEmpty }
             .sorted()
+    }
+
+    private func resolvedPath(_ path: String) -> String {
+        if path.hasPrefix("/") || currentDirectory == "." {
+            return path
+        }
+        return currentDirectory + "/" + path
     }
 }

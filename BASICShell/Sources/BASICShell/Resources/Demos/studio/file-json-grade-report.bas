@@ -1,6 +1,6 @@
 #! /usr/bin/env aibasic
-' Forward-looking File class example.
-' Requires the planned File system class:
+' File class example.
+' Uses the modern File system class:
 '   File()
 '   file.open(nameOrUrl, access, type, requireNew)
 '   File(nameOrUrl, access, type, requireNew)
@@ -27,11 +27,22 @@ end record
 let report as GradeReport
 report.Course = "Intro to BASIC"
 report.Teacher = "Ms. Ada"
-report.Entries = FromJsonString("[{" + chr$(34) + "student" + chr$(34) + ":" + chr$(34) + "Ada Lovelace" + chr$(34) + "," + chr$(34) + "assignment" + chr$(34) + ":" + chr$(34) + "Loops" + chr$(34) + "," + chr$(34) + "score" + chr$(34) + ":18," + chr$(34) + "possible" + chr$(34) + ":20},{" + chr$(34) + "student" + chr$(34) + ":" + chr$(34) + "Grace Hopper" + chr$(34) + "," + chr$(34) + "assignment" + chr$(34) + ":" + chr$(34) + "Classes" + chr$(34) + "," + chr$(34) + "score" + chr$(34) + ":47," + chr$(34) + "possible" + chr$(34) + ":50},{" + chr$(34) + "student" + chr$(34) + ":" + chr$(34) + "Katherine Johnson" + chr$(34) + "," + chr$(34) + "assignment" + chr$(34) + ":" + chr$(34) + "Imports" + chr$(34) + "," + chr$(34) + "score" + chr$(34) + ":29," + chr$(34) + "possible" + chr$(34) + ":30}]", true)
+let q$ = chr$(34)
+let entries$ = "[{"
+entries$ = entries$ + q$ + "student" + q$ + ":" + q$ + "Ada Lovelace" + q$
+entries$ = entries$ + "," + q$ + "assignment" + q$ + ":" + q$ + "Loops" + q$
+entries$ = entries$ + "," + q$ + "score" + q$ + ":18," + q$ + "possible" + q$ + ":20}"
+entries$ = entries$ + ",{" + q$ + "student" + q$ + ":" + q$ + "Grace Hopper" + q$
+entries$ = entries$ + "," + q$ + "assignment" + q$ + ":" + q$ + "Classes" + q$
+entries$ = entries$ + "," + q$ + "score" + q$ + ":47," + q$ + "possible" + q$ + ":50}"
+entries$ = entries$ + ",{" + q$ + "student" + q$ + ":" + q$ + "Katherine Johnson" + q$
+entries$ = entries$ + "," + q$ + "assignment" + q$ + ":" + q$ + "Imports" + q$
+entries$ = entries$ + "," + q$ + "score" + q$ + ":29," + q$ + "possible" + q$ + ":30}]"
+report.Entries = FromJsonString(entries$, true)
 
 print "WRITING grade-report.json"
 let output = File()
-output.open("grade-report.json", WRITE, JSON, true)
+output.open("grade-report.json", WRITE, JSON, false)
 output.writeJson(report, true)
 print "BYTES ="; output.size()
 output.close
