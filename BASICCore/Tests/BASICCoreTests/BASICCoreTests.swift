@@ -1390,7 +1390,9 @@ struct BASICCoreTests {
         room = FromJsonString("{" + q$ + "name" + q$ + ":" + q$ + "OS" + q$ + "," + q$ + "students" + q$ + ":[{" + q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "},{" + q$ + "name" + q$ + ":" + q$ + "Grace" + q$ + "}]," + q$ + "studentsByRowAndSeat" + q$ + ":[[{"+ q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "}],[{" + q$ + "name" + q$ + ":" + q$ + "Grace" + q$ + "}]]}", true)
         print room.Name
         print len(room.Students)
+        print room.Students(1).Name
         print len(room.StudentsByRowAndSeat)
+        print room.StudentsByRowAndSeat(1, 0).Name
         print ToJsonString(room, false)
 
         let scores(*) as integer
@@ -1408,7 +1410,9 @@ struct BASICCoreTests {
         #expect(host.output == [
             "OS",
             "2",
+            "Grace",
             "2",
+            "Grace",
             "{\"name\":\"OS\",\"students\":[{\"name\":\"Ada\"},{\"name\":\"Grace\"}],\"studentsByRowAndSeat\":[[{\"name\":\"Ada\"}],[{\"name\":\"Grace\"}]]}",
             "4",
             "40",

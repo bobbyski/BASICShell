@@ -330,7 +330,12 @@ private struct BASICJSONFieldOptions: Equatable {
     let name: String
 }
 
-private struct BASICRecordField: Equatable {
+private protocol BASICFieldDefinition {
+    var displayName: String { get }
+    var type: BASICType { get }
+}
+
+private struct BASICRecordField: Equatable, BASICFieldDefinition {
     let displayName: String
     let normalizedName: String
     let type: BASICType
@@ -373,7 +378,7 @@ private enum BASICMemberVisibility: String, Equatable {
     case `protected` = "PROTECTED"
 }
 
-private struct BASICClassField: Equatable {
+private struct BASICClassField: Equatable, BASICFieldDefinition {
     let displayName: String
     let normalizedName: String
     let type: BASICType
@@ -417,18 +422,22 @@ private struct VariableReference: Equatable {
     var indexes: [Expression]
     var declarationDimensions: [Expression?]
     var fields: [String]
+    var fieldIndexes: [[Expression]]
     var hasEmptyIndexList: Bool
 
-    init(base: VariableName, indexes: [Expression] = [], declarationDimensions: [Expression?] = [], fields: [String] = [], hasEmptyIndexList: Bool = false) {
+    init(base: VariableName, indexes: [Expression] = [], declarationDimensions: [Expression?] = [], fields: [String] = [], fieldIndexes: [[Expression]] = [], hasEmptyIndexList: Bool = false) {
         self.base = base
         self.indexes = indexes
         self.declarationDimensions = declarationDimensions
         self.fields = fields
+        self.fieldIndexes = fields.enumerated().map { index, _ in
+            fieldIndexes.indices.contains(index) ? fieldIndexes[index] : []
+        }
         self.hasEmptyIndexList = hasEmptyIndexList
     }
 
     var isSimple: Bool {
-        indexes.isEmpty && declarationDimensions.isEmpty && fields.isEmpty && !hasEmptyIndexList
+        indexes.isEmpty && declarationDimensions.isEmpty && fields.isEmpty && fieldIndexes.isEmpty && !hasEmptyIndexList
     }
 }
 
@@ -544,7 +553,12 @@ private final class BASICRuntime {
         binding(for: reference.base.normalized)?.type
     }
 
-    func value(for reference: VariableReference, indexes: [BASICValue], accessClassName: String? = nil) throws -> BASICValue {
+    func value(
+        for reference: VariableReference,
+        indexes: [BASICValue],
+        fieldIndexes: [[BASICValue]] = [],
+        accessClassName: String? = nil
+    ) throws -> BASICValue {
         let declaredFieldType = fieldSurfaceType(for: reference)
         var value = value(for: reference.base)
         if !indexes.isEmpty {
@@ -572,6 +586,17 @@ private final class BASICRuntime {
                 throw BASICError.runtime("\(recordName) has no field \(field)")
             }
             value = fieldValue
+            let indexes = fieldIndexes.indices.contains(fieldIndex) ? fieldIndexes[fieldIndex] : []
+            if !indexes.isEmpty {
+                switch value {
+                case .array(let array):
+                    value = try arrayValue(array, at: indexes, name: field)
+                case .dictionary(let dictionary):
+                    value = try dictionaryValue(dictionary, at: indexes, name: field)
+                default:
+                    throw BASICError.runtime("\(field) is not an array")
+                }
+            }
         }
         return value
     }
@@ -662,7 +687,13 @@ private final class BASICRuntime {
         set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized)
     }
 
-    func assign(reference: VariableReference, indexes: [BASICValue], value: BASICValue?, accessClassName: String? = nil) throws {
+    func assign(
+        reference: VariableReference,
+        indexes: [BASICValue],
+        fieldIndexes: [[BASICValue]] = [],
+        value: BASICValue?,
+        accessClassName: String? = nil
+    ) throws {
         guard !reference.isSimple else {
             try assign(kind: .bare, variable: reference.base, declaredType: nil, value: value)
             return
@@ -683,6 +714,7 @@ private final class BASICRuntime {
                 } else {
                     array.values[offset] = try assigningField(
                         reference.fields,
+                        fieldIndexes: fieldIndexes,
                         in: array.values[offset],
                         value: value,
                         accessClassName: accessClassName,
@@ -700,6 +732,7 @@ private final class BASICRuntime {
                 } else {
                     dictionary.values[key] = try assigningField(
                         reference.fields,
+                        fieldIndexes: fieldIndexes,
                         in: currentValue,
                         value: value,
                         accessClassName: accessClassName,
@@ -716,6 +749,7 @@ private final class BASICRuntime {
 
         binding.value = try assigningField(
             reference.fields,
+            fieldIndexes: fieldIndexes,
             in: binding.value,
             value: value,
             accessClassName: accessClassName,
@@ -1268,6 +1302,7 @@ private final class BASICRuntime {
 
     private func assigningField(
         _ fields: [String],
+        fieldIndexes: [[BASICValue]] = [],
         in recordValue: BASICValue,
         value: BASICValue?,
         accessClassName: String?,
@@ -1290,16 +1325,97 @@ private final class BASICRuntime {
         }
         try validateAccess(to: field, from: accessClassName)
         let current = recordFields[normalized] ?? defaultValue(for: field)
+        let indexes = fieldIndexes.first ?? []
         if fields.count == 1 {
-            recordFields[normalized] = try coerce(value ?? defaultValue(for: field), to: field, variable: VariableName(name: field.displayName, column: 0))
+            if indexes.isEmpty {
+                recordFields[normalized] = try coerce(value ?? defaultValue(for: field), to: field, variable: VariableName(name: field.displayName, column: 0))
+            } else {
+                recordFields[normalized] = try assigningIndexedValue(
+                    in: current,
+                    indexes: indexes,
+                    value: value,
+                    field: field
+                )
+            }
+        } else if indexes.isEmpty {
+            recordFields[normalized] = try assigningField(
+                Array(fields.dropFirst()),
+                fieldIndexes: Array(fieldIndexes.dropFirst()),
+                in: current,
+                value: value,
+                accessClassName: accessClassName
+            )
         } else {
-            recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value, accessClassName: accessClassName)
+            recordFields[normalized] = try assigningIndexedField(
+                Array(fields.dropFirst()),
+                fieldIndexes: Array(fieldIndexes.dropFirst()),
+                in: current,
+                indexes: indexes,
+                value: value,
+                accessClassName: accessClassName,
+                field: field
+            )
         }
         switch recordValue {
         case .object:
             return .object(recordName, recordFields)
         default:
             return .record(recordName, recordFields)
+        }
+    }
+
+    private func assigningIndexedValue(
+        in current: BASICValue,
+        indexes: [BASICValue],
+        value: BASICValue?,
+        field: any BASICFieldDefinition
+    ) throws -> BASICValue {
+        switch current {
+        case .array(var array):
+            let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: field.displayName)
+            array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: VariableName(name: field.displayName, column: 0))
+            return .array(array)
+        case .dictionary(var dictionary):
+            let key = try dictionaryKey(from: indexes, name: field.displayName)
+            dictionary.values[key] = value ?? .empty
+            return .dictionary(dictionary)
+        default:
+            throw BASICError.runtime("\(field.displayName) is not an array")
+        }
+    }
+
+    private func assigningIndexedField(
+        _ fields: [String],
+        fieldIndexes: [[BASICValue]],
+        in current: BASICValue,
+        indexes: [BASICValue],
+        value: BASICValue?,
+        accessClassName: String?,
+        field: any BASICFieldDefinition
+    ) throws -> BASICValue {
+        switch current {
+        case .array(var array):
+            let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: field.displayName)
+            array.values[offset] = try assigningField(
+                fields,
+                fieldIndexes: fieldIndexes,
+                in: array.values[offset],
+                value: value,
+                accessClassName: accessClassName
+            )
+            return .array(array)
+        case .dictionary(var dictionary):
+            let key = try dictionaryKey(from: indexes, name: field.displayName)
+            dictionary.values[key] = try assigningField(
+                fields,
+                fieldIndexes: fieldIndexes,
+                in: dictionary.values[key] ?? .empty,
+                value: value,
+                accessClassName: accessClassName
+            )
+            return .dictionary(dictionary)
+        default:
+            throw BASICError.runtime("\(field.displayName) is not an array")
         }
     }
 
@@ -2962,7 +3078,13 @@ public final class BASICInterpreter {
             return .next
         case .referenceAssignment(let reference, let expression):
             let value = try expression.map(evaluate)
-            try runtime.assign(reference: reference, indexes: try reference.indexes.map(evaluate), value: value, accessClassName: currentClassContext)
+            try runtime.assign(
+                reference: reference,
+                indexes: try reference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: reference),
+                value: value,
+                accessClassName: currentClassContext
+            )
             return .next
         case .dim(let kind, let variable, let dimensions, let declaredType):
             try runtime.dim(kind: kind, variable: variable, dimensions: try dimensions.map { try $0.map(integer) }, declaredType: declaredType)
@@ -3187,6 +3309,7 @@ public final class BASICInterpreter {
                 try runtime.assign(
                     reference: reference,
                     indexes: try reference.indexes.map(evaluate),
+                    fieldIndexes: try evaluatedFieldIndexes(for: reference),
                     value: value,
                     accessClassName: currentClassContext
                 )
@@ -3854,32 +3977,55 @@ public final class BASICInterpreter {
 
     private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
         let receiverDeclaredType = runtime.declaredType(for: receiver)
-        let receiverValue = try runtime.value(for: receiver, indexes: try receiver.indexes.map(evaluate))
-        guard case .object(let className, _) = receiverValue else {
-            throw BASICError.runtime("\(receiver.base.name) is not an object")
-        }
-        guard let classDefinition = classDefinitions[className.uppercased()] else {
-            throw BASICError.runtime("Unknown CLASS \(className)")
-        }
-        guard let definition = lookupMethod(
-            named: method.normalized,
-            receiverDeclaredType: receiverDeclaredType,
-            in: classDefinition
-        ) else {
-            throw BASICError.runtime("\(methodLookupTypeName(receiverDeclaredType, fallbackClassName: classDefinition.displayName)) has no method \(method.name)")
-        }
-        try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
-        let result = try callFunction(
-            definition: definition,
-            receiver: receiverValue,
-            receiverClassName: classDefinition.displayName,
-            arguments: arguments,
-            allowVoid: false
+        let receiverValue = try runtime.value(
+            for: receiver,
+            indexes: try receiver.indexes.map(evaluate),
+            fieldIndexes: try evaluatedFieldIndexes(for: receiver),
+            accessClassName: currentClassContext
         )
-        if let updatedReceiver = result.receiver {
-            try runtime.assign(reference: receiver, indexes: try receiver.indexes.map(evaluate), value: updatedReceiver, accessClassName: currentClassContext)
+        var missingMethodError: BASICError?
+        if case .object(let className, _) = receiverValue {
+            guard let classDefinition = classDefinitions[className.uppercased()] else {
+                throw BASICError.runtime("Unknown CLASS \(className)")
+            }
+            if let definition = lookupMethod(named: method.normalized, receiverDeclaredType: receiverDeclaredType, in: classDefinition) {
+                try validateMethodAccess(definition, receiverClass: classDefinition.displayName)
+                let result = try callFunction(
+                    definition: definition,
+                    receiver: receiverValue,
+                    receiverClassName: classDefinition.displayName,
+                    arguments: arguments,
+                    allowVoid: false
+                )
+                if let updatedReceiver = result.receiver {
+                    try runtime.assign(
+                        reference: receiver,
+                        indexes: try receiver.indexes.map(evaluate),
+                        fieldIndexes: try evaluatedFieldIndexes(for: receiver),
+                        value: updatedReceiver,
+                        accessClassName: currentClassContext
+                    )
+                }
+                return result.value
+            }
+            missingMethodError = BASICError.runtime("\(methodLookupTypeName(receiverDeclaredType, fallbackClassName: classDefinition.displayName)) has no method \(method.name)")
         }
-        return result.value
+        var fieldReference = receiver
+        fieldReference.fields.append(method.name)
+        fieldReference.fieldIndexes.append(arguments)
+        do {
+            return try runtime.value(
+                for: fieldReference,
+                indexes: try fieldReference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: fieldReference),
+                accessClassName: currentClassContext
+            )
+        } catch {
+            if let missingMethodError {
+                throw missingMethodError
+            }
+            throw error
+        }
     }
 
     private func lookupMethod(
@@ -4434,7 +4580,12 @@ public final class BASICInterpreter {
         case .variable(let name):
             return runtime.value(for: name)
         case .variableReference(let reference):
-            return try runtime.value(for: reference, indexes: try reference.indexes.map(evaluate), accessClassName: currentClassContext)
+            return try runtime.value(
+                for: reference,
+                indexes: try reference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: reference),
+                accessClassName: currentClassContext
+            )
         case .callOrArray(let name, let arguments):
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
@@ -4492,6 +4643,12 @@ public final class BASICInterpreter {
             return .number(Double(string.characterCount))
         case .systemFunction(let expression):
             return .string(BASICString(try runSystemCommand(expression)))
+        }
+    }
+
+    private func evaluatedFieldIndexes(for reference: VariableReference) throws -> [[BASICValue]] {
+        try reference.fieldIndexes.map { indexes in
+            try indexes.map(evaluate)
         }
     }
 
@@ -5722,20 +5879,28 @@ private struct Parser {
             if peek == .leftParen {
                 let arguments = try parseArgumentList()
                 var fields: [String] = []
+                var fieldIndexes: [[Expression]] = []
                 while match(.dot) {
                     let fieldColumn = tokens[current].column
                     let fieldName = try consumeIdentifier("Expected field name after .")
                     if peek == .leftParen {
+                        let memberArguments = try parseArgumentList()
+                        if peek == .dot {
+                            fields.append(fieldName)
+                            fieldIndexes.append(memberArguments)
+                            continue
+                        }
                         return .methodCall(
-                            VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields),
+                            VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields, fieldIndexes: fieldIndexes),
                             VariableName(name: fieldName, column: fieldColumn),
-                            try parseArgumentList()
+                            memberArguments
                         )
                     }
                     fields.append(fieldName)
+                    fieldIndexes.append([])
                 }
                 if !fields.isEmpty {
-                    return .variableReference(VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields))
+                    return .variableReference(VariableReference(base: VariableName(name: name, column: column), indexes: arguments, fields: fields, fieldIndexes: fieldIndexes))
                 }
                 return .callOrArray(VariableName(name: name, column: column), arguments)
             }
@@ -5744,9 +5909,16 @@ private struct Parser {
                 let fieldColumn = tokens[current].column
                 let fieldName = try consumeIdentifier("Expected field name after .")
                 if peek == .leftParen {
-                    return .methodCall(reference, VariableName(name: fieldName, column: fieldColumn), try parseArgumentList())
+                    let arguments = try parseArgumentList()
+                    if peek == .dot {
+                        reference.fields.append(fieldName)
+                        reference.fieldIndexes.append(arguments)
+                        continue
+                    }
+                    return .methodCall(reference, VariableName(name: fieldName, column: fieldColumn), arguments)
                 }
                 reference.fields.append(fieldName)
+                reference.fieldIndexes.append([])
             }
             if !reference.fields.isEmpty {
                 return .variableReference(reference)
@@ -5814,10 +5986,12 @@ private struct Parser {
             }
         }
         var fields: [String] = []
+        var fieldIndexes: [[Expression]] = []
         while match(.dot) {
             fields.append(try consumeIdentifier("Expected field name after ."))
+            fieldIndexes.append(peek == .leftParen ? try parseArgumentList() : [])
         }
-        return VariableReference(base: base, indexes: indexes, declarationDimensions: declarationDimensions, fields: fields, hasEmptyIndexList: hasEmptyIndexList)
+        return VariableReference(base: base, indexes: indexes, declarationDimensions: declarationDimensions, fields: fields, fieldIndexes: fieldIndexes, hasEmptyIndexList: hasEmptyIndexList)
     }
 
     private mutating func consumeIdentifier(_ message: String) throws -> String {

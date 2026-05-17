@@ -71,14 +71,15 @@ print "LEN STUDENTS ="; len(room.Students)
 print "LEN ROOM GRID ="; len(room.Grid)
 print ToJsonString(room, false)
 
-print "KNOWN GAPS - COMMENTED"
-' Field array element access needs segmented reference parsing:
-' print room.Students(1).Name
-' print room.Students(1).Scores(0)
-' print room.Grid(1, 1)
-'
-' Direct mutation of array fields also needs segmented indexed field paths:
-' room.Students(0).Scores(0) = 100
-' room.Grid(0, 0) = 42
+print "SEGMENTED FIELD ARRAY ACCESS"
+print room.Students(1).Name
+print room.Students(1).Scores(0)
+print room.Grid(1, 1)
+
+print "SEGMENTED FIELD ARRAY MUTATION"
+room.Students(0).Scores(0) = 100
+room.Grid(0, 0) = 42
+print room.Students(0).Scores(0)
+print room.Grid(0, 0)
 
 print "ARRAY BASELINE COMPLETE"
