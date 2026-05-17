@@ -4,6 +4,10 @@
 
 Defines an object type. Classes support public/private/protected fields and methods, `IMPLEMENTS`, `INHERITS`, `OVERRIDES`, `NEW ClassName`, `NEW ClassName()`, and dotted field/method access. `ME` refers to the current object inside a method.
 
+Fields may include literal defaults and opt-in JSON metadata. `JSON NAME "fieldName"` includes that field in `ToJsonString()` output with the given case-sensitive JSON name. Fields without JSON metadata are excluded from class JSON output.
+
+Class fields can also use dynamic array ranks for JSON payloads. Use `(*)` for a one-dimensional array and `(*, *)` for nested JSON arrays.
+
 ```basic
 interface Printable
     function Title() as string
@@ -31,7 +35,9 @@ end class
 
 class FancyReport
     inherits Report
-    public Badge as string
+    public Badge as string json name "badge" = "defaultBadge"
+    public Scores(*) as integer json name "scores"
+    public localOnly as integer = 0
 
     function New(title as string, badge as string)
         ME.Title = title

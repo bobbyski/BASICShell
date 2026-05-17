@@ -27,3 +27,23 @@ print names$(1)
 dim student as Student
 dim roster(10) as Student
 ```
+
+For scoped declarations, use `LOCAL`, `GLOBAL`, or `LET` with the same array/type shape.
+
+```basic
+local scratch(2) as integer
+global shared as dictionary
+let report as FancyReport
+```
+
+Use `*` inside the parentheses for variable-length arrays that resize when JSON is decoded into them. `()` is accepted as shorthand for a one-dimensional dynamic array, but `(*)` makes the intent clearer. Multidimensional dynamic arrays use one `*` per rank.
+
+```basic
+let scores(*) as integer
+scores = FromJsonString("[10,20,30]", true)
+print len(scores)
+
+let grid(*, *) as integer
+grid = FromJsonString("[[1,2],[3,4]]", true)
+print grid(1, 1)
+```

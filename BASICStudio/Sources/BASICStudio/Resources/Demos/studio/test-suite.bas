@@ -130,7 +130,8 @@ end class
 
 class FancyReport
     inherits Report
-    public Badge as string
+    public Badge as string json name "badge" = "defaultBadge"
+    public myLocalVar as integer = 0
 
     function New(title as string, badge as string)
         ME.Title = title
@@ -162,6 +163,9 @@ fancy = new FancyReport("Phase2", "OK")
 print "INHERITED SUMMARY =", fancy.Summary$()
 print "RENAMED =", fancy.Rename$("Phase2B")
 print "RENAMED SUMMARY =", fancy.Summary$()
+print "JSON =", ToJsonString(fancy, false)
+let parsed = FromJsonString("{" + chr$(34) + "badge" + chr$(34) + ":null}", true)
+print "JSON NULL =", parsed("badge")
 
 if total >= 20 then Passed
 print "MATH FAILED"

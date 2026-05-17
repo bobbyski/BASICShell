@@ -4,8 +4,11 @@
 
 Creates or updates a variable in the global context. `GLOBAL` can include `AS <type>` and an optional initializer.
 
+`GLOBAL` can declare scalar values, dictionaries, records/classes, and arrays. If no initializer is provided, the variable gets the default value for its type.
+
 ```basic
 global total as integer = 0
 global name$ as string = "AIBASIC"
 global done as boolean = true
+global sharedScores(2) as integer
 ```

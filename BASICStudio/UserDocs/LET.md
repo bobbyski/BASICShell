@@ -4,10 +4,18 @@
 
 Assigns a value to a variable. `LET` is optional, so plain assignment works too. Variables are case-insensitive. `LET` can include `AS <type>` and follows the active `OPTION GLOBAL-LET` or `OPTION LOCAL-LET` mode.
 
+When `LET` includes a type but no initializer, it creates the default value for that type. `LET` can also declare arrays.
+
 ```basic
 let x as integer = 42
 y = x + 8
 name$ = "AIBASIC"
 done as boolean = true
 print y, name$
+```
+
+```basic
+let payload as dictionary
+let scores(2) as integer
+let report as FancyReport
 ```

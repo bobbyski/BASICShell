@@ -107,6 +107,58 @@ struct BASICCoreTests {
         #expect(host.output == ["2"])
     }
 
+    @Test("LET can declare typed aggregate variables without initializer")
+    func letCanDeclareTypedAggregateVariablesWithoutInitializer() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class FancyReport
+            public Badge as string json name "badge" = "defaultBadge"
+        end class
+
+        let report as FancyReport
+        print ToJsonString(report, false)
+
+        let payload as dictionary
+        payload("name") = "Ada"
+        print payload("name")
+
+        let scores(2) as integer
+        scores(0) = 10
+        scores(1) = 20
+        scores(2) = scores(0) + scores(1)
+        print scores(2)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["{\"badge\":\"defaultBadge\"}", "Ada", "30"])
+    }
+
+    @Test("GLOBAL and LOCAL can declare scoped arrays")
+    func globalAndLocalCanDeclareScopedArrays() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        option global-let
+        global scores(0) as integer
+        scores(0) = 1
+        gosub Demo
+        print scores(0)
+        end
+
+        Demo:
+        local scores(0) as integer
+        scores(0) = 7
+        print scores(0)
+        return
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["7", "1"])
+    }
+
     @Test("AS type suffix conflicts are reported")
     func asTypeSuffixConflictsAreReported() {
         let host = TestHost()
@@ -1188,6 +1240,181 @@ struct BASICCoreTests {
         #expect(scores?.value == "3 entries")
         #expect(scores?.children.map(\.name) == ["\"Ada\"", "\"Grace\"", "\"Zero\""])
         #expect(scores?.children.map(\.value) == ["98", "A", "FALSE"])
+    }
+
+    @Test("JSON encoding uses opt-in aliases for class fields")
+    func jsonEncodingUsesOptInAliasesForClassFields() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class FancyReport
+            public Badge as string json name "badge" = "defaultBadge"
+            public myLocalVar as integer = 0
+        end class
+        dim report as FancyReport
+        report = new FancyReport()
+        print ToJsonString(report, false)
+        report.Badge = "ready"
+        print ToJsonString(report, false)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["{\"badge\":\"defaultBadge\"}", "{\"badge\":\"ready\"}"])
+    }
+
+    @Test("JSON round trip supports dictionaries arrays and NULL")
+    func jsonRoundTripSupportsDictionariesArraysAndNull() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        dim payload as dictionary
+        payload("name") = "Ada"
+        payload("missing") = NULL
+        payload("score") = 98
+        let json$ = ToJsonString(payload, false)
+        print json$
+        let decoded = FromJsonString(json$, true)
+        print decoded("name")
+        print decoded("missing")
+        print decoded("score")
+        let values = FromJsonString("[1,true,null]", true)
+        print values(0)
+        print values(1)
+        print values(2)
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "{\"missing\":null,\"name\":\"Ada\",\"score\":98}",
+            "Ada",
+            "NULL",
+            "98",
+            "1",
+            "TRUE",
+            "NULL"
+        ])
+    }
+
+    @Test("JSON can decode into typed records classes and arrays")
+    func jsonCanDecodeIntoTypedRecordsClassesAndArrays() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string json name "name" = "Unknown"
+            Age as integer json name "age" = 0
+            Grade as double json name "grade" = 0
+            Scratch as string = "hidden"
+        end type
+
+        class FancyReport
+            public Badge as string json name "badge" = "defaultBadge"
+            public Count as integer json name "count" = 0
+            public LocalOnly as string = "secret"
+        end class
+
+        let q$ = chr$(34)
+        let student as Student
+        student = FromJsonString("{" + q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "," + q$ + "age" + q$ + ":16," + q$ + "grade" + q$ + ":99.5," + q$ + "extra" + q$ + ":1}", true)
+        print student.Name
+        print student.Age
+        print student.Grade
+        print student.Scratch
+
+        let report as FancyReport
+        report = FromJsonString("{" + q$ + "badge" + q$ + ":" + q$ + "READY" + q$ + "," + q$ + "count" + q$ + ":7," + q$ + "LocalOnly" + q$ + ":" + q$ + "ignored" + q$ + "}", true)
+        print report.Badge
+        print report.Count
+        print report.LocalOnly
+
+        let scores(2) as integer
+        scores = FromJsonString("[10,20,30]", true)
+        print scores(2)
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "Ada",
+            "16",
+            "99.5",
+            "hidden",
+            "READY",
+            "7",
+            "secret",
+            "30"
+        ])
+    }
+
+    @Test("JSON typed decode reports type mismatch")
+    func jsonTypedDecodeReportsTypeMismatch() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Student
+            Name as string json name "name"
+            Age as integer json name "age"
+        end type
+
+        let student as Student
+        let q$ = chr$(34)
+        student = FromJsonString("{" + q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "," + q$ + "age" + q$ + ":" + q$ + "sixteen" + q$ + "}", true)
+        print student.Name
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Type Mismatch"])
+    }
+
+    @Test("JSON decodes variable length arrays and LEN reports element count")
+    func jsonDecodesVariableLengthArraysAndLenReportsElementCount() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        record Student
+            Name as string json name "name"
+        end record
+
+        record Classroom
+            Name as string json name "name"
+            Students(*) as Student json name "students"
+            StudentsByRowAndSeat(*, *) as Student json name "studentsByRowAndSeat"
+        end record
+
+        let q$ = chr$(34)
+        let room as Classroom
+        room = FromJsonString("{" + q$ + "name" + q$ + ":" + q$ + "OS" + q$ + "," + q$ + "students" + q$ + ":[{" + q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "},{" + q$ + "name" + q$ + ":" + q$ + "Grace" + q$ + "}]," + q$ + "studentsByRowAndSeat" + q$ + ":[[{"+ q$ + "name" + q$ + ":" + q$ + "Ada" + q$ + "}],[{" + q$ + "name" + q$ + ":" + q$ + "Grace" + q$ + "}]]}", true)
+        print room.Name
+        print len(room.Students)
+        print len(room.StudentsByRowAndSeat)
+        print ToJsonString(room, false)
+
+        let scores(*) as integer
+        scores = FromJsonString("[10,20,30,40]", true)
+        print len(scores)
+        print scores(3)
+
+        let grid(*, *) as integer
+        grid = FromJsonString("[[1,2],[3,4]]", true)
+        print len(grid)
+        print grid(1, 1)
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "OS",
+            "2",
+            "2",
+            "{\"name\":\"OS\",\"students\":[{\"name\":\"Ada\"},{\"name\":\"Grace\"}],\"studentsByRowAndSeat\":[[{\"name\":\"Ada\"}],[{\"name\":\"Grace\"}]]}",
+            "4",
+            "40",
+            "4",
+            "4"
+        ])
     }
 
     @Test("Debugger snapshots group inherited CLASS fields")

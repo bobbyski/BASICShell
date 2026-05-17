@@ -113,6 +113,13 @@ public struct BASICString: Equatable, CustomStringConvertible {
         }
     }
 
+    var rawString: String {
+        switch storage {
+        case .text(let value): return value
+        case .data(let data): return String(decoding: data, as: UTF8.self)
+        }
+    }
+
     var characterCount: Int {
         description.count
     }
@@ -156,6 +163,7 @@ public struct BASICString: Equatable, CustomStringConvertible {
 
 indirect enum BASICValue: Equatable, CustomStringConvertible {
     case empty
+    case null
     case number(Double)
     case string(BASICString)
     case boolean(Bool)
@@ -168,6 +176,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
         switch self {
         case .empty:
             return ""
+        case .null:
+            return "NULL"
         case .number(let value):
             if value.rounded() == value {
                 return String(Int(value))
@@ -190,7 +200,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
 
     var truthy: Bool {
         switch self {
-        case .empty: return false
+        case .empty, .null: return false
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
@@ -231,6 +241,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
 struct BASICArray: Equatable {
     let dimensions: [Int]
     let type: BASICType
+    let isDynamic: Bool
     var values: [BASICValue]
 }
 
@@ -315,11 +326,18 @@ private struct BASICTypeSpec: Equatable {
     let fixedLength: Int?
 }
 
+private struct BASICJSONFieldOptions: Equatable {
+    let name: String
+}
+
 private struct BASICRecordField: Equatable {
     let displayName: String
     let normalizedName: String
     let type: BASICType
     let fixedLength: Int?
+    let arrayDimensions: [Int?]
+    let json: BASICJSONFieldOptions?
+    let defaultValue: BASICValue?
 }
 
 private struct BASICRecordDefinition: Equatable {
@@ -359,8 +377,11 @@ private struct BASICClassField: Equatable {
     let displayName: String
     let normalizedName: String
     let type: BASICType
+    let arrayDimensions: [Int?]
     let visibility: BASICMemberVisibility
     let declaringClassName: String
+    let json: BASICJSONFieldOptions?
+    let defaultValue: BASICValue?
 }
 
 private struct BASICClassDefinition: Equatable {
@@ -394,16 +415,20 @@ private struct VariableName: Equatable {
 private struct VariableReference: Equatable {
     let base: VariableName
     var indexes: [Expression]
+    var declarationDimensions: [Expression?]
     var fields: [String]
+    var hasEmptyIndexList: Bool
 
-    init(base: VariableName, indexes: [Expression] = [], fields: [String] = []) {
+    init(base: VariableName, indexes: [Expression] = [], declarationDimensions: [Expression?] = [], fields: [String] = [], hasEmptyIndexList: Bool = false) {
         self.base = base
         self.indexes = indexes
+        self.declarationDimensions = declarationDimensions
         self.fields = fields
+        self.hasEmptyIndexList = hasEmptyIndexList
     }
 
     var isSimple: Bool {
-        indexes.isEmpty && fields.isEmpty
+        indexes.isEmpty && declarationDimensions.isEmpty && fields.isEmpty && !hasEmptyIndexList
     }
 }
 
@@ -571,6 +596,26 @@ private final class BASICRuntime {
         snapshots(from: globals, scope: .global)
     }
 
+    func jsonString(for value: BASICValue, pretty: Bool) throws -> String {
+        let object = try jsonObject(for: value, declaredType: inferredType(name: "", value: value))
+        var options: JSONSerialization.WritingOptions = [.fragmentsAllowed, .sortedKeys]
+        if pretty {
+            options.insert(.prettyPrinted)
+        }
+        let data = try JSONSerialization.data(withJSONObject: object, options: options)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func valueFromJSONString(_ source: String, permissive: Bool) throws -> BASICValue {
+        var options: JSONSerialization.ReadingOptions = []
+        if permissive {
+            options.insert(.fragmentsAllowed)
+        }
+        let data = Data(source.utf8)
+        let object = try JSONSerialization.jsonObject(with: data, options: options)
+        return try basicValue(fromJSONObject: object)
+    }
+
     func assign(
         kind: AssignmentKind,
         variable: VariableName,
@@ -582,31 +627,39 @@ private final class BASICRuntime {
         let target = targetContext(kind: kind, normalized: normalized)
         let existing = binding(in: target, normalized: normalized)
         let type = try resolvedType(variable: variable, declaredType: declaredType, value: value, existing: existing)
+        if case .array(let existingArray) = existing?.value, let value {
+            let coercedArray = try coerceArray(value, toMatch: existingArray, variable: variable)
+            let binding = VariableBinding(displayName: variable.name, type: existingArray.type, value: .array(coercedArray))
+            set(binding, in: target, normalized: normalized)
+            return
+        }
         let coerced = try coerce(value ?? defaultValue(for: type), to: type, variable: variable)
         let binding = VariableBinding(displayName: variable.name, type: type, value: coerced)
         set(binding, in: target, normalized: normalized)
     }
 
-    func dim(variable: VariableName, dimensions: [Int], declaredType: BASICType?) throws {
+    func dim(kind: AssignmentKind, variable: VariableName, dimensions: [Int?], declaredType: BASICType?) throws {
         try validateSuffix(variable: variable, declaredType: declaredType)
         guard !dimensions.isEmpty else {
             let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
             let binding = VariableBinding(displayName: variable.name, type: type, value: defaultValue(for: type))
-            set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
+            set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized)
             return
         }
-        guard dimensions.allSatisfy({ $0 >= 0 }) else {
+        guard dimensions.allSatisfy({ ($0 ?? 0) >= 0 }) else {
             throw BASICError.runtime("DIM bounds must be non-negative")
         }
         let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
-        let elementCount = dimensions.reduce(1) { $0 * ($1 + 1) }
+        let resolvedDimensions = dimensions.map { $0 ?? -1 }
+        let elementCount = resolvedDimensions.contains(-1) ? 0 : resolvedDimensions.reduce(1) { $0 * ($1 + 1) }
         let array = BASICArray(
-            dimensions: dimensions,
+            dimensions: resolvedDimensions,
             type: type,
+            isDynamic: dimensions.contains(where: { $0 == nil }),
             values: Array(repeating: defaultValue(for: type), count: elementCount)
         )
         let binding = VariableBinding(displayName: variable.name, type: type, value: .array(array))
-        set(binding, in: targetContext(kind: .bare, normalized: variable.normalized), normalized: variable.normalized)
+        set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized)
     }
 
     func assign(reference: VariableReference, indexes: [BASICValue], value: BASICValue?, accessClassName: String? = nil) throws {
@@ -737,6 +790,102 @@ private final class BASICRuntime {
         }
     }
 
+    private func jsonObject(for value: BASICValue, declaredType: BASICType) throws -> Any {
+        switch value {
+        case .empty, .null:
+            return NSNull()
+        case .number(let number):
+            return number
+        case .string(let string):
+            return string.rawString
+        case .boolean(let boolean):
+            return boolean
+        case .array(let array):
+            return try jsonArrayObject(for: array)
+        case .dictionary(let dictionary):
+            var object: [String: Any] = [:]
+            for key in dictionary.values.keys.sorted() {
+                object[key] = try jsonObject(for: dictionary.values[key] ?? .empty, declaredType: inferredType(name: key, value: dictionary.values[key]))
+            }
+            return object
+        case .record(let name, let fields):
+            let definition = recordDefinitions[name.uppercased()]
+            var object: [String: Any] = [:]
+            for field in definition?.fields ?? [] {
+                guard let json = field.json else { continue }
+                let fieldValue = fields[field.normalizedName] ?? defaultValue(for: field)
+                object[json.name] = try jsonObject(for: fieldValue, declaredType: field.type)
+            }
+            return object
+        case .object(let name, let fields):
+            guard let definition = classDefinitions[name.uppercased()] else { return [:] }
+            var object: [String: Any] = [:]
+            for field in inheritedFields(for: definition) {
+                guard let json = field.json else { continue }
+                let fieldValue = fields[field.normalizedName] ?? defaultValue(for: field)
+                object[json.name] = try jsonObject(for: fieldValue, declaredType: field.type)
+            }
+            return object
+        }
+    }
+
+    private func basicValue(fromJSONObject object: Any) throws -> BASICValue {
+        if object is NSNull {
+            return .null
+        }
+        if let string = object as? String {
+            return .string(BASICString(string))
+        }
+        if let number = object as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .boolean(number.boolValue)
+            }
+            return .number(number.doubleValue)
+        }
+        if let array = object as? [Any] {
+            return .array(BASICArray(
+                dimensions: [array.count - 1],
+                type: .scalar(.variant),
+                isDynamic: true,
+                values: try array.map(basicValue(fromJSONObject:))
+            ))
+        }
+        if let dictionary = object as? [String: Any] {
+            var values: [String: BASICValue] = [:]
+            for key in dictionary.keys.sorted() {
+                values[key] = try basicValue(fromJSONObject: dictionary[key] as Any)
+            }
+            return .dictionary(BASICDictionary(values: values))
+        }
+        throw BASICError.runtime("Unsupported JSON value")
+    }
+
+    private func jsonArrayObject(for array: BASICArray) throws -> Any {
+        guard array.dimensions.count > 1 else {
+            return try array.values.map { try jsonObject(for: $0, declaredType: array.type) }
+        }
+        return try jsonArraySlice(for: array, dimension: 0, offset: 0).value
+    }
+
+    private func jsonArraySlice(for array: BASICArray, dimension: Int, offset: Int) throws -> (value: Any, nextOffset: Int) {
+        let count = max(0, array.dimensions[dimension] + 1)
+        var values: [Any] = []
+        var cursor = offset
+        if dimension == array.dimensions.count - 1 {
+            for _ in 0..<count {
+                values.append(try jsonObject(for: array.values[cursor], declaredType: array.type))
+                cursor += 1
+            }
+            return (values, cursor)
+        }
+        for _ in 0..<count {
+            let child = try jsonArraySlice(for: array, dimension: dimension + 1, offset: cursor)
+            values.append(child.value)
+            cursor = child.nextOffset
+        }
+        return (values, cursor)
+    }
+
     private func resolvedType(
         variable: VariableName,
         declaredType: BASICType?,
@@ -772,7 +921,7 @@ private final class BASICRuntime {
         }
         if let value {
             switch value {
-            case .empty: return .scalar(.variant)
+            case .empty, .null: return .scalar(.variant)
             case .string: return .scalar(.string)
             case .boolean: return .scalar(.boolean)
             case .number(let number) where number.rounded() != number:
@@ -813,6 +962,9 @@ private final class BASICRuntime {
             if case .record(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
                 return value
             }
+            if case .dictionary(let dictionary) = value {
+                return try decodeRecord(name: name, from: dictionary, variable: variable)
+            }
             if case .object(let valueName, let fields) = value, valueName.uppercased() == name.uppercased() {
                 return .record(valueName, fields)
             }
@@ -822,6 +974,12 @@ private final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
         }
         if case .classType(let name) = type {
+            if case .null = value {
+                return .null
+            }
+            if case .dictionary(let dictionary) = value {
+                return try decodeObject(name: name, from: dictionary, variable: variable)
+            }
             if case .object(let valueName, _) = value {
                 if valueName.uppercased() == name.uppercased() || isClass(valueName, subclassOf: name) {
                     return value
@@ -833,6 +991,9 @@ private final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
         }
         if case .interfaceType(let name) = type {
+            if case .null = value {
+                return .null
+            }
             if case .object(let valueName, _) = value,
                classConforms(valueName, toInterface: name) {
                 return value
@@ -886,6 +1047,128 @@ private final class BASICRuntime {
         }
     }
 
+    private func decodeRecord(name: String, from dictionary: BASICDictionary, variable: VariableName) throws -> BASICValue {
+        guard let definition = recordDefinitions[name.uppercased()] else {
+            throw BASICError.runtime("Type Mismatch")
+        }
+        var fields = defaultValue(for: .record(name)).compositeFields?.fields ?? [:]
+        for field in definition.fields {
+            guard let json = field.json, let sourceValue = dictionary.values[json.name] else { continue }
+            do {
+                fields[field.normalizedName] = try coerce(sourceValue, to: field, variable: VariableName(name: field.displayName, column: variable.column))
+            } catch {
+                throw BASICError.runtime("Type Mismatch")
+            }
+        }
+        return .record(definition.displayName, fields)
+    }
+
+    private func decodeObject(name: String, from dictionary: BASICDictionary, variable: VariableName) throws -> BASICValue {
+        guard let definition = classDefinitions[name.uppercased()] else {
+            throw BASICError.runtime("Type Mismatch")
+        }
+        var fields = defaultValue(for: .classType(name)).compositeFields?.fields ?? [:]
+        for field in inheritedFields(for: definition) {
+            guard let json = field.json, let sourceValue = dictionary.values[json.name] else { continue }
+            do {
+                fields[field.normalizedName] = try coerce(sourceValue, to: field, variable: VariableName(name: field.displayName, column: variable.column))
+            } catch {
+                throw BASICError.runtime("Type Mismatch")
+            }
+        }
+        return .object(definition.displayName, fields)
+    }
+
+    private func coerceArray(_ value: BASICValue, toMatch existingArray: BASICArray, variable: VariableName) throws -> BASICArray {
+        guard case .array(let sourceArray) = value else {
+            throw BASICError.runtime("Type Mismatch")
+        }
+        do {
+            let shape = try arrayShape(from: sourceArray, rank: existingArray.dimensions.count)
+            let dimensions: [Int]
+            if existingArray.isDynamic {
+                dimensions = try zip(existingArray.dimensions, shape).map { existing, decoded in
+                    if existing >= 0, existing != decoded {
+                        throw BASICError.runtime("Type Mismatch")
+                    }
+                    return existing >= 0 ? existing : decoded
+                }
+            } else {
+                guard shape == existingArray.dimensions else {
+                    throw BASICError.runtime("Type Mismatch")
+                }
+                dimensions = existingArray.dimensions
+            }
+            let sourceValues = try flattenedArrayValues(from: sourceArray, rank: existingArray.dimensions.count)
+            return BASICArray(
+                dimensions: dimensions,
+                type: existingArray.type,
+                isDynamic: existingArray.isDynamic,
+                values: try sourceValues.map {
+                    try coerce($0, to: existingArray.type, variable: variable)
+                }
+            )
+        } catch {
+            throw BASICError.runtime("Type Mismatch")
+        }
+    }
+
+    private func arrayShape(from array: BASICArray, rank: Int) throws -> [Int] {
+        guard rank > 0 else { throw BASICError.runtime("Type Mismatch") }
+        if rank == 1 {
+            return [array.values.count - 1]
+        }
+        guard let first = array.values.first else {
+            return Array(repeating: -1, count: rank)
+        }
+        guard case .array(let firstArray) = first else {
+            throw BASICError.runtime("Type Mismatch")
+        }
+        let childShape = try arrayShape(from: firstArray, rank: rank - 1)
+        for value in array.values.dropFirst() {
+            guard case .array(let childArray) = value,
+                  try arrayShape(from: childArray, rank: rank - 1) == childShape else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+        }
+        return [array.values.count - 1] + childShape
+    }
+
+    private func flattenedArrayValues(from array: BASICArray, rank: Int) throws -> [BASICValue] {
+        guard rank > 0 else { throw BASICError.runtime("Type Mismatch") }
+        if rank == 1 {
+            return array.values
+        }
+        var values: [BASICValue] = []
+        for value in array.values {
+            guard case .array(let childArray) = value else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            values.append(contentsOf: try flattenedArrayValues(from: childArray, rank: rank - 1))
+        }
+        return values
+    }
+
+    private func coerce(_ value: BASICValue, to field: BASICRecordField, variable: VariableName) throws -> BASICValue {
+        if !field.arrayDimensions.isEmpty {
+            guard case .array(let defaultArray) = defaultValue(for: field) else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            return .array(try coerceArray(value, toMatch: defaultArray, variable: variable))
+        }
+        return try coerce(value, to: field.type, variable: variable)
+    }
+
+    private func coerce(_ value: BASICValue, to field: BASICClassField, variable: VariableName) throws -> BASICValue {
+        if !field.arrayDimensions.isEmpty {
+            guard case .array(let defaultArray) = defaultValue(for: field) else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            return .array(try coerceArray(value, toMatch: defaultArray, variable: variable))
+        }
+        return try coerce(value, to: field.type, variable: variable)
+    }
+
     func defaultValue(for type: BASICType) -> BASICValue {
         switch type {
         case .void: return .empty
@@ -898,7 +1181,7 @@ private final class BASICRuntime {
                 return .record(name, [:])
             }
             let fields = Dictionary(uniqueKeysWithValues: definition.fields.map {
-                ($0.normalizedName, defaultValue(for: $0.type))
+                ($0.normalizedName, defaultValue(for: $0))
             })
             return .record(definition.displayName, fields)
         case .classType(let name):
@@ -906,7 +1189,7 @@ private final class BASICRuntime {
                 return .object(name, [:])
             }
             let fields = Dictionary(uniqueKeysWithValues: inheritedFields(for: definition).map {
-                ($0.normalizedName, defaultValue(for: $0.type))
+                ($0.normalizedName, defaultValue(for: $0))
             })
             return .object(definition.displayName, fields)
         case .interfaceType:
@@ -914,6 +1197,28 @@ private final class BASICRuntime {
         case .dictionary:
             return .dictionary(BASICDictionary())
         }
+    }
+
+    private func defaultValue(for field: BASICRecordField) -> BASICValue {
+        defaultValue(type: field.type, arrayDimensions: field.arrayDimensions, explicitDefault: field.defaultValue)
+    }
+
+    private func defaultValue(for field: BASICClassField) -> BASICValue {
+        defaultValue(type: field.type, arrayDimensions: field.arrayDimensions, explicitDefault: field.defaultValue)
+    }
+
+    private func defaultValue(type: BASICType, arrayDimensions: [Int?], explicitDefault: BASICValue?) -> BASICValue {
+        guard !arrayDimensions.isEmpty else {
+            return explicitDefault ?? defaultValue(for: type)
+        }
+        let dimensions = arrayDimensions.map { $0 ?? -1 }
+        let count = dimensions.contains(-1) ? 0 : dimensions.reduce(1) { $0 * ($1 + 1) }
+        return .array(BASICArray(
+            dimensions: dimensions,
+            type: type,
+            isDynamic: arrayDimensions.contains(where: { $0 == nil }),
+            values: Array(repeating: defaultValue(for: type), count: count)
+        ))
     }
 
     private func arrayValue(_ array: BASICArray, at indexes: [BASICValue], name: String) throws -> BASICValue {
@@ -984,9 +1289,9 @@ private final class BASICRuntime {
             throw BASICError.runtime("\(fieldLookupTypeName(declaredType, fallbackTypeName: recordName)) has no field \(first)")
         }
         try validateAccess(to: field, from: accessClassName)
-        let current = recordFields[normalized] ?? defaultValue(for: field.type)
+        let current = recordFields[normalized] ?? defaultValue(for: field)
         if fields.count == 1 {
-            recordFields[normalized] = try coerce(value ?? defaultValue(for: field.type), to: field.type, variable: VariableName(name: field.displayName, column: 0))
+            recordFields[normalized] = try coerce(value ?? defaultValue(for: field), to: field, variable: VariableName(name: field.displayName, column: 0))
         } else {
             recordFields[normalized] = try assigningField(Array(fields.dropFirst()), in: current, value: value, accessClassName: accessClassName)
         }
@@ -1122,7 +1427,7 @@ private final class BASICRuntime {
             let classFields = definition.fields
             guard !classFields.isEmpty else { return nil }
             let children = classFields.map { field in
-                let value = fields[field.normalizedName] ?? defaultValue(for: field.type)
+                let value = fields[field.normalizedName] ?? defaultValue(for: field)
                 return snapshot(
                     name: field.displayName,
                     type: field.type,
@@ -1151,7 +1456,7 @@ private final class BASICRuntime {
         let definitions = compositeFieldDefinitions(for: typeName)
         if !definitions.isEmpty {
             return definitions.map { field in
-                let value = fields[field.normalizedName] ?? defaultValue(for: field.type)
+                let value = fields[field.normalizedName] ?? defaultValue(for: field)
                 return snapshot(
                     name: field.displayName,
                     type: field.type,
@@ -1180,7 +1485,16 @@ private final class BASICRuntime {
         }
         if let recordDefinition = recordDefinitions[typeName.uppercased()] {
             return recordDefinition.fields.map {
-                BASICClassField(displayName: $0.displayName, normalizedName: $0.normalizedName, type: $0.type, visibility: .public, declaringClassName: recordDefinition.normalizedName)
+                BASICClassField(
+                    displayName: $0.displayName,
+                    normalizedName: $0.normalizedName,
+                    type: $0.type,
+                    arrayDimensions: $0.arrayDimensions,
+                    visibility: .public,
+                    declaringClassName: recordDefinition.normalizedName,
+                    json: $0.json,
+                    defaultValue: $0.defaultValue
+                )
             }
         }
         return []
@@ -2161,7 +2475,7 @@ public final class BASICInterpreter {
                 if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
                     return (line.fileName, line.sourceLineNumber)
                 }
-            case .classField(let name, _, _), .typeField(let name, _, _):
+            case .classField(let name, _, _, _, _, _), .typeField(let name, _, _, _, _, _):
                 if message.contains("field \(name)") || message.contains(" \(name) ") {
                     return (line.fileName, line.sourceLineNumber)
                 }
@@ -2650,8 +2964,8 @@ public final class BASICInterpreter {
             let value = try expression.map(evaluate)
             try runtime.assign(reference: reference, indexes: try reference.indexes.map(evaluate), value: value, accessClassName: currentClassContext)
             return .next
-        case .dim(let variable, let dimensions, let declaredType):
-            try runtime.dim(variable: variable, dimensions: try dimensions.map(integer), declaredType: declaredType)
+        case .dim(let kind, let variable, let dimensions, let declaredType):
+            try runtime.dim(kind: kind, variable: variable, dimensions: try dimensions.map { try $0.map(integer) }, declaredType: declaredType)
             return .next
         case .optionLetMode(let mode):
             runtime.letMode = mode
@@ -2898,7 +3212,7 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .typeField(let fieldName, let type, let fixedLength):
+                case .typeField(let fieldName, let type, let fixedLength, let arrayDimensions, let json, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("TYPE \(name) field \(fieldName) is already defined")
@@ -2908,7 +3222,10 @@ public final class BASICInterpreter {
                             displayName: fieldName,
                             normalizedName: normalizedField,
                             type: type,
-                            fixedLength: fixedLength
+                            fixedLength: fixedLength,
+                            arrayDimensions: arrayDimensions,
+                            json: json,
+                            defaultValue: defaultValue
                         )
                     )
                 case .endType:
@@ -3026,18 +3343,18 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .classField(let fieldName, let type, let visibility):
+                case .classField(let fieldName, let type, let visibility, let arrayDimensions, let json, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, visibility: visibility, declaringClassName: normalized))
-                case .typeField(let fieldName, let type, _):
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, defaultValue: defaultValue))
+                case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, visibility: .public, declaringClassName: normalized))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, defaultValue: defaultValue))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
                 case .inheritsDeclaration(let baseClassName):
@@ -3306,7 +3623,8 @@ public final class BASICInterpreter {
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ASC", "ATN", "CINT", "COS", "EXP", "FIX", "INSTR", "INT",
         "LEFT$", "LOG", "MID$", "RIGHT$", "RND", "SGN", "SIN", "SPACE$",
-        "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "VAL"
+        "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TOJSONSTRING", "VAL",
+        "FROMJSONSTRING"
     ]
 
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -3379,9 +3697,31 @@ public final class BASICInterpreter {
             return .string(BASICString(String(repeating: " ", count: target - 1)))
         case "TAN":
             return .number(tan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "TOJSONSTRING":
+            try requireArgumentCount(name.name, arguments, 2)
+            let value = try evaluate(arguments[0])
+            let pretty = try boolean(try evaluate(arguments[1]))
+            do {
+                return .string(BASICString(try runtime.jsonString(for: value, pretty: pretty)))
+            } catch let error as BASICError {
+                throw error
+            } catch {
+                throw BASICError.runtime("JSON encode failed: \(error.localizedDescription)")
+            }
         case "VAL":
             let value = try singleStringArgument(name: name.name, arguments: arguments)
             return .number(Self.leadingNumber(in: value) ?? 0)
+        case "FROMJSONSTRING":
+            try requireArgumentCount(name.name, arguments, 2)
+            let source = try string(arguments[0])
+            let permissive = try boolean(try evaluate(arguments[1]))
+            do {
+                return try runtime.valueFromJSONString(source, permissive: permissive)
+            } catch let error as BASICError {
+                throw error
+            } catch {
+                throw BASICError.runtime("JSON parse failed: \(error.localizedDescription)")
+            }
         default:
             throw BASICError.runtime("Unknown function \(name.name)")
         }
@@ -4089,6 +4429,8 @@ public final class BASICInterpreter {
             return .string(BASICString(value))
         case .boolean(let value):
             return .boolean(value)
+        case .null:
+            return .null
         case .variable(let name):
             return runtime.value(for: name)
         case .variableReference(let reference):
@@ -4140,8 +4482,12 @@ public final class BASICInterpreter {
         case .chrFunction(let expression):
             return .string(try BASICString.character(code: integer(expression)))
         case .lenFunction(let expression):
-            guard let string = try evaluate(expression).string else {
-                throw BASICError.runtime("LEN requires a string")
+            let value = try evaluate(expression)
+            if case .array(let array) = value {
+                return .number(Double(array.values.count))
+            }
+            guard let string = value.string else {
+                throw BASICError.runtime("LEN requires a string or array")
             }
             return .number(Double(string.characterCount))
         case .systemFunction(let expression):
@@ -4202,6 +4548,19 @@ public final class BASICInterpreter {
             throw BASICError.runtime("Expected a string")
         }
         return string.description
+    }
+
+    private func boolean(_ value: BASICValue) throws -> Bool {
+        switch value {
+        case .boolean(let boolean):
+            return boolean
+        case .number(let number) where number == 0:
+            return false
+        case .number(let number) where number == 1:
+            return true
+        default:
+            throw BASICError.runtime("Expected a boolean")
+        }
     }
 
     private func resolve(point: GraphicsPoint) throws -> (x: Int, y: Int) {
@@ -4304,7 +4663,7 @@ private indirect enum Statement: Equatable {
     case sequence([Statement])
     case importDirective(String)
     case typeDeclaration(name: String)
-    case typeField(name: String, type: BASICType, fixedLength: Int?)
+    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, defaultValue: BASICValue?)
     case endType
     case interfaceDeclaration(name: String)
     case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
@@ -4312,7 +4671,7 @@ private indirect enum Statement: Equatable {
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
-    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility)
+    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, defaultValue: BASICValue?)
     case endClass
     case functionDeclaration(
         name: VariableName,
@@ -4335,7 +4694,7 @@ private indirect enum Statement: Equatable {
     case line(GraphicsPoint, GraphicsPoint, Expression?)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
     case referenceAssignment(VariableReference, Expression?)
-    case dim(VariableName, [Expression], BASICType?)
+    case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case input(String)
     case load(Expression)
@@ -4417,6 +4776,7 @@ private indirect enum Expression: Equatable {
     case number(Double)
     case string(String)
     case boolean(Bool)
+    case null
     case variable(VariableName)
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
@@ -4706,6 +5066,10 @@ private struct Parser {
             let name = try consumeIdentifier("Expected TYPE name")
             return .typeDeclaration(name: name)
         }
+        if matchIdentifier("RECORD") {
+            let name = try consumeIdentifier("Expected RECORD name")
+            return .typeDeclaration(name: name)
+        }
         if matchIdentifier("INTERFACE") {
             let name = try consumeIdentifier("Expected INTERFACE name")
             return .interfaceDeclaration(name: name)
@@ -4726,7 +5090,7 @@ private struct Parser {
             return try parseModifiedMember()
         }
         if matchIdentifier("DIM") {
-            return try parseDim()
+            return try parseDim(kind: .bare)
         }
         if matchIdentifier("FOR") {
             return try parseForLoop()
@@ -4757,6 +5121,9 @@ private struct Parser {
                 return .endFunction
             }
             if matchIdentifier("TYPE") {
+                return .endType
+            }
+            if matchIdentifier("RECORD") {
                 return .endType
             }
             if matchIdentifier("INTERFACE") {
@@ -4819,7 +5186,7 @@ private struct Parser {
             return .line(start, end, color)
         }
         if matchIdentifier("LET") {
-            return try parseAssignment(kind: .letValue, requiresEquals: true)
+            return try parseAssignment(kind: .letValue, requiresEquals: false)
         }
         if matchIdentifier("INPUT") {
             let name = try consumeIdentifier("Expected variable name after INPUT")
@@ -4882,24 +5249,35 @@ private struct Parser {
         throw syntax("Unknown statement")
     }
 
-    private mutating func parseDim() throws -> Statement {
+    private mutating func parseDim(kind: AssignmentKind) throws -> Statement {
         let variable = try consumeVariableName("Expected variable name after DIM")
-        var dimensions: [Expression] = []
+        var dimensions: [Expression?] = []
         if match(.leftParen) {
-            repeat {
-                dimensions.append(try parseExpression())
-            } while match(.comma)
-            guard match(.rightParen) else { throw syntax("Expected )") }
+            if match(.rightParen) {
+                dimensions.append(nil)
+            } else {
+                repeat {
+                    if match(.star) {
+                        dimensions.append(nil)
+                    } else {
+                        dimensions.append(try parseExpression())
+                    }
+                } while match(.comma)
+                guard match(.rightParen) else { throw syntax("Expected )") }
+            }
         }
         let declaredType = try parseOptionalType(for: variable)
-        return .dim(variable, dimensions, declaredType)
+        return .dim(kind, variable, dimensions, declaredType)
     }
 
     private mutating func parseTypeField() throws -> Statement {
         let name = try consumeIdentifier("Expected field name")
+        let arrayDimensions = try parseOptionalArrayDimensions()
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
-        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength)
+        let json = try parseJSONFieldOptions(defaultName: name)
+        let defaultValue = try parseOptionalFieldDefault()
+        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength, arrayDimensions: arrayDimensions, json: json, defaultValue: defaultValue)
     }
 
     private mutating func parseModifiedMember() throws -> Statement {
@@ -4922,9 +5300,66 @@ private struct Parser {
     private mutating func parseClassField(visibility: BASICMemberVisibility? = nil) throws -> Statement {
         let visibility = visibility ?? parseVisibilityModifier() ?? .public
         let name = try consumeIdentifier("Expected class field name")
+        let arrayDimensions = try parseOptionalArrayDimensions()
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
-        return .classField(name: name, type: typeSpec.type, visibility: visibility)
+        let json = try parseJSONFieldOptions(defaultName: name)
+        let defaultValue = try parseOptionalFieldDefault()
+        return .classField(name: name, type: typeSpec.type, visibility: visibility, arrayDimensions: arrayDimensions, json: json, defaultValue: defaultValue)
+    }
+
+    private mutating func parseOptionalArrayDimensions() throws -> [Int?] {
+        guard match(.leftParen) else { return [] }
+        if match(.rightParen) {
+            return [nil]
+        }
+        var dimensions: [Int?] = []
+        repeat {
+            if match(.star) {
+                dimensions.append(nil)
+            } else {
+                guard case .number(let bound) = advance(), bound.rounded() == bound, bound >= 0 else {
+                    throw syntax("Expected array bound")
+                }
+                dimensions.append(Int(bound))
+            }
+        } while match(.comma)
+        guard match(.rightParen) else { throw syntax("Expected )") }
+        return dimensions
+    }
+
+    private mutating func parseJSONFieldOptions(defaultName: String) throws -> BASICJSONFieldOptions? {
+        guard matchIdentifier("JSON") else { return nil }
+        if matchIdentifier("EXCLUDE") {
+            return nil
+        }
+        if matchIdentifier("NAME") {
+            guard case .string(let name) = advance() else {
+                throw syntax("Expected JSON field name string")
+            }
+            return BASICJSONFieldOptions(name: name)
+        }
+        return BASICJSONFieldOptions(name: defaultName)
+    }
+
+    private mutating func parseOptionalFieldDefault() throws -> BASICValue? {
+        guard match(.equals) else { return nil }
+        switch advance() {
+        case .number(let value):
+            return .number(value)
+        case .string(let value):
+            return .string(BASICString(value))
+        case .identifier(let name):
+            switch name.uppercased() {
+            case "TRUE": return .boolean(true)
+            case "FALSE": return .boolean(false)
+            case "NULL": return .null
+            case "EMPTY": return .empty
+            default: throw syntax("Expected literal field default")
+            }
+        default:
+            throw syntax("Expected literal field default")
+        }
     }
 
     private mutating func parseForLoop() throws -> Statement {
@@ -5102,7 +5537,7 @@ private struct Parser {
     private mutating func parseAssignment(kind: AssignmentKind, requiresEquals: Bool) throws -> Statement {
         let reference = try parseVariableReference(message: "Expected variable name")
         let variable = reference.base
-        let declaredType = reference.isSimple ? try parseOptionalType(for: variable) : nil
+        let declaredType = (reference.isSimple || (reference.fields.isEmpty && !reference.declarationDimensions.isEmpty)) ? try parseOptionalType(for: variable) : nil
         let expression: Expression?
         if match(.equals) {
             expression = try parseExpression()
@@ -5112,6 +5547,12 @@ private struct Parser {
             expression = nil
         }
         if !reference.isSimple {
+            if reference.declarationDimensions.contains(where: { $0 == nil }) && expression != nil {
+                throw syntax("Dynamic array markers are only valid in declarations")
+            }
+            if expression == nil, reference.fields.isEmpty {
+                return .dim(kind, variable, reference.declarationDimensions, declaredType)
+            }
             guard kind == .bare || kind == .letValue else {
                 throw syntax("GLOBAL and LOCAL require simple variable names")
             }
@@ -5256,6 +5697,7 @@ private struct Parser {
             let uppercased = name.uppercased()
             if uppercased == "TRUE" { return .boolean(true) }
             if uppercased == "FALSE" { return .boolean(false) }
+            if uppercased == "NULL" { return .null }
             if uppercased == "NEW" {
                 let className = try consumeIdentifier("Expected class name after NEW")
                 let arguments = peek == .leftParen ? try parseArgumentList() : []
@@ -5352,17 +5794,30 @@ private struct Parser {
     private mutating func parseVariableReference(message: String) throws -> VariableReference {
         let base = try consumeVariableName(message)
         var indexes: [Expression] = []
+        var declarationDimensions: [Expression?] = []
+        var hasEmptyIndexList = false
         if match(.leftParen) {
-            repeat {
-                indexes.append(try parseExpression())
-            } while match(.comma)
-            guard match(.rightParen) else { throw syntax("Expected )") }
+            if match(.rightParen) {
+                hasEmptyIndexList = true
+                declarationDimensions = [nil]
+            } else {
+                repeat {
+                    if match(.star) {
+                        declarationDimensions.append(nil)
+                    } else {
+                        let expression = try parseExpression()
+                        indexes.append(expression)
+                        declarationDimensions.append(expression)
+                    }
+                } while match(.comma)
+                guard match(.rightParen) else { throw syntax("Expected )") }
+            }
         }
         var fields: [String] = []
         while match(.dot) {
             fields.append(try consumeIdentifier("Expected field name after ."))
         }
-        return VariableReference(base: base, indexes: indexes, fields: fields)
+        return VariableReference(base: base, indexes: indexes, declarationDimensions: declarationDimensions, fields: fields, hasEmptyIndexList: hasEmptyIndexList)
     }
 
     private mutating func consumeIdentifier(_ message: String) throws -> String {
@@ -5434,7 +5889,8 @@ private struct Parser {
 
     private var isTypeFieldDeclaration: Bool {
         guard case .identifier = peek else { return false }
-        guard case .identifier(let next) = peekNext else { return false }
+        let asIndex = fieldAsKeywordIndex(startingAt: current + 1)
+        guard asIndex < tokens.count, case .identifier(let next) = tokens[asIndex].token else { return false }
         return next.uppercased() == "AS"
     }
 
@@ -5442,11 +5898,21 @@ private struct Parser {
         guard case .identifier(let access) = peek else { return false }
         guard ["PUBLIC", "PRIVATE", "PROTECTED"].contains(access.uppercased()) else { return false }
         let nameIndex = current + 1
-        let asIndex = current + 2
-        guard asIndex < tokens.count else { return false }
         guard case .identifier = tokens[nameIndex].token else { return false }
+        let asIndex = fieldAsKeywordIndex(startingAt: nameIndex + 1)
+        guard asIndex < tokens.count else { return false }
         guard case .identifier(let asKeyword) = tokens[asIndex].token else { return false }
         return asKeyword.uppercased() == "AS"
+    }
+
+    private func fieldAsKeywordIndex(startingAt index: Int) -> Int {
+        guard index < tokens.count else { return index }
+        guard tokens[index].token == .leftParen else { return index }
+        var cursor = index + 1
+        while cursor < tokens.count, tokens[cursor].token != .rightParen {
+            cursor += 1
+        }
+        return min(cursor + 1, tokens.count)
     }
 
     private var isMemberModifier: Bool {
