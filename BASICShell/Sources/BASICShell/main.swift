@@ -120,7 +120,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
 }
 
 let host = ConsoleHost()
-let session = BASICSession(host: host)
+let session = BASICSession(host: host, promptTemplate: BASICSession.shellPromptTemplate)
 
 @MainActor
 func runTermKitEditor() {

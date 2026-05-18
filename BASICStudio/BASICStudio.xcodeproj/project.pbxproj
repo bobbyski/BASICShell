@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */; };
 		4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
 		74D0835107EBA56BF18A331D /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = EF38E292B830FC5A0F76CE1D /* MarkdownUI */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
@@ -16,6 +17,7 @@
 /* Begin PBXFileReference section */
 		2F75838E7973F9367D5B0837 /* BASICCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCore; path = ../BASICCore; sourceTree = SOURCE_ROOT; };
 		393A6113D352F2C1DAC75002 /* BASICStudio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BASICStudio.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdPromptEditorView.swift; sourceTree = "<group>"; };
 		97D345D0E032E06BB808DA86 /* BASICStudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudio.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -70,8 +72,17 @@
 			isa = PBXGroup;
 			children = (
 				97D345D0E032E06BB808DA86 /* BASICStudio.swift */,
+				BE666396AA58CBDE82B152A4 /* NerdPromptEditorView */,
 			);
 			path = BASICStudio;
+			sourceTree = "<group>";
+		};
+		BE666396AA58CBDE82B152A4 /* NerdPromptEditorView */ = {
+			isa = PBXGroup;
+			children = (
+				8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */,
+			);
+			path = NerdPromptEditorView;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -142,6 +153,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */,
+				34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

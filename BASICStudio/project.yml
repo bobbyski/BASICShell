@@ -27,6 +27,7 @@ targets:
           - Resources
     resources:
       - path: Sources/BASICStudio/Resources/Demos
+      - path: Sources/BASICStudio/Resources/Fonts
     dependencies:
       - package: BASICCore
         product: BASICCore

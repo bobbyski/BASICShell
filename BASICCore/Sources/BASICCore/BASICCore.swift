@@ -2364,8 +2364,11 @@ private final class BASICFileState {
 }
 
 public final class BASICSession: @unchecked Sendable {
-    public static let defaultPromptTemplate = "    %cwd %gitSegment "
-    public static let defaultPrompt = "    ~  "
+    public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    public static let plainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "
+    public static let shellPromptTemplate = "READY%nl> "
+    public static let defaultPrompt = "\(NSUserName()):~ > "
+    public static let nerdFontPromptTemplate = "    %cwd %gitSegment "
 
     public let program = BASICProgram()
     public var promptTemplate: String

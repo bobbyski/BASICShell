@@ -19,7 +19,8 @@ let package = Package(
                 "SwiftTerm"
             ],
             resources: [
-                .copy("Resources/Demos")
+                .copy("Resources/Demos"),
+                .copy("Resources/Fonts")
             ]
         )
     ]

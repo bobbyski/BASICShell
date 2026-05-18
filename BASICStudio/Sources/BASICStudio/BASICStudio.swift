@@ -1,5 +1,6 @@
 import BASICCore
 import AppKit
+import CoreText
 import MarkdownUI
 import SwiftUI
 import SwiftTerm
@@ -10,6 +11,10 @@ import WebKit
 struct BASICStudioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = StudioModel()
+
+    init() {
+        StudioFonts.registerBundledFonts()
+    }
 
     var body: some Scene {
         WindowGroup("AIBasic Studio") {
@@ -78,7 +83,7 @@ struct BASICStudioApp: App {
 
         Settings {
             SettingsView(model: model)
-                .frame(width: 560, height: 380)
+                .frame(width: 760, height: 520)
         }
     }
 }
@@ -87,6 +92,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+}
+
+enum StudioFonts {
+    static let defaultFamily = "MesloLGS NF"
+    static let legacyDefaultFamily = "SF Mono"
+    static let legacyPlainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "
+
+    static func registerBundledFonts() {
+        guard let fontURLs = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "Fonts") else { return }
+        for url in fontURLs {
+            var error: Unmanaged<CFError>?
+            if !CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error),
+               let error = error?.takeRetainedValue() {
+                NSLog("Unable to register bundled font \(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
     }
 }
 
@@ -434,7 +456,7 @@ struct StudioSettings: Codable {
     var terminalScreenSize: TerminalScreenSize = .flexible
     var workingDirectoryPath: String?
     var promptTemplate: String = BASICSession.defaultPromptTemplate
-    var fontFamily: String = "SF Mono"
+    var fontFamily: String = StudioFonts.defaultFamily
     var fontSize: Double = 13
 
     private enum CodingKeys: String, CodingKey {
@@ -453,7 +475,7 @@ struct StudioSettings: Codable {
         terminalScreenSize: TerminalScreenSize = .flexible,
         workingDirectoryPath: String? = nil,
         promptTemplate: String = BASICSession.defaultPromptTemplate,
-        fontFamily: String = "SF Mono",
+        fontFamily: String = StudioFonts.defaultFamily,
         fontSize: Double = 13
     ) {
         self.editorTheme = editorTheme
@@ -472,7 +494,7 @@ struct StudioSettings: Codable {
         terminalScreenSize = try container.decodeIfPresent(TerminalScreenSize.self, forKey: .terminalScreenSize) ?? .flexible
         workingDirectoryPath = try container.decodeIfPresent(String.self, forKey: .workingDirectoryPath)
         promptTemplate = try container.decodeIfPresent(String.self, forKey: .promptTemplate) ?? BASICSession.defaultPromptTemplate
-        fontFamily = try container.decodeIfPresent(String.self, forKey: .fontFamily) ?? "SF Mono"
+        fontFamily = try container.decodeIfPresent(String.self, forKey: .fontFamily) ?? StudioFonts.defaultFamily
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
     }
 }
@@ -537,29 +559,7 @@ struct SettingsView: View {
     }
 
     private var generalPage: some View {
-        Form {
-            Section("Prompt") {
-                TextField("Prompt string", text: $model.promptTemplate, axis: .vertical)
-                    .lineLimit(3...5)
-                    .textFieldStyle(.roundedBorder)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Supported prompt tokens")
-                        .font(.caption.weight(.semibold))
-                    Text("${currentdir}, ${gitstatus}, ${user}, %cwd, %git, %gitSegment, %nl")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
-
-                Button("Use Styled Default") {
-                    model.promptTemplate = BASICSession.defaultPromptTemplate
-                }
-
-                Button("Use Classic BASIC") {
-                    model.promptTemplate = "READY%nl> "
-                }
-            }
-        }
+        NerdPromptEditorView(promptTemplate: $model.promptTemplate)
     }
 
     private var fontPage: some View {
@@ -591,7 +591,7 @@ struct SettingsView: View {
         let families = NSFontManager.shared.availableFontFamilies.sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
-        let preferred = ["SF Mono", "MesloLGS NF", "Hack Nerd Font", "JetBrains Mono", "Menlo", "Monaco"]
+        let preferred = [StudioFonts.defaultFamily, "SF Mono", "Hack Nerd Font", "JetBrains Mono", "Menlo", "Monaco"]
         var result: [String] = []
         for family in preferred where !result.contains(family) {
             result.append(family)
@@ -628,7 +628,7 @@ struct MonacoEditor: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
-        webView.loadHTMLString(Self.html, baseURL: nil)
+        webView.loadHTMLString(Self.html, baseURL: Bundle.main.resourceURL)
         context.coordinator.webView = webView
         return webView
     }
@@ -669,7 +669,7 @@ struct MonacoEditor: NSViewRepresentable {
         private var pendingExecutionLine: Int?
         private var pendingBreakpointLines: Set<Int> = []
         private var pendingIsReadOnly = false
-        private var pendingFontFamily = "SF Mono"
+        private var pendingFontFamily = StudioFonts.defaultFamily
         private var pendingFontSize = 13.0
         private var pendingFindRequest: Int?
         private var pendingReplaceRequest: Int?
@@ -835,6 +835,30 @@ struct MonacoEditor: NSViewRepresentable {
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
+        @font-face {
+          font-family: "MesloLGS NF";
+          src: url("Fonts/MesloLGS NF Regular.ttf") format("truetype");
+          font-weight: 400;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "MesloLGS NF";
+          src: url("Fonts/MesloLGS NF Bold.ttf") format("truetype");
+          font-weight: 700;
+          font-style: normal;
+        }
+        @font-face {
+          font-family: "MesloLGS NF";
+          src: url("Fonts/MesloLGS NF Italic.ttf") format("truetype");
+          font-weight: 400;
+          font-style: italic;
+        }
+        @font-face {
+          font-family: "MesloLGS NF";
+          src: url("Fonts/MesloLGS NF Bold Italic.ttf") format("truetype");
+          font-weight: 700;
+          font-style: italic;
+        }
         html, body, #editor {
           height: 100%;
           width: 100%;
@@ -914,9 +938,14 @@ struct MonacoEditor: NSViewRepresentable {
           editor.updateOptions({ readOnly: readOnly, domReadOnly: readOnly });
         };
 
+        function cssFontFamily(fontFamily) {
+          const escaped = String(fontFamily).replace(/'/g, "\\'");
+          return "'" + escaped + "', 'SF Mono', Menlo, Monaco, monospace";
+        }
+
         window.basicStudioSetFont = function(fontFamily, fontSize) {
           if (!editor) { return; }
-          editor.updateOptions({ fontFamily: fontFamily, fontSize: fontSize });
+          editor.updateOptions({ fontFamily: cssFontFamily(fontFamily), fontSize: fontSize });
         };
 
         function applyPageBackground(themeName) {
@@ -1073,7 +1102,7 @@ struct MonacoEditor: NSViewRepresentable {
             automaticLayout: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            fontFamily: "SF Mono",
+            fontFamily: cssFontFamily(pendingFontFamily),
             fontSize: 13,
             lineNumbers: pendingLineNumbers ? "on" : "off",
             glyphMargin: pendingLineNumbers,
@@ -1148,7 +1177,7 @@ final class StudioModel: ObservableObject {
             saveSettings()
         }
     }
-    @Published var fontFamily = "SF Mono" {
+    @Published var fontFamily = StudioFonts.defaultFamily {
         didSet { saveSettings() }
     }
     @Published var fontSize = 13.0 {
@@ -1195,8 +1224,8 @@ final class StudioModel: ObservableObject {
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
         workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
-        promptTemplate = settings.promptTemplate
-        fontFamily = settings.fontFamily
+        promptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate ? BASICSession.defaultPromptTemplate : settings.promptTemplate
+        fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
         isLoadingSettings = false
         consoleText = session.prompt

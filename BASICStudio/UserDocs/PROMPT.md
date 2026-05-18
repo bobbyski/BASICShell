@@ -20,5 +20,11 @@ prompt "READY%nl> "
 ```
 
 ```basic
+prompt "${user}:${currentdir} ${gitstatus}> "
+```
+
+Nerd Font symbols can be used when the selected font supports them.
+
+```basic
 prompt "    ${currentdir}    ${gitstatus}  "
 ```
