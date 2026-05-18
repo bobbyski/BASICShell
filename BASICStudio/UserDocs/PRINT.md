@@ -12,3 +12,12 @@ print "LEFT", "NEXT ZONE"
 name$ = "AIBASIC"
 print name$
 ```
+
+`PRINT#` writes to a legacy numbered sequential file opened for `OUTPUT` or `APPEND`.
+
+```basic
+open "out.txt" for output as #1
+print #1, "HELLO"; " "; 42
+print#1, "NEXT LINE"
+close #1
+```

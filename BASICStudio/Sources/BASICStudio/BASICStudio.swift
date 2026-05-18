@@ -859,12 +859,26 @@ struct MonacoEditor: NSViewRepresentable {
           font-weight: 700;
           font-style: italic;
         }
-        html, body, #editor {
+        html, body, #editor, #fallbackEditor {
           height: 100%;
           width: 100%;
           margin: 0;
           overflow: hidden;
           background: #1e1e1e;
+        }
+        #fallbackEditor {
+          display: none;
+          box-sizing: border-box;
+          border: 0;
+          outline: 0;
+          resize: none;
+          padding: 12px;
+          color: #d4d4d4;
+          caret-color: #75beff;
+          font-family: "MesloLGS NF", "SF Mono", Menlo, Monaco, monospace;
+          font-size: 13px;
+          line-height: 1.35;
+          white-space: pre;
         }
         .basic-error-line {
           background: rgba(255, 59, 48, 0.16);
@@ -894,17 +908,23 @@ struct MonacoEditor: NSViewRepresentable {
           margin-top: 4px;
         }
       </style>
-      <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js" onerror="window.basicStudioUseFallback && window.basicStudioUseFallback()"></script>
     </head>
     <body>
       <div id="editor"></div>
+      <textarea id="fallbackEditor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
       <script>
         let editor = null;
+        let fallbackEditor = document.getElementById("fallbackEditor");
+        var usingFallback = false;
+        let didPostReady = false;
         let pendingText = "";
         let pendingLineNumbers = false;
         let pendingTheme = "vs-dark";
         let pendingFind = false;
         let pendingFindShowsReplace = false;
+        let pendingFontFamily = "MesloLGS NF";
+        let pendingFontSize = 13;
         let suppressChange = false;
         let errorDecorations = [];
         let diagnosticDecorations = [];
@@ -915,8 +935,48 @@ struct MonacoEditor: NSViewRepresentable {
           window.webkit.messageHandlers.basicStudio.postMessage(message);
         }
 
+        function postReadyOnce() {
+          if (didPostReady) { return; }
+          didPostReady = true;
+          post({ type: "ready" });
+        }
+
+        function fallbackThemeColors(themeName) {
+          if (themeName === "vs") {
+            return { background: "#ffffff", foreground: "#1f1f1f", caret: "#005fb8" };
+          }
+          if (themeName === "hc-black") {
+            return { background: "#000000", foreground: "#ffffff", caret: "#ffffff" };
+          }
+          return { background: "#1e1e1e", foreground: "#d4d4d4", caret: "#75beff" };
+        }
+
+        window.basicStudioUseFallback = function() {
+          if (editor || usingFallback) { return; }
+          usingFallback = true;
+          document.getElementById("editor").style.display = "none";
+          fallbackEditor.style.display = "block";
+          fallbackEditor.value = pendingText;
+          const colors = fallbackThemeColors(pendingTheme);
+          fallbackEditor.style.background = colors.background;
+          fallbackEditor.style.color = colors.foreground;
+          fallbackEditor.style.caretColor = colors.caret;
+          fallbackEditor.readOnly = false;
+          fallbackEditor.addEventListener("input", function() {
+            pendingText = fallbackEditor.value;
+            post({ type: "change", text: fallbackEditor.value });
+          });
+          postReadyOnce();
+        };
+
         window.basicStudioSetText = function(value) {
           pendingText = value;
+          if (usingFallback) {
+            if (fallbackEditor.value !== value) {
+              fallbackEditor.value = value;
+            }
+            return;
+          }
           if (!editor || editor.getValue() === value) { return; }
           suppressChange = true;
           editor.setValue(value);
@@ -925,6 +985,7 @@ struct MonacoEditor: NSViewRepresentable {
 
         window.basicStudioSetLineNumbers = function(show) {
           pendingLineNumbers = show;
+          if (usingFallback) { return; }
           if (!editor) { return; }
           editor.updateOptions({
             lineNumbers: show ? "on" : "off",
@@ -934,6 +995,10 @@ struct MonacoEditor: NSViewRepresentable {
         };
 
         window.basicStudioSetReadOnly = function(readOnly) {
+          if (usingFallback) {
+            fallbackEditor.readOnly = readOnly;
+            return;
+          }
           if (!editor) { return; }
           editor.updateOptions({ readOnly: readOnly, domReadOnly: readOnly });
         };
@@ -944,6 +1009,13 @@ struct MonacoEditor: NSViewRepresentable {
         }
 
         window.basicStudioSetFont = function(fontFamily, fontSize) {
+          pendingFontFamily = fontFamily;
+          pendingFontSize = fontSize;
+          if (usingFallback) {
+            fallbackEditor.style.fontFamily = cssFontFamily(fontFamily);
+            fallbackEditor.style.fontSize = fontSize + "px";
+            return;
+          }
           if (!editor) { return; }
           editor.updateOptions({ fontFamily: cssFontFamily(fontFamily), fontSize: fontSize });
         };
@@ -957,11 +1029,22 @@ struct MonacoEditor: NSViewRepresentable {
         window.basicStudioSetTheme = function(themeName) {
           pendingTheme = themeName;
           applyPageBackground(themeName);
+          if (usingFallback) {
+            const colors = fallbackThemeColors(themeName);
+            fallbackEditor.style.background = colors.background;
+            fallbackEditor.style.color = colors.foreground;
+            fallbackEditor.style.caretColor = colors.caret;
+            return;
+          }
           if (!editor) { return; }
           monaco.editor.setTheme(themeName);
         };
 
         window.basicStudioFind = function(showReplace) {
+          if (usingFallback) {
+            fallbackEditor.focus();
+            return;
+          }
           if (!editor) {
             pendingFind = true;
             pendingFindShowsReplace = showReplace;
@@ -975,6 +1058,7 @@ struct MonacoEditor: NSViewRepresentable {
         };
 
         window.basicStudioSetErrorLine = function(lineNumber) {
+          if (usingFallback) { return; }
           if (!editor) { return; }
           const decorations = lineNumber ? [{
             range: new monaco.Range(lineNumber, 1, lineNumber, 1),
@@ -994,6 +1078,7 @@ struct MonacoEditor: NSViewRepresentable {
         };
 
         window.basicStudioSetDiagnostics = function(diagnostics) {
+          if (usingFallback) { return; }
           if (!editor || !window.monaco) { return; }
           const markers = (diagnostics || []).map((diagnostic) => {
             const lineNumber = Math.max(1, diagnostic.lineNumber || 1);
@@ -1049,6 +1134,7 @@ struct MonacoEditor: NSViewRepresentable {
         };
 
         window.basicStudioSetExecutionLine = function(lineNumber) {
+          if (usingFallback) { return; }
           if (!editor) { return; }
           const decorations = lineNumber ? [{
             range: new monaco.Range(lineNumber, 1, lineNumber, 1),
@@ -1068,6 +1154,7 @@ struct MonacoEditor: NSViewRepresentable {
         };
 
         window.basicStudioSetBreakpoints = function(lineNumbers) {
+          if (usingFallback) { return; }
           if (!editor) { return; }
           const decorations = lineNumbers.map((lineNumber) => ({
             range: new monaco.Range(lineNumber, 1, lineNumber, 1),
@@ -1079,8 +1166,18 @@ struct MonacoEditor: NSViewRepresentable {
           breakpointDecorations.splice(0, breakpointDecorations.length, ...editor.deltaDecorations(breakpointDecorations, decorations));
         };
 
+        window.addEventListener("DOMContentLoaded", function() {
+          window.setTimeout(function() {
+            if (!editor) {
+              window.basicStudioUseFallback();
+            }
+          }, 4000);
+        });
+
+        if (window.require) {
         require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs" } });
         require(["vs/editor/editor.main"], function() {
+          if (usingFallback) { return; }
           monaco.languages.register({ id: "aibasic" });
           monaco.languages.setMonarchTokensProvider("aibasic", {
             ignoreCase: true,
@@ -1134,8 +1231,13 @@ struct MonacoEditor: NSViewRepresentable {
             window.basicStudioFind(pendingFindShowsReplace);
           }
 
-          post({ type: "ready" });
+          postReadyOnce();
+        }, function() {
+          window.basicStudioUseFallback();
         });
+        } else {
+          window.basicStudioUseFallback();
+        }
       </script>
     </body>
     </html>

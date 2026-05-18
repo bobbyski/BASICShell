@@ -29,6 +29,27 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Chained string addition prints once")
+    func chainedStringAdditionPrintsOnce() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PRINT \"A\" + \"B\" + \"C\"")
+
+        #expect(host.output == ["ABC"])
+    }
+
+    @Test("Deep left-associative binary chains evaluate without exhausting the Swift stack")
+    func deepLeftAssociativeBinaryChainsEvaluateWithoutStackOverflow() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let chain = Array(repeating: "CHR$(65)", count: 2_000).joined(separator: " + ")
+
+        session.submit("PRINT LEN(" + chain + ") > 1999")
+
+        #expect(host.output == ["1"])
+    }
+
     @Test("Evaluates long string concatenation without recursive stack growth")
     func evaluatesLongStringConcatenation() {
         let host = TestHost()
@@ -1506,6 +1527,64 @@ struct BASICCoreTests {
         """)
         missingSession.submit("run")
         #expect(missingHost.output == ["Runtime error: File Not Found"])
+    }
+
+    @Test("Legacy sequential file statements write read append and report EOF")
+    func legacySequentialFileStatementsWriteReadAppendAndReportEOF() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        open "legacy.txt" for output as #1
+        print #1, "HELLO"; " "; 42
+        print#1, "NEXT,"; 7
+        close #1
+
+        open "legacy.txt" for append as #1
+        print #1, "TAIL"
+        close #1
+
+        open "legacy.txt" for input as #2
+        line input #2, a$
+        input#2, b$, n
+        line input#2, c$
+        print a$
+        print b$
+        print n
+        print c$
+        print eof(2)
+        close
+        """)
+        session.submit("run")
+
+        #expect(host.files["legacy.txt"] == "HELLO 42\nNEXT,7\nTAIL\n")
+        #expect(host.output == [
+            "HELLO 42",
+            "NEXT",
+            "7",
+            "TAIL",
+            "TRUE"
+        ])
+    }
+
+    @Test("Legacy sequential files report bad modes and missing files")
+    func legacySequentialFilesReportBadModesAndMissingFiles() {
+        let missingHost = TestHost()
+        let missingSession = BASICSession(host: missingHost)
+        missingSession.program.loadSource("""
+        open "missing.txt" for input as #1
+        """)
+        missingSession.submit("run")
+        #expect(missingHost.output == ["Runtime error: File Not Found"])
+
+        let modeHost = TestHost()
+        let modeSession = BASICSession(host: modeHost)
+        modeSession.program.loadSource("""
+        open "out.txt" for output as #1
+        line input #1, a$
+        """)
+        modeSession.submit("run")
+        #expect(modeHost.output == ["Runtime error: Bad file mode"])
     }
 
     @Test("CD changes the base directory for BASIC file commands")

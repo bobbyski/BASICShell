@@ -10,3 +10,16 @@ print "HELLO", name$
 input age
 print age + 1
 ```
+
+`INPUT#` reads comma-separated fields from a legacy sequential file opened for `INPUT`.
+
+```basic
+open "data.txt" for output as #1
+print #1, "Ada,16"
+close #1
+
+open "data.txt" for input as #1
+input #1, name$, age
+print name$, age
+close #1
+```

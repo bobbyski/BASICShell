@@ -264,6 +264,12 @@ private enum BASICFileContentType: String, Equatable {
     case json = "JSON"
 }
 
+private enum BASICLegacyFileMode: String, Equatable {
+    case input = "INPUT"
+    case output = "OUTPUT"
+    case append = "APPEND"
+}
+
 private struct BASICOpenFile: Equatable {
     var path: String?
     var access: BASICFileAccess?
@@ -2766,6 +2772,7 @@ public final class BASICInterpreter {
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
     private var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     private var classDefinitions: [String: BASICClassDefinition] = [:]
+    private var legacyFiles: [Int: BASICOpenFile] = [:]
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
@@ -2801,6 +2808,7 @@ public final class BASICInterpreter {
         gosubStack.removeAll()
         forStack.removeAll()
         functionStack.removeAll()
+        legacyFiles.removeAll()
         try prepare(startLine: startLine)
         try continueExecution()
     }
@@ -3385,6 +3393,9 @@ public final class BASICInterpreter {
             let rendered = try renderPrint(parts)
             host?.print(rendered.text, terminator: rendered.terminator)
             return .next
+        case .printFile(let number, let parts):
+            try printLegacyFile(number: number, parts: parts)
+            return .next
         case .screen(let expression):
             let modeNumber = try integer(expression)
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -3471,6 +3482,18 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("Expected numeric input for \(name)")
             }
             try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
+            return .next
+        case .openFile(let path, let mode, let number):
+            try openLegacyFile(path: path, mode: mode, number: number)
+            return .next
+        case .closeFile(let number):
+            try closeLegacyFile(number: number)
+            return .next
+        case .inputFile(let number, let targets):
+            try inputLegacyFile(number: number, targets: targets)
+            return .next
+        case .lineInputFile(let number, let target):
+            try lineInputLegacyFile(number: number, target: target)
             return .next
         case .read(let targets):
             try readData(into: targets)
@@ -4116,7 +4139,7 @@ public final class BASICInterpreter {
 
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ASC", "ATN", "CINT", "COS", "EXP", "FIX", "INSTR", "INT",
-        "LEFT$", "LOG", "MID$", "RIGHT$", "RND", "SGN", "SIN", "SPACE$",
+        "EOF", "LEFT$", "LOG", "MID$", "RIGHT$", "RND", "SGN", "SIN", "SPACE$",
         "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TOJSONSTRING", "VAL",
         "FROMJSONSTRING"
     ]
@@ -4142,6 +4165,9 @@ public final class BASICInterpreter {
             return .number(cos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "EXP":
             return .number(exp(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "EOF":
+            try requireArgumentCount(name.name, arguments, 1)
+            return try legacyEOF(arguments[0])
         case "FIX":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(value < 0 ? ceil(value) : floor(value))
@@ -4746,6 +4772,221 @@ public final class BASICInterpreter {
         }
     }
 
+    private func openLegacyFile(path: Expression, mode: BASICLegacyFileMode, number: Expression) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("File I/O is not supported by this host")
+        }
+        let handle = try legacyFileHandle(number)
+        guard legacyFiles[handle]?.isOpen != true else {
+            throw BASICError.runtime("File Already Open")
+        }
+        let resolvedPath = try string(path)
+        let exists = try fileHost.fileExists(path: resolvedPath)
+        let content: BASICString
+        let position: Int
+        let access: BASICFileAccess
+        switch mode {
+        case .input:
+            guard exists else { throw BASICError.runtime("File Not Found") }
+            let text = try fileHost.loadTextFile(path: resolvedPath)
+            content = BASICString(text)
+            position = 0
+            access = .read
+        case .output:
+            content = BASICString("")
+            position = 0
+            access = .write
+            try fileHost.saveTextFile(path: resolvedPath, text: "")
+        case .append:
+            let text = exists ? try fileHost.loadTextFile(path: resolvedPath) : ""
+            content = BASICString(text)
+            position = text.count
+            access = .write
+        }
+        legacyFiles[handle] = BASICOpenFile(
+            path: resolvedPath,
+            access: access,
+            contentType: .text,
+            isOpen: true,
+            content: content,
+            position: position
+        )
+    }
+
+    private func closeLegacyFile(number: Expression?) throws {
+        if let number {
+            let handle = try legacyFileHandle(number)
+            guard var file = legacyFiles[handle], file.isOpen else {
+                throw BASICError.runtime("Bad file number")
+            }
+            file.isOpen = false
+            legacyFiles[handle] = file
+            return
+        }
+
+        for handle in legacyFiles.keys {
+            legacyFiles[handle]?.isOpen = false
+        }
+    }
+
+    private func printLegacyFile(number: Expression, parts: [PrintPart]) throws {
+        let handle = try legacyFileHandle(number)
+        var file = try writableLegacyFile(handle: handle)
+        let rendered = try renderPrint(parts)
+        let path = try legacyOpenPath(file)
+        let text = rendered.text + rendered.terminator
+        file.content = file.content.concatenating(BASICString(text))
+        file.position = file.content.rawString.count
+        try legacyFileHost().saveTextFile(path: path, text: file.content.rawString)
+        legacyFiles[handle] = file
+    }
+
+    private func inputLegacyFile(number: Expression, targets: [ReadTarget]) throws {
+        let handle = try legacyFileHandle(number)
+        var fields: [String] = []
+        while fields.count < targets.count {
+            guard let line = try readLegacyLine(handle: handle) else {
+                throw BASICError.runtime("Input past end")
+            }
+            fields.append(contentsOf: parseLegacyInputFields(line))
+        }
+        for (target, field) in zip(targets, fields) {
+            try assignLegacyInput(field, to: target)
+        }
+    }
+
+    private func lineInputLegacyFile(number: Expression, target: ReadTarget) throws {
+        let handle = try legacyFileHandle(number)
+        guard let line = try readLegacyLine(handle: handle) else {
+            throw BASICError.runtime("Input past end")
+        }
+        try assignReadValue(.string(BASICString(line)), to: target)
+    }
+
+    private func legacyEOF(_ number: Expression) throws -> BASICValue {
+        let handle = try legacyFileHandle(number)
+        let file = try readableLegacyFile(handle: handle)
+        return .boolean(file.position >= file.content.rawString.count)
+    }
+
+    private func readLegacyLine(handle: Int) throws -> String? {
+        var file = try readableLegacyFile(handle: handle)
+        let raw = file.content.rawString
+        guard file.position < raw.count else {
+            legacyFiles[handle] = file
+            return nil
+        }
+        let start = raw.index(raw.startIndex, offsetBy: file.position)
+        if let newline = raw[start...].firstIndex(of: "\n") {
+            let lineEnd = newline > start && raw[raw.index(before: newline)] == "\r" ? raw.index(before: newline) : newline
+            let line = String(raw[start..<lineEnd])
+            file.position = raw.distance(from: raw.startIndex, to: raw.index(after: newline))
+            legacyFiles[handle] = file
+            return line
+        }
+        let line = String(raw[start...])
+        file.position = raw.count
+        legacyFiles[handle] = file
+        return line
+    }
+
+    private func parseLegacyInputFields(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
+        var iterator = line.makeIterator()
+        while let character = iterator.next() {
+            if character == "\"" {
+                inQuotes.toggle()
+            } else if character == "," && !inQuotes {
+                fields.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        fields.append(current.trimmingCharacters(in: .whitespaces))
+        return fields
+    }
+
+    private func assignLegacyInput(_ field: String, to target: ReadTarget) throws {
+        let variableName: VariableName
+        switch target {
+        case .variable(let variable):
+            variableName = variable
+        case .reference(let reference):
+            variableName = reference.base
+        }
+        let value: BASICValue
+        if variableName.name.hasSuffix("$") {
+            value = .string(BASICString(field))
+        } else if field.uppercased() == "TRUE" {
+            value = .boolean(true)
+        } else if field.uppercased() == "FALSE" {
+            value = .boolean(false)
+        } else if let number = Double(field) {
+            value = .number(number)
+        } else {
+            throw BASICError.runtime("Type Mismatch")
+        }
+        try assignReadValue(value, to: target)
+    }
+
+    private func assignReadValue(_ value: BASICValue, to target: ReadTarget) throws {
+        switch target {
+        case .variable(let variable):
+            try runtime.assign(kind: .bare, variable: variable, declaredType: nil, value: value)
+        case .reference(let reference):
+            try runtime.assign(
+                reference: reference,
+                indexes: try reference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: reference),
+                value: value,
+                accessClassName: currentClassContext
+            )
+        }
+    }
+
+    private func readableLegacyFile(handle: Int) throws -> BASICOpenFile {
+        guard let file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        guard file.access == .read else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        return file
+    }
+
+    private func writableLegacyFile(handle: Int) throws -> BASICOpenFile {
+        guard let file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        guard file.access == .write else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        return file
+    }
+
+    private func legacyFileHandle(_ expression: Expression) throws -> Int {
+        let handle = try integer(expression)
+        guard handle > 0 else {
+            throw BASICError.runtime("Bad file number")
+        }
+        return handle
+    }
+
+    private func legacyFileHost() throws -> BASICFileHost {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("File I/O is not supported by this host")
+        }
+        return fileHost
+    }
+
+    private func legacyOpenPath(_ file: BASICOpenFile) throws -> String {
+        guard let path = file.path else { throw BASICError.runtime("File is not open") }
+        return path
+    }
+
     private func runSystemCommand(_ expression: Expression) throws -> String {
         guard let systemHost = host as? BASICSystemHost else {
             throw BASICError.runtime("SYSTEM is not supported by this host")
@@ -5318,6 +5559,11 @@ private indirect enum Statement: Equatable {
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case input(String)
+    case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
+    case closeFile(Expression?)
+    case printFile(number: Expression, parts: [PrintPart])
+    case inputFile(number: Expression, targets: [ReadTarget])
+    case lineInputFile(number: Expression, target: ReadTarget)
     case load(Expression)
     case save(Expression?)
     case cd(Expression?)
@@ -5441,6 +5687,7 @@ private enum Token: Equatable {
     case minus
     case star
     case slash
+    case hash
     case dot
     case leftParen
     case rightParen
@@ -5497,6 +5744,7 @@ private struct Lexer {
         case ",": token = .comma
         case ";": token = .semicolon
         case ":": token = .colon
+        case "#": token = .hash
         case "=": token = .equals
         case "+": token = .plus
         case "-": token = .minus
@@ -5666,7 +5914,17 @@ private struct Parser {
         }
         if matchIdentifier("REM") { return .remark }
         if matchIdentifier("PRINT") {
+            if match(.hash) {
+                let number = try parseFileNumber(hashAlreadyConsumed: true)
+                _ = match(.comma)
+                return .printFile(number: number, parts: try parsePrintParts())
+            }
             return .print(try parsePrintParts())
+        }
+        if matchIdentifier("PRINT#") {
+            let number = try parseFileNumber(hashAlreadyConsumed: true)
+            _ = match(.comma)
+            return .printFile(number: number, parts: try parsePrintParts())
         }
         if matchIdentifier("IMPORT") {
             guard case .string(let path) = advance() else { throw syntax("Expected import path") }
@@ -5801,6 +6059,17 @@ private struct Parser {
             return .preset(point, color)
         }
         if matchIdentifier("LINE") {
+            if matchIdentifier("INPUT") {
+                let hashAlreadyConsumed = match(.hash)
+                let number = try parseFileNumber(hashAlreadyConsumed: hashAlreadyConsumed)
+                guard match(.comma) else { throw syntax("Expected , after file number") }
+                return .lineInputFile(number: number, target: try parseFileTarget())
+            }
+            if matchIdentifier("INPUT#") {
+                let number = try parseFileNumber(hashAlreadyConsumed: true)
+                guard match(.comma) else { throw syntax("Expected , after file number") }
+                return .lineInputFile(number: number, target: try parseFileTarget())
+            }
             let start = try parsePoint()
             guard match(.minus) else { throw syntax("Expected - in LINE") }
             let end = try parsePoint()
@@ -5810,7 +6079,23 @@ private struct Parser {
         if matchIdentifier("LET") {
             return try parseAssignment(kind: .letValue, requiresEquals: false)
         }
+        if matchIdentifier("OPEN") {
+            return try parseOpenFile()
+        }
+        if matchIdentifier("CLOSE") {
+            return .closeFile(isStatementEnd ? nil : try parseFileNumber(hashAlreadyConsumed: match(.hash)))
+        }
+        if matchIdentifier("INPUT#") {
+            let number = try parseFileNumber(hashAlreadyConsumed: true)
+            guard match(.comma) else { throw syntax("Expected , after file number") }
+            return .inputFile(number: number, targets: try parseFileTargets())
+        }
         if isKeywordStatement("INPUT") && matchIdentifier("INPUT") {
+            if match(.hash) {
+                let number = try parseFileNumber(hashAlreadyConsumed: true)
+                guard match(.comma) else { throw syntax("Expected , after file number") }
+                return .inputFile(number: number, targets: try parseFileTargets())
+            }
             let name = try consumeIdentifier("Expected variable name after INPUT")
             return .input(name)
         }
@@ -5876,6 +6161,9 @@ private struct Parser {
                 return .expression(try parseExpression())
             }
             return try parseAssignment(kind: .bare, requiresEquals: true)
+        }
+        if case .hash = peek {
+            throw syntax("Unexpected character #")
         }
         throw syntax("Unknown statement")
     }
@@ -6063,6 +6351,38 @@ private struct Parser {
             }
         }
         return .nextLoop(variables)
+    }
+
+    private mutating func parseOpenFile() throws -> Statement {
+        let path = try parseExpression()
+        guard matchIdentifier("FOR") else { throw syntax("Expected FOR in OPEN") }
+        let modeName = try consumeIdentifier("Expected INPUT, OUTPUT, or APPEND")
+        guard let mode = BASICLegacyFileMode(rawValue: modeName.uppercased()) else {
+            throw syntax("Expected INPUT, OUTPUT, or APPEND")
+        }
+        guard matchIdentifier("AS") else { throw syntax("Expected AS in OPEN") }
+        let hashAlreadyConsumed = match(.hash)
+        return .openFile(path: path, mode: mode, number: try parseFileNumber(hashAlreadyConsumed: hashAlreadyConsumed))
+    }
+
+    private mutating func parseFileNumber(hashAlreadyConsumed: Bool) throws -> Expression {
+        if !hashAlreadyConsumed {
+            guard match(.hash) else { throw syntax("Expected file number") }
+        }
+        return try parseExpression()
+    }
+
+    private mutating func parseFileTargets() throws -> [ReadTarget] {
+        var targets: [ReadTarget] = []
+        repeat {
+            targets.append(try parseFileTarget())
+        } while match(.comma)
+        return targets
+    }
+
+    private mutating func parseFileTarget() throws -> ReadTarget {
+        let reference = try parseVariableReference(message: "Expected variable after file number")
+        return reference.isSimple ? .variable(reference.base) : .reference(reference)
     }
 
     private mutating func parseFunctionDeclaration(visibility: BASICMemberVisibility, isOverride: Bool) throws -> Statement {
@@ -6681,8 +7001,8 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
+        "LABEL", "REM", "PRINT", "PRINT#", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
     ]
