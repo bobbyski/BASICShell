@@ -393,6 +393,78 @@ struct BundledExample: Identifiable, Hashable {
 fileprivate enum TerminalInputOperation {
     case append(String)
     case submit(String)
+    case key(String)
+}
+
+final class StudioInputCoordinator: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var isAwaitingLine = false
+    private var isProgramRunning = false
+    private var submittedLine: String?
+    private var keyBuffer: [String] = []
+
+    func beginLineInput() {
+        condition.lock()
+        isAwaitingLine = true
+        submittedLine = nil
+        condition.unlock()
+    }
+
+    func waitForLine() -> String? {
+        condition.lock()
+        while isAwaitingLine {
+            condition.wait()
+        }
+        let line = submittedLine
+        submittedLine = nil
+        condition.unlock()
+        return line
+    }
+
+    func submitLine(_ line: String) {
+        condition.lock()
+        guard isAwaitingLine else {
+            condition.unlock()
+            return
+        }
+        submittedLine = line
+        isAwaitingLine = false
+        condition.signal()
+        condition.unlock()
+    }
+
+    func awaitingLineInput() -> Bool {
+        condition.lock()
+        let value = isAwaitingLine
+        condition.unlock()
+        return value
+    }
+
+    func setProgramRunning(_ running: Bool) {
+        condition.lock()
+        isProgramRunning = running
+        condition.unlock()
+    }
+
+    func shouldCaptureKeyOnly() -> Bool {
+        condition.lock()
+        let value = isProgramRunning && !isAwaitingLine
+        condition.unlock()
+        return value
+    }
+
+    func pushKey(_ key: String) {
+        condition.lock()
+        keyBuffer.append(key)
+        condition.unlock()
+    }
+
+    func readKey() -> String? {
+        condition.lock()
+        let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
+        condition.unlock()
+        return key
+    }
 }
 
 @MainActor
@@ -880,6 +952,18 @@ struct MonacoEditor: NSViewRepresentable {
           line-height: 1.35;
           white-space: pre;
         }
+        #editorStatus {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 10;
+          padding: 5px 8px;
+          border-radius: 6px;
+          background: rgba(45, 45, 45, 0.92);
+          color: #d4d4d4;
+          font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          pointer-events: none;
+        }
         .basic-error-line {
           background: rgba(255, 59, 48, 0.16);
         }
@@ -912,10 +996,12 @@ struct MonacoEditor: NSViewRepresentable {
     </head>
     <body>
       <div id="editor"></div>
+      <div id="editorStatus">Loading Monaco editor...</div>
       <textarea id="fallbackEditor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
       <script>
         let editor = null;
         let fallbackEditor = document.getElementById("fallbackEditor");
+        let editorStatus = document.getElementById("editorStatus");
         var usingFallback = false;
         let didPostReady = false;
         let pendingText = "";
@@ -941,6 +1027,15 @@ struct MonacoEditor: NSViewRepresentable {
           post({ type: "ready" });
         }
 
+        function hideStatus() {
+          editorStatus.style.display = "none";
+        }
+
+        function showStatus(message) {
+          editorStatus.textContent = message;
+          editorStatus.style.display = "block";
+        }
+
         function fallbackThemeColors(themeName) {
           if (themeName === "vs") {
             return { background: "#ffffff", foreground: "#1f1f1f", caret: "#005fb8" };
@@ -955,6 +1050,7 @@ struct MonacoEditor: NSViewRepresentable {
           if (editor || usingFallback) { return; }
           usingFallback = true;
           document.getElementById("editor").style.display = "none";
+          showStatus("Basic editor fallback");
           fallbackEditor.style.display = "block";
           fallbackEditor.value = pendingText;
           const colors = fallbackThemeColors(pendingTheme);
@@ -966,6 +1062,7 @@ struct MonacoEditor: NSViewRepresentable {
             pendingText = fallbackEditor.value;
             post({ type: "change", text: fallbackEditor.value });
           });
+          window.setTimeout(hideStatus, 1800);
           postReadyOnce();
         };
 
@@ -1178,6 +1275,7 @@ struct MonacoEditor: NSViewRepresentable {
         require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs" } });
         require(["vs/editor/editor.main"], function() {
           if (usingFallback) { return; }
+          hideStatus();
           monaco.languages.register({ id: "aibasic" });
           monaco.languages.setMonarchTokensProvider("aibasic", {
             ignoreCase: true,
@@ -1313,6 +1411,7 @@ final class StudioModel: ObservableObject {
     private var currentProgramURL: URL?
     private let executionQueue = DispatchQueue(label: "AIBasic.Studio.Execution", qos: .userInitiated)
     private var activeExecutionControl: BASICExecutionControl?
+    private let inputCoordinator = StudioInputCoordinator()
 
     private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
 
@@ -1549,12 +1648,29 @@ final class StudioModel: ObservableObject {
         for operation in operations {
             switch operation {
             case .append(let text):
-                consoleText += text
+                if isProgramRunning && !inputCoordinator.awaitingLineInput() {
+                    inputCoordinator.pushKey(text)
+                } else {
+                    consoleText += text
+                }
             case .submit(let command):
-                consoleText += "\n"
-                submitConsoleCommand(command, echo: false)
+                if inputCoordinator.awaitingLineInput() {
+                    consoleText += "\n"
+                    inputCoordinator.submitLine(command)
+                } else if isProgramRunning {
+                    inputCoordinator.pushKey("\n")
+                } else {
+                    consoleText += "\n"
+                    submitConsoleCommand(command, echo: false)
+                }
+            case .key(let text):
+                inputCoordinator.pushKey(text)
             }
         }
+    }
+
+    nonisolated fileprivate func shouldCaptureTerminalKeyOnly() -> Bool {
+        inputCoordinator.shouldCaptureKeyOnly()
     }
 
     private func rebuildProgramFromEditor() {
@@ -1666,6 +1782,7 @@ final class StudioModel: ObservableObject {
         }
         activeExecutionControl = control
         isProgramRunning = true
+        inputCoordinator.setProgramRunning(true)
         isProgramPaused = false
         if command == .run || command == .runStep {
             debuggerExecutionLine = nil
@@ -1744,6 +1861,7 @@ final class StudioModel: ObservableObject {
             activeExecutionControl = nil
         }
         isProgramRunning = false
+        inputCoordinator.setProgramRunning(false)
 
         let debuggerIsActive = inspectorPane == .debug
         let shouldSuppressConsolePause = paused && debuggerIsActive
@@ -1766,14 +1884,22 @@ final class StudioModel: ObservableObject {
 
     private func shouldUseEditorProgram(for command: String) -> Bool {
         let keyword = command.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        return keyword == "LIST" || keyword == "RUN" || keyword.hasPrefix("RUN ") || keyword == "SAVE" || keyword.hasPrefix("SAVE ")
+        return keyword == "LIST" || matchesCommandKeyword("RUN", in: keyword) || matchesCommandKeyword("SAVE", in: keyword)
     }
 
     private func shouldSyncEditorAfterCommand(_ command: String) -> Bool {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         let uppercased = trimmed.uppercased()
-        return trimmed.first?.isNumber == true || uppercased == "NEW" || uppercased == "LOAD" || uppercased.hasPrefix("LOAD ")
+        return trimmed.first?.isNumber == true || uppercased == "NEW" || matchesCommandKeyword("LOAD", in: uppercased)
+    }
+
+    private func matchesCommandKeyword(_ keyword: String, in command: String) -> Bool {
+        guard command.count >= keyword.count else { return false }
+        let end = command.index(command.startIndex, offsetBy: keyword.count)
+        guard command[command.startIndex..<end] == keyword[...] else { return false }
+        guard end < command.endIndex else { return true }
+        return command[end].isWhitespace || command[end] == "\""
     }
 
     private func syncEditorFromSession() {
@@ -2460,7 +2586,7 @@ struct UserDoc: Identifiable, Hashable {
 
 extension StudioModel: StudioDebuggerInterface {}
 
-extension StudioModel: BASICHost {
+extension StudioModel: BASICHost, BASICKeyboardHost {
     nonisolated func print(_ text: String, terminator: String) {
         runOnMainSync {
             highlightErrorIfPresent(text)
@@ -2476,7 +2602,15 @@ extension StudioModel: BASICHost {
     }
 
     nonisolated func readLine(prompt: String) -> String? {
-        nil
+        inputCoordinator.beginLineInput()
+        runOnMainSync {
+            appendConsoleOutput(prompt, terminator: "")
+        }
+        return inputCoordinator.waitForLine()
+    }
+
+    nonisolated func readKey() -> String? {
+        inputCoordinator.readKey()
     }
 }
 
@@ -2875,18 +3009,26 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         for byte in data {
             switch byte {
             case 10, 13:
-                let command = inputBuffer
-                inputBuffer = ""
-                operations.append(.submit(command))
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    operations.append(.key("\n"))
+                } else {
+                    let command = inputBuffer
+                    inputBuffer = ""
+                    operations.append(.submit(command))
+                }
             case 8, 127:
                 guard !inputBuffer.isEmpty else { continue }
                 inputBuffer.removeLast()
-                operations.append(.append("\u{8} \u{20}\u{8}"))
+                operations.append(.append("\u{1B}[D \u{1B}[D"))
             case 32...126:
                 let scalar = UnicodeScalar(byte)
                 let character = String(Character(scalar))
-                inputBuffer.append(character)
-                operations.append(.append(character))
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    operations.append(.key(character))
+                } else {
+                    inputBuffer.append(character)
+                    operations.append(.append(character))
+                }
             default:
                 break
             }

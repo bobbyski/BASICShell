@@ -493,6 +493,7 @@ private struct FunctionDefinition: Equatable {
     let visibility: BASICMemberVisibility
     let isOverride: Bool
     let explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
+    let bodyExpression: Expression?
 
     init(
         displayName: String,
@@ -504,7 +505,8 @@ private struct FunctionDefinition: Equatable {
         ownerClassName: String? = nil,
         visibility: BASICMemberVisibility = .public,
         isOverride: Bool = false,
-        explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation] = []
+        explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation] = [],
+        bodyExpression: Expression? = nil
     ) {
         self.displayName = displayName
         self.normalizedName = normalizedName
@@ -516,6 +518,7 @@ private struct FunctionDefinition: Equatable {
         self.visibility = visibility
         self.isOverride = isOverride
         self.explicitInterfaceImplementations = explicitInterfaceImplementations
+        self.bodyExpression = bodyExpression
     }
 }
 
@@ -605,7 +608,12 @@ private final class BASICRuntime {
         accessClassName: String? = nil
     ) throws -> BASICValue {
         let declaredFieldType = fieldSurfaceType(for: reference)
-        var value = value(for: reference.base)
+        var value: BASICValue
+        if !indexes.isEmpty, binding(for: reference.base.normalized) == nil {
+            value = try createImplicitArray(for: reference.base, rank: indexes.count).value
+        } else {
+            value = self.value(for: reference.base)
+        }
         if !indexes.isEmpty {
             switch value {
             case .array(let array):
@@ -760,7 +768,12 @@ private final class BASICRuntime {
 
         let normalized = reference.base.normalized
         let context = targetContext(kind: .bare, normalized: normalized)
-        guard var binding = binding(in: context, normalized: normalized) else {
+        var binding: VariableBinding
+        if let existing = self.binding(in: context, normalized: normalized) {
+            binding = existing
+        } else if !indexes.isEmpty {
+            binding = try createImplicitArray(for: reference.base, rank: indexes.count, in: context)
+        } else {
             throw BASICError.runtime("\(reference.base.name) is not defined")
         }
 
@@ -881,6 +894,31 @@ private final class BASICRuntime {
         case .local(let index):
             locals[index][normalized] = binding
         }
+    }
+
+    @discardableResult
+    private func createImplicitArray(
+        for variable: VariableName,
+        rank: Int,
+        in context: TargetContext? = nil
+    ) throws -> VariableBinding {
+        let target = context ?? targetContext(kind: .bare, normalized: variable.normalized)
+        let type = resolvedDeclaredType(inferredType(name: variable.name, value: nil))
+        try validateSuffix(variable: variable, declaredType: type)
+        let dimensions = Array(repeating: 10, count: rank)
+        let count = dimensions.reduce(1) { $0 * ($1 + 1) }
+        let binding = VariableBinding(
+            displayName: variable.name,
+            type: type,
+            value: .array(BASICArray(
+                dimensions: dimensions,
+                type: type,
+                isDynamic: false,
+                values: Array(repeating: defaultValue(for: type), count: count)
+            ))
+        )
+        set(binding, in: target, normalized: variable.normalized)
+        return binding
     }
 
     private func jsonObject(for value: BASICValue, declaredType: BASICType) throws -> Any {
@@ -2005,6 +2043,10 @@ public protocol BASICSystemHost: BASICHost {
     func runSystemCommand(_ command: String) throws -> String
 }
 
+public protocol BASICKeyboardHost: BASICHost {
+    func readKey() -> String?
+}
+
 public extension BASICFileHost {
     func saveTextFile(path: String, text: String) throws {
         throw BASICError.runtime("SAVE is not supported by this host")
@@ -2776,6 +2818,7 @@ public final class BASICInterpreter {
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
+    private var outputColumn = 0
     private var pausedDebugCallStack: [BASICCallStackFrame]?
     private var pausedDebugLocalVariables: [BASICVariableSnapshot]?
     private var pausedDebugFrameLocalVariables: [[BASICVariableSnapshot]]?
@@ -2809,6 +2852,7 @@ public final class BASICInterpreter {
         forStack.removeAll()
         functionStack.removeAll()
         legacyFiles.removeAll()
+        outputColumn = 0
         try prepare(startLine: startLine)
         try continueExecution()
     }
@@ -3340,7 +3384,7 @@ public final class BASICInterpreter {
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
-        case .empty, .remark, .data:
+        case .empty, .remark, .data, .defFunction:
             return .next
         case .typeDeclaration:
             guard let index = matchingEndType(after: pc, in: parsed) else {
@@ -3390,11 +3434,20 @@ public final class BASICInterpreter {
             }
             return .next
         case .print(let parts):
-            let rendered = try renderPrint(parts)
+            let rendered = try renderPrint(parts, startColumn: outputColumn)
             host?.print(rendered.text, terminator: rendered.terminator)
+            updateOutputColumn(rendered)
+            return .next
+        case .printUsing(let format, let values, let trailingSeparator):
+            let rendered = try renderUsing(format: format, values: values, trailingSeparator: trailingSeparator, startColumn: outputColumn)
+            host?.print(rendered.text, terminator: rendered.terminator)
+            updateOutputColumn(rendered)
             return .next
         case .printFile(let number, let parts):
             try printLegacyFile(number: number, parts: parts)
+            return .next
+        case .printFileUsing(let number, let format, let values, let trailingSeparator):
+            try printLegacyFileUsing(number: number, format: format, values: values, trailingSeparator: trailingSeparator)
             return .next
         case .screen(let expression):
             let modeNumber = try integer(expression)
@@ -3413,6 +3466,7 @@ public final class BASICInterpreter {
         case .cls:
             host?.printLine("\u{001B}[2J\u{001B}[H")
             (host as? BASICGraphicsHost)?.clearGraphics(color: nil)
+            outputColumn = 0
             return .next
         case .pset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -3483,11 +3537,26 @@ public final class BASICInterpreter {
             }
             try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
             return .next
+        case .lineInput(let prompt, let target):
+            let promptText = try prompt.map(string) ?? ""
+            let raw = host?.readLine(prompt: promptText) ?? ""
+            try assignReadValue(.string(BASICString(raw)), to: target)
+            outputColumn = 0
+            return .next
         case .openFile(let path, let mode, let number):
             try openLegacyFile(path: path, mode: mode, number: number)
             return .next
         case .closeFile(let number):
             try closeLegacyFile(number: number)
+            return .next
+        case .putFile(let number, let parts):
+            try printLegacyFile(number: number, parts: parts)
+            return .next
+        case .getFile(let number, let targets):
+            try inputLegacyFile(number: number, targets: targets)
+            return .next
+        case .resetFile(let number):
+            try resetLegacyFile(number: number)
             return .next
         case .inputFile(let number, let targets):
             try inputLegacyFile(number: number, targets: targets)
@@ -3520,6 +3589,7 @@ public final class BASICInterpreter {
             let output = try runSystemCommand(command)
             if !output.isEmpty {
                 host?.print(output, terminator: "")
+                updateOutputColumn(text: output, terminator: "")
             }
             return .next
         case .randomize(let expression):
@@ -3530,6 +3600,20 @@ public final class BASICInterpreter {
             return .goto(line)
         case .gotoLabel(let label):
             return .gotoLabel(label)
+        case .computedGoto(let targets, let selector):
+            let selected = try integer(selector)
+            guard selected >= 1, selected <= targets.count else {
+                return .next
+            }
+            return targets[selected - 1].flow
+        case .computedGosub(let targets, let selector):
+            let selected = try integer(selector)
+            guard selected >= 1, selected <= targets.count else {
+                return .next
+            }
+            let localContextIndex = runtime.pushLocalContext()
+            gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
+            return targets[selected - 1].flow
         case .gosub(let target):
             let localContextIndex = runtime.pushLocalContext()
             gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
@@ -3550,6 +3634,12 @@ public final class BASICInterpreter {
             }
             try setFunctionReturn(try evaluate(expression))
             return .functionReturn
+        case .pause:
+            if host?.readLine(prompt: "PAUSE") == nil {
+                host?.printLine("PAUSE")
+                outputColumn = 0
+            }
+            return .next
         case .exitFunction:
             guard !functionStack.isEmpty else {
                 throw BASICError.runtime("EXIT FUNCTION outside FUNCTION")
@@ -3670,6 +3760,20 @@ public final class BASICInterpreter {
                 definitions[name.normalized] = definition
                 index = endIndex + 1
                 continue
+            case .defFunction(let name, let parameter, let returnType, let body):
+                let definition = FunctionDefinition(
+                    displayName: name.name,
+                    normalizedName: name.normalized,
+                    parameters: [parameter],
+                    returnType: returnType,
+                    startIndex: index,
+                    endIndex: index,
+                    bodyExpression: body
+                )
+                if definitions[name.normalized] != nil {
+                    throw BASICError.runtime("Function \(name.name) is already defined")
+                }
+                definitions[name.normalized] = definition
             default:
                 break
             }
@@ -4138,10 +4242,11 @@ public final class BASICInterpreter {
     }
 
     private static let intrinsicFunctionNames: Set<String> = [
-        "ABS", "ASC", "ATN", "CINT", "COS", "EXP", "FIX", "INSTR", "INT",
-        "EOF", "LEFT$", "LOG", "MID$", "RIGHT$", "RND", "SGN", "SIN", "SPACE$",
-        "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TOJSONSTRING", "VAL",
-        "FROMJSONSTRING"
+        "ABS", "ACS", "ASC", "ASN", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
+        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
+        "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
+        "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
+        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$"
     ]
 
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -4151,18 +4256,34 @@ public final class BASICInterpreter {
         case "ABS":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(abs(value))
+        case "ACS":
+            return .number(acos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASC":
             let value = try singleStringArgument(name: name.name, arguments: arguments)
             guard let scalar = value.unicodeScalars.first else {
                 throw BASICError.runtime("ASC requires a non-empty string")
             }
             return .number(Double(scalar.value))
+        case "ASN":
+            return .number(asin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ATN":
             return .number(atan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "BINARY$":
+            let value = try singleIntegerArgument(name: name.name, arguments: arguments)
+            guard value >= 0 else {
+                throw BASICError.runtime("BINARY$ requires a non-negative value")
+            }
+            return .string(BASICString(String(value, radix: 2)))
         case "CINT":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments).rounded())
         case "COS":
             return .number(cos(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "COT":
+            return .number(1 / tan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "CSC":
+            return .number(1 / sin(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "DEC":
+            return .number(try singleNumericArgument(name: name.name, arguments: arguments) * 180 / Double.pi)
         case "EXP":
             return .number(exp(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "EOF":
@@ -4171,31 +4292,57 @@ public final class BASICInterpreter {
         case "FIX":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(value < 0 ? ceil(value) : floor(value))
+        case "HCS":
+            return .number(cosh(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "HEX$":
+            let value = try singleIntegerArgument(name: name.name, arguments: arguments)
+            guard value >= 0 else {
+                throw BASICError.runtime("HEX$ requires a non-negative value")
+            }
+            return .string(BASICString(String(value, radix: 16, uppercase: true)))
+        case "HSN":
+            return .number(sinh(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "HTN":
+            return .number(tanh(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "INKEY$":
+            try requireArgumentCount(name.name, arguments, 0)
+            return .string(BASICString((host as? BASICKeyboardHost)?.readKey() ?? ""))
         case "INSTR":
             return .number(Double(try intrinsicInstr(arguments: arguments)))
         case "INT":
             return .number(floor(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "LCT":
+            return .number(log10(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "LEFT$":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try string(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.prefix(count))))
-        case "LOG":
+        case "LOG", "LOC":
             return .number(log(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "LTW":
+            return .number(log2(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "MID$":
             return try intrinsicMid(arguments: arguments)
+        case "POS":
+            try requireArgumentCount(name.name, arguments, 1)
+            return .number(Double(outputColumn + 1))
         case "RIGHT$":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try string(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.suffix(count))))
+        case "RAD":
+            return .number(try singleNumericArgument(name: name.name, arguments: arguments) * Double.pi / 180)
         case "RND":
             try requireArgumentRange(name.name, arguments, 0...1)
             let argument = try arguments.first.map { try numeric(try evaluate($0)) }
             return .number(runtime.randomGenerator.next(argument: argument))
-        case "SGN":
+        case "SCN", "SGN":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(value == 0 ? 0 : (value < 0 ? -1 : 1))
+        case "SEC":
+            return .number(1 / cos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SIN":
             return .number(sin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SPACE$":
@@ -4231,6 +4378,13 @@ public final class BASICInterpreter {
         case "VAL":
             let value = try singleStringArgument(name: name.name, arguments: arguments)
             return .number(Self.leadingNumber(in: value) ?? 0)
+        case "USING$":
+            guard arguments.count >= 2 else {
+                throw BASICError.runtime("USING$ expects at least 2 arguments")
+            }
+            let format = try string(arguments[0])
+            let values = try arguments.dropFirst().map(evaluate)
+            return .string(BASICString(try formatUsing(format: format, values: values)))
         case "FROMJSONSTRING":
             try requireArgumentCount(name.name, arguments, 2)
             let source = try string(arguments[0])
@@ -4573,6 +4727,15 @@ public final class BASICInterpreter {
             runtime.popLocalContext()
         }
 
+        if let bodyExpression = definition.bodyExpression {
+            let value = try runtime.coerce(
+                try evaluate(bodyExpression),
+                to: definition.returnType,
+                variable: VariableName(name: definition.displayName, column: 0)
+            )
+            return FunctionCallResult(value: value, receiver: receiver)
+        }
+
         func resultValue() -> FunctionCallResult {
             let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
             let receiver = receiver == nil ? nil : runtime.value(for: VariableName(name: "ME", column: 0))
@@ -4829,10 +4992,31 @@ public final class BASICInterpreter {
         }
     }
 
+    private func resetLegacyFile(number: Expression) throws {
+        let handle = try legacyFileHandle(number)
+        guard var file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        file.position = 0
+        legacyFiles[handle] = file
+    }
+
     private func printLegacyFile(number: Expression, parts: [PrintPart]) throws {
         let handle = try legacyFileHandle(number)
         var file = try writableLegacyFile(handle: handle)
         let rendered = try renderPrint(parts)
+        let path = try legacyOpenPath(file)
+        let text = rendered.text + rendered.terminator
+        file.content = file.content.concatenating(BASICString(text))
+        file.position = file.content.rawString.count
+        try legacyFileHost().saveTextFile(path: path, text: file.content.rawString)
+        legacyFiles[handle] = file
+    }
+
+    private func printLegacyFileUsing(number: Expression, format: Expression, values: [Expression], trailingSeparator: PrintSeparator?) throws {
+        let handle = try legacyFileHandle(number)
+        var file = try writableLegacyFile(handle: handle)
+        let rendered = try renderUsing(format: format, values: values, trailingSeparator: trailingSeparator)
         let path = try legacyOpenPath(file)
         let text = rendered.text + rendered.terminator
         file.content = file.content.concatenating(BASICString(text))
@@ -5015,9 +5199,9 @@ public final class BASICInterpreter {
         return .next
     }
 
-    private func renderPrint(_ parts: [PrintPart]) throws -> PrintOutput {
+    private func renderPrint(_ parts: [PrintPart], startColumn: Int = 0) throws -> PrintOutput {
         var output = ""
-        var column = 0
+        var column = startColumn
         let tabWidth = 14
 
         for part in parts {
@@ -5041,7 +5225,161 @@ public final class BASICInterpreter {
         }
 
         let terminator = parts.last?.suppressesNewline == true ? "" : "\n"
-        return PrintOutput(text: output, terminator: terminator)
+        return PrintOutput(text: output, terminator: terminator, endColumn: column)
+    }
+
+    private func renderUsing(format: Expression, values: [Expression], trailingSeparator: PrintSeparator?, startColumn: Int = 0) throws -> PrintOutput {
+        let format = try string(format)
+        let rendered = try formatUsing(format: format, values: try values.map(evaluate))
+        return PrintOutput(text: rendered, terminator: trailingSeparator == nil ? "\n" : "", endColumn: startColumn + rendered.count)
+    }
+
+    private func updateOutputColumn(_ output: PrintOutput) {
+        if output.terminator.contains("\n") {
+            outputColumn = 0
+        } else {
+            outputColumn = output.endColumn
+        }
+    }
+
+    private func updateOutputColumn(text: String, terminator: String) {
+        let combined = text + terminator
+        if let lastNewline = combined.lastIndex(of: "\n") {
+            outputColumn = combined.distance(from: combined.index(after: lastNewline), to: combined.endIndex)
+        } else {
+            outputColumn += combined.count
+        }
+    }
+
+    private func formatUsing(format: String, values: [BASICValue]) throws -> String {
+        guard !values.isEmpty else { return format }
+
+        var rendered = ""
+        var valueIndex = 0
+        while valueIndex < values.count {
+            let startIndex = valueIndex
+            let pass = try formatUsingPass(format: format, values: values, valueIndex: &valueIndex)
+            if pass.fieldCount == 0 {
+                if rendered.isEmpty {
+                    rendered += format
+                }
+                break
+            }
+            rendered += pass.text
+            if valueIndex == startIndex {
+                break
+            }
+        }
+        return rendered
+    }
+
+    private func formatUsingPass(format: String, values: [BASICValue], valueIndex: inout Int) throws -> (text: String, fieldCount: Int) {
+        var output = ""
+        var fieldCount = 0
+        var index = format.startIndex
+
+        while index < format.endIndex {
+            let character = format[index]
+            if character == "!" {
+                guard valueIndex < values.count else { break }
+                let value = values[valueIndex]
+                valueIndex += 1
+                fieldCount += 1
+                output += String(value.description.prefix(1))
+                index = format.index(after: index)
+                continue
+            }
+            if character == "&" {
+                guard valueIndex < values.count else { break }
+                let value = values[valueIndex]
+                valueIndex += 1
+                fieldCount += 1
+                output += value.description
+                index = format.index(after: index)
+                continue
+            }
+            if isNumericUsingCharacter(character) {
+                let start = index
+                while index < format.endIndex, isNumericUsingCharacter(format[index]) {
+                    index = format.index(after: index)
+                }
+                let field = String(format[start..<index])
+                if field.contains("#") {
+                    guard valueIndex < values.count else { break }
+                    let value = values[valueIndex]
+                    valueIndex += 1
+                    fieldCount += 1
+                    output += try formatNumericUsingField(field, value: value)
+                    continue
+                }
+                output += field
+                continue
+            }
+
+            output.append(character)
+            index = format.index(after: index)
+        }
+
+        return (output, fieldCount)
+    }
+
+    private func isNumericUsingCharacter(_ character: Character) -> Bool {
+        "#.,+$-*".contains(character)
+    }
+
+    private func formatNumericUsingField(_ field: String, value: BASICValue) throws -> String {
+        let number = try numeric(value)
+        let decimalIndex = field.firstIndex(of: ".")
+        let integerPattern = decimalIndex.map { String(field[..<$0]) } ?? field
+        let fractionalPattern = decimalIndex.map { String(field[field.index(after: $0)...]) } ?? ""
+        let fractionalDigits = fractionalPattern.filter { $0 == "#" }.count
+        let usesGrouping = integerPattern.contains(",")
+        let usesDollar = field.contains("$")
+        let usesPlus = field.contains("+")
+        let padCharacter: Character = field.contains("*") ? "*" : " "
+
+        let absolute = abs(number)
+        let scale = pow(10.0, Double(fractionalDigits))
+        let roundedAbsolute = (absolute * scale).rounded() / scale
+        let fixed = String(format: "%.\(fractionalDigits)f", roundedAbsolute)
+        let pieces = fixed.split(separator: ".", omittingEmptySubsequences: false)
+        var integerPart = String(pieces.first ?? "0")
+        let fractionalPart = pieces.count > 1 ? String(pieces[1]) : ""
+        if usesGrouping {
+            integerPart = groupedDigits(integerPart)
+        }
+
+        var prefix = ""
+        if number < 0 {
+            prefix += "-"
+        } else if usesPlus {
+            prefix += "+"
+        }
+        if usesDollar {
+            prefix += "$"
+        }
+
+        var rendered = prefix + integerPart
+        if fractionalDigits > 0 {
+            rendered += "." + fractionalPart
+        }
+
+        let width = field.count
+        guard rendered.count <= width else {
+            return String(repeating: "%", count: width)
+        }
+        return String(repeating: String(padCharacter), count: width - rendered.count) + rendered
+    }
+
+    private func groupedDigits(_ digits: String) -> String {
+        var result = ""
+        for (offset, character) in digits.reversed().enumerated() {
+            if offset > 0, offset % 3 == 0 {
+                result.append(",")
+            }
+            result.append(character)
+        }
+        return String(result.reversed())
     }
 
     private func printSpacing(for expression: Expression, column: Int) throws -> String? {
@@ -5542,11 +5880,13 @@ private indirect enum Statement: Equatable {
         isOverride: Bool,
         explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
     )
+    case defFunction(name: VariableName, parameter: FunctionParameter, returnType: BASICType, body: Expression)
     case endFunction
     case data([BASICValue])
     case read([ReadTarget])
     case restore
     case print([PrintPart])
+    case printUsing(format: Expression, values: [Expression], trailingSeparator: PrintSeparator?)
     case screen(Expression)
     case color(Expression)
     case cls
@@ -5559,9 +5899,14 @@ private indirect enum Statement: Equatable {
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case input(String)
+    case lineInput(prompt: Expression?, target: ReadTarget)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
     case closeFile(Expression?)
+    case putFile(number: Expression, parts: [PrintPart])
+    case getFile(number: Expression, targets: [ReadTarget])
+    case resetFile(Expression)
     case printFile(number: Expression, parts: [PrintPart])
+    case printFileUsing(number: Expression, format: Expression, values: [Expression], trailingSeparator: PrintSeparator?)
     case inputFile(number: Expression, targets: [ReadTarget])
     case lineInputFile(number: Expression, target: ReadTarget)
     case load(Expression)
@@ -5572,9 +5917,12 @@ private indirect enum Statement: Equatable {
     case randomize(Expression?)
     case goto(Int)
     case gotoLabel(String)
+    case computedGoto([BranchTarget], Expression)
+    case computedGosub([BranchTarget], Expression)
     case gosub(BranchTarget)
     case returnFromSubroutine
     case returnValue(Expression)
+    case pause
     case exitFunction
     case ifThen(Expression, ConditionalAction, ConditionalAction?)
     case blockIf(Expression)
@@ -5621,6 +5969,7 @@ private enum PrintSeparator: Equatable {
 private struct PrintOutput: Equatable {
     let text: String
     let terminator: String
+    let endColumn: Int
 }
 
 private enum BranchTarget: Equatable {
@@ -5914,9 +6263,17 @@ private struct Parser {
         }
         if matchIdentifier("REM") { return .remark }
         if matchIdentifier("PRINT") {
+            if matchIdentifier("USING") {
+                let using = try parseUsingClause()
+                return .printUsing(format: using.format, values: using.values, trailingSeparator: using.trailingSeparator)
+            }
             if match(.hash) {
                 let number = try parseFileNumber(hashAlreadyConsumed: true)
                 _ = match(.comma)
+                if matchIdentifier("USING") {
+                    let using = try parseUsingClause()
+                    return .printFileUsing(number: number, format: using.format, values: using.values, trailingSeparator: using.trailingSeparator)
+                }
                 return .printFile(number: number, parts: try parsePrintParts())
             }
             return .print(try parsePrintParts())
@@ -5924,6 +6281,10 @@ private struct Parser {
         if matchIdentifier("PRINT#") {
             let number = try parseFileNumber(hashAlreadyConsumed: true)
             _ = match(.comma)
+            if matchIdentifier("USING") {
+                let using = try parseUsingClause()
+                return .printFileUsing(number: number, format: using.format, values: using.values, trailingSeparator: using.trailingSeparator)
+            }
             return .printFile(number: number, parts: try parsePrintParts())
         }
         if matchIdentifier("IMPORT") {
@@ -5941,6 +6302,9 @@ private struct Parser {
         }
         if matchIdentifier("FUNCTION") {
             return try parseFunctionDeclaration(visibility: .public, isOverride: false)
+        }
+        if matchIdentifier("DEF") {
+            return try parseDefFunction()
         }
         if matchIdentifier("TYPE") {
             let name = try consumeIdentifier("Expected TYPE name")
@@ -6060,10 +6424,12 @@ private struct Parser {
         }
         if matchIdentifier("LINE") {
             if matchIdentifier("INPUT") {
-                let hashAlreadyConsumed = match(.hash)
-                let number = try parseFileNumber(hashAlreadyConsumed: hashAlreadyConsumed)
-                guard match(.comma) else { throw syntax("Expected , after file number") }
-                return .lineInputFile(number: number, target: try parseFileTarget())
+                if match(.hash) {
+                    let number = try parseFileNumber(hashAlreadyConsumed: true)
+                    guard match(.comma) else { throw syntax("Expected , after file number") }
+                    return .lineInputFile(number: number, target: try parseFileTarget())
+                }
+                return try parseLineInput()
             }
             if matchIdentifier("INPUT#") {
                 let number = try parseFileNumber(hashAlreadyConsumed: true)
@@ -6084,6 +6450,19 @@ private struct Parser {
         }
         if matchIdentifier("CLOSE") {
             return .closeFile(isStatementEnd ? nil : try parseFileNumber(hashAlreadyConsumed: match(.hash)))
+        }
+        if matchIdentifier("PUT") {
+            let number = try parseFileNumber(hashAlreadyConsumed: match(.hash))
+            _ = match(.comma)
+            return .putFile(number: number, parts: try parsePrintParts())
+        }
+        if matchIdentifier("GET") {
+            let number = try parseFileNumber(hashAlreadyConsumed: match(.hash))
+            guard match(.comma) else { throw syntax("Expected , after file number") }
+            return .getFile(number: number, targets: try parseFileTargets())
+        }
+        if matchIdentifier("RESET") {
+            return .resetFile(try parseFileNumber(hashAlreadyConsumed: match(.hash)))
         }
         if matchIdentifier("INPUT#") {
             let number = try parseFileNumber(hashAlreadyConsumed: true)
@@ -6117,12 +6496,11 @@ private struct Parser {
         if matchIdentifier("RANDOMIZE") {
             return .randomize(isStatementEnd ? nil : try parseExpression())
         }
+        if matchIdentifier("ON") {
+            return try parseOnStatement()
+        }
         if matchIdentifier("GOTO") {
-            let target = try consumeBranchTarget("Expected line number or label after GOTO")
-            switch target {
-            case .line(let line): return .goto(line)
-            case .label(let label): return .gotoLabel(label)
-            }
+            return try parseGotoStatement()
         }
         if matchIdentifier("GOSUB") {
             let target = try consumeBranchTarget("Expected line number or label after GOSUB")
@@ -6133,6 +6511,9 @@ private struct Parser {
                 return .returnFromSubroutine
             }
             return .returnValue(try parseExpression())
+        }
+        if matchIdentifier("PAUSE") {
+            return .pause
         }
         if matchIdentifier("IF") {
             let condition = try parseExpression()
@@ -6427,6 +6808,63 @@ private struct Parser {
         )
     }
 
+    private mutating func parseDefFunction() throws -> Statement {
+        let name = try consumeVariableName("Expected DEF function name")
+        guard name.normalized.hasPrefix("FN") else {
+            throw syntax("DEF function names must start with FN")
+        }
+        guard match(.leftParen) else { throw syntax("Expected (") }
+        let parameter = try consumeVariableName("Expected DEF parameter name")
+        guard match(.rightParen) else { throw syntax("Expected )") }
+        guard match(.equals) else { throw syntax("Expected =") }
+        let returnType = suffixType(for: name.name) ?? .scalar(.double)
+        let parameterType = suffixType(for: parameter.name) ?? .scalar(.double)
+        return .defFunction(
+            name: name,
+            parameter: FunctionParameter(variable: parameter, type: parameterType),
+            returnType: returnType,
+            body: try parseExpression()
+        )
+    }
+
+    private mutating func parseGotoStatement() throws -> Statement {
+        var targets = [try consumeBranchTarget("Expected line number or label after GOTO")]
+        while match(.comma) {
+            targets.append(try consumeBranchTarget("Expected line number or label after ,"))
+        }
+
+        if matchIdentifier("ON") {
+            return .computedGoto(targets, try parseExpression())
+        }
+
+        guard targets.count == 1 else {
+            throw syntax("Expected ON after computed GOTO targets")
+        }
+        switch targets[0] {
+        case .line(let line): return .goto(line)
+        case .label(let label): return .gotoLabel(label)
+        }
+    }
+
+    private mutating func parseOnStatement() throws -> Statement {
+        let selector = try parseExpression()
+        if matchIdentifier("GOTO") {
+            return .computedGoto(try parseBranchTargetList(), selector)
+        }
+        if matchIdentifier("GOSUB") {
+            return .computedGosub(try parseBranchTargetList(), selector)
+        }
+        throw syntax("Expected GOTO or GOSUB after ON expression")
+    }
+
+    private mutating func parseBranchTargetList() throws -> [BranchTarget] {
+        var targets = [try consumeBranchTarget("Expected line number or label")]
+        while match(.comma) {
+            targets.append(try consumeBranchTarget("Expected line number or label after ,"))
+        }
+        return targets
+    }
+
     private mutating func parseExplicitInterfaceImplementations() throws -> [BASICExplicitInterfaceImplementation] {
         guard matchIdentifier("IMPLEMENTS") else { return [] }
         var implementations: [BASICExplicitInterfaceImplementation] = []
@@ -6469,6 +6907,38 @@ private struct Parser {
             }
         }
         return parts
+    }
+
+    private mutating func parseLineInput() throws -> Statement {
+        let prompt: Expression?
+        if case .string = peek {
+            prompt = try parseExpression()
+            _ = match(.semicolon) || match(.comma)
+        } else {
+            prompt = nil
+        }
+        return .lineInput(prompt: prompt, target: try parseFileTarget())
+    }
+
+    private mutating func parseUsingClause() throws -> (format: Expression, values: [Expression], trailingSeparator: PrintSeparator?) {
+        let format = try parseExpression()
+        guard match(.semicolon) || match(.comma) else {
+            throw syntax("Expected ; after USING format")
+        }
+
+        var values: [Expression] = []
+        var trailingSeparator: PrintSeparator?
+        while !isStatementEnd {
+            if match(.comma) {
+                trailingSeparator = .comma
+            } else if match(.semicolon) {
+                trailingSeparator = .semicolon
+            } else {
+                values.append(try parseExpression())
+                trailingSeparator = nil
+            }
+        }
+        return (format, values, trailingSeparator)
     }
 
     private mutating func parseDataValues() throws -> [BASICValue] {
@@ -6705,7 +7175,7 @@ private struct Parser {
                 let arguments = peek == .leftParen ? try parseArgumentList() : []
                 return .newObject(className, arguments)
             }
-            if uppercased == "RND", peek != .leftParen {
+            if (uppercased == "RND" || uppercased == "INKEY$"), peek != .leftParen {
                 return .functionCall(VariableName(name: name, column: tokens[max(0, current - 1)].column), [])
             }
             if uppercased == "POINT", peek == .leftParen {
@@ -7001,9 +7471,9 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "GOTO", "GOSUB", "RETURN", "IF",
+        "LABEL", "REM", "PRINT", "PRINT#", "USING", "USING$", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
-        "FUNCTION", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP"
+        "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]
 }

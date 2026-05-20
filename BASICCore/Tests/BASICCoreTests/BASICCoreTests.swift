@@ -411,6 +411,114 @@ struct BASICCoreTests {
         #expect(host.output == ["hit"])
     }
 
+    @Test("Computed GOTO selects one based target")
+    func computedGotoSelectsOneBasedTarget() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let choice = 2
+        goto First, Second, Third on choice
+        print "miss"
+        end
+        First:
+        print "first"
+        end
+        Second:
+        print "second"
+        end
+        Third:
+        print "third"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["second"])
+    }
+
+    @Test("ON GOTO selects one based target")
+    func onGotoSelectsOneBasedTarget() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        choice = 3
+        on choice goto First, Second, Third
+        print "miss"
+        end
+        First:
+        print "first"
+        end
+        Second:
+        print "second"
+        end
+        Third:
+        print "third"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["third"])
+    }
+
+    @Test("ON GOTO falls through when selector is out of range")
+    func onGotoFallsThroughWhenSelectorIsOutOfRange() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        choice = 0
+        on choice goto First, Second
+        print "fallthrough"
+        end
+        First:
+        print "first"
+        Second:
+        print "second"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["fallthrough"])
+    }
+
+    @Test("ON GOSUB selects one based target and returns")
+    func onGosubSelectsOneBasedTargetAndReturns() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        choice = 2
+        on choice gosub First, Second, Third
+        print "back"
+        end
+        First:
+        print "first"
+        return
+        Second:
+        print "second"
+        return
+        Third:
+        print "third"
+        return
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["second", "back"])
+    }
+
+    @Test("PAUSE prompts and continues")
+    func pausePromptsAndContinues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        pause
+        print "after"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["before", "PAUSE", "after"])
+    }
+
     @Test("Block IF supports ELSEIF ELSE and END IF")
     func blockIfElseIfElseEndIf() {
         let host = TestHost()
@@ -724,6 +832,150 @@ struct BASICCoreTests {
         #expect(host.output == ["A   B    C"])
     }
 
+    @Test("LINE INPUT reads a full string")
+    func lineInputReadsFullString() {
+        let host = TestHost()
+        host.input = ["Ada, Grace, Katherine"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input "Names: "; names$
+        print names$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada, Grace, Katherine"])
+    }
+
+    @Test("LINE INPUT can assign record fields")
+    func lineInputAssignsRecordFields() {
+        let host = TestHost()
+        host.input = ["Ada Lovelace"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Person
+            Name as string
+        end type
+        dim p as Person
+        line input p.Name
+        print p.Name
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada Lovelace"])
+    }
+
+    @Test("INKEY$ reads pending key without blocking")
+    func inkeyReadsPendingKeyWithoutBlocking() {
+        let host = TestHost()
+        host.keys = ["A", "B"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print inkey$()
+        print inkey$
+        print inkey$()
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["A", "B", ""])
+    }
+
+    @Test("POS reports the current print column")
+    func posReportsCurrentPrintColumn() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "ABC";
+        col = pos(0)
+        print
+        print col
+        print "AB";
+        print tab(5);"C"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["ABC", "4", "AB  C"])
+    }
+
+    @Test("HEX$ formats non-negative integers")
+    func hexFormatsNonNegativeIntegers() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print hex$(0)
+        print hex$(15)
+        print hex$(255)
+        print hex$(4095)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["0", "F", "FF", "FFF"])
+    }
+
+    @Test("HEX$ rejects negative values")
+    func hexRejectsNegativeValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("print hex$(-1)")
+
+        #expect(host.output == ["Runtime error: HEX$ requires a non-negative value"])
+    }
+
+    @Test("BINARY$ formats non-negative integers")
+    func binaryFormatsNonNegativeIntegers() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print binary$(0)
+        print binary$(5)
+        print binary$(255)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["0", "101", "11111111"])
+    }
+
+    @Test("BINARY$ rejects negative values")
+    func binaryRejectsNegativeValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("print binary$(-1)")
+
+        #expect(host.output == ["Runtime error: BINARY$ requires a non-negative value"])
+    }
+
+    @Test("PRINT USING and USING$ format numbers and strings")
+    func printUsingAndUsingFunctionFormatValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print using "TOTAL ###.##"; 12.3
+        print using "$#,###.##"; 1234.5
+        print using "NAME ! &"; "Ada", "Lovelace"
+        print using "## "; 1, 2, 3
+        print using "##"; 123
+        print using$("###.#", 4.25)
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "TOTAL  12.30",
+            "$1,234.50",
+            "NAME A Lovelace",
+            " 1  2  3 ",
+            "%%",
+            "  4.3"
+        ])
+    }
+
     @Test("GW BASIC numeric intrinsics")
     func gwBasicNumericIntrinsics() {
         let host = TestHost()
@@ -748,6 +1000,29 @@ struct BASICCoreTests {
             "-1            0             1",
             "0             1             0",
             "0             1             0             3"
+        ])
+    }
+
+    @Test("IBM BASIC 1970 math aliases")
+    func ibmBasic1970MathAliases() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print ACS(1),ASN(0),COT(0.7853981633974483)
+        print CSC(1.5707963267948966),SEC(0),SCN(-2)
+        print DEC(3.141592653589793),RAD(180)
+        print HCS(0),HSN(0),HTN(0)
+        print LCT(100),LOC(1),LTW(8)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "0             0             1.0000000000000002",
+            "1             1             -1",
+            "180           3.141592653589793",
+            "1             0             0",
+            "2             0             3"
         ])
     }
 
@@ -946,6 +1221,37 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["7"])
+    }
+
+    @Test("LOAD accepts classic no-space quoted path")
+    func loadAcceptsClassicNoSpaceQuotedPath() {
+        let host = TestHost()
+        host.files["demo.bas"] = """
+        print "loaded"
+        line input a$
+        """
+        let session = BASICSession(host: host)
+
+        session.submit("load\"demo.bas\"")
+        session.submit("list")
+
+        #expect(host.output == ["print \"loaded\"\nline input a$"])
+    }
+
+    @Test("DEF FN single-expression functions work")
+    func defFnSingleExpressionFunctionsWork() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        def FNSquare(x) = x * x
+        def FNShout$(word$) = word$ + "!"
+        print FNSquare(5)
+        print FNShout$("HELLO")
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["25", "HELLO!"])
     }
 
     @Test("SAVE writes program and remembers file name")
@@ -1538,6 +1844,7 @@ struct BASICCoreTests {
         open "legacy.txt" for output as #1
         print #1, "HELLO"; " "; 42
         print#1, "NEXT,"; 7
+        print #1, using "TOTAL ###.##"; 12.3
         close #1
 
         open "legacy.txt" for append as #1
@@ -1548,23 +1855,50 @@ struct BASICCoreTests {
         line input #2, a$
         input#2, b$, n
         line input#2, c$
+        line input #2, d$
         print a$
         print b$
         print n
         print c$
+        print d$
         print eof(2)
         close
         """)
         session.submit("run")
 
-        #expect(host.files["legacy.txt"] == "HELLO 42\nNEXT,7\nTAIL\n")
+        #expect(host.files["legacy.txt"] == "HELLO 42\nNEXT,7\nTOTAL  12.30\nTAIL\n")
         #expect(host.output == [
             "HELLO 42",
             "NEXT",
             "7",
+            "TOTAL  12.30",
             "TAIL",
             "TRUE"
         ])
+    }
+
+    @Test("IBM PUT GET and RESET use legacy numbered files")
+    func ibmPutGetAndResetUseLegacyNumberedFiles() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        open "ibm-file.txt" for output as #1
+        put #1, "ADA"; ","; 16
+        close #1
+
+        open "ibm-file.txt" for input as #1
+        get #1, name$, age
+        print name$; " "; age
+        reset #1
+        line input #1, raw$
+        print raw$
+        close #1
+        """)
+        session.submit("run")
+
+        #expect(host.files["ibm-file.txt"] == "ADA,16\n")
+        #expect(host.output == ["ADA 16", "ADA,16"])
     }
 
     @Test("Legacy sequential files report bad modes and missing files")
@@ -2149,6 +2483,39 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["30", "Ada Lovelace"])
+    }
+
+    @Test("Implicit array declaration creates default dimensions")
+    func implicitArrayDeclarationCreatesDefaultDimensions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        scores(10) = 42
+        print scores(10)
+        print scores(0)
+        names$(1) = "Ada"
+        print names$(1)
+        grid(2,3) = 23
+        print grid(2,3)
+        print len(scores)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["42", "0", "Ada", "23", "11"])
+    }
+
+    @Test("Implicit array declaration enforces default upper bound")
+    func implicitArrayDeclarationEnforcesDefaultUpperBound() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        scores(11) = 42
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: scores subscript out of range"])
     }
 
     @Test("DIM supports dictionary variables")
@@ -3098,11 +3465,12 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
     var input: [String] = []
+    var keys: [String] = []
     var files: [String: String] = [:]
     var currentDirectory = "."
     var systemCommands: [String] = []
@@ -3116,7 +3484,11 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
     func print(_ text: String, terminator: String) {
         pendingOutput += text
         if terminator.contains("\n") {
-            output.append(pendingOutput)
+            if hasPendingUnterminatedOutput {
+                output[output.count - 1] = pendingOutput
+            } else {
+                output.append(pendingOutput)
+            }
             pendingOutput = ""
             hasPendingUnterminatedOutput = false
         } else if hasPendingUnterminatedOutput {
@@ -3142,6 +3514,10 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost 
 
     func readLine(prompt: String) -> String? {
         input.isEmpty ? nil : input.removeFirst()
+    }
+
+    func readKey() -> String? {
+        keys.isEmpty ? nil : keys.removeFirst()
     }
 
     func loadTextFile(path: String) throws -> String {
@@ -3232,7 +3608,11 @@ private final class TextOnlyHost: BASICFileHost {
     func print(_ text: String, terminator: String) {
         pendingOutput += text
         if terminator.contains("\n") {
-            output.append(pendingOutput)
+            if hasPendingUnterminatedOutput {
+                output[output.count - 1] = pendingOutput
+            } else {
+                output.append(pendingOutput)
+            }
             pendingOutput = ""
             hasPendingUnterminatedOutput = false
         } else if hasPendingUnterminatedOutput {

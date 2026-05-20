@@ -2,7 +2,7 @@ import BASICCore
 import Darwin
 import Foundation
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost {
     func print(_ text: String, terminator: String) {
         Swift.print(text, terminator: terminator)
     }
@@ -14,6 +14,34 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost {
     func readLine(prompt: String) -> String? {
         Swift.print(prompt, terminator: "")
         return Swift.readLine()
+    }
+
+    func readKey() -> String? {
+        let fd = STDIN_FILENO
+        guard isatty(fd) == 1 else { return nil }
+
+        var originalTermios = termios()
+        guard tcgetattr(fd, &originalTermios) == 0 else { return nil }
+        var rawTermios = originalTermios
+        rawTermios.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        rawTermios.c_cc.16 = 0
+        rawTermios.c_cc.17 = 0
+
+        let originalFlags = fcntl(fd, F_GETFL, 0)
+        guard originalFlags >= 0 else { return nil }
+
+        guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else { return nil }
+        _ = fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK)
+        defer {
+            _ = fcntl(fd, F_SETFL, originalFlags)
+            var restored = originalTermios
+            _ = tcsetattr(fd, TCSANOW, &restored)
+        }
+
+        var byte: UInt8 = 0
+        let count = Darwin.read(fd, &byte, 1)
+        guard count == 1 else { return nil }
+        return String(bytes: [byte], encoding: .utf8) ?? String(UnicodeScalar(byte))
     }
 
     func loadTextFile(path: String) throws -> String {
