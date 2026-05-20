@@ -2990,8 +2990,9 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
 
         let terminal = terminalView.getTerminal()
-        let cellWidth = terminalView.frame.width / CGFloat(max(terminal.cols, 1))
-        let cellHeight = terminalView.frame.height / CGFloat(max(terminal.rows, 1))
+        let optimalSize = terminalView.getOptimalFrameSize().size
+        let cellWidth = min(terminalView.frame.width, optimalSize.width) / CGFloat(max(terminal.cols, 1))
+        let cellHeight = min(terminalView.frame.height, optimalSize.height) / CGFloat(max(terminal.rows, 1))
         let x = CGFloat(min(max(terminal.buffer.x, 0), max(terminal.cols - 1, 0))) * cellWidth
         let y = terminalView.frame.height - (CGFloat(min(max(terminal.buffer.y, 0), max(terminal.rows - 1, 0))) + 1) * cellHeight
 
