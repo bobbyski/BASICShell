@@ -121,7 +121,7 @@ public struct BASICString: Equatable, CustomStringConvertible {
     }
 
     var characterCount: Int {
-        description.count
+        rawString.count
     }
 
     var byteCount: Int {
@@ -433,6 +433,11 @@ private enum LetMode: Equatable {
     case local
 }
 
+private enum BASICKeyMode: Equatable {
+    case aibasic
+    case ibm
+}
+
 private enum AssignmentKind: Equatable {
     case bare
     case letValue
@@ -552,6 +557,7 @@ private final class BASICRuntime {
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
     var letMode: LetMode = .global
+    var keyMode: BASICKeyMode = .aibasic
     var randomGenerator = BASICRandomGenerator()
     private var fileObjects: [Int: BASICOpenFile] = [:]
     private var nextFileObjectID = 1
@@ -566,6 +572,7 @@ private final class BASICRuntime {
     func clearAll() {
         resetForRun()
         letMode = .global
+        keyMode = .aibasic
     }
 
     func pushLocalContext() -> Int {
@@ -2047,6 +2054,286 @@ public protocol BASICKeyboardHost: BASICHost {
     func readKey() -> String?
 }
 
+public protocol BASICConsoleHost: BASICHost {
+    func screenColumns() -> Int
+    func screenRows() -> Int
+    func locate(row: Int, column: Int) throws
+}
+
+public extension BASICConsoleHost {
+    func screenColumns() -> Int { 80 }
+
+    func screenRows() -> Int { 25 }
+
+    func locate(row: Int, column: Int) throws {
+        let safeRow = max(1, row)
+        let safeColumn = max(1, column)
+        print("\u{001B}[\(safeRow);\(safeColumn)H", terminator: "")
+    }
+}
+
+public enum BASICRawKey {
+    public static let escape = "\u{1B}"
+    public static let delete = "\u{7F}"
+    public static let backspace = "\u{8}"
+
+    public static func functionKeySequence(_ number: Int) -> String? {
+        switch number {
+        case 1: return "\u{1B}OP"
+        case 2: return "\u{1B}OQ"
+        case 3: return "\u{1B}OR"
+        case 4: return "\u{1B}OS"
+        case 5: return "\u{1B}[15~"
+        case 6: return "\u{1B}[17~"
+        case 7: return "\u{1B}[18~"
+        case 8: return "\u{1B}[19~"
+        case 9: return "\u{1B}[20~"
+        case 10: return "\u{1B}[21~"
+        case 11: return "\u{1B}[23~"
+        case 12: return "\u{1B}[24~"
+        case 13: return "\u{1B}[25~"
+        case 14: return "\u{1B}[26~"
+        case 15: return "\u{1B}[28~"
+        case 16: return "\u{1B}[29~"
+        case 17: return "\u{1B}[31~"
+        case 18: return "\u{1B}[32~"
+        case 19: return "\u{1B}[33~"
+        case 20: return "\u{1B}[34~"
+        case 21: return "\u{1B}[35~"
+        case 22: return "\u{1B}[36~"
+        default: return nil
+        }
+    }
+}
+
+public enum BASICKeyEncoding {
+    case aibasic
+    case ibm
+}
+
+public struct BASICKeyNormalizer {
+    public static func normalize(_ rawKey: String, encoding: BASICKeyEncoding = .aibasic) -> String {
+        guard !rawKey.isEmpty else { return "" }
+        if rawKey.hasPrefix("[GP:") {
+            return rawKey
+        }
+        if rawKey.count == 1 {
+            if rawKey == BASICRawKey.delete { return BASICRawKey.backspace }
+            return rawKey
+        }
+
+        if let normalized = normalizedEscapeSequence(rawKey, encoding: encoding) {
+            return normalized
+        }
+
+        return extended(code: 255, encoding: encoding)
+    }
+
+    private static func normalizedEscapeSequence(_ rawKey: String, encoding: BASICKeyEncoding) -> String? {
+        guard rawKey.first == Character(BASICRawKey.escape) else { return nil }
+        if rawKey == BASICRawKey.escape { return BASICRawKey.escape }
+
+        let suffix = String(rawKey.dropFirst())
+        let modifiers = modifiers(from: suffix)
+
+        if let modifiedCharacter = modifiedCharacter(from: suffix) {
+            return modifiedCharacter
+        }
+
+        if let code = modifiedNavigationCode(from: suffix) {
+            return extended(code: code, shift: modifiers.shift, command: modifiers.command, option: modifiers.option, encoding: encoding)
+        }
+
+        if let key = modifiedFunctionKey(from: suffix) {
+            return functionKey(key.number, ibmCode: key.ibmCode, shift: modifiers.shift, command: modifiers.command, option: modifiers.option, encoding: encoding)
+        }
+
+        switch suffix {
+        case "[A": return extended(code: 72, encoding: encoding)
+        case "[B": return extended(code: 80, encoding: encoding)
+        case "[C": return extended(code: 77, encoding: encoding)
+        case "[D": return extended(code: 75, encoding: encoding)
+        case "[H", "OH", "[1~", "[7~": return extended(code: 71, encoding: encoding)
+        case "[F", "OF", "[4~", "[8~": return extended(code: 79, encoding: encoding)
+        case "[2~": return extended(code: 82, encoding: encoding)
+        case "[3~": return extended(code: 83, encoding: encoding)
+        case "[5~": return extended(code: 73, encoding: encoding)
+        case "[6~": return extended(code: 81, encoding: encoding)
+        case "OP": return functionKey(1, ibmCode: 59, encoding: encoding)
+        case "OQ": return functionKey(2, ibmCode: 60, encoding: encoding)
+        case "OR": return functionKey(3, ibmCode: 61, encoding: encoding)
+        case "OS": return functionKey(4, ibmCode: 62, encoding: encoding)
+        case "[15~": return functionKey(5, ibmCode: 63, encoding: encoding)
+        case "[17~": return functionKey(6, ibmCode: 64, encoding: encoding)
+        case "[18~": return functionKey(7, ibmCode: 65, encoding: encoding)
+        case "[19~": return functionKey(8, ibmCode: 66, encoding: encoding)
+        case "[20~": return functionKey(9, ibmCode: 67, encoding: encoding)
+        case "[21~": return functionKey(10, ibmCode: 68, encoding: encoding)
+        case "[23~": return functionKey(11, ibmCode: 133, encoding: encoding)
+        case "[24~": return functionKey(12, ibmCode: 134, encoding: encoding)
+        default:
+            if let number = functionKeyNumber(from: suffix), (13...22).contains(number) {
+                return functionKey(number, ibmCode: 255, encoding: encoding)
+            }
+            return nil
+        }
+    }
+
+    private static func modifiedCharacter(from suffix: String) -> String? {
+        guard suffix.hasPrefix("[") else { return nil }
+        let body = suffix.dropFirst()
+        guard body.count >= 2 else { return nil }
+        var index = body.startIndex
+        var sawModifier = false
+        while index < body.endIndex {
+            let character = body[index]
+            guard character == "!" || character == "$" || character == "#" else { break }
+            sawModifier = true
+            index = body.index(after: index)
+        }
+        guard sawModifier, index < body.endIndex else { return nil }
+        let character = body[index]
+        guard character.unicodeScalars.allSatisfy({ (32...126).contains(Int($0.value)) }) else { return nil }
+        guard body.index(after: index) == body.endIndex else { return nil }
+        return suffix
+    }
+
+    private static func modifiedNavigationCode(from suffix: String) -> Int? {
+        guard suffix.hasPrefix("[") else { return nil }
+        if suffix.hasPrefix("[1;"), let last = suffix.last {
+            switch last {
+            case "A": return 72
+            case "B": return 80
+            case "C": return 77
+            case "D": return 75
+            case "H": return 71
+            case "F": return 79
+            default: return nil
+            }
+        }
+
+        guard suffix.hasSuffix("~") else { return nil }
+        let body = suffix.dropFirst().dropLast()
+        let base = body.split(separator: ";").first ?? ""
+        switch base {
+        case "2": return 82
+        case "3": return 83
+        case "5": return 73
+        case "6": return 81
+        default: return nil
+        }
+    }
+
+    private static func modifiedFunctionKey(from suffix: String) -> (number: Int, ibmCode: Int)? {
+        if suffix.hasPrefix("[1;"), let last = suffix.last {
+            switch last {
+            case "P": return (1, 59)
+            case "Q": return (2, 60)
+            case "R": return (3, 61)
+            case "S": return (4, 62)
+            default: break
+            }
+        }
+
+        guard suffix.hasPrefix("["), suffix.hasSuffix("~") else { return nil }
+        let body = suffix.dropFirst().dropLast()
+        guard let base = Int(body.split(separator: ";").first ?? "") else { return nil }
+        switch base {
+        case 15: return (5, 63)
+        case 17: return (6, 64)
+        case 18: return (7, 65)
+        case 19: return (8, 66)
+        case 20: return (9, 67)
+        case 21: return (10, 68)
+        case 23: return (11, 133)
+        case 24: return (12, 134)
+        default:
+            guard let number = functionKeyNumber(from: suffix), (13...22).contains(number) else { return nil }
+            return (number, 255)
+        }
+    }
+
+    private static func modifiers(from suffix: String) -> (shift: Bool, command: Bool, option: Bool) {
+        guard let parameter = modifierParameter(from: suffix) else {
+            return (false, false, false)
+        }
+
+        switch parameter {
+        case 2: return (true, false, false)
+        case 3: return (false, false, true)
+        case 4: return (true, false, true)
+        case 5: return (false, false, false)
+        case 6: return (true, false, false)
+        case 7: return (false, false, true)
+        case 8: return (true, false, true)
+        case 9: return (false, true, false)
+        case 10: return (true, true, false)
+        case 11: return (false, true, true)
+        case 12: return (true, true, true)
+        default: return (false, false, false)
+        }
+    }
+
+    private static func modifierParameter(from suffix: String) -> Int? {
+        guard let semicolon = suffix.lastIndex(of: ";") else { return nil }
+        var digits = ""
+        var index = suffix.index(after: semicolon)
+        while index < suffix.endIndex {
+            let character = suffix[index]
+            guard character.isNumber else { break }
+            digits.append(character)
+            index = suffix.index(after: index)
+        }
+        return Int(digits)
+    }
+
+    private static func functionKeyNumber(from suffix: String) -> Int? {
+        guard suffix.hasPrefix("["), suffix.hasSuffix("~") else { return nil }
+        let body = suffix.dropFirst().dropLast()
+        guard let value = Int(body.split(separator: ";").first ?? "") else { return nil }
+        switch value {
+        case 25: return 13
+        case 26: return 14
+        case 28: return 15
+        case 29: return 16
+        case 31: return 17
+        case 32: return 18
+        case 33: return 19
+        case 34: return 20
+        case 35: return 21
+        case 36: return 22
+        default: return nil
+        }
+    }
+
+    private static func functionKey(_ number: Int, ibmCode: Int, shift: Bool = false, command: Bool = false, option: Bool = false, encoding: BASICKeyEncoding) -> String {
+        switch encoding {
+        case .aibasic:
+            var modifiers = ""
+            if shift { modifiers += "!" }
+            if command { modifiers += "$" }
+            if option { modifiers += "#" }
+            return "[\(modifiers)F\(number)"
+        case .ibm:
+            return extended(code: ibmCode, encoding: encoding)
+        }
+    }
+
+    private static func extended(code: Int, shift: Bool = false, command: Bool = false, option: Bool = false, encoding: BASICKeyEncoding) -> String {
+        let scalar = String(UnicodeScalar(code) ?? UnicodeScalar(255)!)
+        switch encoding {
+        case .aibasic:
+            var modifiers = ""
+            if shift { modifiers += "!" }
+            if command { modifiers += "$" }
+            if option { modifiers += "#" }
+            return "[\(modifiers)\(scalar)"
+        case .ibm:
+            return "\u{0}\(scalar)"
+        }
+    }
+}
+
 public extension BASICFileHost {
     func saveTextFile(path: String, text: String) throws {
         throw BASICError.runtime("SAVE is not supported by this host")
@@ -2293,8 +2580,8 @@ public final class BASICProgram: @unchecked Sendable {
         }
     }
 
-    public func loadSource(_ source: String) {
-        lines = Self.parseLines(from: source, fileName: nil, isImported: false)
+    public func loadSource(_ source: String, fileName: String? = nil) {
+        lines = Self.parseLines(from: source, fileName: fileName, isImported: false)
     }
 
     public func clear() {
@@ -2450,7 +2737,7 @@ public final class BASICSession: @unchecked Sendable {
                     throw BASICError.runtime("LOAD is not supported by this host")
                 }
                 do {
-                    program.loadSource(try fileHost.loadTextFile(path: path))
+                    program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
                     fileState.lastFilePath = path
                 } catch {
                     throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
@@ -3063,6 +3350,7 @@ public final class BASICInterpreter {
         functionDefinitions = try collectFunctions(in: parsed)
         dataValues = collectData(in: parsed)
         dataIndex = 0
+        try seedHostVariables()
 
         pc = 0
         if let startLine {
@@ -3070,6 +3358,30 @@ public final class BASICInterpreter {
             pc = index
         }
         isPrepared = true
+    }
+
+    private func seedHostVariables() throws {
+        let currentDirectory = try (host as? BASICFileHost)?.currentDirectoryPath() ?? FileManager.default.currentDirectoryPath
+        let columns = (host as? BASICConsoleHost)?.screenColumns() ?? 80
+        let rows = (host as? BASICConsoleHost)?.screenRows() ?? 25
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "CURRENTDIR$", column: 0),
+            declaredType: .scalar(.string),
+            value: .string(BASICString(currentDirectory))
+        )
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "SCREENWIDTH", column: 0),
+            declaredType: .scalar(.double),
+            value: .number(Double(columns))
+        )
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "SCREENHEIGHT", column: 0),
+            declaredType: .scalar(.double),
+            value: .number(Double(rows))
+        )
     }
 
     private func expandedProgramLines() throws -> [ProgramLine] {
@@ -3208,7 +3520,10 @@ public final class BASICInterpreter {
     }
 
     private static func importedBasFiles(in path: String, using fileHost: BASICFileHost) throws -> [String] {
-        let directory = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        var directory = path.replacingOccurrences(of: "\\", with: "/")
+        while directory.hasSuffix("/") {
+            directory.removeLast()
+        }
         return try fileHost.listFiles(path: path)
             .filter { $0.lowercased().hasSuffix(".bas") }
             .map { joinImportPath(directory: directory, relativePath: $0) }
@@ -3468,6 +3783,18 @@ public final class BASICInterpreter {
             (host as? BASICGraphicsHost)?.clearGraphics(color: nil)
             outputColumn = 0
             return .next
+        case .locate(let rowExpression, let columnExpression):
+            let row = try integer(rowExpression)
+            let column = try integer(columnExpression)
+            if let consoleHost = host as? BASICConsoleHost {
+                try consoleHost.locate(row: row, column: column)
+            } else {
+                let safeRow = max(1, row)
+                let safeColumn = max(1, column)
+                host?.print("\u{001B}[\(safeRow);\(safeColumn)H", terminator: "")
+            }
+            outputColumn = max(0, column - 1)
+            return .next
         case .pset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
@@ -3525,17 +3852,13 @@ public final class BASICInterpreter {
         case .optionLetMode(let mode):
             runtime.letMode = mode
             return .next
-        case .input(let name):
-            let raw = host?.readLine(prompt: "\(name)? ") ?? ""
-            let value: BASICValue
-            if name.hasSuffix("$") {
-                value = .string(BASICString(raw))
-            } else if let number = Double(raw.trimmingCharacters(in: .whitespaces)) {
-                value = .number(number)
-            } else {
-                throw BASICError.runtime("Expected numeric input for \(name)")
-            }
-            try runtime.assign(kind: .bare, variable: VariableName(name: name, column: 0), declaredType: nil, value: value)
+        case .optionKeyMode(let mode):
+            runtime.keyMode = mode
+            return .next
+        case .input(let prompt, let target):
+            let promptText = try prompt.map(string) ?? "\(inputTargetName(target))? "
+            let raw = host?.readLine(prompt: promptText) ?? ""
+            try assignReadValue(try inputValue(from: raw, to: target), to: target)
             return .next
         case .lineInput(let prompt, let target):
             let promptText = try prompt.map(string) ?? ""
@@ -4245,7 +4568,7 @@ public final class BASICInterpreter {
         "ABS", "ACS", "ASC", "ASN", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
         "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
-        "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
+        "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$"
     ]
 
@@ -4259,7 +4582,7 @@ public final class BASICInterpreter {
         case "ACS":
             return .number(acos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASC":
-            let value = try singleStringArgument(name: name.name, arguments: arguments)
+            let value = try singleRawStringArgument(name: name.name, arguments: arguments)
             guard let scalar = value.unicodeScalars.first else {
                 throw BASICError.runtime("ASC requires a non-empty string")
             }
@@ -4286,6 +4609,12 @@ public final class BASICInterpreter {
             return .number(try singleNumericArgument(name: name.name, arguments: arguments) * 180 / Double.pi)
         case "EXP":
             return .number(exp(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "FILEEXISTS":
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("FILEEXISTS is not supported by this host")
+            }
+            return .number(try fileHost.fileExists(path: string(arguments[0])) ? 1 : 0)
         case "EOF":
             try requireArgumentCount(name.name, arguments, 1)
             return try legacyEOF(arguments[0])
@@ -4306,7 +4635,9 @@ public final class BASICInterpreter {
             return .number(tanh(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "INKEY$":
             try requireArgumentCount(name.name, arguments, 0)
-            return .string(BASICString((host as? BASICKeyboardHost)?.readKey() ?? ""))
+            let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
+            let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
+            return .string(BASICString(BASICKeyNormalizer.normalize(rawKey, encoding: encoding)))
         case "INSTR":
             return .number(Double(try intrinsicInstr(arguments: arguments)))
         case "INT":
@@ -4315,7 +4646,7 @@ public final class BASICInterpreter {
             return .number(log10(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "LEFT$":
             try requireArgumentCount(name.name, arguments, 2)
-            let value = try string(arguments[0])
+            let value = try rawString(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.prefix(count))))
         case "LOG", "LOC":
@@ -4329,7 +4660,7 @@ public final class BASICInterpreter {
             return .number(Double(outputColumn + 1))
         case "RIGHT$":
             try requireArgumentCount(name.name, arguments, 2)
-            let value = try string(arguments[0])
+            let value = try rawString(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.suffix(count))))
         case "RAD":
@@ -4426,6 +4757,11 @@ public final class BASICInterpreter {
         return try string(arguments[0])
     }
 
+    private func singleRawStringArgument(name: String, arguments: [Expression]) throws -> String {
+        try requireArgumentCount(name, arguments, 1)
+        return try rawString(arguments[0])
+    }
+
     private func requireArgumentCount(_ name: String, _ arguments: [Expression], _ count: Int) throws {
         guard arguments.count == count else {
             throw BASICError.runtime("\(name) expects \(count) argument\(count == 1 ? "" : "s")")
@@ -4445,12 +4781,12 @@ public final class BASICInterpreter {
         let needle: String
         if arguments.count == 2 {
             start = 1
-            haystack = try string(arguments[0])
-            needle = try string(arguments[1])
+            haystack = try rawString(arguments[0])
+            needle = try rawString(arguments[1])
         } else {
             start = max(1, try integer(arguments[0]))
-            haystack = try string(arguments[1])
-            needle = try string(arguments[2])
+            haystack = try rawString(arguments[1])
+            needle = try rawString(arguments[2])
         }
 
         guard !needle.isEmpty else { return start }
@@ -4462,7 +4798,7 @@ public final class BASICInterpreter {
 
     private func intrinsicMid(arguments: [Expression]) throws -> BASICValue {
         try requireArgumentRange("MID$", arguments, 2...3)
-        let value = try string(arguments[0])
+        let value = try rawString(arguments[0])
         let start = max(1, try integer(arguments[1]))
         guard start <= value.count else { return .string(BASICString("")) }
         let startIndex = value.index(value.startIndex, offsetBy: start - 1)
@@ -4880,7 +5216,7 @@ public final class BASICInterpreter {
             throw BASICError.runtime("LOAD is not supported by this host")
         }
         do {
-            program.loadSource(try fileHost.loadTextFile(path: path))
+            program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
             fileState.lastFilePath = path
         } catch {
             throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
@@ -5094,26 +5430,7 @@ public final class BASICInterpreter {
     }
 
     private func assignLegacyInput(_ field: String, to target: ReadTarget) throws {
-        let variableName: VariableName
-        switch target {
-        case .variable(let variable):
-            variableName = variable
-        case .reference(let reference):
-            variableName = reference.base
-        }
-        let value: BASICValue
-        if variableName.name.hasSuffix("$") {
-            value = .string(BASICString(field))
-        } else if field.uppercased() == "TRUE" {
-            value = .boolean(true)
-        } else if field.uppercased() == "FALSE" {
-            value = .boolean(false)
-        } else if let number = Double(field) {
-            value = .number(number)
-        } else {
-            throw BASICError.runtime("Type Mismatch")
-        }
-        try assignReadValue(value, to: target)
+        try assignReadValue(try inputValue(from: field, to: target), to: target)
     }
 
     private func assignReadValue(_ value: BASICValue, to target: ReadTarget) throws {
@@ -5128,6 +5445,73 @@ public final class BASICInterpreter {
                 value: value,
                 accessClassName: currentClassContext
             )
+        }
+    }
+
+    private func inputValue(from raw: String, to target: ReadTarget) throws -> BASICValue {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        let current = try currentValue(for: target)
+        switch current {
+        case .string:
+            return .string(BASICString(raw))
+        case .boolean:
+            if trimmed.uppercased() == "TRUE" {
+                return .boolean(true)
+            }
+            if trimmed.uppercased() == "FALSE" {
+                return .boolean(false)
+            }
+            if trimmed == "1" {
+                return .boolean(true)
+            }
+            if trimmed == "0" {
+                return .boolean(false)
+            }
+            throw BASICError.runtime("Type Mismatch")
+        case .number:
+            guard let number = Double(trimmed) else {
+                throw BASICError.runtime("Expected numeric input for \(inputTargetName(target))")
+            }
+            return .number(number)
+        case .empty:
+            if inputTargetName(target).hasSuffix("$") {
+                return .string(BASICString(raw))
+            }
+            if trimmed.uppercased() == "TRUE" {
+                return .boolean(true)
+            }
+            if trimmed.uppercased() == "FALSE" {
+                return .boolean(false)
+            }
+            guard let number = Double(trimmed) else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            return .number(number)
+        default:
+            throw BASICError.runtime("Type Mismatch")
+        }
+    }
+
+    private func currentValue(for target: ReadTarget) throws -> BASICValue {
+        switch target {
+        case .variable(let variable):
+            return runtime.value(for: variable)
+        case .reference(let reference):
+            return try runtime.value(
+                for: reference,
+                indexes: try reference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: reference),
+                accessClassName: currentClassContext
+            )
+        }
+    }
+
+    private func inputTargetName(_ target: ReadTarget) -> String {
+        switch target {
+        case .variable(let variable):
+            return variable.name
+        case .reference(let reference):
+            return ([reference.base.name] + reference.fields).joined(separator: ".")
         }
     }
 
@@ -5749,6 +6133,13 @@ public final class BASICInterpreter {
         return string.description
     }
 
+    private func rawString(_ expression: Expression) throws -> String {
+        guard let string = try evaluate(expression).string else {
+            throw BASICError.runtime("Expected a string")
+        }
+        return string.rawString
+    }
+
     private func boolean(_ value: BASICValue) throws -> Bool {
         switch value {
         case .boolean(let boolean):
@@ -5890,6 +6281,7 @@ private indirect enum Statement: Equatable {
     case screen(Expression)
     case color(Expression)
     case cls
+    case locate(row: Expression, column: Expression)
     case pset(GraphicsPoint, Expression?)
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
@@ -5898,7 +6290,8 @@ private indirect enum Statement: Equatable {
     case expression(Expression)
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
-    case input(String)
+    case optionKeyMode(BASICKeyMode)
+    case input(prompt: Expression?, target: ReadTarget)
     case lineInput(prompt: Expression?, target: ReadTarget)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
     case closeFile(Expression?)
@@ -6393,7 +6786,7 @@ private struct Parser {
             return .exitFunction
         }
         if matchIdentifier("OPTION") {
-            return .optionLetMode(try parseLetMode())
+            return try parseOptionStatement()
         }
         if matchIdentifier("GLOBAL") {
             return try parseAssignment(kind: .global, requiresEquals: false)
@@ -6411,6 +6804,11 @@ private struct Parser {
         }
         if matchIdentifier("CLS") {
             return .cls
+        }
+        if matchIdentifier("LOCATE") {
+            let row = try parseExpression()
+            guard match(.comma) else { throw syntax("Expected , in LOCATE") }
+            return .locate(row: row, column: try parseExpression())
         }
         if matchIdentifier("PSET") {
             let point = try parsePoint()
@@ -6475,8 +6873,15 @@ private struct Parser {
                 guard match(.comma) else { throw syntax("Expected , after file number") }
                 return .inputFile(number: number, targets: try parseFileTargets())
             }
-            let name = try consumeIdentifier("Expected variable name after INPUT")
-            return .input(name)
+            let prompt: Expression?
+            if case .string = peek {
+                prompt = try parseExpression()
+                guard match(.comma) || match(.semicolon) else { throw syntax("Expected , after INPUT prompt") }
+            } else {
+                prompt = nil
+            }
+            let reference = try parseVariableReference(message: "Expected variable after INPUT")
+            return .input(prompt: prompt, target: reference.isSimple ? .variable(reference.base) : .reference(reference))
         }
         if matchIdentifier("LOAD") {
             return .load(try parseExpression())
@@ -7033,6 +7438,26 @@ private struct Parser {
         return .assignment(kind, variable, declaredType, expression)
     }
 
+    private mutating func parseOptionStatement() throws -> Statement {
+        if matchIdentifier("GLOBAL") {
+            guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected GLOBAL-LET") }
+            return .optionLetMode(.global)
+        }
+        if matchIdentifier("LOCAL") {
+            guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected LOCAL-LET") }
+            return .optionLetMode(.local)
+        }
+        if matchIdentifier("IBM") {
+            guard match(.minus), matchIdentifier("KEYS") else { throw syntax("Expected IBM-KEYS") }
+            return .optionKeyMode(.ibm)
+        }
+        if matchIdentifier("AIBASIC") {
+            guard match(.minus), matchIdentifier("KEYS") else { throw syntax("Expected AIBASIC-KEYS") }
+            return .optionKeyMode(.aibasic)
+        }
+        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, or AIBASIC-KEYS")
+    }
+
     private mutating func parseLetMode() throws -> LetMode {
         if matchIdentifier("GLOBAL") {
             guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected GLOBAL-LET") }
@@ -7471,7 +7896,7 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "USING", "USING$", "SCREEN", "COLOR", "CLS", "PSET", "PRESET", "LINE",
+        "LABEL", "REM", "PRINT", "PRINT#", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"

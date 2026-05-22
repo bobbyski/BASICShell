@@ -2,7 +2,227 @@ import BASICCore
 import Darwin
 import Foundation
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost {
+final class ShellLineEditor: @unchecked Sendable {
+    static let shared = ShellLineEditor()
+
+    private var isOverwriteMode = false
+
+    func readLine(prompt: String) -> String? {
+        let fd = STDIN_FILENO
+        guard isatty(fd) == 1 else {
+            Swift.print(prompt, terminator: "")
+            return Swift.readLine()
+        }
+
+        var originalTermios = termios()
+        guard tcgetattr(fd, &originalTermios) == 0 else {
+            Swift.print(prompt, terminator: "")
+            return Swift.readLine()
+        }
+
+        var rawTermios = originalTermios
+        rawTermios.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        rawTermios.c_cc.16 = 1
+        rawTermios.c_cc.17 = 0
+        guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else {
+            Swift.print(prompt, terminator: "")
+            return Swift.readLine()
+        }
+        defer {
+            var restored = originalTermios
+            _ = tcsetattr(fd, TCSANOW, &restored)
+        }
+
+        Swift.print(prompt, terminator: "")
+        fflush(stdout)
+
+        var buffer = ""
+        var cursor = 0
+
+        while true {
+            guard let raw = readRawKey(fd: fd) else { return nil }
+            if raw == "\r" || raw == "\n" {
+                Swift.print()
+                return buffer
+            }
+
+            if raw == "\u{4}", buffer.isEmpty {
+                Swift.print()
+                return nil
+            }
+
+            if raw == "\u{3}" {
+                Swift.print("^C")
+                buffer = ""
+                cursor = 0
+                return ""
+            }
+
+            if raw == "\t" {
+                isOverwriteMode.toggle()
+                continue
+            }
+
+            if raw == "\u{8}" || raw == "\u{7F}" {
+                guard cursor > 0 else { continue }
+                cursor -= 1
+                buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
+                repaint(buffer: buffer, cursor: cursor, prefix: "\u{1B}[D")
+                continue
+            }
+
+            if raw.first == Character(BASICRawKey.escape) {
+                handleEscape(raw, buffer: &buffer, cursor: &cursor)
+                continue
+            }
+
+            if raw.count == 1, let scalar = raw.unicodeScalars.first, scalar.value >= 32 {
+                insert(raw, into: &buffer, cursor: &cursor)
+            }
+        }
+    }
+
+    private func readRawKey(fd: Int32) -> String? {
+        var byte: UInt8 = 0
+        guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
+        var bytes = [byte]
+        if byte == 27 {
+            while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
+                bytes.append(next)
+                if isCompleteEscapeSequence(bytes) { break }
+            }
+        }
+        return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
+    }
+
+    private func insert(_ text: String, into buffer: inout String, cursor: inout Int) {
+        let textCount = text.count
+        if isOverwriteMode, cursor < buffer.count {
+            buffer.removeSubrange(range(in: buffer, offset: cursor, length: min(textCount, buffer.count - cursor)))
+        }
+        buffer.insert(contentsOf: text, at: buffer.index(buffer.startIndex, offsetBy: cursor))
+        let oldCursor = cursor
+        cursor += textCount
+        repaint(buffer: buffer, cursor: cursor, from: oldCursor)
+    }
+
+    private func handleEscape(_ raw: String, buffer: inout String, cursor: inout Int) {
+        let key = BASICKeyNormalizer.normalize(raw)
+        switch key {
+        case "[K": moveCursor(to: cursor - 1, cursor: &cursor, bufferCount: buffer.count)
+        case "[M": moveCursor(to: cursor + 1, cursor: &cursor, bufferCount: buffer.count)
+        case "[G": moveCursor(to: 0, cursor: &cursor, bufferCount: buffer.count)
+        case "[O": moveCursor(to: buffer.count, cursor: &cursor, bufferCount: buffer.count)
+        case "[S":
+            guard cursor < buffer.count else { return }
+            buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
+            repaint(buffer: buffer, cursor: cursor)
+        case "[R":
+            isOverwriteMode.toggle()
+        default:
+            break
+        }
+    }
+
+    private func moveCursor(to newCursor: Int, cursor: inout Int, bufferCount: Int) {
+        let clamped = min(max(newCursor, 0), bufferCount)
+        guard clamped != cursor else { return }
+        let delta = clamped - cursor
+        cursor = clamped
+        if delta > 0 {
+            Swift.print(String(repeating: "\u{1B}[C", count: delta), terminator: "")
+        } else {
+            Swift.print(String(repeating: "\u{1B}[D", count: -delta), terminator: "")
+        }
+        fflush(stdout)
+    }
+
+    private func repaint(buffer: String, cursor: Int, from oldCursor: Int? = nil, prefix: String = "") {
+        let redrawStart = oldCursor ?? cursor
+        let suffix = String(buffer.dropFirst(redrawStart))
+        let backtrack = max(0, buffer.count - cursor)
+        Swift.print(prefix + "\u{1B}[K" + suffix + String(repeating: "\u{1B}[D", count: backtrack), terminator: "")
+        fflush(stdout)
+    }
+
+    private func range(in string: String, offset: Int, length: Int) -> Range<String.Index> {
+        let start = string.index(string.startIndex, offsetBy: offset)
+        let end = string.index(start, offsetBy: length)
+        return start..<end
+    }
+
+    private func readByteIfAvailable(fd: Int32, timeoutMicroseconds: Int32) -> UInt8? {
+        var readSet = fd_set()
+        fdZero(&readSet)
+        fdSet(fd, &readSet)
+        var timeout = timeval(tv_sec: 0, tv_usec: timeoutMicroseconds)
+        guard select(fd + 1, &readSet, nil, nil, &timeout) > 0 else { return nil }
+        var byte: UInt8 = 0
+        return Darwin.read(fd, &byte, 1) == 1 ? byte : nil
+    }
+
+    private func isCompleteEscapeSequence(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2 else { return false }
+        if bytes[1] == UInt8(ascii: "O") {
+            return bytes.count >= 3
+        }
+        if bytes[1] == UInt8(ascii: "[") {
+            guard let last = bytes.last else { return false }
+            if (65...90).contains(last) || (97...122).contains(last) || last == UInt8(ascii: "~") {
+                return true
+            }
+        }
+        return bytes.count >= 8
+    }
+
+    private func fdZero(_ set: inout fd_set) {
+        set = fd_set()
+    }
+
+    private func fdSet(_ fd: Int32, _ set: inout fd_set) {
+        let bitsPerField = MemoryLayout<Int32>.size * 8
+        let intOffset = Int(fd) / bitsPerField
+        let bitOffset = Int(fd) % bitsPerField
+        let mask = Int32(1 << bitOffset)
+        switch intOffset {
+        case 0: set.fds_bits.0 |= mask
+        case 1: set.fds_bits.1 |= mask
+        case 2: set.fds_bits.2 |= mask
+        case 3: set.fds_bits.3 |= mask
+        case 4: set.fds_bits.4 |= mask
+        case 5: set.fds_bits.5 |= mask
+        case 6: set.fds_bits.6 |= mask
+        case 7: set.fds_bits.7 |= mask
+        case 8: set.fds_bits.8 |= mask
+        case 9: set.fds_bits.9 |= mask
+        case 10: set.fds_bits.10 |= mask
+        case 11: set.fds_bits.11 |= mask
+        case 12: set.fds_bits.12 |= mask
+        case 13: set.fds_bits.13 |= mask
+        case 14: set.fds_bits.14 |= mask
+        case 15: set.fds_bits.15 |= mask
+        case 16: set.fds_bits.16 |= mask
+        case 17: set.fds_bits.17 |= mask
+        case 18: set.fds_bits.18 |= mask
+        case 19: set.fds_bits.19 |= mask
+        case 20: set.fds_bits.20 |= mask
+        case 21: set.fds_bits.21 |= mask
+        case 22: set.fds_bits.22 |= mask
+        case 23: set.fds_bits.23 |= mask
+        case 24: set.fds_bits.24 |= mask
+        case 25: set.fds_bits.25 |= mask
+        case 26: set.fds_bits.26 |= mask
+        case 27: set.fds_bits.27 |= mask
+        case 28: set.fds_bits.28 |= mask
+        case 29: set.fds_bits.29 |= mask
+        case 30: set.fds_bits.30 |= mask
+        case 31: set.fds_bits.31 |= mask
+        default: break
+        }
+    }
+}
+
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost {
     func print(_ text: String, terminator: String) {
         Swift.print(text, terminator: terminator)
     }
@@ -12,8 +232,23 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost {
     }
 
     func readLine(prompt: String) -> String? {
-        Swift.print(prompt, terminator: "")
-        return Swift.readLine()
+        ShellLineEditor.shared.readLine(prompt: prompt)
+    }
+
+    func screenColumns() -> Int {
+        terminalSize().columns
+    }
+
+    func screenRows() -> Int {
+        terminalSize().rows
+    }
+
+    private func terminalSize() -> (columns: Int, rows: Int) {
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 else {
+            return (80, 25)
+        }
+        return (max(1, Int(size.ws_col)), max(1, Int(size.ws_row)))
     }
 
     func readKey() -> String? {
@@ -41,7 +276,84 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost {
         var byte: UInt8 = 0
         let count = Darwin.read(fd, &byte, 1)
         guard count == 1 else { return nil }
-        return String(bytes: [byte], encoding: .utf8) ?? String(UnicodeScalar(byte))
+        var bytes = [byte]
+        if byte == 27 {
+            while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
+                bytes.append(next)
+                if isCompleteEscapeSequence(bytes) { break }
+            }
+        }
+        return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
+    }
+
+    private func readByteIfAvailable(fd: Int32, timeoutMicroseconds: Int32) -> UInt8? {
+        var readSet = fd_set()
+        fdZero(&readSet)
+        fdSet(fd, &readSet)
+        var timeout = timeval(tv_sec: 0, tv_usec: timeoutMicroseconds)
+        guard select(fd + 1, &readSet, nil, nil, &timeout) > 0 else { return nil }
+        var byte: UInt8 = 0
+        return Darwin.read(fd, &byte, 1) == 1 ? byte : nil
+    }
+
+    private func isCompleteEscapeSequence(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2 else { return false }
+        if bytes[1] == UInt8(ascii: "O") {
+            return bytes.count >= 3
+        }
+        if bytes[1] == UInt8(ascii: "[") {
+            guard let last = bytes.last else { return false }
+            if (65...90).contains(last) || (97...122).contains(last) || last == UInt8(ascii: "~") {
+                return true
+            }
+        }
+        return bytes.count >= 8
+    }
+
+    private func fdZero(_ set: inout fd_set) {
+        set = fd_set()
+    }
+
+    private func fdSet(_ fd: Int32, _ set: inout fd_set) {
+        let bitsPerField = MemoryLayout<Int32>.size * 8
+        let intOffset = Int(fd) / bitsPerField
+        let bitOffset = Int(fd) % bitsPerField
+        let mask = Int32(1 << bitOffset)
+        switch intOffset {
+        case 0: set.fds_bits.0 |= mask
+        case 1: set.fds_bits.1 |= mask
+        case 2: set.fds_bits.2 |= mask
+        case 3: set.fds_bits.3 |= mask
+        case 4: set.fds_bits.4 |= mask
+        case 5: set.fds_bits.5 |= mask
+        case 6: set.fds_bits.6 |= mask
+        case 7: set.fds_bits.7 |= mask
+        case 8: set.fds_bits.8 |= mask
+        case 9: set.fds_bits.9 |= mask
+        case 10: set.fds_bits.10 |= mask
+        case 11: set.fds_bits.11 |= mask
+        case 12: set.fds_bits.12 |= mask
+        case 13: set.fds_bits.13 |= mask
+        case 14: set.fds_bits.14 |= mask
+        case 15: set.fds_bits.15 |= mask
+        case 16: set.fds_bits.16 |= mask
+        case 17: set.fds_bits.17 |= mask
+        case 18: set.fds_bits.18 |= mask
+        case 19: set.fds_bits.19 |= mask
+        case 20: set.fds_bits.20 |= mask
+        case 21: set.fds_bits.21 |= mask
+        case 22: set.fds_bits.22 |= mask
+        case 23: set.fds_bits.23 |= mask
+        case 24: set.fds_bits.24 |= mask
+        case 25: set.fds_bits.25 |= mask
+        case 26: set.fds_bits.26 |= mask
+        case 27: set.fds_bits.27 |= mask
+        case 28: set.fds_bits.28 |= mask
+        case 29: set.fds_bits.29 |= mask
+        case 30: set.fds_bits.30 |= mask
+        case 31: set.fds_bits.31 |= mask
+        default: break
+        }
     }
 
     func loadTextFile(path: String) throws -> String {
@@ -149,6 +461,10 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost {
 
 let host = ConsoleHost()
 let session = BASICSession(host: host, promptTemplate: BASICSession.shellPromptTemplate)
+
+func demoFileName(for name: String) -> String {
+    name.hasSuffix(".bas") ? name : "\(name).bas"
+}
 
 @MainActor
 func runTermKitEditor() {
@@ -355,7 +671,7 @@ if arguments.first == "--demo" {
         exit(1)
     }
     do {
-        session.program.loadSource(source)
+        session.program.loadSource(source, fileName: demoFileName(for: arguments[1]))
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
@@ -372,7 +688,7 @@ if arguments.first == "--demo" {
 
 if let scriptPath = arguments.first {
     do {
-        session.program.loadSource(try host.loadTextFile(path: scriptPath))
+        session.program.loadSource(try host.loadTextFile(path: scriptPath), fileName: scriptPath)
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
@@ -391,8 +707,7 @@ print("AIBasic Shell")
 print("Type HELP for commands. Type QUIT to exit.")
 
 while true {
-    print(session.prompt, terminator: "")
-    guard let line = readLine() else { break }
+    guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()
         continue

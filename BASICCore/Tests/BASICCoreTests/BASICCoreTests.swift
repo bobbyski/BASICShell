@@ -39,6 +39,26 @@ struct BASICCoreTests {
         #expect(host.output == ["ABC"])
     }
 
+    @Test("Exposes host environment variables and file existence")
+    func hostEnvironmentVariablesAndFileExists() {
+        let host = TestHost()
+        host.currentDirectory = "/tmp/aibasic"
+        host.columns = 132
+        host.rows = 43
+        host.files["/tmp/aibasic/posdata/storeinfo.json"] = "{}"
+        let session = BASICSession(host: host)
+
+        session.submit("print currentdir$")
+        session.submit("print screenwidth, screenheight")
+        session.submit("print fileexists(\"posdata/storeinfo.json\")")
+        session.submit("locate 3, 12")
+
+        #expect(host.output == ["/tmp/aibasic", "132           43", "1"])
+        #expect(host.locations.count == 1)
+        #expect(host.locations.first?.0 == 3)
+        #expect(host.locations.first?.1 == 12)
+    }
+
     @Test("Deep left-associative binary chains evaluate without exhausting the Swift stack")
     func deepLeftAssociativeBinaryChainsEvaluateWithoutStackOverflow() {
         let host = TestHost()
@@ -244,7 +264,7 @@ struct BASICCoreTests {
         session.submit("print \"A\";chr$(0);\"B\"")
         session.submit("print len(\"A\" + chr$(0) + \"B\")")
 
-        #expect(host.output == ["AB", "2"])
+        #expect(host.output == ["AB", "3"])
     }
 
     @Test("SELECT CASE supports values ranges comparisons and else")
@@ -866,6 +886,56 @@ struct BASICCoreTests {
         #expect(host.output == ["Ada Lovelace"])
     }
 
+    @Test("INPUT supports prompts and record fields")
+    func inputSupportsPromptsAndRecordFields() {
+        let host = TestHost()
+        host.input = ["Ada Market", "0.075", "true"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Store
+            Name as string
+            Tax as double
+            Enabled as boolean
+        end type
+        let store as Store
+        input "Name: ", store.Name
+        input "Tax rate: ", store.Tax
+        input "Enabled: ", store.Enabled
+        print store.Name
+        print store.Tax
+        print store.Enabled
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada Market", "0.075", "TRUE"])
+    }
+
+    @Test("INPUT# uses record field types")
+    func inputFileUsesRecordFieldTypes() {
+        let host = TestHost()
+        host.files["stores.txt"] = "Ada Market,0.075,true\n"
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Store
+            Name as string
+            Tax as double
+            Enabled as boolean
+        end type
+        let store as Store
+        open "stores.txt" for input as #1
+        input #1, store.Name, store.Tax, store.Enabled
+        close #1
+        print store.Name
+        print store.Tax
+        print store.Enabled
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada Market", "0.075", "TRUE"])
+    }
+
     @Test("INKEY$ reads pending key without blocking")
     func inkeyReadsPendingKeyWithoutBlocking() {
         let host = TestHost()
@@ -880,6 +950,49 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["A", "B", ""])
+    }
+
+    @Test("INKEY$ normalizes special keys in default AIBasic mode")
+    func inkeyNormalizesSpecialKeysInAIBasicMode() {
+        let host = TestHost()
+        host.keys = ["\u{1B}[D", "\u{1B}OP", "\u{1B}[1;2D", "\u{1B}[1;3P", "\u{1B}[25;10~", "\u{1B}[#s", "[GP:A", "\t", "\u{8}", "\u{11}"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print inkey$()
+        print inkey$()
+        print inkey$()
+        print inkey$()
+        print inkey$()
+        print inkey$()
+        print inkey$()
+        print asc(inkey$())
+        print asc(inkey$())
+        print asc(inkey$())
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["[K", "[F1", "[!K", "[#F1", "[!$F13", "[#s", "[GP:A", "9", "8", "17"])
+    }
+
+    @Test("OPTION IBM-KEYS makes INKEY$ return GW-BASIC extended keys")
+    func optionIBMKeysMakesInkeyReturnGWBasicExtendedKeys() {
+        let host = TestHost()
+        host.keys = ["\u{1B}[D", "\u{1B}OP"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        option ibm-keys
+        k$ = inkey$()
+        print len(k$)
+        print asc(mid$(k$, 2, 1))
+        k$ = inkey$()
+        print len(k$)
+        print asc(mid$(k$, 2, 1))
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["2", "75", "2", "59"])
     }
 
     @Test("POS reports the current print column")
@@ -3465,7 +3578,7 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
@@ -3478,6 +3591,9 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var breakAfterOutputCount: Int?
     weak var executionControl: BASICExecutionControl?
     var screenMode: BASICScreenMode?
+    var columns = 80
+    var rows = 25
+    var locations: [(Int, Int)] = []
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
 
@@ -3518,6 +3634,18 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
 
     func readKey() -> String? {
         keys.isEmpty ? nil : keys.removeFirst()
+    }
+
+    func screenColumns() -> Int {
+        columns
+    }
+
+    func screenRows() -> Int {
+        rows
+    }
+
+    func locate(row: Int, column: Int) throws {
+        locations.append((row, column))
     }
 
     func loadTextFile(path: String) throws -> String {

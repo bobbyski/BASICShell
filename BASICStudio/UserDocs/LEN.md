@@ -2,7 +2,7 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen)
 
-Returns the displayed character count for a string, not the byte count. NUL bytes from `CHR$(0)` are not counted. When passed an array, returns the number of elements in the array.
+Returns the stored character count for a string, not the byte count. NUL bytes from `CHR$(0)` are counted even though display output strips them. When passed an array, returns the number of elements in the array.
 
 ```basic
 print len("HELLO")

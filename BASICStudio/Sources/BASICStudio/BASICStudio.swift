@@ -1,6 +1,7 @@
 import BASICCore
 import AppKit
 import CoreText
+import GameController
 import MarkdownUI
 import SwiftUI
 import SwiftTerm
@@ -71,6 +72,14 @@ struct BASICStudioApp: App {
                     model.showFindAndReplace()
                 }
                 .keyboardShortcut("f", modifiers: [.command, .option])
+            }
+
+            CommandMenu("Console") {
+                Toggle("Overwrite Mode", isOn: Binding(
+                    get: { model.isConsoleOverwriteMode },
+                    set: { model.setConsoleOverwriteMode($0) }
+                ))
+                .keyboardShortcut("i", modifiers: [.control])
             }
 
             CommandMenu("Debug") {
@@ -464,6 +473,134 @@ final class StudioInputCoordinator: @unchecked Sendable {
         let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
         condition.unlock()
         return key
+    }
+}
+
+final class StudioConsoleInputState: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var isOverwriteMode = false
+
+    func setOverwriteMode(_ value: Bool) {
+        condition.lock()
+        isOverwriteMode = value
+        condition.unlock()
+    }
+
+    func toggleOverwriteMode() -> Bool {
+        condition.lock()
+        isOverwriteMode.toggle()
+        let value = isOverwriteMode
+        condition.unlock()
+        return value
+    }
+
+    func overwriteMode() -> Bool {
+        condition.lock()
+        let value = isOverwriteMode
+        condition.unlock()
+        return value
+    }
+}
+
+final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
+    private let condition = NSCondition()
+    private var keyBuffer: [String] = []
+    private var configuredControllerIDs: Set<ObjectIdentifier> = []
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidConnect(_:)),
+            name: .GCControllerDidConnect,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidDisconnect(_:)),
+            name: .GCControllerDidDisconnect,
+            object: nil
+        )
+        GCController.controllers().forEach(configure)
+        GCController.startWirelessControllerDiscovery(completionHandler: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        GCController.stopWirelessControllerDiscovery()
+    }
+
+    func readKey() -> String? {
+        GCController.controllers().forEach(configure)
+        condition.lock()
+        let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
+        condition.unlock()
+        return key
+    }
+
+    @objc private func controllerDidConnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController else { return }
+        configure(controller)
+    }
+
+    @objc private func controllerDidDisconnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController else { return }
+        condition.lock()
+        configuredControllerIDs.remove(ObjectIdentifier(controller))
+        condition.unlock()
+    }
+
+    private func configure(_ controller: GCController) {
+        let identifier = ObjectIdentifier(controller)
+        condition.lock()
+        let inserted = configuredControllerIDs.insert(identifier).inserted
+        condition.unlock()
+        guard inserted else { return }
+
+        push("[GP:CONNECTED")
+
+        if let gamepad = controller.extendedGamepad {
+            bind(gamepad.buttonA, "A")
+            bind(gamepad.buttonB, "B")
+            bind(gamepad.buttonX, "X")
+            bind(gamepad.buttonY, "Y")
+            bind(gamepad.leftShoulder, "LEFT_SHOULDER")
+            bind(gamepad.rightShoulder, "RIGHT_SHOULDER")
+            bind(gamepad.leftTrigger, "LEFT_TRIGGER")
+            bind(gamepad.rightTrigger, "RIGHT_TRIGGER")
+            bind(gamepad.dpad.up, "DPAD_UP")
+            bind(gamepad.dpad.down, "DPAD_DOWN")
+            bind(gamepad.dpad.left, "DPAD_LEFT")
+            bind(gamepad.dpad.right, "DPAD_RIGHT")
+            bind(gamepad.leftThumbstick.up, "LEFT_STICK_UP")
+            bind(gamepad.leftThumbstick.down, "LEFT_STICK_DOWN")
+            bind(gamepad.leftThumbstick.left, "LEFT_STICK_LEFT")
+            bind(gamepad.leftThumbstick.right, "LEFT_STICK_RIGHT")
+            bind(gamepad.rightThumbstick.up, "RIGHT_STICK_UP")
+            bind(gamepad.rightThumbstick.down, "RIGHT_STICK_DOWN")
+            bind(gamepad.rightThumbstick.left, "RIGHT_STICK_LEFT")
+            bind(gamepad.rightThumbstick.right, "RIGHT_STICK_RIGHT")
+        } else if let gamepad = controller.microGamepad {
+            bind(gamepad.buttonA, "A")
+            bind(gamepad.buttonX, "X")
+            bind(gamepad.dpad.up, "DPAD_UP")
+            bind(gamepad.dpad.down, "DPAD_DOWN")
+            bind(gamepad.dpad.left, "DPAD_LEFT")
+            bind(gamepad.dpad.right, "DPAD_RIGHT")
+        }
+    }
+
+    private func bind(_ button: GCControllerButtonInput, _ descriptor: String) {
+        button.pressedChangedHandler = { [weak self] _, _, pressed in
+            guard pressed else { return }
+            self?.push("[GP:\(descriptor)")
+        }
+    }
+
+    private func push(_ key: String) {
+        condition.lock()
+        keyBuffer.append(key)
+        condition.unlock()
     }
 }
 
@@ -1358,9 +1495,12 @@ final class StudioModel: ObservableObject {
     @Published var editorFindRequest = 0
     @Published var editorReplaceRequest = 0
     @Published var isProgramRunning = false
+    @Published var isConsoleOverwriteMode = false
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
+    private var liveTerminalColumns = 80
+    private var liveTerminalRows = 25
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
@@ -1409,9 +1549,12 @@ final class StudioModel: ObservableObject {
     private var shouldRunStartupProgram = false
     private var isLoadingSettings = true
     private var currentProgramURL: URL?
+    private var currentProgramFileName: String?
     private let executionQueue = DispatchQueue(label: "AIBasic.Studio.Execution", qos: .userInitiated)
     private var activeExecutionControl: BASICExecutionControl?
     private let inputCoordinator = StudioInputCoordinator()
+    private let consoleInputState = StudioConsoleInputState()
+    private let gamepadInputCoordinator = StudioGamepadInputCoordinator()
 
     private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
 
@@ -1435,11 +1578,13 @@ final class StudioModel: ObservableObject {
         if arguments.first == "--demo", arguments.count >= 2 {
             if let source = Self.bundledDemoSource(named: arguments[1]) {
                 programText = source
+                currentProgramFileName = Self.demoFileName(for: arguments[1])
             }
         } else if let path = arguments.first,
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
             currentProgramURL = URL(fileURLWithPath: expandedPath(path))
+            currentProgramFileName = currentProgramURL?.path
             workingDirectoryURL = currentProgramURL?.deletingLastPathComponent().standardizedFileURL ?? workingDirectoryURL
             shouldRunStartupProgram = true
         }
@@ -1480,6 +1625,11 @@ final class StudioModel: ObservableObject {
         debuggerSelectedCallStackFrameIndex = frame.index
     }
 
+    func updateLiveTerminalSize(columns: Int, rows: Int) {
+        liveTerminalColumns = max(1, columns)
+        liveTerminalRows = max(1, rows)
+    }
+
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
         let location = BASICBreakpointLocation(
             fileName: debuggerFileName,
@@ -1518,6 +1668,7 @@ final class StudioModel: ObservableObject {
             let source = try String(contentsOf: url, encoding: .utf8)
             programText = source
             currentProgramURL = url
+            currentProgramFileName = url.path
             workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
             editorErrorLine = nil
             rebuildProgramFromEditor()
@@ -1539,6 +1690,7 @@ final class StudioModel: ObservableObject {
 
         programText = source
         currentProgramURL = nil
+        currentProgramFileName = Self.demoFileName(for: example.path)
         editorErrorLine = nil
         debuggerExecutionLine = nil
         debuggerBreakpoints = []
@@ -1595,6 +1747,8 @@ final class StudioModel: ObservableObject {
         guard !isProgramRunning else { return }
         _ = session.submit("NEW")
         programText = ""
+        currentProgramURL = nil
+        currentProgramFileName = nil
         consoleText = prompt
         graphics.clear(color: nil)
         graphicsRevision += 1
@@ -1614,6 +1768,17 @@ final class StudioModel: ObservableObject {
         selectedPane = .console
         submitConsoleCommand(trimmed, echo: true)
         command = ""
+    }
+
+    func setConsoleOverwriteMode(_ value: Bool) {
+        consoleInputState.setOverwriteMode(value)
+        isConsoleOverwriteMode = value
+    }
+
+    fileprivate func toggleConsoleOverwriteModeFromTerminal() -> Bool {
+        let value = consoleInputState.toggleOverwriteMode()
+        isConsoleOverwriteMode = value
+        return value
     }
 
     func stopProgram() {
@@ -1674,13 +1839,13 @@ final class StudioModel: ObservableObject {
     }
 
     private func rebuildProgramFromEditor() {
-        session.program.loadSource(programText)
+        session.program.loadSource(programText, fileName: currentProgramFileName)
         updateEditorDiagnostics()
     }
 
     private func updateEditorDiagnostics() {
         let program = BASICProgram()
-        program.loadSource(programText)
+        program.loadSource(programText, fileName: currentProgramFileName)
         editorDiagnostics = BASICInterpreter(program: program, host: self).diagnostics()
     }
 
@@ -1688,6 +1853,7 @@ final class StudioModel: ObservableObject {
         do {
             try programText.write(to: url, atomically: true, encoding: .utf8)
             currentProgramURL = url
+            currentProgramFileName = url.path
             workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
             rebuildProgramFromEditor()
         } catch {
@@ -2080,6 +2246,10 @@ final class StudioModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    private static func demoFileName(for name: String) -> String {
+        name.hasSuffix(".bas") ? name : "\(name).bas"
     }
 
     private static func availableBundledExamples() -> [BundledExample] {
@@ -2586,7 +2756,7 @@ struct UserDoc: Identifiable, Hashable {
 
 extension StudioModel: StudioDebuggerInterface {}
 
-extension StudioModel: BASICHost, BASICKeyboardHost {
+extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost {
     nonisolated func print(_ text: String, terminator: String) {
         runOnMainSync {
             highlightErrorIfPresent(text)
@@ -2609,8 +2779,20 @@ extension StudioModel: BASICHost, BASICKeyboardHost {
         return inputCoordinator.waitForLine()
     }
 
+    nonisolated func screenColumns() -> Int {
+        valueOnMainSync {
+            terminalScreenSize.dimensions?.cols ?? liveTerminalColumns
+        }
+    }
+
+    nonisolated func screenRows() -> Int {
+        valueOnMainSync {
+            terminalScreenSize.dimensions?.rows ?? liveTerminalRows
+        }
+    }
+
     nonisolated func readKey() -> String? {
-        inputCoordinator.readKey()
+        inputCoordinator.readKey() ?? gamepadInputCoordinator.readKey()
     }
 }
 
@@ -2860,6 +3042,7 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
     }
 }
 
+@MainActor
 final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDelegate {
     weak var model: StudioModel?
 
@@ -2871,6 +3054,16 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var renderedFontFamily: String?
     private var renderedFontSize: Double?
     private var inputBuffer = ""
+    private var inputCursor = 0
+    private var keyMonitor: Any?
+
+    deinit {
+        MainActor.assumeIsolated {
+            if let keyMonitor {
+                NSEvent.removeMonitor(keyMonitor)
+            }
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -2890,9 +3083,20 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.configureNativeColors()
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
+        installKeyMonitor()
 
         addSubview(terminalView)
         addSubview(overlayView, positioned: .above, relativeTo: terminalView)
+    }
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            guard event.window === self.window else { return event }
+            guard self.handleProgramKeyEvent(event) else { return event }
+            return nil
+        }
     }
 
     private func applyFont(family: String, size: Double) {
@@ -2929,6 +3133,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             terminalView.getTerminal().resetToInitialState()
             renderedCharacterCount = 0
             inputBuffer = ""
+            inputCursor = 0
         }
 
         if consoleText.count > renderedCharacterCount {
@@ -2949,6 +3154,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         let screenSize = renderedScreenSize ?? .flexible
         if let dimensions = screenSize.dimensions {
             terminalView.getTerminal().resize(cols: dimensions.cols, rows: dimensions.rows)
+            model?.updateLiveTerminalSize(columns: dimensions.cols, rows: dimensions.rows)
             let optimalSize = terminalView.getOptimalFrameSize().size
             let width = min(bounds.width, optimalSize.width)
             let height = min(bounds.height, optimalSize.height)
@@ -2969,6 +3175,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.frame = bounds
         overlayView.frame = bounds
         terminalView.sizeChanged(source: terminalView.getTerminal())
+        let terminal = terminalView.getTerminal()
+        model?.updateLiveTerminalSize(columns: terminal.cols, rows: terminal.rows)
         terminalView.needsDisplay = true
         overlayView.needsDisplay = true
     }
@@ -3001,13 +3209,145 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        model?.updateLiveTerminalSize(columns: newCols, rows: newRows)
+    }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
+           event.charactersIgnoringModifiers?.lowercased() == "i",
+           model?.shouldCaptureTerminalKeyOnly() != true {
+            _ = model?.toggleConsoleOverwriteModeFromTerminal()
+            return true
+        }
+
+        guard model?.shouldCaptureTerminalKeyOnly() == true,
+              let rawKey = Self.rawSpecialKeySequence(from: event)
+        else {
+            return false
+        }
+
+        Task { @MainActor [weak model] in
+            model?.handleTerminalInput([.key(rawKey)])
+        }
+        return true
+    }
+
+    private static func rawSpecialKeySequence(from event: NSEvent) -> String? {
+        guard let characters = event.charactersIgnoringModifiers,
+              let scalar = characters.unicodeScalars.first
+        else {
+            return nil
+        }
+
+        let key = Int(scalar.value)
+        let modifier = modifierParameter(for: event)
+        let escape = "\u{1B}"
+
+        if let modifiedCharacter = modifiedPrintableCharacter(from: event, modifier: modifier) {
+            return "\(escape)[\(modifiedCharacter)"
+        }
+
+        func csi(_ base: String, final: String) -> String {
+            if let modifier {
+                return "\(escape)[\(base);\(modifier)\(final)"
+            }
+            return "\(escape)[\(base)\(final)"
+        }
+
+        func csiFinal(_ final: String) -> String {
+            if let modifier {
+                return "\(escape)[1;\(modifier)\(final)"
+            }
+            return "\(escape)[\(final)"
+        }
+
+        func ss3OrCsi(_ final: String) -> String {
+            if let modifier {
+                return "\(escape)[1;\(modifier)\(final)"
+            }
+            return "\(escape)O\(final)"
+        }
+
+        switch key {
+        case NSUpArrowFunctionKey: return csiFinal("A")
+        case NSDownArrowFunctionKey: return csiFinal("B")
+        case NSRightArrowFunctionKey: return csiFinal("C")
+        case NSLeftArrowFunctionKey: return csiFinal("D")
+        case NSHomeFunctionKey: return csiFinal("H")
+        case NSEndFunctionKey: return csiFinal("F")
+        case NSInsertFunctionKey: return csi("2", final: "~")
+        case NSDeleteFunctionKey: return csi("3", final: "~")
+        case NSPageUpFunctionKey: return csi("5", final: "~")
+        case NSPageDownFunctionKey: return csi("6", final: "~")
+        case NSF1FunctionKey: return ss3OrCsi("P")
+        case NSF2FunctionKey: return ss3OrCsi("Q")
+        case NSF3FunctionKey: return ss3OrCsi("R")
+        case NSF4FunctionKey: return ss3OrCsi("S")
+        case NSF5FunctionKey: return csi("15", final: "~")
+        case NSF6FunctionKey: return csi("17", final: "~")
+        case NSF7FunctionKey: return csi("18", final: "~")
+        case NSF8FunctionKey: return csi("19", final: "~")
+        case NSF9FunctionKey: return csi("20", final: "~")
+        case NSF10FunctionKey: return csi("21", final: "~")
+        case NSF11FunctionKey: return csi("23", final: "~")
+        case NSF12FunctionKey: return csi("24", final: "~")
+        case NSF13FunctionKey: return csi("25", final: "~")
+        case NSF14FunctionKey: return csi("26", final: "~")
+        case NSF15FunctionKey: return csi("28", final: "~")
+        case NSF16FunctionKey: return csi("29", final: "~")
+        case NSF17FunctionKey: return csi("31", final: "~")
+        case NSF18FunctionKey: return csi("32", final: "~")
+        case NSF19FunctionKey: return csi("33", final: "~")
+        case NSF20FunctionKey: return csi("34", final: "~")
+        case NSF21FunctionKey: return csi("35", final: "~")
+        case NSF22FunctionKey: return csi("36", final: "~")
+        default: return nil
+        }
+    }
+
+    private static func modifiedPrintableCharacter(from event: NSEvent, modifier: Int?) -> String? {
+        guard let modifier,
+              let characters = event.charactersIgnoringModifiers,
+              characters.count == 1,
+              let character = characters.first,
+              character.unicodeScalars.allSatisfy({ (32...126).contains(Int($0.value)) })
+        else {
+            return nil
+        }
+
+        switch modifier {
+        case 3: return "#\(character)"
+        case 4: return "!#\(character)"
+        default: return nil
+        }
+    }
+
+    private static func modifierParameter(for event: NSEvent) -> Int? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let shift = flags.contains(.shift)
+        let option = flags.contains(.option)
+        let command = flags.contains(.command)
+
+        switch (shift, option, command) {
+        case (false, false, false): return nil
+        case (true, false, false): return 2
+        case (false, true, false): return 3
+        case (true, true, false): return 4
+        case (false, false, true): return 9
+        case (true, false, true): return 10
+        case (false, true, true): return 11
+        case (true, true, true): return 12
+        }
+    }
+
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         var operations: [TerminalInputOperation] = []
+        var iterator = Array(data).makeIterator()
 
-        for byte in data {
+        while let byte = iterator.next() {
             switch byte {
             case 10, 13:
                 if model?.shouldCaptureTerminalKeyOnly() == true {
@@ -3015,20 +3355,44 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 } else {
                     let command = inputBuffer
                     inputBuffer = ""
+                    inputCursor = 0
                     operations.append(.submit(command))
                 }
+            case 9:
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    operations.append(.key("\t"))
+                } else {
+                    appendText("\t", to: &operations)
+                }
             case 8, 127:
-                guard !inputBuffer.isEmpty else { continue }
-                inputBuffer.removeLast()
-                operations.append(.append("\u{1B}[D \u{1B}[D"))
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    operations.append(.key(BASICRawKey.backspace))
+                } else {
+                    backspace(in: &operations)
+                }
+            case 1...31:
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    operations.append(.key(String(UnicodeScalar(byte))))
+                }
             case 32...126:
                 let scalar = UnicodeScalar(byte)
                 let character = String(Character(scalar))
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key(character))
                 } else {
-                    inputBuffer.append(character)
-                    operations.append(.append(character))
+                    appendText(character, to: &operations)
+                }
+            case 27:
+                var bytes = [byte]
+                while let next = iterator.next() {
+                    bytes.append(next)
+                    if isCompleteEscapeSequence(bytes) { break }
+                }
+                if model?.shouldCaptureTerminalKeyOnly() == true {
+                    let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
+                    operations.append(.key(raw))
+                } else if let raw = String(bytes: bytes, encoding: .utf8) {
+                    handleEditingEscape(raw, operations: &operations)
                 }
             default:
                 break
@@ -3040,9 +3404,85 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             model?.handleTerminalInput(operations)
         }
     }
+
+    private func appendText(_ text: String, to operations: inout [TerminalInputOperation]) {
+        guard !text.isEmpty else { return }
+        let textCount = text.count
+        if model?.isConsoleOverwriteMode == true, inputCursor < inputBuffer.count {
+            inputBuffer.removeSubrange(range(offset: inputCursor, length: min(textCount, inputBuffer.count - inputCursor)))
+        }
+        inputBuffer.insert(contentsOf: text, at: inputBuffer.index(inputBuffer.startIndex, offsetBy: inputCursor))
+        let targetCursor = inputCursor + textCount
+        operations.append(.append(redrawInputFromCursor(targetCursor: targetCursor)))
+        inputCursor = targetCursor
+    }
+
+    private func backspace(in operations: inout [TerminalInputOperation]) {
+        guard inputCursor > 0 else { return }
+        inputCursor -= 1
+        inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
+        operations.append(.append("\u{1B}[D" + redrawInputFromCursor(targetCursor: inputCursor)))
+    }
+
+    private func deleteForward(in operations: inout [TerminalInputOperation]) {
+        guard inputCursor < inputBuffer.count else { return }
+        inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
+        operations.append(.append(redrawInputFromCursor(targetCursor: inputCursor)))
+    }
+
+    private func moveInputCursor(to newCursor: Int, operations: inout [TerminalInputOperation]) {
+        let clamped = min(max(newCursor, 0), inputBuffer.count)
+        guard clamped != inputCursor else { return }
+        let delta = clamped - inputCursor
+        inputCursor = clamped
+        if delta > 0 {
+            operations.append(.append(String(repeating: "\u{1B}[C", count: delta)))
+        } else {
+            operations.append(.append(String(repeating: "\u{1B}[D", count: -delta)))
+        }
+    }
+
+    private func handleEditingEscape(_ raw: String, operations: inout [TerminalInputOperation]) {
+        let key = BASICKeyNormalizer.normalize(raw)
+        switch key {
+        case "[K": moveInputCursor(to: inputCursor - 1, operations: &operations)
+        case "[M": moveInputCursor(to: inputCursor + 1, operations: &operations)
+        case "[G": moveInputCursor(to: 0, operations: &operations)
+        case "[O": moveInputCursor(to: inputBuffer.count, operations: &operations)
+        case "[S": deleteForward(in: &operations)
+        case "[R": _ = model?.toggleConsoleOverwriteModeFromTerminal()
+        default: break
+        }
+    }
+
+    private func redrawInputFromCursor(targetCursor: Int) -> String {
+        let suffix = String(inputBuffer.dropFirst(inputCursor))
+        let backtrack = max(0, inputBuffer.count - targetCursor)
+        return "\u{1B}[K" + suffix + String(repeating: "\u{1B}[D", count: backtrack)
+    }
+
+    private func range(offset: Int, length: Int) -> Range<String.Index> {
+        let start = inputBuffer.index(inputBuffer.startIndex, offsetBy: offset)
+        let end = inputBuffer.index(start, offsetBy: length)
+        return start..<end
+    }
     func scrolled(source: TerminalView, position: Double) {}
     func bell(source: TerminalView) {}
     func clipboardCopy(source: TerminalView, content: Data) {}
+
+    private func isCompleteEscapeSequence(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2 else { return false }
+        if bytes[1] == UInt8(ascii: "O") {
+            return bytes.count >= 3
+        }
+        if bytes[1] == UInt8(ascii: "[") {
+            guard let last = bytes.last else { return false }
+            if (65...90).contains(last) || (97...122).contains(last) || last == UInt8(ascii: "~") {
+                return true
+            }
+        }
+        return bytes.count >= 8
+    }
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
