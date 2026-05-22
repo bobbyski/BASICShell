@@ -886,6 +886,108 @@ struct BASICCoreTests {
         #expect(host.output == ["Ada Lovelace"])
     }
 
+    @Test("LINE INPUT EXITVAR returns special key and keeps typed text")
+    func lineInputExitVarReturnsSpecialKey() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada", exitKey: "[P")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input "Name: "; name$ exitvar key$
+        print name$
+        print key$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada", "[P"])
+    }
+
+    @Test("LINE INPUT EXITVAR clears exit variable on normal enter")
+    func lineInputExitVarClearsOnNormalEnter() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        key$ = "OLD"
+        line input name$ exitvar key$
+        print name$
+        print key$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada", ""])
+    }
+
+    @Test("LINE INPUT EXITVAR can assign record fields")
+    func lineInputExitVarAssignsRecordFields() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada", exitKey: "[F1]")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Person
+            Name as string
+            ExitKey as string
+        end type
+        dim p as Person
+        line input p.Name exitvar p.ExitKey
+        print p.Name
+        print p.ExitKey
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada", "[F1]"])
+    }
+
+    @Test("LINE INPUT LENGTH and MAX pass field options to host")
+    func lineInputLengthAndMaxPassOptions() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada Lovelace")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input "Name: "; name$ length 8 max 20
+        print name$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada Lovelace"])
+        #expect(host.lineInputOptions == [BASICLineInputOptions(fieldLength: 8, maxLength: 20)])
+    }
+
+    @Test("LINE INPUT MAX truncates host result")
+    func lineInputMaxTruncatesResult() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada Lovelace")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input name$ max 3
+        print name$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada"])
+    }
+
+    @Test("LINE INPUT options can appear around EXITVAR")
+    func lineInputOptionsCanAppearAroundExitVar() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "Ada", exitKey: "[P]")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input name$ length 5 exitvar key$ max 10
+        print name$
+        print key$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Ada", "[P]"])
+        #expect(host.lineInputOptions == [BASICLineInputOptions(fieldLength: 5, maxLength: 10)])
+    }
+
     @Test("INPUT supports prompts and record fields")
     func inputSupportsPromptsAndRecordFields() {
         let host = TestHost()
@@ -3578,11 +3680,13 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
     var input: [String] = []
+    var lineInputResults: [BASICLineInputResult] = []
+    var lineInputOptions: [BASICLineInputOptions] = []
     var keys: [String] = []
     var files: [String: String] = [:]
     var currentDirectory = "."
@@ -3630,6 +3734,18 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
 
     func readLine(prompt: String) -> String? {
         input.isEmpty ? nil : input.removeFirst()
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult? {
+        if !lineInputResults.isEmpty {
+            return lineInputResults.removeFirst()
+        }
+        return readLine(prompt: prompt).map { BASICLineInputResult(text: $0) }
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
+        lineInputOptions.append(options)
+        return readLine(prompt: prompt, exitOnSpecialKey: exitOnSpecialKey)
     }
 
     func readKey() -> String? {

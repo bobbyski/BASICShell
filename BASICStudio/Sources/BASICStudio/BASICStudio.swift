@@ -402,6 +402,7 @@ struct BundledExample: Identifiable, Hashable {
 fileprivate enum TerminalInputOperation {
     case append(String)
     case submit(String)
+    case lineInputExit(String, String)
     case key(String)
 }
 
@@ -410,24 +411,40 @@ final class StudioInputCoordinator: @unchecked Sendable {
     private var isAwaitingLine = false
     private var isProgramRunning = false
     private var submittedLine: String?
+    private var submittedExitKey: String?
+    private var exitLineInputOnSpecialKey = false
+    private var lineInputOptions = BASICLineInputOptions()
     private var keyBuffer: [String] = []
 
-    func beginLineInput() {
+    func beginLineInput(exitOnSpecialKey: Bool = false) {
+        beginLineInput(exitOnSpecialKey: exitOnSpecialKey, options: BASICLineInputOptions())
+    }
+
+    func beginLineInput(exitOnSpecialKey: Bool = false, options: BASICLineInputOptions) {
         condition.lock()
         isAwaitingLine = true
         submittedLine = nil
+        submittedExitKey = nil
+        exitLineInputOnSpecialKey = exitOnSpecialKey
+        lineInputOptions = options
         condition.unlock()
     }
 
     func waitForLine() -> String? {
+        waitForLineInput()?.text
+    }
+
+    func waitForLineInput() -> BASICLineInputResult? {
         condition.lock()
         while isAwaitingLine {
             condition.wait()
         }
         let line = submittedLine
+        let exitKey = submittedExitKey
         submittedLine = nil
+        submittedExitKey = nil
         condition.unlock()
-        return line
+        return line.map { BASICLineInputResult(text: $0, exitKey: exitKey) }
     }
 
     func submitLine(_ line: String) {
@@ -437,6 +454,24 @@ final class StudioInputCoordinator: @unchecked Sendable {
             return
         }
         submittedLine = line
+        submittedExitKey = nil
+        exitLineInputOnSpecialKey = false
+        lineInputOptions = BASICLineInputOptions()
+        isAwaitingLine = false
+        condition.signal()
+        condition.unlock()
+    }
+
+    func submitLineInputExit(line: String, key: String) {
+        condition.lock()
+        guard isAwaitingLine, exitLineInputOnSpecialKey else {
+            condition.unlock()
+            return
+        }
+        submittedLine = line
+        submittedExitKey = key
+        exitLineInputOnSpecialKey = false
+        lineInputOptions = BASICLineInputOptions()
         isAwaitingLine = false
         condition.signal()
         condition.unlock()
@@ -445,6 +480,20 @@ final class StudioInputCoordinator: @unchecked Sendable {
     func awaitingLineInput() -> Bool {
         condition.lock()
         let value = isAwaitingLine
+        condition.unlock()
+        return value
+    }
+
+    func shouldExitLineInputOnSpecialKey() -> Bool {
+        condition.lock()
+        let value = isAwaitingLine && exitLineInputOnSpecialKey
+        condition.unlock()
+        return value
+    }
+
+    func activeLineInputOptions() -> BASICLineInputOptions {
+        condition.lock()
+        let value = isAwaitingLine ? lineInputOptions : BASICLineInputOptions()
         condition.unlock()
         return value
     }
@@ -1828,6 +1877,13 @@ final class StudioModel: ObservableObject {
                     consoleText += "\n"
                     submitConsoleCommand(command, echo: false)
                 }
+            case .lineInputExit(let line, let key):
+                if inputCoordinator.awaitingLineInput() {
+                    consoleText += "\n"
+                    inputCoordinator.submitLineInputExit(line: line, key: key)
+                } else {
+                    inputCoordinator.pushKey(key)
+                }
             case .key(let text):
                 inputCoordinator.pushKey(text)
             }
@@ -1836,6 +1892,14 @@ final class StudioModel: ObservableObject {
 
     nonisolated fileprivate func shouldCaptureTerminalKeyOnly() -> Bool {
         inputCoordinator.shouldCaptureKeyOnly()
+    }
+
+    nonisolated fileprivate func shouldExitLineInputOnSpecialKey() -> Bool {
+        inputCoordinator.shouldExitLineInputOnSpecialKey()
+    }
+
+    nonisolated fileprivate func activeLineInputOptions() -> BASICLineInputOptions {
+        inputCoordinator.activeLineInputOptions()
     }
 
     private func rebuildProgramFromEditor() {
@@ -2756,7 +2820,7 @@ struct UserDoc: Identifiable, Hashable {
 
 extension StudioModel: StudioDebuggerInterface {}
 
-extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost {
+extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
     nonisolated func print(_ text: String, terminator: String) {
         runOnMainSync {
             highlightErrorIfPresent(text)
@@ -2777,6 +2841,25 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost {
             appendConsoleOutput(prompt, terminator: "")
         }
         return inputCoordinator.waitForLine()
+    }
+
+    nonisolated func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult? {
+        inputCoordinator.beginLineInput(exitOnSpecialKey: exitOnSpecialKey)
+        runOnMainSync {
+            appendConsoleOutput(prompt, terminator: "")
+        }
+        return inputCoordinator.waitForLineInput()
+    }
+
+    nonisolated func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
+        inputCoordinator.beginLineInput(exitOnSpecialKey: exitOnSpecialKey, options: options)
+        runOnMainSync {
+            appendConsoleOutput(prompt, terminator: "")
+            if let length = options.fieldLength {
+                appendConsoleOutput(String(repeating: " ", count: length) + String(repeating: "\u{1B}[D", count: length), terminator: "")
+            }
+        }
+        return inputCoordinator.waitForLineInput()
     }
 
     nonisolated func screenColumns() -> Int {
@@ -3055,6 +3138,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var renderedFontSize: Double?
     private var inputBuffer = ""
     private var inputCursor = 0
+    private var inputFieldViewStart = 0
+    private var inputFieldDisplayCursor = 0
     private var keyMonitor: Any?
 
     deinit {
@@ -3356,11 +3441,18 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                     let command = inputBuffer
                     inputBuffer = ""
                     inputCursor = 0
+                    resetInputFieldState()
                     operations.append(.submit(command))
                 }
             case 9:
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key("\t"))
+                } else if model?.shouldExitLineInputOnSpecialKey() == true {
+                    let command = inputBuffer
+                    inputBuffer = ""
+                    inputCursor = 0
+                    resetInputFieldState()
+                    operations.append(.lineInputExit(command, "\t"))
                 } else {
                     appendText("\t", to: &operations)
                 }
@@ -3391,6 +3483,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
                     operations.append(.key(raw))
+                } else if model?.shouldExitLineInputOnSpecialKey() == true {
+                    let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
+                    let command = inputBuffer
+                    inputBuffer = ""
+                    inputCursor = 0
+                    resetInputFieldState()
+                    operations.append(.lineInputExit(command, BASICKeyNormalizer.normalize(raw)))
                 } else if let raw = String(bytes: bytes, encoding: .utf8) {
                     handleEditingEscape(raw, operations: &operations)
                 }
@@ -3408,6 +3507,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func appendText(_ text: String, to operations: inout [TerminalInputOperation]) {
         guard !text.isEmpty else { return }
         let textCount = text.count
+        let options = model?.activeLineInputOptions() ?? BASICLineInputOptions()
+        let replacedCount = model?.isConsoleOverwriteMode == true && inputCursor < inputBuffer.count ? min(textCount, inputBuffer.count - inputCursor) : 0
+        if let maxLength = options.maxLength, inputBuffer.count - replacedCount + textCount > maxLength {
+            return
+        }
         if model?.isConsoleOverwriteMode == true, inputCursor < inputBuffer.count {
             inputBuffer.removeSubrange(range(offset: inputCursor, length: min(textCount, inputBuffer.count - inputCursor)))
         }
@@ -3421,7 +3525,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         guard inputCursor > 0 else { return }
         inputCursor -= 1
         inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
-        operations.append(.append("\u{1B}[D" + redrawInputFromCursor(targetCursor: inputCursor)))
+        if model?.activeLineInputOptions().fieldLength != nil {
+            operations.append(.append(redrawInputFromCursor(targetCursor: inputCursor)))
+        } else {
+            operations.append(.append("\u{1B}[D" + redrawInputFromCursor(targetCursor: inputCursor)))
+        }
     }
 
     private func deleteForward(in operations: inout [TerminalInputOperation]) {
@@ -3433,6 +3541,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func moveInputCursor(to newCursor: Int, operations: inout [TerminalInputOperation]) {
         let clamped = min(max(newCursor, 0), inputBuffer.count)
         guard clamped != inputCursor else { return }
+        if model?.activeLineInputOptions().fieldLength != nil {
+            inputCursor = clamped
+            operations.append(.append(redrawInputFromCursor(targetCursor: inputCursor)))
+            return
+        }
         let delta = clamped - inputCursor
         inputCursor = clamped
         if delta > 0 {
@@ -3456,9 +3569,37 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func redrawInputFromCursor(targetCursor: Int) -> String {
+        if let fieldLength = model?.activeLineInputOptions().fieldLength {
+            ensureInputFieldViewContains(cursor: targetCursor, fieldLength: fieldLength)
+            let visible = visibleInputField(fieldLength: fieldLength)
+            let displayCursor = targetCursor - inputFieldViewStart
+            let output = String(repeating: "\u{1B}[D", count: inputFieldDisplayCursor)
+                + visible
+                + String(repeating: "\u{1B}[D", count: max(0, fieldLength - displayCursor))
+            inputFieldDisplayCursor = displayCursor
+            return output
+        }
         let suffix = String(inputBuffer.dropFirst(inputCursor))
         let backtrack = max(0, inputBuffer.count - targetCursor)
         return "\u{1B}[K" + suffix + String(repeating: "\u{1B}[D", count: backtrack)
+    }
+
+    private func resetInputFieldState() {
+        inputFieldViewStart = 0
+        inputFieldDisplayCursor = 0
+    }
+
+    private func ensureInputFieldViewContains(cursor: Int, fieldLength: Int) {
+        if cursor < inputFieldViewStart {
+            inputFieldViewStart = cursor
+        } else if cursor > inputFieldViewStart + fieldLength {
+            inputFieldViewStart = cursor - fieldLength
+        }
+    }
+
+    private func visibleInputField(fieldLength: Int) -> String {
+        let visible = String(inputBuffer.dropFirst(inputFieldViewStart).prefix(fieldLength))
+        return visible + String(repeating: " ", count: max(0, fieldLength - visible.count))
     }
 
     private func range(offset: Int, length: Int) -> Range<String.Index> {

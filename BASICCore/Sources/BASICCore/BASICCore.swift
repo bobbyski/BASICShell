@@ -2036,6 +2036,34 @@ public protocol BASICHost: AnyObject {
     func readLine(prompt: String) -> String?
 }
 
+public struct BASICLineInputResult: Equatable, Sendable {
+    public let text: String
+    public let exitKey: String?
+
+    public init(text: String, exitKey: String? = nil) {
+        self.text = text
+        self.exitKey = exitKey
+    }
+}
+
+public struct BASICLineInputOptions: Equatable, Sendable {
+    public let fieldLength: Int?
+    public let maxLength: Int?
+
+    public init(fieldLength: Int? = nil, maxLength: Int? = nil) {
+        self.fieldLength = fieldLength
+        self.maxLength = maxLength
+    }
+}
+
+public protocol BASICLineInputHost: BASICHost {
+    func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult?
+}
+
+public protocol BASICConfiguredLineInputHost: BASICLineInputHost {
+    func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult?
+}
+
 public protocol BASICFileHost: BASICHost {
     func loadTextFile(path: String) throws -> String
     func saveTextFile(path: String, text: String) throws
@@ -3860,10 +3888,30 @@ public final class BASICInterpreter {
             let raw = host?.readLine(prompt: promptText) ?? ""
             try assignReadValue(try inputValue(from: raw, to: target), to: target)
             return .next
-        case .lineInput(let prompt, let target):
+        case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength):
             let promptText = try prompt.map(string) ?? ""
-            let raw = host?.readLine(prompt: promptText) ?? ""
-            try assignReadValue(.string(BASICString(raw)), to: target)
+            let length = try fieldLength.map(integer)
+            let maximum = try maxLength.map(integer)
+            if let length, length <= 0 {
+                throw BASICError.runtime("LINE INPUT LENGTH must be greater than zero")
+            }
+            if let maximum, maximum < 0 {
+                throw BASICError.runtime("LINE INPUT MAX must be zero or greater")
+            }
+            let options = BASICLineInputOptions(fieldLength: length, maxLength: maximum)
+            let result: BASICLineInputResult
+            if let lineInputHost = host as? BASICConfiguredLineInputHost {
+                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: exitTarget != nil, options: options) ?? BASICLineInputResult(text: "")
+            } else if exitTarget != nil, let lineInputHost = host as? BASICLineInputHost {
+                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: true) ?? BASICLineInputResult(text: "")
+            } else {
+                result = BASICLineInputResult(text: host?.readLine(prompt: promptText) ?? "")
+            }
+            let text = maximum.map { String(result.text.prefix($0)) } ?? result.text
+            try assignReadValue(.string(BASICString(text)), to: target)
+            if let exitTarget {
+                try assignReadValue(.string(BASICString(result.exitKey ?? "")), to: exitTarget)
+            }
             outputColumn = 0
             return .next
         case .openFile(let path, let mode, let number):
@@ -6292,7 +6340,7 @@ private indirect enum Statement: Equatable {
     case optionLetMode(LetMode)
     case optionKeyMode(BASICKeyMode)
     case input(prompt: Expression?, target: ReadTarget)
-    case lineInput(prompt: Expression?, target: ReadTarget)
+    case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
     case closeFile(Expression?)
     case putFile(number: Expression, parts: [PrintPart])
@@ -7322,7 +7370,25 @@ private struct Parser {
         } else {
             prompt = nil
         }
-        return .lineInput(prompt: prompt, target: try parseFileTarget())
+        let target = try parseFileTarget()
+        var exitTarget: ReadTarget?
+        var fieldLength: Expression?
+        var maxLength: Expression?
+        while !isStatementEnd {
+            if matchIdentifier("EXITVAR") {
+                guard exitTarget == nil else { throw syntax("Duplicate EXITVAR in LINE INPUT") }
+                exitTarget = try parseFileTarget()
+            } else if matchIdentifier("LENGTH") {
+                guard fieldLength == nil else { throw syntax("Duplicate LENGTH in LINE INPUT") }
+                fieldLength = try parseExpression()
+            } else if matchIdentifier("MAX") {
+                guard maxLength == nil else { throw syntax("Duplicate MAX in LINE INPUT") }
+                maxLength = try parseExpression()
+            } else {
+                throw syntax("Expected EXITVAR, LENGTH, or MAX in LINE INPUT")
+            }
+        }
+        return .lineInput(prompt: prompt, target: target, exitTarget: exitTarget, fieldLength: fieldLength, maxLength: maxLength)
     }
 
     private mutating func parseUsingClause() throws -> (format: Expression, values: [Expression], trailingSeparator: PrintSeparator?) {

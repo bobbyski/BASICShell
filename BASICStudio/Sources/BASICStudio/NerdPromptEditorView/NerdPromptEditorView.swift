@@ -751,9 +751,20 @@ private extension Array {
     }
 }
 
-#Preview {
-    @Previewable @State var prompt = BASICSession.nerdFontPromptTemplate
-    NerdPromptEditorView(promptTemplate: $prompt)
-        .frame(width: 720, height: 460)
-        .padding()
+#if DEBUG
+private struct NerdPromptEditorView_Previews: PreviewProvider {
+    private struct PreviewContainer: View {
+        @State var prompt = BASICSession.nerdFontPromptTemplate
+
+        var body: some View {
+            NerdPromptEditorView(promptTemplate: $prompt)
+                .frame(width: 720, height: 460)
+                .padding()
+        }
+    }
+
+    static var previews: some View {
+        PreviewContainer()
+    }
 }
+#endif

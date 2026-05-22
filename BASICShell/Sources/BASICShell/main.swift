@@ -6,18 +6,30 @@ final class ShellLineEditor: @unchecked Sendable {
     static let shared = ShellLineEditor()
 
     private var isOverwriteMode = false
+    private var fieldLength: Int?
+    private var maxLength: Int?
+    private var fieldViewStart = 0
+    private var fieldDisplayCursor = 0
 
     func readLine(prompt: String) -> String? {
+        readLine(prompt: prompt, exitOnSpecialKey: false)?.text
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult? {
+        readLine(prompt: prompt, exitOnSpecialKey: exitOnSpecialKey, options: BASICLineInputOptions())
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
         let fd = STDIN_FILENO
         guard isatty(fd) == 1 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine()
+            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
         }
 
         var originalTermios = termios()
         guard tcgetattr(fd, &originalTermios) == 0 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine()
+            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
         }
 
         var rawTermios = originalTermios
@@ -26,7 +38,7 @@ final class ShellLineEditor: @unchecked Sendable {
         rawTermios.c_cc.17 = 0
         guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine()
+            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
         }
         defer {
             var restored = originalTermios
@@ -34,6 +46,13 @@ final class ShellLineEditor: @unchecked Sendable {
         }
 
         Swift.print(prompt, terminator: "")
+        fieldLength = options.fieldLength
+        maxLength = options.maxLength
+        fieldViewStart = 0
+        fieldDisplayCursor = 0
+        if let fieldLength {
+            Swift.print(String(repeating: " ", count: fieldLength) + String(repeating: "\u{1B}[D", count: fieldLength), terminator: "")
+        }
         fflush(stdout)
 
         var buffer = ""
@@ -43,7 +62,7 @@ final class ShellLineEditor: @unchecked Sendable {
             guard let raw = readRawKey(fd: fd) else { return nil }
             if raw == "\r" || raw == "\n" {
                 Swift.print()
-                return buffer
+                return BASICLineInputResult(text: buffer)
             }
 
             if raw == "\u{4}", buffer.isEmpty {
@@ -55,10 +74,14 @@ final class ShellLineEditor: @unchecked Sendable {
                 Swift.print("^C")
                 buffer = ""
                 cursor = 0
-                return ""
+                return BASICLineInputResult(text: "")
             }
 
             if raw == "\t" {
+                if exitOnSpecialKey {
+                    Swift.print()
+                    return BASICLineInputResult(text: buffer, exitKey: raw)
+                }
                 isOverwriteMode.toggle()
                 continue
             }
@@ -72,6 +95,10 @@ final class ShellLineEditor: @unchecked Sendable {
             }
 
             if raw.first == Character(BASICRawKey.escape) {
+                if exitOnSpecialKey {
+                    Swift.print()
+                    return BASICLineInputResult(text: buffer, exitKey: BASICKeyNormalizer.normalize(raw))
+                }
                 handleEscape(raw, buffer: &buffer, cursor: &cursor)
                 continue
             }
@@ -97,6 +124,10 @@ final class ShellLineEditor: @unchecked Sendable {
 
     private func insert(_ text: String, into buffer: inout String, cursor: inout Int) {
         let textCount = text.count
+        let replacedCount = isOverwriteMode && cursor < buffer.count ? min(textCount, buffer.count - cursor) : 0
+        if let maxLength, buffer.count - replacedCount + textCount > maxLength {
+            return
+        }
         if isOverwriteMode, cursor < buffer.count {
             buffer.removeSubrange(range(in: buffer, offset: cursor, length: min(textCount, buffer.count - cursor)))
         }
@@ -109,10 +140,10 @@ final class ShellLineEditor: @unchecked Sendable {
     private func handleEscape(_ raw: String, buffer: inout String, cursor: inout Int) {
         let key = BASICKeyNormalizer.normalize(raw)
         switch key {
-        case "[K": moveCursor(to: cursor - 1, cursor: &cursor, bufferCount: buffer.count)
-        case "[M": moveCursor(to: cursor + 1, cursor: &cursor, bufferCount: buffer.count)
-        case "[G": moveCursor(to: 0, cursor: &cursor, bufferCount: buffer.count)
-        case "[O": moveCursor(to: buffer.count, cursor: &cursor, bufferCount: buffer.count)
+        case "[K": moveCursor(to: cursor - 1, cursor: &cursor, buffer: buffer)
+        case "[M": moveCursor(to: cursor + 1, cursor: &cursor, buffer: buffer)
+        case "[G": moveCursor(to: 0, cursor: &cursor, buffer: buffer)
+        case "[O": moveCursor(to: buffer.count, cursor: &cursor, buffer: buffer)
         case "[S":
             guard cursor < buffer.count else { return }
             buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
@@ -124,9 +155,15 @@ final class ShellLineEditor: @unchecked Sendable {
         }
     }
 
-    private func moveCursor(to newCursor: Int, cursor: inout Int, bufferCount: Int) {
+    private func moveCursor(to newCursor: Int, cursor: inout Int, buffer: String) {
+        let bufferCount = buffer.count
         let clamped = min(max(newCursor, 0), bufferCount)
         guard clamped != cursor else { return }
+        if fieldLength != nil {
+            cursor = clamped
+            repaint(buffer: buffer, cursor: cursor)
+            return
+        }
         let delta = clamped - cursor
         cursor = clamped
         if delta > 0 {
@@ -138,11 +175,42 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 
     private func repaint(buffer: String, cursor: Int, from oldCursor: Int? = nil, prefix: String = "") {
+        if let fieldLength {
+            ensureFieldViewContains(cursor: cursor, fieldLength: fieldLength)
+            let visible = visibleField(buffer: buffer, fieldLength: fieldLength)
+            let displayCursor = cursor - fieldViewStart
+            Swift.print(
+                String(repeating: "\u{1B}[D", count: fieldDisplayCursor)
+                + visible
+                + String(repeating: "\u{1B}[D", count: max(0, fieldLength - displayCursor)),
+                terminator: ""
+            )
+            fieldDisplayCursor = displayCursor
+            fflush(stdout)
+            return
+        }
         let redrawStart = oldCursor ?? cursor
         let suffix = String(buffer.dropFirst(redrawStart))
         let backtrack = max(0, buffer.count - cursor)
         Swift.print(prefix + "\u{1B}[K" + suffix + String(repeating: "\u{1B}[D", count: backtrack), terminator: "")
         fflush(stdout)
+    }
+
+    private func limited(_ value: String, maxLength: Int?) -> String {
+        maxLength.map { String(value.prefix($0)) } ?? value
+    }
+
+    private func ensureFieldViewContains(cursor: Int, fieldLength: Int) {
+        if cursor < fieldViewStart {
+            fieldViewStart = cursor
+        } else if cursor > fieldViewStart + fieldLength {
+            fieldViewStart = cursor - fieldLength
+        }
+    }
+
+    private func visibleField(buffer: String, fieldLength: Int) -> String {
+        let visible = String(buffer.dropFirst(fieldViewStart).prefix(fieldLength))
+        return visible + String(repeating: " ", count: max(0, fieldLength - visible.count))
     }
 
     private func range(in string: String, offset: Int, length: Int) -> Range<String.Index> {
@@ -222,7 +290,7 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
     func print(_ text: String, terminator: String) {
         Swift.print(text, terminator: terminator)
     }
@@ -233,6 +301,14 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASI
 
     func readLine(prompt: String) -> String? {
         ShellLineEditor.shared.readLine(prompt: prompt)
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult? {
+        ShellLineEditor.shared.readLine(prompt: prompt, exitOnSpecialKey: exitOnSpecialKey)
+    }
+
+    func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
+        ShellLineEditor.shared.readLine(prompt: prompt, exitOnSpecialKey: exitOnSpecialKey, options: options)
     }
 
     func screenColumns() -> Int {
