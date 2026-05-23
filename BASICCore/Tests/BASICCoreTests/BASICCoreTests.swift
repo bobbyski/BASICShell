@@ -2777,6 +2777,71 @@ struct BASICCoreTests {
         #expect(host.output == ["Grace", "17", "98.5"])
     }
 
+    @Test("REFLECT returns metadata and system tags for record fields")
+    func reflectReturnsMetadataAndSystemTagsForRecordFields() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type StoreInfo
+            Name as string json name "name" meta { label: "Store name", width: 40, required: true, "display-key": "store.name" }
+            TaxRate as double meta { decimals: 3 }
+        end type
+        dim store as StoreInfo
+        meta = reflect(store.Name)
+        print meta("name")
+        print meta("type")
+        print meta("parent")
+        print meta("path")
+        print meta("label")
+        print meta("width")
+        print meta("required")
+        print meta("display-key")
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "Name",
+            "STRING",
+            "store",
+            "store.Name",
+            "Store name",
+            "40",
+            "TRUE",
+            "store.name"
+        ])
+    }
+
+    @Test("REFLECT returns non-empty metadata for scalars and indexed variables")
+    func reflectReturnsNonEmptyMetadataForScalarsAndIndexedVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        count% = 7
+        dim scores(2) as integer
+        scalarMeta = reflect(count%)
+        indexedMeta = reflect(scores(1))
+        arrayMeta = reflect(scores)
+        print scalarMeta("name")
+        print scalarMeta("type")
+        print indexedMeta("name")
+        print indexedMeta("type")
+        print indexedMeta("index")
+        print arrayMeta("type")
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "count%",
+            "INTEGER",
+            "scores",
+            "INTEGER",
+            "(1)",
+            "ARRAY OF INTEGER"
+        ])
+    }
+
     @Test("DIM supports arrays of TYPE records")
     func dimSupportsArraysOfRecords() {
         let host = TestHost()

@@ -360,6 +360,8 @@ private struct BASICJSONFieldOptions: Equatable {
     let name: String
 }
 
+private typealias BASICMetadata = [String: BASICValue]
+
 private protocol BASICFieldDefinition {
     var displayName: String { get }
     var type: BASICType { get }
@@ -372,6 +374,7 @@ private struct BASICRecordField: Equatable, BASICFieldDefinition {
     let fixedLength: Int?
     let arrayDimensions: [Int?]
     let json: BASICJSONFieldOptions?
+    let metadata: BASICMetadata
     let defaultValue: BASICValue?
 }
 
@@ -416,6 +419,7 @@ private struct BASICClassField: Equatable, BASICFieldDefinition {
     let visibility: BASICMemberVisibility
     let declaringClassName: String
     let json: BASICJSONFieldOptions?
+    let metadata: BASICMetadata
     let defaultValue: BASICValue?
 }
 
@@ -595,6 +599,75 @@ private final class BASICRuntime {
 
     func declaredType(for reference: VariableReference) -> BASICType? {
         binding(for: reference.base.normalized)?.type
+    }
+
+    func metadata(
+        for reference: VariableReference,
+        indexes: [BASICValue],
+        fieldIndexes: [[BASICValue]] = [],
+        accessClassName: String? = nil
+    ) throws -> BASICValue {
+        let binding = binding(for: reference.base.normalized)
+        var displayName = binding?.displayName ?? reference.base.name
+        var currentType = binding?.type ?? inferredType(name: reference.base.name, value: binding?.value)
+        var currentValue = binding?.value ?? defaultValue(for: currentType)
+        var metadata: BASICMetadata = [:]
+        var path = displayName
+        var parentPath: String?
+        var indexDescription: String?
+
+        if !indexes.isEmpty {
+            let indexed = try reflectedIndexedValue(
+                currentValue,
+                indexes: indexes,
+                name: displayName
+            )
+            currentValue = indexed.value
+            currentType = indexed.type
+            indexDescription = reflectionIndexDescription(indexes)
+        }
+
+        for (fieldIndex, fieldName) in reference.fields.enumerated() {
+            guard let composite = currentValue.compositeFields else {
+                throw BASICError.runtime("\(reference.base.name) has no field \(fieldName)")
+            }
+            let (recordName, fields) = composite
+            let lookupTypeName = fieldIndex == 0 ? fieldSurfaceType(for: reference)?.name ?? recordName : recordName
+            try validateFieldAccess(typeName: lookupTypeName, fieldName: fieldName, accessClassName: accessClassName)
+            guard let field = compositeFieldDefinitions(for: lookupTypeName).first(where: { $0.normalizedName == fieldName.uppercased() }) else {
+                throw BASICError.runtime("\(fieldLookupTypeName(fieldSurfaceType(for: reference), fallbackTypeName: recordName)) has no field \(fieldName)")
+            }
+
+            parentPath = path
+            displayName = field.displayName
+            metadata = field.metadata
+            path = "\(path).\(displayName)"
+            currentType = field.type
+            currentValue = fields[field.normalizedName] ?? defaultValue(for: field)
+
+            let indexes = fieldIndexes.indices.contains(fieldIndex) ? fieldIndexes[fieldIndex] : []
+            if !indexes.isEmpty {
+                let indexed = try reflectedIndexedValue(
+                    currentValue,
+                    indexes: indexes,
+                    name: field.displayName
+                )
+                currentValue = indexed.value
+                currentType = indexed.type
+                indexDescription = reflectionIndexDescription(indexes)
+            } else {
+                indexDescription = nil
+            }
+        }
+
+        return reflectionDictionary(
+            metadata: metadata,
+            name: displayName,
+            typeName: reflectionTypeName(type: currentType, value: currentValue),
+            path: path,
+            parent: parentPath,
+            index: indexDescription
+        )
     }
 
     static func isBuiltInClass(_ name: String) -> Bool {
@@ -1532,6 +1605,56 @@ private final class BASICRuntime {
         dictionary.values[try dictionaryKey(from: indexes, name: name)] ?? .empty
     }
 
+    private func reflectedIndexedValue(_ value: BASICValue, indexes: [BASICValue], name: String) throws -> (value: BASICValue, type: BASICType) {
+        switch value {
+        case .array(let array):
+            return (try arrayValue(array, at: indexes, name: name), array.type)
+        case .dictionary(let dictionary):
+            let element = try dictionaryValue(dictionary, at: indexes, name: name)
+            return (element, inferredType(name: name, value: element))
+        default:
+            throw BASICError.runtime("\(name) is not an array")
+        }
+    }
+
+    private func reflectionDictionary(
+        metadata: BASICMetadata,
+        name: String,
+        typeName: String,
+        path: String,
+        parent: String?,
+        index: String?
+    ) -> BASICValue {
+        var values = metadata
+        values["name"] = .string(BASICString(name))
+        values["type"] = .string(BASICString(typeName))
+        values["path"] = .string(BASICString(path))
+        if let parent {
+            values["parent"] = .string(BASICString(parent))
+        }
+        if let index {
+            values["index"] = .string(BASICString(index))
+        }
+        return .dictionary(BASICDictionary(values: values))
+    }
+
+    private func reflectionTypeName(type: BASICType, value: BASICValue) -> String {
+        if case .array(let array) = value {
+            return "ARRAY OF \(array.type.name)"
+        }
+        return type.name
+    }
+
+    private func reflectionIndexDescription(_ indexes: [BASICValue]) -> String {
+        let rendered = indexes.map { value in
+            if let string = value.string {
+                return "\"\(string.description)\""
+            }
+            return value.description
+        }
+        return "(\(rendered.joined(separator: ",")))"
+    }
+
     private func arrayOffset(dimensions: [Int], indexes: [BASICValue], name: String) throws -> Int {
         guard indexes.count == dimensions.count else {
             throw BASICError.runtime("\(name) expects \(dimensions.count) indexes")
@@ -1887,6 +2010,7 @@ private final class BASICRuntime {
                     visibility: .public,
                     declaringClassName: recordDefinition.normalizedName,
                     json: $0.json,
+                    metadata: $0.metadata,
                     defaultValue: $0.defaultValue
                 )
             }
@@ -3323,7 +3447,7 @@ public final class BASICInterpreter {
                 if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
                     return (line.fileName, line.sourceLineNumber)
                 }
-            case .classField(let name, _, _, _, _, _), .typeField(let name, _, _, _, _, _):
+            case .classField(let name, _, _, _, _, _, _), .typeField(let name, _, _, _, _, _, _):
                 if message.contains("field \(name)") || message.contains(" \(name) ") {
                     return (line.fileName, line.sourceLineNumber)
                 }
@@ -4204,7 +4328,7 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .typeField(let fieldName, let type, let fixedLength, let arrayDimensions, let json, let defaultValue):
+                case .typeField(let fieldName, let type, let fixedLength, let arrayDimensions, let json, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("TYPE \(name) field \(fieldName) is already defined")
@@ -4217,6 +4341,7 @@ public final class BASICInterpreter {
                             fixedLength: fixedLength,
                             arrayDimensions: arrayDimensions,
                             json: json,
+                            metadata: metadata,
                             defaultValue: defaultValue
                         )
                     )
@@ -4335,18 +4460,18 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .classField(let fieldName, let type, let visibility, let arrayDimensions, let json, let defaultValue):
+                case .classField(let fieldName, let type, let visibility, let arrayDimensions, let json, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, defaultValue: defaultValue))
-                case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let defaultValue):
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, metadata: metadata, defaultValue: defaultValue))
+                case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, defaultValue: defaultValue))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, metadata: metadata, defaultValue: defaultValue))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
                 case .inheritsDeclaration(let baseClassName):
@@ -4617,7 +4742,7 @@ public final class BASICInterpreter {
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
         "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
-        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$"
+        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT"
     ]
 
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -4711,6 +4836,9 @@ public final class BASICInterpreter {
             let value = try rawString(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.suffix(count))))
+        case "REFLECT":
+            try requireArgumentCount(name.name, arguments, 1)
+            return try reflect(arguments[0])
         case "RAD":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments) * Double.pi / 180)
         case "RND":
@@ -4808,6 +4936,32 @@ public final class BASICInterpreter {
     private func singleRawStringArgument(name: String, arguments: [Expression]) throws -> String {
         try requireArgumentCount(name, arguments, 1)
         return try rawString(arguments[0])
+    }
+
+    private func reflect(_ expression: Expression) throws -> BASICValue {
+        switch expression {
+        case .variable(let variable):
+            return try runtime.metadata(
+                for: VariableReference(base: variable),
+                indexes: [],
+                accessClassName: currentClassContext
+            )
+        case .variableReference(let reference):
+            return try runtime.metadata(
+                for: reference,
+                indexes: try reference.indexes.map(evaluate),
+                fieldIndexes: try evaluatedFieldIndexes(for: reference),
+                accessClassName: currentClassContext
+            )
+        case .callOrArray(let name, let arguments):
+            return try runtime.metadata(
+                for: VariableReference(base: name, indexes: arguments),
+                indexes: try arguments.map(evaluate),
+                accessClassName: currentClassContext
+            )
+        default:
+            throw BASICError.runtime("REFLECT expects a variable")
+        }
     }
 
     private func requireArgumentCount(_ name: String, _ arguments: [Expression], _ count: Int) throws {
@@ -6301,7 +6455,7 @@ private indirect enum Statement: Equatable {
     case sequence([Statement])
     case importDirective(String)
     case typeDeclaration(name: String)
-    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, defaultValue: BASICValue?)
+    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICMetadata, defaultValue: BASICValue?)
     case endType
     case interfaceDeclaration(name: String)
     case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
@@ -6309,7 +6463,7 @@ private indirect enum Statement: Equatable {
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
-    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, defaultValue: BASICValue?)
+    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICMetadata, defaultValue: BASICValue?)
     case endClass
     case functionDeclaration(
         name: VariableName,
@@ -6481,6 +6635,8 @@ private enum Token: Equatable {
     case dot
     case leftParen
     case rightParen
+    case leftBrace
+    case rightBrace
     case eof
 }
 
@@ -6543,6 +6699,8 @@ private struct Lexer {
         case ".": token = .dot
         case "(": token = .leftParen
         case ")": token = .rightParen
+        case "{": token = .leftBrace
+        case "}": token = .rightBrace
         case "<":
             if match("=") { token = .lessEqual }
             else if match(">") { token = .notEqual }
@@ -7080,8 +7238,9 @@ private struct Parser {
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
         let json = try parseJSONFieldOptions(defaultName: name)
+        let metadata = try parseOptionalFieldMetadata()
         let defaultValue = try parseOptionalFieldDefault()
-        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength, arrayDimensions: arrayDimensions, json: json, defaultValue: defaultValue)
+        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength, arrayDimensions: arrayDimensions, json: json, metadata: metadata, defaultValue: defaultValue)
     }
 
     private mutating func parseModifiedMember() throws -> Statement {
@@ -7108,8 +7267,9 @@ private struct Parser {
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
         let json = try parseJSONFieldOptions(defaultName: name)
+        let metadata = try parseOptionalFieldMetadata()
         let defaultValue = try parseOptionalFieldDefault()
-        return .classField(name: name, type: typeSpec.type, visibility: visibility, arrayDimensions: arrayDimensions, json: json, defaultValue: defaultValue)
+        return .classField(name: name, type: typeSpec.type, visibility: visibility, arrayDimensions: arrayDimensions, json: json, metadata: metadata, defaultValue: defaultValue)
     }
 
     private mutating func parseOptionalArrayDimensions() throws -> [Int?] {
@@ -7144,6 +7304,46 @@ private struct Parser {
             return BASICJSONFieldOptions(name: name)
         }
         return BASICJSONFieldOptions(name: defaultName)
+    }
+
+    private mutating func parseOptionalFieldMetadata() throws -> BASICMetadata {
+        guard matchIdentifier("META") else { return [:] }
+        guard match(.leftBrace) else { throw syntax("Expected { after META") }
+        var metadata: BASICMetadata = [:]
+        if !match(.rightBrace) {
+            repeat {
+                let key: String
+                switch advance() {
+                case .identifier(let name), .string(let name):
+                    key = name
+                default:
+                    throw syntax("Expected metadata key")
+                }
+                guard match(.colon) else { throw syntax("Expected : after metadata key") }
+                metadata[key] = try parseMetadataLiteral()
+            } while match(.comma)
+            guard match(.rightBrace) else { throw syntax("Expected } after metadata") }
+        }
+        return metadata
+    }
+
+    private mutating func parseMetadataLiteral() throws -> BASICValue {
+        switch advance() {
+        case .number(let value):
+            return .number(value)
+        case .string(let value):
+            return .string(BASICString(value))
+        case .identifier(let name):
+            switch name.uppercased() {
+            case "TRUE": return .boolean(true)
+            case "FALSE": return .boolean(false)
+            case "NULL": return .null
+            case "EMPTY": return .empty
+            default: throw syntax("Expected literal metadata value")
+            }
+        default:
+            throw syntax("Expected literal metadata value")
+        }
     }
 
     private mutating func parseOptionalFieldDefault() throws -> BASICValue? {
