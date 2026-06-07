@@ -221,6 +221,14 @@ struct StudioView: View {
                 .help("Documentation")
 
                 Button {
+                    model.toggleInspector(.logs)
+                } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                        .foregroundStyle(model.inspectorPane == .logs ? Color.blue : Color.primary)
+                }
+                .help("Log")
+
+                Button {
                     model.isCommandBarVisible.toggle()
                 } label: {
                     Image(systemName: "keyboard")
@@ -321,6 +329,8 @@ struct StudioView: View {
             DebugPane(model: model)
         case .docs:
             UserDocumentationPane()
+        case .logs:
+            LogPane(model: model)
         }
     }
 
@@ -376,6 +386,30 @@ enum StudioPane {
 enum InspectorPane {
     case debug
     case docs
+    case logs
+}
+
+enum LogIssuer: String, CaseIterable, Identifiable {
+    case user = "U"
+    case basic = "B"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .user: return "User"
+        case .basic: return "BASIC"
+        }
+    }
+}
+
+struct StudioLogEntry: Identifiable, Equatable {
+    let id = UUID()
+    let timestamp: Date
+    let issuer: LogIssuer
+    let level: String
+    let module: String
+    let text: String
 }
 
 struct BundledExample: Identifiable, Hashable {
@@ -409,6 +443,7 @@ fileprivate enum TerminalInputOperation {
 final class StudioInputCoordinator: @unchecked Sendable {
     private let condition = NSCondition()
     private var isAwaitingLine = false
+    private var isAwaitingRawKey = false
     private var isProgramRunning = false
     private var submittedLine: String?
     private var submittedExitKey: String?
@@ -477,6 +512,21 @@ final class StudioInputCoordinator: @unchecked Sendable {
         condition.unlock()
     }
 
+    func cancelLineInput() {
+        condition.lock()
+        guard isAwaitingLine else {
+            condition.unlock()
+            return
+        }
+        submittedLine = nil
+        submittedExitKey = nil
+        exitLineInputOnSpecialKey = false
+        lineInputOptions = BASICLineInputOptions()
+        isAwaitingLine = false
+        condition.signal()
+        condition.unlock()
+    }
+
     func awaitingLineInput() -> Bool {
         condition.lock()
         let value = isAwaitingLine
@@ -501,12 +551,16 @@ final class StudioInputCoordinator: @unchecked Sendable {
     func setProgramRunning(_ running: Bool) {
         condition.lock()
         isProgramRunning = running
+        if !running {
+            isAwaitingRawKey = false
+            condition.signal()
+        }
         condition.unlock()
     }
 
     func shouldCaptureKeyOnly() -> Bool {
         condition.lock()
-        let value = isProgramRunning && !isAwaitingLine
+        let value = (isProgramRunning || isAwaitingRawKey) && !isAwaitingLine
         condition.unlock()
         return value
     }
@@ -514,11 +568,48 @@ final class StudioInputCoordinator: @unchecked Sendable {
     func pushKey(_ key: String) {
         condition.lock()
         keyBuffer.append(key)
+        condition.signal()
+        condition.unlock()
+    }
+
+    func clearKeys() {
+        condition.lock()
+        keyBuffer.removeAll()
         condition.unlock()
     }
 
     func readKey() -> String? {
         condition.lock()
+        let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
+        condition.unlock()
+        return key
+    }
+
+    func beginRawKeyInput() {
+        condition.lock()
+        isAwaitingRawKey = true
+        condition.unlock()
+    }
+
+    func endRawKeyInput() {
+        condition.lock()
+        isAwaitingRawKey = false
+        condition.signal()
+        condition.unlock()
+    }
+
+    func rawKeyInputActive() -> Bool {
+        condition.lock()
+        let value = isAwaitingRawKey
+        condition.unlock()
+        return value
+    }
+
+    func waitForRawKey() -> String? {
+        condition.lock()
+        while keyBuffer.isEmpty && (isProgramRunning || isAwaitingRawKey) {
+            condition.wait()
+        }
         let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
         condition.unlock()
         return key
@@ -1467,7 +1558,7 @@ struct MonacoEditor: NSViewRepresentable {
             ignoreCase: true,
             tokenizer: {
               root: [
-                [/\\b(PRINT|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|PROMPT|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
+                [/\\b(PRINT|LOG|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|PROMPT|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
                 [/".*?"/, "string"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
                 [/'.*$/, "comment"],
@@ -1592,6 +1683,11 @@ final class StudioModel: ObservableObject {
     @Published var debuggerLocalVariables: [BASICVariableSnapshot] = []
     @Published var debuggerFrameLocalVariables: [[BASICVariableSnapshot]] = []
     @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
+    @Published var isLoggingEnabled = true
+    @Published var logEntries: [StudioLogEntry] = []
+    @Published var showUserLogs = true
+    @Published var showBasicLogs = false
+    @Published var selectedLogLevels: Set<String> = []
     let bundledExamples = StudioModel.availableBundledExamples()
 
     let graphics = GraphicsFramebuffer()
@@ -1604,6 +1700,8 @@ final class StudioModel: ObservableObject {
     private let inputCoordinator = StudioInputCoordinator()
     private let consoleInputState = StudioConsoleInputState()
     private let gamepadInputCoordinator = StudioGamepadInputCoordinator()
+    private var suppressNextEmptyProgramSubmit = false
+    private var suppressNextProgramNewlineKey = false
 
     private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
 
@@ -1650,6 +1748,59 @@ final class StudioModel: ObservableObject {
 
     func toggleInspector(_ pane: InspectorPane) {
         inspectorPane = inspectorPane == pane ? nil : pane
+    }
+
+    var availableLogLevels: [String] {
+        Array(Set(logEntries.map { normalizedLogLevel($0.level) })).sorted()
+    }
+
+    var filteredLogEntries: [StudioLogEntry] {
+        logEntries.filter { entry in
+            if entry.issuer == .user && !showUserLogs { return false }
+            if entry.issuer == .basic && !showBasicLogs { return false }
+            return selectedLogLevels.isEmpty || selectedLogLevels.contains(normalizedLogLevel(entry.level))
+        }
+    }
+
+    func toggleLogLevel(_ level: String) {
+        let normalized = normalizedLogLevel(level)
+        if selectedLogLevels.contains(normalized) {
+            selectedLogLevels.remove(normalized)
+        } else {
+            selectedLogLevels.insert(normalized)
+        }
+    }
+
+    func clearLogs() {
+        logEntries.removeAll()
+        selectedLogLevels.removeAll()
+    }
+
+    func appendLog(level: String, issuer: LogIssuer, module: String? = nil, text: String) {
+        guard isLoggingEnabled else { return }
+        logEntries.append(StudioLogEntry(
+            timestamp: Date(),
+            issuer: issuer,
+            level: normalizedLogLevel(level),
+            module: normalizedLogModule(module, issuer: issuer),
+            text: text
+        ))
+        if logEntries.count > 1000 {
+            logEntries.removeFirst(logEntries.count - 1000)
+        }
+    }
+
+    private func normalizedLogLevel(_ level: String) -> String {
+        let trimmed = level.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "INFO" : trimmed.uppercased()
+    }
+
+    private func normalizedLogModule(_ module: String?, issuer: LogIssuer) -> String {
+        let trimmed = module?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return issuer == .user ? "BASICStudio.swift" : "BASIC"
     }
 
     func openDebugger() {
@@ -1832,6 +1983,8 @@ final class StudioModel: ObservableObject {
 
     func stopProgram() {
         activeExecutionControl?.requestBreak()
+        inputCoordinator.cancelLineInput()
+        inputCoordinator.endRawKeyInput()
     }
 
     func continueDebugging() {
@@ -1862,31 +2015,64 @@ final class StudioModel: ObservableObject {
         for operation in operations {
             switch operation {
             case .append(let text):
-                if isProgramRunning && !inputCoordinator.awaitingLineInput() {
+                if inputCoordinator.shouldCaptureKeyOnly() {
+                    appendLog(level: "INPUT", issuer: .user, text: "queued printable key while program is running")
                     inputCoordinator.pushKey(text)
                 } else {
                     consoleText += text
                 }
             case .submit(let command):
+                appendLog(level: "INPUT", issuer: .user, text: "submit \(command.isEmpty ? "<empty>" : command)")
                 if inputCoordinator.awaitingLineInput() {
-                    consoleText += "\n"
+                    if inputCoordinator.activeLineInputOptions().fieldLength == nil {
+                        consoleText += "\n"
+                    }
                     inputCoordinator.submitLine(command)
-                } else if isProgramRunning {
-                    inputCoordinator.pushKey("\n")
+                } else if inputCoordinator.shouldCaptureKeyOnly() {
+                    if command.isEmpty && suppressNextEmptyProgramSubmit {
+                        appendLog(level: "INPUT", issuer: .user, text: "suppressed empty submit after program launch")
+                        suppressNextEmptyProgramSubmit = false
+                    } else {
+                        suppressNextEmptyProgramSubmit = false
+                        inputCoordinator.pushKey("\n")
+                    }
                 } else {
                     consoleText += "\n"
                     submitConsoleCommand(command, echo: false)
+                    if isProgramRunning {
+                        suppressNextEmptyProgramSubmit = true
+                    }
                 }
             case .lineInputExit(let line, let key):
+                appendLog(level: "INPUT", issuer: .user, text: "line input exit key \(key) with \(line.count) chars")
                 if inputCoordinator.awaitingLineInput() {
-                    consoleText += "\n"
+                    if inputCoordinator.activeLineInputOptions().fieldLength == nil {
+                        consoleText += "\n"
+                    }
                     inputCoordinator.submitLineInputExit(line: line, key: key)
                 } else {
+                    suppressNextProgramNewlineKey = false
                     inputCoordinator.pushKey(key)
                 }
             case .key(let text):
-                inputCoordinator.pushKey(text)
+                appendLog(level: "INPUT", issuer: .user, text: "key \(debugKeyDescription(text))")
+                if text == "\n" && suppressNextProgramNewlineKey {
+                    appendLog(level: "INPUT", issuer: .user, text: "suppressed newline key after program launch")
+                    suppressNextProgramNewlineKey = false
+                } else {
+                    suppressNextProgramNewlineKey = false
+                    inputCoordinator.pushKey(text)
+                }
             }
+        }
+    }
+
+    private func debugKeyDescription(_ key: String) -> String {
+        switch key {
+        case "\n": return "\\n"
+        case "\t": return "\\t"
+        case "\u{1B}": return "ESC"
+        default: return key.isEmpty ? "<empty>" : key
         }
     }
 
@@ -1995,6 +2181,10 @@ final class StudioModel: ObservableObject {
 
     private func startProgramRun(startLine: Int?, command: DebugRunCommand = .run) {
         guard !isProgramRunning else { return }
+        inputCoordinator.clearKeys()
+        suppressNextEmptyProgramSubmit = false
+        suppressNextProgramNewlineKey = command == .run || command == .runStep
+        appendLog(level: "RUN", issuer: .user, text: "starting \(command) \(startLine.map { "at \($0)" } ?? "")")
         let control = BASICExecutionControl()
         control.setBreakpoints(debuggerBreakpoints)
         switch command {
@@ -2092,6 +2282,7 @@ final class StudioModel: ObservableObject {
         }
         isProgramRunning = false
         inputCoordinator.setProgramRunning(false)
+        appendLog(level: paused ? "PAUSE" : "RUN", issuer: .user, text: paused ? "program paused" : "program finished")
 
         let debuggerIsActive = inspectorPane == .debug
         let shouldSuppressConsolePause = paused && debuggerIsActive
@@ -2414,6 +2605,120 @@ final class StudioModel: ObservableObject {
     var consoleLineCount: Int {
         guard !consoleText.isEmpty else { return 0 }
         return consoleText.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+}
+
+struct LogPane: View {
+    @ObservedObject var model: StudioModel
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Toggle("Enabled", isOn: $model.isLoggingEnabled)
+                    Spacer()
+                    Button("Clear") { model.clearLogs() }
+                        .disabled(model.logEntries.isEmpty)
+                }
+
+                HStack {
+                    Toggle("User", isOn: $model.showUserLogs)
+                    Toggle("BASIC", isOn: $model.showBasicLogs)
+                    Spacer()
+                    Menu("Levels") {
+                        if model.availableLogLevels.isEmpty {
+                            Text("No Levels")
+                        } else {
+                            Button(model.selectedLogLevels.isEmpty ? "All Selected" : "Show All") {
+                                model.selectedLogLevels.removeAll()
+                            }
+                            Divider()
+                            ForEach(model.availableLogLevels, id: \.self) { level in
+                                Button {
+                                    model.toggleLogLevel(level)
+                                } label: {
+                                    HStack {
+                                        Text(level)
+                                        if model.selectedLogLevels.isEmpty || model.selectedLogLevels.contains(level) {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(model.filteredLogEntries) { entry in
+                        logRow(entry)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func logRow(_ entry: StudioLogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(Self.timestampFormatter.string(from: entry.timestamp))
+                    .foregroundStyle(.secondary)
+                Text(entry.issuer.rawValue)
+                    .fontWeight(.bold)
+                Text(entry.level)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(color(for: entry.level))
+                Text(entry.module)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .font(.caption.monospaced())
+
+            Text(entry.text)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color(for: entry.level).opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func color(for level: String) -> SwiftUI.Color {
+        switch level.uppercased() {
+        case "ERROR", "ERR", "FATAL":
+            return .red
+        case "WARN", "WARNING":
+            return .yellow
+        case "DEBUG", "TRACE", "INPUT":
+            return .blue
+        case "TARGET":
+            return SwiftUI.Color(red: 0.95, green: 0.15, blue: 0.85)
+        case "RUN", "INFO":
+            return .green
+        case "PAUSE":
+            return .orange
+        default:
+            return .primary
+        }
     }
 }
 
@@ -2820,7 +3125,19 @@ struct UserDoc: Identifiable, Hashable {
 
 extension StudioModel: StudioDebuggerInterface {}
 
-extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
+extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost {
+    nonisolated var usesColoredListing: Bool { true }
+
+    nonisolated var isBASICLoggingEnabled: Bool {
+        valueOnMainSync { isLoggingEnabled }
+    }
+
+    nonisolated func log(level: String, issuer: String, module: String, text: String) {
+        runOnMainSync {
+            appendLog(level: level, issuer: issuer.uppercased() == "U" ? .user : .basic, module: module, text: text)
+        }
+    }
+
     nonisolated func print(_ text: String, terminator: String) {
         runOnMainSync {
             highlightErrorIfPresent(text)
@@ -2855,8 +3172,17 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost, BASICConf
         inputCoordinator.beginLineInput(exitOnSpecialKey: exitOnSpecialKey, options: options)
         runOnMainSync {
             appendConsoleOutput(prompt, terminator: "")
+            let defaultText = options.maxLength.map { String((options.defaultText ?? "").prefix($0)) } ?? (options.defaultText ?? "")
             if let length = options.fieldLength {
-                appendConsoleOutput(String(repeating: " ", count: length) + String(repeating: "\u{1B}[D", count: length), terminator: "")
+                let visible = String(defaultText.prefix(length))
+                appendConsoleOutput(
+                    visible
+                    + String(repeating: " ", count: max(0, length - visible.count))
+                    + String(repeating: "\u{1B}[D", count: max(0, length - visible.count)),
+                    terminator: ""
+                )
+            } else if !defaultText.isEmpty {
+                appendConsoleOutput(defaultText, terminator: "")
             }
         }
         return inputCoordinator.waitForLineInput()
@@ -2876,6 +3202,39 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICConsoleHost, BASICConf
 
     nonisolated func readKey() -> String? {
         inputCoordinator.readKey() ?? gamepadInputCoordinator.readKey()
+    }
+
+    nonisolated func readBlockingKey() -> String? {
+        if let key = inputCoordinator.readKey() ?? gamepadInputCoordinator.readKey() {
+            return key
+        }
+        inputCoordinator.beginRawKeyInput()
+        defer { inputCoordinator.endRawKeyInput() }
+
+        if Thread.isMainThread {
+            while true {
+                if let key = inputCoordinator.readKey() ?? gamepadInputCoordinator.readKey() {
+                    return key
+                }
+                if !inputCoordinator.rawKeyInputActive() {
+                    return nil
+                }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
+        }
+
+        while true {
+            if let key = gamepadInputCoordinator.readKey() {
+                return key
+            }
+            if let key = inputCoordinator.waitForRawKey() {
+                return key
+            }
+            if let key = gamepadInputCoordinator.readKey() {
+                return key
+            }
+            return nil
+        }
     }
 }
 
@@ -3140,7 +3499,10 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var inputCursor = 0
     private var inputFieldViewStart = 0
     private var inputFieldDisplayCursor = 0
+    private var hasInitializedLineInputDefault = false
     private var keyMonitor: Any?
+    private var pendingEscapeBytes: [UInt8] = []
+    private var pendingEscapeFlushID = 0
 
     deinit {
         MainActor.assumeIsolated {
@@ -3219,6 +3581,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             renderedCharacterCount = 0
             inputBuffer = ""
             inputCursor = 0
+            hasInitializedLineInputDefault = false
         }
 
         if consoleText.count > renderedCharacterCount {
@@ -3308,14 +3671,19 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             return true
         }
 
-        guard model?.shouldCaptureTerminalKeyOnly() == true,
+        let shouldCaptureProgramKey = model?.shouldCaptureTerminalKeyOnly() == true
+        let shouldExitLineInput = model?.shouldExitLineInputOnSpecialKey() == true
+        guard shouldCaptureProgramKey || shouldExitLineInput,
               let rawKey = Self.rawSpecialKeySequence(from: event)
         else {
             return false
         }
 
+        var operations: [TerminalInputOperation] = []
+        appendRawSpecialKeySequence(rawKey, operations: &operations)
+        guard !operations.isEmpty else { return true }
         Task { @MainActor [weak model] in
-            model?.handleTerminalInput([.key(rawKey)])
+            model?.handleTerminalInput(operations)
         }
         return true
     }
@@ -3330,6 +3698,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         let key = Int(scalar.value)
         let modifier = modifierParameter(for: event)
         let escape = "\u{1B}"
+
+        if key == 10 || key == 13 || key == NSCarriageReturnCharacter || key == NSEnterCharacter {
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift) else {
+                return nil
+            }
+            return "\(escape)[!M"
+        }
 
         if let modifiedCharacter = modifiedPrintableCharacter(from: event, modifier: modifier) {
             return "\(escape)[\(modifiedCharacter)"
@@ -3430,29 +3805,38 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         var operations: [TerminalInputOperation] = []
-        var iterator = Array(data).makeIterator()
+        var bytes = Array(data)
+        if !pendingEscapeBytes.isEmpty {
+            bytes = pendingEscapeBytes + bytes
+            pendingEscapeBytes = []
+            pendingEscapeFlushID += 1
+        }
+        var iterator = bytes.makeIterator()
+        var previousByteWasCarriageReturn = false
 
         while let byte = iterator.next() {
+            if byte == 10 && previousByteWasCarriageReturn {
+                previousByteWasCarriageReturn = false
+                continue
+            }
+            previousByteWasCarriageReturn = byte == 13
+
             switch byte {
             case 10, 13:
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key("\n"))
                 } else {
+                    ensureLineInputDefaultInitialized()
                     let command = inputBuffer
                     inputBuffer = ""
                     inputCursor = 0
                     resetInputFieldState()
+                    hasInitializedLineInputDefault = false
                     operations.append(.submit(command))
                 }
             case 9:
-                if model?.shouldCaptureTerminalKeyOnly() == true {
-                    operations.append(.key("\t"))
-                } else if model?.shouldExitLineInputOnSpecialKey() == true {
-                    let command = inputBuffer
-                    inputBuffer = ""
-                    inputCursor = 0
-                    resetInputFieldState()
-                    operations.append(.lineInputExit(command, "\t"))
+                if model?.shouldCaptureTerminalKeyOnly() == true || model?.shouldExitLineInputOnSpecialKey() == true {
+                    appendRawSpecialKeySequence("\t", operations: &operations)
                 } else {
                     appendText("\t", to: &operations)
                 }
@@ -3480,18 +3864,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                     bytes.append(next)
                     if isCompleteEscapeSequence(bytes) { break }
                 }
-                if model?.shouldCaptureTerminalKeyOnly() == true {
-                    let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
-                    operations.append(.key(raw))
-                } else if model?.shouldExitLineInputOnSpecialKey() == true {
-                    let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
-                    let command = inputBuffer
-                    inputBuffer = ""
-                    inputCursor = 0
-                    resetInputFieldState()
-                    operations.append(.lineInputExit(command, BASICKeyNormalizer.normalize(raw)))
-                } else if let raw = String(bytes: bytes, encoding: .utf8) {
-                    handleEditingEscape(raw, operations: &operations)
+                if !isCompleteEscapeSequence(bytes), bytes.count < 8 {
+                    pendingEscapeBytes = bytes
+                    schedulePendingEscapeFlush()
+                } else {
+                    handleEscapeBytes(bytes, operations: &operations)
                 }
             default:
                 break
@@ -3504,8 +3881,55 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
+    private func schedulePendingEscapeFlush() {
+        pendingEscapeFlushID += 1
+        let flushID = pendingEscapeFlushID
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard let self,
+                  self.pendingEscapeFlushID == flushID,
+                  !self.pendingEscapeBytes.isEmpty
+            else {
+                return
+            }
+
+            let bytes = self.pendingEscapeBytes
+            self.pendingEscapeBytes = []
+            var operations: [TerminalInputOperation] = []
+            self.handleEscapeBytes(bytes, operations: &operations)
+            guard !operations.isEmpty else { return }
+            self.model?.handleTerminalInput(operations)
+        }
+    }
+
+    private func handleEscapeBytes(_ bytes: [UInt8], operations: inout [TerminalInputOperation]) {
+        let raw = String(bytes: bytes, encoding: .utf8) ?? "\u{1B}"
+        appendRawSpecialKeySequence(raw, operations: &operations)
+    }
+
+    private func appendRawSpecialKeySequence(_ raw: String, operations: inout [TerminalInputOperation]) {
+        if model?.shouldCaptureTerminalKeyOnly() == true {
+            operations.append(.key(raw))
+        } else if model?.shouldExitLineInputOnSpecialKey() == true {
+            finishLineInput(exitKey: BASICKeyNormalizer.normalize(raw), operations: &operations)
+        } else {
+            handleEditingEscape(raw, operations: &operations)
+        }
+    }
+
+    private func finishLineInput(exitKey: String, operations: inout [TerminalInputOperation]) {
+        ensureLineInputDefaultInitialized()
+        let command = inputBuffer
+        inputBuffer = ""
+        inputCursor = 0
+        resetInputFieldState()
+        hasInitializedLineInputDefault = false
+        operations.append(.lineInputExit(command, exitKey))
+    }
+
     private func appendText(_ text: String, to operations: inout [TerminalInputOperation]) {
         guard !text.isEmpty else { return }
+        ensureLineInputDefaultInitialized()
         let textCount = text.count
         let options = model?.activeLineInputOptions() ?? BASICLineInputOptions()
         let replacedCount = model?.isConsoleOverwriteMode == true && inputCursor < inputBuffer.count ? min(textCount, inputBuffer.count - inputCursor) : 0
@@ -3522,6 +3946,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func backspace(in operations: inout [TerminalInputOperation]) {
+        ensureLineInputDefaultInitialized()
         guard inputCursor > 0 else { return }
         inputCursor -= 1
         inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
@@ -3533,12 +3958,14 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func deleteForward(in operations: inout [TerminalInputOperation]) {
+        ensureLineInputDefaultInitialized()
         guard inputCursor < inputBuffer.count else { return }
         inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
         operations.append(.append(redrawInputFromCursor(targetCursor: inputCursor)))
     }
 
     private func moveInputCursor(to newCursor: Int, operations: inout [TerminalInputOperation]) {
+        ensureLineInputDefaultInitialized()
         let clamped = min(max(newCursor, 0), inputBuffer.count)
         guard clamped != inputCursor else { return }
         if model?.activeLineInputOptions().fieldLength != nil {
@@ -3587,6 +4014,22 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func resetInputFieldState() {
         inputFieldViewStart = 0
         inputFieldDisplayCursor = 0
+    }
+
+    private func ensureLineInputDefaultInitialized() {
+        guard !hasInitializedLineInputDefault,
+              let options = model?.activeLineInputOptions(),
+              let defaultText = options.defaultText
+        else { return }
+
+        let limited = options.maxLength.map { String(defaultText.prefix($0)) } ?? defaultText
+        inputBuffer = limited
+        inputCursor = inputBuffer.count
+        if let fieldLength = options.fieldLength {
+            ensureInputFieldViewContains(cursor: inputCursor, fieldLength: fieldLength)
+            inputFieldDisplayCursor = inputCursor - inputFieldViewStart
+        }
+        hasInitializedLineInputDefault = true
     }
 
     private func ensureInputFieldViewContains(cursor: Int, fieldLength: Int) {

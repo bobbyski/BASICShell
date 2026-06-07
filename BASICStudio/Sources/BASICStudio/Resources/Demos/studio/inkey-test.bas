@@ -23,6 +23,7 @@ end
 function KeyName$(k$ as string) as string
     if k$ = chr$(8) then return "BACKSPACE"
     if k$ = chr$(9) then return "TAB"
+    if k$ = "[!T" then return "SHIFT+TAB"
     if k$ = chr$(10) then return "LINE FEED"
     if k$ = chr$(13) then return "RETURN"
     if k$ = chr$(27) then return "ESCAPE"

@@ -1,19 +1,33 @@
 import Foundation
 
+/// Errors produced while parsing, validating, or running BASIC source.
 public enum BASICError: Error, CustomStringConvertible, Equatable {
+    /// A general syntax error without source-line context.
     case syntax(String)
+    /// A syntax error tied to a specific source line and column.
     case contextualSyntax(message: String, source: String, column: Int)
+    /// A general type-checking or coercion error.
     case type(message: String)
+    /// A type error tied to a specific source line and column.
     case contextualType(message: String, source: String, column: Int)
+    /// A runtime failure raised while executing a valid program.
     case runtime(String)
+    /// An operation that requires BASICStudio graphics support on the current host.
     case studioOnlyFeature
+    /// A branch target referenced a missing numbered line.
     case missingLine(Int)
+    /// A branch target referenced a missing label.
     case missingLabel(String)
+    /// Execution was interrupted by a user break request.
     case breakRequested(Int?)
+    /// Execution stopped at a configured breakpoint.
     case breakpoint(BASICBreakpointLocation)
+    /// Execution stopped after completing a debugger step.
     case stepComplete(BASICBreakpointLocation)
+    /// Execution halted intentionally.
     case halted
 
+    /// A user-facing rendering of the error, including caret context when available.
     public var description: String {
         switch self {
         case .syntax(let message): return "Syntax error: \(message)"
@@ -42,18 +56,28 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     }
 }
 
+/// Severity for diagnostics reported before running a BASIC program.
 public enum BASICDiagnosticSeverity: String, Codable, Sendable {
+    /// A diagnostic that prevents correct execution.
     case error
+    /// A diagnostic that should be shown but does not necessarily prevent execution.
     case warning
 }
 
+/// A source diagnostic suitable for editor decorations and LIST CHECK output.
 public struct BASICDiagnostic: Codable, Equatable, Sendable {
+    /// Optional source file path associated with the diagnostic.
     public let fileName: String?
+    /// One-based physical source line number.
     public let lineNumber: Int
+    /// Zero-based source column.
     public let column: Int
+    /// Human-readable diagnostic message.
     public let message: String
+    /// Diagnostic severity.
     public let severity: BASICDiagnosticSeverity
 
+    /// Creates a diagnostic at a source location.
     public init(
         fileName: String? = nil,
         lineNumber: Int,
@@ -80,6 +104,7 @@ private extension BASICError {
     }
 }
 
+/// String storage used by the interpreter, preserving embedded NUL bytes when required.
 public struct BASICString: Equatable, CustomStringConvertible {
     private enum Storage: Equatable {
         case text(String)
@@ -88,6 +113,7 @@ public struct BASICString: Equatable, CustomStringConvertible {
 
     private let storage: Storage
 
+    /// Creates a BASIC string from Swift text, switching to data-backed storage if it contains NUL bytes.
     public init(_ value: String) {
         if value.utf8.contains(0) {
             self.storage = .data(Data(value.utf8))
@@ -104,6 +130,7 @@ public struct BASICString: Equatable, CustomStringConvertible {
         }
     }
 
+    /// Display text for the string, omitting embedded NUL bytes from data-backed values.
     public var description: String {
         switch storage {
         case .text(let value):
@@ -308,29 +335,49 @@ private struct BASICRandomGenerator {
     }
 }
 
+/// Scope classification for variables exposed to debugger clients.
 public enum BASICVariableScope: String, Sendable {
+    /// A variable stored in the currently selected local stack frame.
     case local = "Local"
+    /// A variable stored in global program state.
     case global = "Global"
 }
 
+/// A debugger-friendly snapshot of a variable or child value.
 public struct BASICVariableSnapshot: Identifiable, Equatable, Sendable {
+    /// Stable identifier derived from the variable path.
     public var id: String { path }
+    /// Fully qualified path to the value, including array indexes or field names.
     public let path: String
+    /// Display name for the value.
     public let name: String
+    /// BASIC type name.
     public let typeName: String
+    /// Display value summary.
     public let value: String
+    /// Variable scope.
     public let scope: BASICVariableScope
+    /// Nested children for arrays, dictionaries, records, and objects.
     public let children: [BASICVariableSnapshot]
 }
 
+/// A debugger snapshot of one active call stack frame.
 public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
+    /// Stable identifier for UI lists.
     public var id: String { "\(index):\(kind):\(name)" }
+    /// Zero-based frame index.
     public let index: Int
+    /// Frame kind such as program, function, method, or GOSUB.
     public let kind: String
+    /// Display name for the frame.
     public let name: String
+    /// Source location associated with the frame when known.
     public let location: BASICBreakpointLocation?
+    /// Class that declares the method, when this is a method frame.
     public let declaringClassName: String?
+    /// Runtime receiver class, when this is a method frame.
     public let receiverClassName: String?
+    /// Whether the method frame represents an override.
     public let isOverride: Bool
 }
 
@@ -668,6 +715,103 @@ private final class BASICRuntime {
             parent: parentPath,
             index: indexDescription
         )
+    }
+
+    func reflectedFieldCount(for value: BASICValue) throws -> Int {
+        try reflectedFields(for: value).count
+    }
+
+    func reflectedFieldName(for value: BASICValue, selector: BASICValue) throws -> String {
+        try reflectedField(for: value, selector: selector).displayName
+    }
+
+    func reflectedFieldMetadata(for value: BASICValue, selector: BASICValue) throws -> BASICValue {
+        let field = try reflectedField(for: value, selector: selector)
+        return reflectionDictionary(
+            metadata: field.metadata,
+            name: field.displayName,
+            typeName: field.type.name,
+            path: field.displayName,
+            parent: nil,
+            index: nil
+        )
+    }
+
+    func reflectedFieldValue(for value: BASICValue, selector: BASICValue) throws -> BASICValue {
+        let composite = try reflectedComposite(for: value)
+        let field = try reflectedField(for: value, selector: selector)
+        return composite.fields[field.normalizedName] ?? defaultValue(for: field)
+    }
+
+    func settingReflectedField(value: BASICValue, selector: BASICValue, newValue: BASICValue) throws -> BASICValue {
+        let composite = try reflectedComposite(for: value)
+        let field = try reflectedField(for: value, selector: selector)
+        var fields = composite.fields
+        fields[field.normalizedName] = try coerceReflectedValue(newValue, to: field)
+        switch value {
+        case .record(let name, _):
+            return .record(name, fields)
+        case .object(let name, _):
+            return .object(name, fields)
+        default:
+            throw BASICError.runtime("SETFIELD expects a record or object")
+        }
+    }
+
+    private func reflectedComposite(for value: BASICValue) throws -> (name: String, fields: [String: BASICValue]) {
+        guard let composite = value.compositeFields else {
+            throw BASICError.runtime("Reflection expects a record or object")
+        }
+        return composite
+    }
+
+    private func reflectedFields(for value: BASICValue) throws -> [BASICClassField] {
+        let composite = try reflectedComposite(for: value)
+        return compositeFieldDefinitions(for: composite.name)
+    }
+
+    private func reflectedField(for value: BASICValue, selector: BASICValue) throws -> BASICClassField {
+        let fields = try reflectedFields(for: value)
+        if let number = selector.number {
+            guard number.rounded() == number else {
+                throw BASICError.runtime("Field index must be an integer")
+            }
+            let index = Int(number)
+            guard fields.indices.contains(index) else {
+                throw BASICError.runtime("Field index out of range")
+            }
+            return fields[index]
+        }
+        if let name = selector.string?.description {
+            guard let field = fields.first(where: { $0.normalizedName == name.uppercased() }) else {
+                throw BASICError.runtime("Unknown field \(name)")
+            }
+            return field
+        }
+        throw BASICError.runtime("Field selector must be a number or string")
+    }
+
+    private func coerceReflectedValue(_ value: BASICValue, to field: BASICClassField) throws -> BASICValue {
+        if case .string(let string) = value {
+            let text = string.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch field.type {
+            case .scalar(.integer), .scalar(.double):
+                if let number = Double(text) {
+                    return try coerce(.number(number), to: field, variable: VariableName(name: field.displayName, column: 0))
+                }
+            case .scalar(.boolean):
+                switch text.uppercased() {
+                case "TRUE": return try coerce(.boolean(true), to: field, variable: VariableName(name: field.displayName, column: 0))
+                case "FALSE": return try coerce(.boolean(false), to: field, variable: VariableName(name: field.displayName, column: 0))
+                case "1": return try coerce(.number(1), to: field, variable: VariableName(name: field.displayName, column: 0))
+                case "0": return try coerce(.number(0), to: field, variable: VariableName(name: field.displayName, column: 0))
+                default: break
+                }
+            default:
+                break
+            }
+        }
+        return try coerce(value, to: field, variable: VariableName(name: field.displayName, column: 0))
     }
 
     static func isBuiltInClass(_ name: String) -> Bool {
@@ -2154,69 +2298,127 @@ private extension BASICType {
     }
 }
 
+/// Minimal host interface used by the interpreter for terminal-like I/O.
 public protocol BASICHost: AnyObject {
+    /// Writes text without forcing a line break.
     func print(_ text: String, terminator: String)
+    /// Writes one complete line of text.
     func printLine(_ text: String)
+    /// Reads one line of input for INPUT and LINE INPUT.
     func readLine(prompt: String) -> String?
 }
 
+/// Optional host capability for ANSI-colored LIST output.
+public protocol BASICListingStyleHost: BASICHost {
+    /// True when the host can safely render ANSI syntax coloring for LIST output.
+    var usesColoredListing: Bool { get }
+}
+
+/// Result returned by hosts that can stop LINE INPUT on special keys.
 public struct BASICLineInputResult: Equatable, Sendable {
+    /// Text typed before completion or special-key exit.
     public let text: String
+    /// Normalized special key that ended input, if any.
     public let exitKey: String?
 
+    /// Creates a line-input result.
     public init(text: String, exitKey: String? = nil) {
         self.text = text
         self.exitKey = exitKey
     }
 }
 
+/// Field constraints for configured LINE INPUT operations.
 public struct BASICLineInputOptions: Equatable, Sendable {
+    /// Visible field width, if the host should render a fixed-width entry field.
     public let fieldLength: Int?
+    /// Maximum accepted input length.
     public let maxLength: Int?
+    /// Text used to prefill the input buffer.
+    public let defaultText: String?
 
-    public init(fieldLength: Int? = nil, maxLength: Int? = nil) {
+    /// Creates line-input rendering and validation options.
+    public init(fieldLength: Int? = nil, maxLength: Int? = nil, defaultText: String? = nil) {
         self.fieldLength = fieldLength
         self.maxLength = maxLength
+        self.defaultText = defaultText
     }
 }
 
+/// Host extension point for LINE INPUT EXITVAR support.
 public protocol BASICLineInputHost: BASICHost {
+    /// Reads one line, optionally exiting early on special keys.
     func readLine(prompt: String, exitOnSpecialKey: Bool) -> BASICLineInputResult?
 }
 
+/// Host extension point for configured LINE INPUT field behavior.
 public protocol BASICConfiguredLineInputHost: BASICLineInputHost {
+    /// Reads one configured line-input field.
     func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult?
 }
 
+/// Host interface for BASIC file-system operations.
 public protocol BASICFileHost: BASICHost {
+    /// Loads a UTF-8 text file.
     func loadTextFile(path: String) throws -> String
+    /// Saves a UTF-8 text file.
     func saveTextFile(path: String, text: String) throws
+    /// Returns whether a path exists.
     func fileExists(path: String) throws -> Bool
+    /// Returns the BASIC working directory.
     func currentDirectoryPath() throws -> String
+    /// Changes the BASIC working directory.
     func changeDirectory(path: String) throws
+    /// Lists files in the current BASIC working directory.
     func listFiles() throws -> [String]
+    /// Lists files in a specific directory path.
     func listFiles(path: String) throws -> [String]
 }
 
+/// Host interface for SYSTEM and SYSTEM$ command execution.
 public protocol BASICSystemHost: BASICHost {
+    /// Runs a shell command and returns combined output.
     func runSystemCommand(_ command: String) throws -> String
 }
 
+/// Host interface for non-blocking INKEY$ keyboard input.
 public protocol BASICKeyboardHost: BASICHost {
+    /// Reads one pending raw key sequence, or nil when no key is pending.
     func readKey() -> String?
 }
 
+/// Optional host capability for INPUT$ keyboard reads that wait for key presses.
+public protocol BASICBlockingKeyboardHost: BASICKeyboardHost {
+    /// Reads one raw key sequence, waiting until a key is available or input is cancelled.
+    func readBlockingKey() -> String?
+}
+
+/// Host interface for cursor positioning and screen-size queries.
 public protocol BASICConsoleHost: BASICHost {
+    /// Current console column count.
     func screenColumns() -> Int
+    /// Current console row count.
     func screenRows() -> Int
+    /// Moves the console cursor to a one-based row and column.
     func locate(row: Int, column: Int) throws
 }
 
+/// Host interface for BASIC and system log collection.
+public protocol BASICLoggingHost: BASICHost {
+    /// Whether BASIC LOG statements and interpreter log hooks should be emitted.
+    var isBASICLoggingEnabled: Bool { get }
+    /// Appends a log entry.
+    func log(level: String, issuer: String, module: String, text: String)
+}
+
 public extension BASICConsoleHost {
+    /// Default console width for hosts that do not report a live size.
     func screenColumns() -> Int { 80 }
 
+    /// Default console height for hosts that do not report a live size.
     func screenRows() -> Int { 25 }
 
+    /// Default ANSI cursor-positioning implementation.
     func locate(row: Int, column: Int) throws {
         let safeRow = max(1, row)
         let safeColumn = max(1, column)
@@ -2224,11 +2426,16 @@ public extension BASICConsoleHost {
     }
 }
 
+/// Raw key constants and helpers for terminal key sequences.
 public enum BASICRawKey {
+    /// Raw escape character.
     public static let escape = "\u{1B}"
+    /// Raw delete character.
     public static let delete = "\u{7F}"
+    /// Raw backspace character.
     public static let backspace = "\u{8}"
 
+    /// Returns a terminal escape sequence for a function key number.
     public static func functionKeySequence(_ number: Int) -> String? {
         switch number {
         case 1: return "\u{1B}OP"
@@ -2258,12 +2465,17 @@ public enum BASICRawKey {
     }
 }
 
+/// Output encoding used when normalizing special keys for INKEY$.
 public enum BASICKeyEncoding {
+    /// AIBasic textual key names such as `[K`, `[F1`, and `[GP:A`.
     case aibasic
+    /// IBM/GW-BASIC-style extended key strings prefixed with CHR$(0).
     case ibm
 }
 
+/// Converts raw terminal or gamepad key events into BASIC INKEY$ strings.
 public struct BASICKeyNormalizer {
+    /// Normalizes a raw key sequence using the requested BASIC key encoding.
     public static func normalize(_ rawKey: String, encoding: BASICKeyEncoding = .aibasic) -> String {
         guard !rawKey.isEmpty else { return "" }
         if rawKey.hasPrefix("[GP:") {
@@ -2301,6 +2513,7 @@ public struct BASICKeyNormalizer {
         }
 
         switch suffix {
+        case "[Z": return shiftTab(encoding: encoding)
         case "[A": return extended(code: 72, encoding: encoding)
         case "[B": return extended(code: 80, encoding: encoding)
         case "[C": return extended(code: 77, encoding: encoding)
@@ -2471,6 +2684,15 @@ public struct BASICKeyNormalizer {
         }
     }
 
+    private static func shiftTab(encoding: BASICKeyEncoding) -> String {
+        switch encoding {
+        case .aibasic:
+            return "[!T"
+        case .ibm:
+            return extended(code: 255, encoding: encoding)
+        }
+    }
+
     private static func extended(code: Int, shift: Bool = false, command: Bool = false, option: Bool = false, encoding: BASICKeyEncoding) -> String {
         let scalar = String(UnicodeScalar(code) ?? UnicodeScalar(255)!)
         switch encoding {
@@ -2487,40 +2709,49 @@ public struct BASICKeyNormalizer {
 }
 
 public extension BASICFileHost {
+    /// Default implementation for hosts that do not support saving.
     func saveTextFile(path: String, text: String) throws {
         throw BASICError.runtime("SAVE is not supported by this host")
     }
 
+    /// Default implementation for hosts that do not expose file existence.
     func fileExists(path: String) throws -> Bool {
         false
     }
 
+    /// Default current directory implementation backed by Foundation.
     func currentDirectoryPath() throws -> String {
         FileManager.default.currentDirectoryPath
     }
 
+    /// Default current directory mutation backed by Foundation.
     func changeDirectory(path: String) throws {
         guard FileManager.default.changeCurrentDirectoryPath(path) else {
             throw BASICError.runtime("Could not change directory to \(path)")
         }
     }
 
+    /// Default implementation for hosts that do not support FILES.
     func listFiles() throws -> [String] {
         throw BASICError.runtime("FILES is not supported by this host")
     }
 
+    /// Default implementation for hosts that do not support directory imports.
     func listFiles(path: String) throws -> [String] {
         throw BASICError.runtime("Directory IMPORT is not supported by this host")
     }
 }
 
 public extension BASICSystemHost {
+    /// Default SYSTEM implementation using `/bin/sh -lc`.
     func runSystemCommand(_ command: String) throws -> String {
         try BASICSystemCommand.run(command)
     }
 }
 
+/// Helper for running shell commands for hosts that allow SYSTEM support.
 public enum BASICSystemCommand {
+    /// Runs a command through `/bin/sh -lc` and returns combined stdout/stderr text.
     public static func run(_ command: String, workingDirectory: URL? = nil) throws -> String {
         let process = Process()
         let pipe = Pipe()
@@ -2542,13 +2773,19 @@ public enum BASICSystemCommand {
     }
 }
 
+/// Debugger execution mode.
 public enum BASICExecutionMode: Sendable {
+    /// Run normally until completion, break, or breakpoint.
     case run
+    /// Pause after the next executed statement.
     case stepInto
+    /// Pause after stepping over calls deeper than the provided call depth.
     case stepOver(depth: Int)
+    /// Pause after returning out of the provided call depth.
     case stepOut(depth: Int)
 }
 
+/// Thread-safe execution-control object for breaks, breakpoints, and stepping.
 public final class BASICExecutionControl: @unchecked Sendable {
     private let lock = NSLock()
     private var breakRequested = false
@@ -2558,8 +2795,10 @@ public final class BASICExecutionControl: @unchecked Sendable {
     private var ignoredBreakpointLocation: BASICBreakpointLocation?
     private var mode: BASICExecutionMode = .run
 
+    /// Creates an execution control with no pending breakpoints or break request.
     public init() {}
 
+    /// Clears pending break requests and the current source location.
     public func reset() {
         lock.lock()
         breakRequested = false
@@ -2568,36 +2807,42 @@ public final class BASICExecutionControl: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Requests a cooperative break on the execution thread.
     public func requestBreak() {
         lock.lock()
         breakRequested = true
         lock.unlock()
     }
 
+    /// Current BASIC display line number, if execution has started.
     public var lineNumber: Int? {
         lock.lock()
         defer { lock.unlock() }
         return currentLineNumber
     }
 
+    /// Current precise breakpoint location, if execution has started.
     public var location: BASICBreakpointLocation? {
         lock.lock()
         defer { lock.unlock() }
         return currentLocation
     }
 
+    /// Replaces the active breakpoint set.
     public func setBreakpoints(_ breakpoints: [BASICBreakpoint]) {
         lock.lock()
         self.breakpoints = breakpoints.filter(\.isEnabled).map(\.location)
         lock.unlock()
     }
 
+    /// Sets the current debugger stepping mode.
     public func setMode(_ mode: BASICExecutionMode) {
         lock.lock()
         self.mode = mode
         lock.unlock()
     }
 
+    /// Suppresses one breakpoint stop at a matching location.
     public func ignoreBreakpointOnce(at location: BASICBreakpointLocation?) {
         lock.lock()
         ignoredBreakpointLocation = location
@@ -2648,11 +2893,16 @@ public final class BASICExecutionControl: @unchecked Sendable {
     }
 }
 
+/// Precise debugger location for breakpoints and execution state.
 public struct BASICBreakpointLocation: Hashable, Sendable {
+    /// Optional BASIC source file path.
     public var fileName: String?
+    /// One-based source line number.
     public var lineNumber: Int
+    /// Zero-based statement index within a colon-separated line.
     public var statementNumber: Int
 
+    /// Creates a breakpoint location.
     public init(fileName: String? = nil, lineNumber: Int, statementNumber: Int = 0) {
         self.fileName = fileName
         self.lineNumber = lineNumber
@@ -2670,11 +2920,16 @@ public struct BASICBreakpointLocation: Hashable, Sendable {
     }
 }
 
+/// User-configurable breakpoint.
 public struct BASICBreakpoint: Identifiable, Hashable, Sendable {
+    /// Stable breakpoint identity.
     public var id: UUID
+    /// Source location where the breakpoint should stop.
     public var location: BASICBreakpointLocation
+    /// Whether the breakpoint participates in execution.
     public var isEnabled: Bool
 
+    /// Creates a breakpoint at a location.
     public init(id: UUID = UUID(), location: BASICBreakpointLocation, isEnabled: Bool = true) {
         self.id = id
         self.location = location
@@ -2682,12 +2937,18 @@ public struct BASICBreakpoint: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Graphics screen configuration requested by the BASIC SCREEN statement.
 public struct BASICScreenMode: Equatable, Sendable {
+    /// BASIC screen mode number.
     public let number: Int
+    /// Pixel width for graphics operations.
     public let width: Int
+    /// Pixel height for graphics operations.
     public let height: Int
+    /// Number of supported colors.
     public let colorCount: Int
 
+    /// Creates a screen mode description.
     public init(number: Int, width: Int, height: Int, colorCount: Int) {
         self.number = number
         self.width = width
@@ -2696,59 +2957,82 @@ public struct BASICScreenMode: Equatable, Sendable {
     }
 }
 
+/// Host interface for pixel graphics used by BASICStudio.
 public protocol BASICGraphicsHost: BASICHost {
+    /// Selects a graphics screen mode.
     func setScreenMode(_ mode: BASICScreenMode)
+    /// Sets the current graphics drawing color.
     func setGraphicsColor(_ color: Int)
+    /// Clears the graphics layer, optionally with a color.
     func clearGraphics(color: Int?)
+    /// Sets one graphics pixel.
     func setPixel(x: Int, y: Int, color: Int)
+    /// Reads one graphics pixel.
     func getPixel(x: Int, y: Int) -> Int
+    /// Draws one line segment.
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int)
 }
 
 public extension BASICHost {
+    /// Convenience default that adapts `print(_:terminator:)` to `printLine(_:)`.
     func print(_ text: String, terminator: String) {
         printLine(text + terminator.trimmingCharacters(in: .newlines))
     }
 }
 
+/// Mutable BASIC source program, including numbered and unnumbered lines.
 public final class BASICProgram: @unchecked Sendable {
     private var lines: [ProgramLine] = []
 
+    /// Creates an empty program.
     public init() {}
 
+    /// Whether the program contains no source lines.
     public var isEmpty: Bool { lines.isEmpty }
 
+    /// Adds, replaces, or deletes a numbered source line.
     public func setLine(number: Int, source: String) {
         let trimmed = source.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             lines.removeAll { $0.number == number }
         } else {
             if let index = lines.firstIndex(where: { $0.number == number }) {
-                lines[index].source = trimmed
+                lines[index].source = source
             } else {
-                lines.append(ProgramLine(number: number, source: trimmed, fileName: nil, sourceLineNumber: nil, isImported: false))
+                lines.append(ProgramLine(number: number, source: source, fileName: nil, sourceLineNumber: nil, isImported: false))
             }
             lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
         }
     }
 
+    /// Replaces the program with line-numbered or line-number-free source.
     public func loadSource(_ source: String, fileName: String? = nil) {
         lines = Self.parseLines(from: source, fileName: fileName, isImported: false)
     }
 
+    /// Removes all program lines.
     public func clear() {
         lines.removeAll()
     }
 
-    public func listing() -> String {
-        orderedLines.map { line in
+    /// Returns a LIST-style rendering of the current program.
+    public func listing(begin: Int? = nil, end: Int? = nil, colorized: Bool = false) -> String {
+        orderedLines.filter { line in
+            guard begin != nil || end != nil else { return true }
+            guard let number = line.number else { return false }
+            if let begin, number < begin { return false }
+            if let end, number > end { return false }
+            return true
+        }.map { line in
+            let source = colorized ? Self.colorizedListingLine(line.source) : line.source
             if let number = line.number {
-                return "\(number) \(line.source)"
+                return "\(colorized ? Self.ansiNumber : "")\(number)\(colorized ? Self.ansiReset : "") \(source)"
             }
-            return line.source
+            return source
         }.joined(separator: "\n")
     }
 
+    /// Program lines in execution order with source metadata.
     public var orderedLines: [(number: Int?, source: String, fileName: String?, sourceLineNumber: Int?, isImported: Bool)] {
         lines.map { ($0.number, $0.source, $0.fileName, $0.sourceLineNumber, $0.isImported) }
     }
@@ -2760,12 +3044,18 @@ public final class BASICProgram: @unchecked Sendable {
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
         var digits = ""
         var index = source.startIndex
+        while index < source.endIndex, source[index].isWhitespace {
+            index = source.index(after: index)
+        }
         while index < source.endIndex, source[index].isNumber {
             digits.append(source[index])
             index = source.index(after: index)
         }
         guard !digits.isEmpty, let number = Int(digits) else { return nil }
-        let rest = source[index...].trimmingCharacters(in: .whitespaces)
+        if index < source.endIndex, source[index].isWhitespace {
+            index = source.index(after: index)
+        }
+        let rest = String(source[index...])
         return (number, rest)
     }
 
@@ -2786,10 +3076,7 @@ public final class BASICProgram: @unchecked Sendable {
         )
 
         return lineRecords
-            .map { record in
-                (lineNumber: record.lineNumber, source: record.source.trimmingCharacters(in: .whitespaces))
-            }
-            .filter { !$0.source.isEmpty }
+            .filter { !$0.source.trimmingCharacters(in: .whitespaces).isEmpty }
             .map { record in
                 if let numbered = splitNumberedLine(record.source) {
                     return ProgramLine(number: numbered.number, source: numbered.source, fileName: fileName, sourceLineNumber: record.lineNumber, isImported: isImported)
@@ -2803,7 +3090,7 @@ public final class BASICProgram: @unchecked Sendable {
         var pending: (lineNumber: Int, source: String)?
 
         for sourceLine in sourceLines {
-            let line = sourceLine.source.trimmingCharacters(in: .whitespaces)
+            let line = sourceLine.source
             let combined = [pending?.source, line]
                 .compactMap { $0 }
                 .joined(separator: pending == nil ? "" : " ")
@@ -2836,6 +3123,108 @@ public final class BASICProgram: @unchecked Sendable {
         }
         return nil
     }
+
+    private static let ansiReset = "\u{001B}[0m"
+    private static let ansiKeyword = "\u{001B}[38;5;39m"
+    private static let ansiString = "\u{001B}[38;5;215m"
+    private static let ansiComment = "\u{001B}[38;5;71m"
+    private static let ansiNumber = "\u{001B}[38;5;141m"
+
+    private static let listingKeywords: Set<String> = [
+        "AS", "ASYNC", "AWAIT", "CASE", "CLASS", "CLOSE", "COLOR", "DATA", "DIM", "ELSE", "ELSEIF",
+        "END", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB", "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE",
+        "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
+        "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
+        "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID"
+    ]
+
+    private static func colorizedListingLine(_ source: String) -> String {
+        var output = ""
+        var index = source.startIndex
+        var atLineStart = true
+        var previousWasIdentifier = false
+
+        func appendComment(from commentStart: String.Index) {
+            output += ansiComment + source[commentStart...] + ansiReset
+            index = source.endIndex
+        }
+
+        while index < source.endIndex {
+            let character = source[index]
+            if character.isWhitespace {
+                output.append(character)
+                atLineStart = atLineStart && character != "\t" ? atLineStart : false
+                index = source.index(after: index)
+                previousWasIdentifier = false
+                continue
+            }
+            if atLineStart && character == "#" {
+                appendComment(from: index)
+                break
+            }
+            if character == "'" {
+                appendComment(from: index)
+                break
+            }
+            if character == "/", source.index(after: index) < source.endIndex, source[source.index(after: index)] == "/" {
+                appendComment(from: index)
+                break
+            }
+            if character == "\"" {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex {
+                    let current = source[index]
+                    index = source.index(after: index)
+                    if current == "\"" { break }
+                }
+                output += ansiString + source[start..<index] + ansiReset
+                atLineStart = false
+                previousWasIdentifier = false
+                continue
+            }
+            if character.isNumber {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex, source[index].isNumber || source[index] == "." {
+                    index = source.index(after: index)
+                }
+                output += ansiNumber + source[start..<index] + ansiReset
+                atLineStart = false
+                previousWasIdentifier = false
+                continue
+            }
+            if character.isLetter {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "$" || source[index] == "%" || source[index] == "#" {
+                    index = source.index(after: index)
+                }
+                let word = String(source[start..<index])
+                let uppercased = word.uppercased()
+                if uppercased == "REM" && !previousWasIdentifier {
+                    output += ansiKeyword + word + ansiReset
+                    if index < source.endIndex {
+                        output += ansiComment + source[index...] + ansiReset
+                    }
+                    break
+                }
+                if listingKeywords.contains(uppercased) {
+                    output += ansiKeyword + word + ansiReset
+                } else {
+                    output += word
+                }
+                atLineStart = false
+                previousWasIdentifier = true
+                continue
+            }
+            output.append(character)
+            atLineStart = false
+            previousWasIdentifier = false
+            index = source.index(after: index)
+        }
+        return output + ansiReset
+    }
 }
 
 private struct ProgramLine {
@@ -2850,15 +3239,24 @@ private final class BASICFileState {
     var lastFilePath: String?
 }
 
+/// High-level REPL/session facade for editing, running, and debugging BASIC programs.
 public final class BASICSession: @unchecked Sendable {
+    /// Default graphical prompt template used by BASICStudio.
     public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    /// Plain text prompt template for hosts without powerline glyph support.
     public static let plainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "
+    /// Classic READY prompt template.
     public static let shellPromptTemplate = "READY%nl> "
+    /// Legacy default prompt string.
     public static let defaultPrompt = "\(NSUserName()):~ > "
+    /// Nerd-font prompt template for shell-style hosts.
     public static let nerdFontPromptTemplate = "    %cwd %gitSegment "
 
+    /// Editable program associated with this session.
     public let program = BASICProgram()
+    /// Template used to render prompts.
     public var promptTemplate: String
+    /// Current rendered prompt.
     public var prompt: String {
         renderedPrompt()
     }
@@ -2868,11 +3266,13 @@ public final class BASICSession: @unchecked Sendable {
     private let fileState = BASICFileState()
     private var activeInterpreter: BASICInterpreter?
 
+    /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
         self.host = host
         self.promptTemplate = promptTemplate
     }
 
+    /// Submits one console line, returning false when the caller should exit.
     @discardableResult
     public func submit(_ input: String) -> Bool {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2960,10 +3360,17 @@ public final class BASICSession: @unchecked Sendable {
                 return true
             }
 
-            switch trimmed.uppercased() {
-            case "LIST":
-                let listing = program.listing()
+            if let listCommand = try Self.listCommand(from: trimmed) {
+                let colored = (host as? BASICListingStyleHost)?.usesColoredListing == true
+                let listing = program.listing(begin: listCommand.begin, end: listCommand.end, colorized: colored)
                 if !listing.isEmpty { host.printLine(listing) }
+                if listCommand.check {
+                    printDiagnostics()
+                }
+                return true
+            }
+
+            switch trimmed.uppercased() {
             case "NEW":
                 program.clear()
                 runtime.clearAll()
@@ -2987,6 +3394,7 @@ public final class BASICSession: @unchecked Sendable {
         return true
     }
 
+    /// Starts the program from the beginning or an optional numbered line.
     public func runProgram(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
         runtime.resetForRun()
         let interpreter = BASICInterpreter(
@@ -3014,6 +3422,7 @@ public final class BASICSession: @unchecked Sendable {
         }
     }
 
+    /// Continues an interrupted program, or runs from the start when no program is paused.
     public func continueProgram(executionControl: BASICExecutionControl? = nil) throws {
         guard let activeInterpreter else {
             try runProgram(executionControl: executionControl)
@@ -3037,30 +3446,66 @@ public final class BASICSession: @unchecked Sendable {
         }
     }
 
+    /// Local variables visible in the active debugger frame.
     public var debugLocalVariables: [BASICVariableSnapshot] {
         activeInterpreter?.debugLocalVariables ?? runtime.localSnapshots()
     }
 
+    /// Global variables visible to the program.
     public var debugGlobalVariables: [BASICVariableSnapshot] {
         activeInterpreter?.debugGlobalVariables ?? runtime.globalSnapshots()
     }
 
+    /// Parses and validates the current program without running it.
     public func diagnostics() -> [BASICDiagnostic] {
         BASICInterpreter(program: program, host: host, runtime: runtime, fileState: fileState).diagnostics()
     }
 
+    private func printDiagnostics() {
+        let diagnostics = self.diagnostics()
+        guard !diagnostics.isEmpty else {
+            host.printLine("No diagnostics.")
+            return
+        }
+
+        host.printLine("Diagnostics:")
+        let indexedLines = program.orderedLines.enumerated().map { index, line in
+            (
+                sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                displayLineNumber: line.number ?? line.sourceLineNumber ?? index + 1,
+                source: line.number.map { "\($0) \(line.source)" } ?? line.source
+            )
+        }
+        for diagnostic in diagnostics {
+            let source = diagnostic.fileName == nil
+                ? indexedLines.first { $0.sourceLineNumber == diagnostic.lineNumber }
+                : nil
+            let displayLineNumber = source?.displayLineNumber ?? diagnostic.lineNumber
+            let filePrefix = diagnostic.fileName.map { "\($0):" } ?? ""
+            host.printLine("\(filePrefix)Line \(displayLineNumber), column \(diagnostic.column + 1): \(diagnostic.message)")
+            if let sourceText = source?.source {
+                host.printLine(sourceText)
+                host.printLine(String(repeating: " ", count: max(0, diagnostic.column)) + "^")
+            }
+        }
+    }
+
+    /// Current debugger call stack.
     public var debugCallStack: [BASICCallStackFrame] {
         activeInterpreter?.debugCallStack ?? []
     }
 
+    /// Local variables for each debugger stack frame.
     public var debugFrameLocalVariables: [[BASICVariableSnapshot]] {
         activeInterpreter?.debugFrameLocalVariables ?? []
     }
 
+    /// Current debugger call depth.
     public var debugCallDepth: Int {
         activeInterpreter?.debugCallDepth ?? 0
     }
 
+    /// Returns a user-facing pause message for break and step errors.
     public func debugPauseDescription(for error: BASICError) -> String {
         let baseDescription: String
         switch error {
@@ -3091,12 +3536,18 @@ public final class BASICSession: @unchecked Sendable {
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
         var digits = ""
         var index = source.startIndex
+        while index < source.endIndex, source[index].isWhitespace {
+            index = source.index(after: index)
+        }
         while index < source.endIndex, source[index].isNumber {
             digits.append(source[index])
             index = source.index(after: index)
         }
         guard !digits.isEmpty, let number = Int(digits) else { return nil }
-        let rest = source[index...].trimmingCharacters(in: .whitespaces)
+        if index < source.endIndex, source[index].isWhitespace {
+            index = source.index(after: index)
+        }
+        let rest = String(source[index...])
         return (number, rest)
     }
 
@@ -3117,6 +3568,48 @@ public final class BASICSession: @unchecked Sendable {
     private static func promptString(from source: String) throws -> String?? {
         guard keywordPrefix("PROMPT", matches: source) else { return nil }
         return try commandPath(keyword: "PROMPT", from: source, requiresPath: false)
+    }
+
+    private struct ListCommand {
+        var begin: Int?
+        var end: Int?
+        var check = false
+    }
+
+    private static func listCommand(from source: String) throws -> ListCommand? {
+        guard keywordPrefix("LIST", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 4)
+        var rest = source[start...].trimmingCharacters(in: .whitespaces)
+        var command = ListCommand()
+
+        if rest.uppercased().hasSuffix("CHECK") {
+            let checkStart = rest.index(rest.endIndex, offsetBy: -5)
+            let beforeCheck = rest[..<checkStart]
+            if beforeCheck.isEmpty || beforeCheck.last?.isWhitespace == true {
+                command.check = true
+                rest = beforeCheck.trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        guard !rest.isEmpty else { return command }
+        if let dash = rest.firstIndex(of: "-") {
+            let lower = rest[..<dash].trimmingCharacters(in: .whitespaces)
+            let upper = rest[rest.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+            if !lower.isEmpty {
+                guard let begin = Int(lower) else { throw BASICError.syntax("Expected beginning line number in LIST") }
+                command.begin = begin
+            }
+            if !upper.isEmpty {
+                guard let end = Int(upper) else { throw BASICError.syntax("Expected ending line number in LIST") }
+                command.end = end
+            }
+            return command
+        }
+
+        guard let line = Int(rest) else { throw BASICError.syntax("Expected line range after LIST") }
+        command.begin = line
+        command.end = line
+        return command
     }
 
     private static func commandPath(keyword: String, from source: String, requiresPath: Bool) throws -> String? {
@@ -3240,6 +3733,7 @@ public final class BASICSession: @unchecked Sendable {
     }
 }
 
+/// Low-level interpreter for a prepared `BASICProgram`.
 public final class BASICInterpreter {
     private let program: BASICProgram
     private weak var host: BASICHost?
@@ -3267,7 +3761,10 @@ public final class BASICInterpreter {
     private var dataIndex = 0
     private var pc = 0
     private var isPrepared = false
+    private var currentSourceFileName: String?
+    private var currentLogModuleOverride: String?
 
+    /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
         self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil)
     }
@@ -3286,6 +3783,7 @@ public final class BASICInterpreter {
         self.executionControl = executionControl
     }
 
+    /// Starts execution, optionally from a numbered line.
     public func run(startLine: Int? = nil) throws {
         gosubStack.removeAll()
         forStack.removeAll()
@@ -3300,6 +3798,7 @@ public final class BASICInterpreter {
         self.executionControl = executionControl
     }
 
+    /// Parses and validates the interpreter program without running it.
     public func diagnostics() -> [BASICDiagnostic] {
         var diagnostics: [BASICDiagnostic] = []
         let rootLines = program.orderedLines
@@ -3688,6 +4187,7 @@ public final class BASICInterpreter {
         return "\(directory)/\(cleanRelative)"
     }
 
+    /// Continues execution after a breakpoint, step, or break request.
     public func continueExecution() throws {
         clearPausedDebugSnapshots()
         if !isPrepared {
@@ -3738,7 +4238,16 @@ public final class BASICInterpreter {
     }
 
     private func updateExecutionLocation(_ line: ParsedLine) {
+        currentSourceFileName = line.fileName
         executionControl?.update(lineNumber: line.displayLineNumber, location: line.breakpointLocation)
+    }
+
+    private func defaultLogModuleName() -> String {
+        guard let fileName = currentSourceFileName, !fileName.isEmpty else {
+            return "Immediate"
+        }
+        let normalized = fileName.replacingOccurrences(of: "\\", with: "/")
+        return normalized.split(separator: "/").last.map(String.init) ?? fileName
     }
 
     fileprivate var debugCallDepth: Int {
@@ -3910,6 +4419,22 @@ public final class BASICInterpreter {
             host?.print(rendered.text, terminator: rendered.terminator)
             updateOutputColumn(rendered)
             return .next
+        case .log(let level, let parts):
+            guard let loggingHost = host as? BASICLoggingHost,
+                  loggingHost.isBASICLoggingEnabled else {
+                return .next
+            }
+            let rendered = try renderPrint(parts, startColumn: 0)
+            loggingHost.log(
+                level: try string(level),
+                issuer: "B",
+                module: currentLogModuleOverride ?? defaultLogModuleName(),
+                text: rendered.text
+            )
+            return .next
+        case .module(let name):
+            currentLogModuleOverride = try string(name)
+            return .next
         case .printFile(let number, let parts):
             try printLegacyFile(number: number, parts: parts)
             return .next
@@ -4012,24 +4537,25 @@ public final class BASICInterpreter {
             let raw = host?.readLine(prompt: promptText) ?? ""
             try assignReadValue(try inputValue(from: raw, to: target), to: target)
             return .next
-        case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength):
+        case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength, let defaultValue):
             let promptText = try prompt.map(string) ?? ""
             let length = try fieldLength.map(integer)
             let maximum = try maxLength.map(integer)
+            let defaultText = try defaultValue.map(string)
             if let length, length <= 0 {
                 throw BASICError.runtime("LINE INPUT LENGTH must be greater than zero")
             }
             if let maximum, maximum < 0 {
                 throw BASICError.runtime("LINE INPUT MAX must be zero or greater")
             }
-            let options = BASICLineInputOptions(fieldLength: length, maxLength: maximum)
+            let options = BASICLineInputOptions(fieldLength: length, maxLength: maximum, defaultText: defaultText)
             let result: BASICLineInputResult
             if let lineInputHost = host as? BASICConfiguredLineInputHost {
-                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: exitTarget != nil, options: options) ?? BASICLineInputResult(text: "")
+                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: exitTarget != nil, options: options) ?? BASICLineInputResult(text: defaultText ?? "")
             } else if exitTarget != nil, let lineInputHost = host as? BASICLineInputHost {
-                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: true) ?? BASICLineInputResult(text: "")
+                result = lineInputHost.readLine(prompt: promptText, exitOnSpecialKey: true) ?? BASICLineInputResult(text: defaultText ?? "")
             } else {
-                result = BASICLineInputResult(text: host?.readLine(prompt: promptText) ?? "")
+                result = BASICLineInputResult(text: host?.readLine(prompt: promptText) ?? defaultText ?? "")
             }
             let text = maximum.map { String(result.text.prefix($0)) } ?? result.text
             try assignReadValue(.string(BASICString(text)), to: target)
@@ -4739,10 +5265,11 @@ public final class BASICInterpreter {
 
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ACS", "ASC", "ASN", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
-        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
+        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
         "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
-        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT"
+        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
+        "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
     ]
 
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
@@ -4811,6 +5338,8 @@ public final class BASICInterpreter {
             let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
             let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
             return .string(BASICString(BASICKeyNormalizer.normalize(rawKey, encoding: encoding)))
+        case "INPUT$":
+            return try intrinsicInputString(name: name.name, arguments: arguments)
         case "INSTR":
             return .number(Double(try intrinsicInstr(arguments: arguments)))
         case "INT":
@@ -4839,6 +5368,24 @@ public final class BASICInterpreter {
         case "REFLECT":
             try requireArgumentCount(name.name, arguments, 1)
             return try reflect(arguments[0])
+        case "FIELDCOUNT":
+            try requireArgumentCount(name.name, arguments, 1)
+            return .number(Double(try runtime.reflectedFieldCount(for: evaluate(arguments[0]))))
+        case "FIELDNAME$":
+            try requireArgumentCount(name.name, arguments, 2)
+            return .string(BASICString(try runtime.reflectedFieldName(for: evaluate(arguments[0]), selector: evaluate(arguments[1]))))
+        case "FIELDMETA":
+            try requireArgumentCount(name.name, arguments, 2)
+            return try runtime.reflectedFieldMetadata(for: evaluate(arguments[0]), selector: evaluate(arguments[1]))
+        case "FIELDVALUE":
+            try requireArgumentCount(name.name, arguments, 2)
+            return try runtime.reflectedFieldValue(for: evaluate(arguments[0]), selector: evaluate(arguments[1]))
+        case "FIELDVALUE$":
+            try requireArgumentCount(name.name, arguments, 2)
+            return .string(BASICString(try runtime.reflectedFieldValue(for: evaluate(arguments[0]), selector: evaluate(arguments[1])).description))
+        case "SETFIELD":
+            try requireArgumentCount(name.name, arguments, 3)
+            return try runtime.settingReflectedField(value: evaluate(arguments[0]), selector: evaluate(arguments[1]), newValue: evaluate(arguments[2]))
         case "RAD":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments) * Double.pi / 180)
         case "RND":
@@ -5280,11 +5827,20 @@ public final class BASICInterpreter {
             return FunctionCallResult(value: value, receiver: receiver)
         }
 
+        var labelIndexByName: [String: Int] = [:]
+        if definition.startIndex < definition.endIndex {
+            for index in (definition.startIndex + 1)..<definition.endIndex {
+                if let label = parsedLines[index].statement.label {
+                    labelIndexByName[label.uppercased()] = index
+                }
+            }
+        }
+
         var pc = definition.startIndex + 1
         let parsed = parsedLines
         do {
             while pc < definition.endIndex {
-                executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
+                updateExecutionLocation(parsed[pc])
                 try executionControl?.checkBreak()
                 let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
                 switch flow {
@@ -5296,7 +5852,9 @@ public final class BASICInterpreter {
                     guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
                     pc = index
                 case .gotoLabel(let label):
-                    guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+                    guard let index = labelIndexByName[label.uppercased()] ?? lineIndexByLabel[label.uppercased()] else {
+                        throw BASICError.missingLabel(label)
+                    }
                     pc = index
                 case .returnTo(let index):
                     pc = index
@@ -5313,7 +5871,7 @@ public final class BASICInterpreter {
 
                 if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
                     if pc < definition.endIndex {
-                        executionControl?.update(lineNumber: parsed[pc].displayLineNumber, location: parsed[pc].breakpointLocation)
+                        updateExecutionLocation(parsed[pc])
                         throw BASICError.stepComplete(parsed[pc].breakpointLocation)
                     }
                 }
@@ -5589,6 +6147,46 @@ public final class BASICInterpreter {
         let handle = try legacyFileHandle(number)
         let file = try readableLegacyFile(handle: handle)
         return .boolean(file.position >= file.content.rawString.count)
+    }
+
+    private func intrinsicInputString(name: String, arguments: [Expression]) throws -> BASICValue {
+        try requireArgumentRange(name, arguments, 1...2)
+        let count = try integer(arguments[0])
+        guard count >= 0 else { throw BASICError.runtime("INPUT$ requires a non-negative length") }
+        guard count > 0 else { return .string(BASICString("")) }
+
+        if arguments.count == 2 {
+            let handle = try legacyFileHandle(arguments[1])
+            return .string(try readLegacyCharacters(handle: handle, count: count))
+        }
+
+        let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
+        var result = ""
+        if let keyboardHost = host as? BASICBlockingKeyboardHost {
+            while result.count < count, let rawKey = keyboardHost.readBlockingKey() {
+                result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
+            }
+        } else if let keyboardHost = host as? BASICKeyboardHost {
+            while result.count < count, let rawKey = keyboardHost.readKey(), !rawKey.isEmpty {
+                result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
+            }
+        }
+        return .string(BASICString(String(result.prefix(count))))
+    }
+
+    private func readLegacyCharacters(handle: Int, count: Int) throws -> BASICString {
+        var file = try readableLegacyFile(handle: handle)
+        let raw = file.content.rawString
+        guard file.position < raw.count else {
+            legacyFiles[handle] = file
+            throw BASICError.runtime("Input past end")
+        }
+        let start = raw.index(raw.startIndex, offsetBy: file.position)
+        let end = raw.index(start, offsetBy: count, limitedBy: raw.endIndex) ?? raw.endIndex
+        let value = String(raw[start..<end])
+        file.position = raw.distance(from: raw.startIndex, to: end)
+        legacyFiles[handle] = file
+        return BASICString(value)
     }
 
     private func readLegacyLine(handle: Int) throws -> String? {
@@ -6480,6 +7078,8 @@ private indirect enum Statement: Equatable {
     case restore
     case print([PrintPart])
     case printUsing(format: Expression, values: [Expression], trailingSeparator: PrintSeparator?)
+    case log(level: Expression, parts: [PrintPart])
+    case module(Expression)
     case screen(Expression)
     case color(Expression)
     case cls
@@ -6494,7 +7094,7 @@ private indirect enum Statement: Equatable {
     case optionLetMode(LetMode)
     case optionKeyMode(BASICKeyMode)
     case input(prompt: Expression?, target: ReadTarget)
-    case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?)
+    case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?, defaultValue: Expression?)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
     case closeFile(Expression?)
     case putFile(number: Expression, parts: [PrintPart])
@@ -6876,6 +7476,12 @@ private struct Parser {
                 return .printFile(number: number, parts: try parsePrintParts())
             }
             return .print(try parsePrintParts())
+        }
+        if matchIdentifier("LOG") {
+            return try parseLogStatement()
+        }
+        if matchIdentifier("MODULE") {
+            return .module(try parseExpression())
         }
         if matchIdentifier("PRINT#") {
             let number = try parseFileNumber(hashAlreadyConsumed: true)
@@ -7562,6 +8168,18 @@ private struct Parser {
         return parts
     }
 
+    private mutating func parseLogStatement() throws -> Statement {
+        let level: Expression
+        if case .identifier(let name) = peek, peekNext == .comma {
+            _ = advance()
+            level = .string(name)
+        } else {
+            level = try parseExpression()
+        }
+        guard match(.comma) else { throw syntax("Expected , after LOG level") }
+        return .log(level: level, parts: try parsePrintParts())
+    }
+
     private mutating func parseLineInput() throws -> Statement {
         let prompt: Expression?
         if case .string = peek {
@@ -7574,6 +8192,7 @@ private struct Parser {
         var exitTarget: ReadTarget?
         var fieldLength: Expression?
         var maxLength: Expression?
+        var defaultValue: Expression?
         while !isStatementEnd {
             if matchIdentifier("EXITVAR") {
                 guard exitTarget == nil else { throw syntax("Duplicate EXITVAR in LINE INPUT") }
@@ -7584,11 +8203,14 @@ private struct Parser {
             } else if matchIdentifier("MAX") {
                 guard maxLength == nil else { throw syntax("Duplicate MAX in LINE INPUT") }
                 maxLength = try parseExpression()
+            } else if matchIdentifier("DEFAULT") {
+                guard defaultValue == nil else { throw syntax("Duplicate DEFAULT in LINE INPUT") }
+                defaultValue = try parseExpression()
             } else {
-                throw syntax("Expected EXITVAR, LENGTH, or MAX in LINE INPUT")
+                throw syntax("Expected EXITVAR, LENGTH, MAX, or DEFAULT in LINE INPUT")
             }
         }
-        return .lineInput(prompt: prompt, target: target, exitTarget: exitTarget, fieldLength: fieldLength, maxLength: maxLength)
+        return .lineInput(prompt: prompt, target: target, exitTarget: exitTarget, fieldLength: fieldLength, maxLength: maxLength, defaultValue: defaultValue)
     }
 
     private mutating func parseUsingClause() throws -> (format: Expression, values: [Expression], trailingSeparator: PrintSeparator?) {
@@ -7962,6 +8584,10 @@ private struct Parser {
         var arguments: [Expression] = []
         if !match(.rightParen) {
             repeat {
+                if match(.hash) {
+                    arguments.append(try parseExpression())
+                    continue
+                }
                 arguments.append(try parseExpression())
             } while match(.comma)
             guard match(.rightParen) else { throw syntax("Expected )") }
@@ -8162,7 +8788,7 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
+        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"

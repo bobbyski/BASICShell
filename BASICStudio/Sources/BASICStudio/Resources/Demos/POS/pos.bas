@@ -66,7 +66,23 @@ Parts:
     print chr$(27) + "[0;32;40m";
     cls
     gosub ShowStoreHeader
-    print "Add or edit parts is next on the build list."
+    let part as Part
+    part.Sku = "COFFEE-001"
+    part.Description = "House coffee"
+    part.UnitPrice = 2.5
+    part.Taxable = true
+
+    let editor as ViewEditor
+    editor = new ViewEditor()
+    part = editor.Edit(part)
+
+    cls
+    gosub ShowStoreHeader
+    print "Part:"
+    print "SKU         "; part.Sku
+    print "Description "; part.Description
+    print "Unit Price  "; using$("###.##", part.UnitPrice)
+    print "Taxable     "; part.Taxable
     goto Done
 
 Done:

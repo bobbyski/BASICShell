@@ -852,6 +852,57 @@ struct BASICCoreTests {
         #expect(host.output == ["A   B    C"])
     }
 
+    @Test("LOG renders print lists when enabled and is ignored when disabled")
+    func logStatementUsesLoggingHost() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("LOG INFO, \"x=\"; 5, \"done\";")
+
+        #expect(host.logs.count == 1)
+        #expect(host.logs.first?.level == "INFO")
+        #expect(host.logs.first?.issuer == "B")
+        #expect(host.logs.first?.module == "Immediate")
+        #expect(host.logs.first?.text == "x=5           done")
+        #expect(host.output.isEmpty)
+
+        host.isBASICLoggingEnabled = false
+        session.submit("LOG WARN, \"ignored\"; system$(\"printf nope\")")
+
+        #expect(host.logs.count == 1)
+        #expect(host.systemCommands.isEmpty)
+    }
+
+    @Test("MODULE overrides the BASIC log module")
+    func moduleStatementOverridesLogModule() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        module "Checkout"
+        log target, "enter menu"
+        """, fileName: "pos.bas")
+        session.submit("run")
+
+        #expect(host.logs.count == 1)
+        #expect(host.logs.first?.level == "target")
+        #expect(host.logs.first?.module == "Checkout")
+    }
+
+    @Test("LOG defaults module to source file name")
+    func logDefaultsModuleToSourceFile() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        log debug, "from file"
+        """, fileName: "/tmp/poslib/mainmenu.bas")
+        session.submit("run")
+
+        #expect(host.logs.count == 1)
+        #expect(host.logs.first?.module == "mainmenu.bas")
+    }
+
     @Test("LINE INPUT reads a full string")
     func lineInputReadsFullString() {
         let host = TestHost()
@@ -988,6 +1039,23 @@ struct BASICCoreTests {
         #expect(host.lineInputOptions == [BASICLineInputOptions(fieldLength: 5, maxLength: 10)])
     }
 
+    @Test("LINE INPUT DEFAULT passes prefilled text to host")
+    func lineInputDefaultPassesPrefilledTextToHost() {
+        let host = TestHost()
+        host.lineInputResults = [BASICLineInputResult(text: "COFFEE-002")]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        line input sku$ length 12 default "COFFEE-001" exitvar key$
+        print sku$
+        print key$
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["COFFEE-002", ""])
+        #expect(host.lineInputOptions == [BASICLineInputOptions(fieldLength: 12, defaultText: "COFFEE-001")])
+    }
+
     @Test("INPUT supports prompts and record fields")
     func inputSupportsPromptsAndRecordFields() {
         let host = TestHost()
@@ -1054,13 +1122,40 @@ struct BASICCoreTests {
         #expect(host.output == ["A", "B", ""])
     }
 
-    @Test("INKEY$ normalizes special keys in default AIBasic mode")
-    func inkeyNormalizesSpecialKeysInAIBasicMode() {
+    @Test("INKEY$ empty result can branch to a label inside a method")
+    func inkeyEmptyCanBranchToLabelInsideMethod() {
         let host = TestHost()
-        host.keys = ["\u{1B}[D", "\u{1B}OP", "\u{1B}[1;2D", "\u{1B}[1;3P", "\u{1B}[25;10~", "\u{1B}[#s", "[GP:A", "\t", "\u{8}", "\u{11}"]
+        host.keys = ["", "\r"]
         let session = BASICSession(host: host)
 
         session.program.loadSource("""
+        class KeyMenu
+            function Choose() as integer
+                let key$ = ""
+        WaitForKey:
+                key$ = inkey$
+                if key$ = "" then WaitForKey
+                return 7
+            end function
+        end class
+
+        let menu as KeyMenu
+        menu = new KeyMenu()
+        print menu.Choose()
+        """, fileName: "mainmenu.bas")
+        session.submit("RUN")
+
+        #expect(host.output == ["7"])
+    }
+
+    @Test("INKEY$ normalizes special keys in default AIBasic mode")
+    func inkeyNormalizesSpecialKeysInAIBasicMode() {
+        let host = TestHost()
+        host.keys = ["\u{1B}[D", "\u{1B}OP", "\u{1B}[1;2D", "\u{1B}[1;3P", "\u{1B}[25;10~", "\u{1B}[#s", "\u{1B}[Z", "[GP:A", "\t", "\u{8}", "\u{11}"]
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print inkey$()
         print inkey$()
         print inkey$()
         print inkey$()
@@ -1074,7 +1169,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["[K", "[F1", "[!K", "[#F1", "[!$F13", "[#s", "[GP:A", "9", "8", "17"])
+        #expect(host.output == ["[K", "[F1", "[!K", "[#F1", "[!$F13", "[#s", "[!T", "[GP:A", "9", "8", "17"])
     }
 
     @Test("OPTION IBM-KEYS makes INKEY$ return GW-BASIC extended keys")
@@ -1421,6 +1516,80 @@ struct BASICCoreTests {
         session.submit("LIST")
 
         #expect(host.output == ["10 print MixedCase\nMyLabel: LeT MixedCase = 42"])
+    }
+
+    @Test("LIST preserves source whitespace")
+    func listPreservesSourceWhitespace() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        class Sample
+            public Name as string
+
+            function Title() as string
+                return Name
+            end function
+        end class
+        """)
+
+        session.submit("LIST")
+
+        #expect(host.output == ["""
+        class Sample
+            public Name as string
+            function Title() as string
+                return Name
+            end function
+        end class
+        """])
+    }
+
+    @Test("LIST preserves direct numbered line spacing")
+    func listPreservesDirectNumberedLineSpacing() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10    print \"indented\"")
+        session.submit("LIST")
+
+        #expect(host.output == ["10    print \"indented\""])
+    }
+
+    @Test("LIST supports ranges")
+    func listSupportsRanges() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print 1")
+        session.submit("20 print 2")
+        session.submit("30 print 3")
+        session.submit("LIST 20-")
+        session.submit("LIST -20")
+        session.submit("LIST 20")
+
+        #expect(host.output == [
+            "20 print 2\n30 print 3",
+            "10 print 1\n20 print 2",
+            "20 print 2"
+        ])
+    }
+
+    @Test("LIST CHECK reports diagnostics")
+    func listCheckReportsDiagnostics() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print \"ok\"")
+        session.submit("20 skdjfhs fhkdsfhsdfk")
+        session.submit("LIST CHECK")
+
+        #expect(host.output.count == 5)
+        #expect(host.output[0] == "10 print \"ok\"\n20 skdjfhs fhkdsfhsdfk")
+        #expect(host.output[1] == "Diagnostics:")
+        #expect(host.output[2].contains("Line 20, column"))
+        #expect(host.output[2].contains("Syntax error: Expected ="))
+        #expect(host.output[3] == "20 skdjfhs fhkdsfhsdfk")
+        #expect(host.output[4].contains("^"))
     }
 
     @Test("LOAD supports line-number-free source")
@@ -2090,6 +2259,41 @@ struct BASICCoreTests {
             "TAIL",
             "TRUE"
         ])
+    }
+
+    @Test("INPUT$ reads fixed character counts from numbered files")
+    func inputStringReadsFixedCountsFromNumberedFiles() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.files["raw.txt"] = "ABCDEF"
+
+        session.program.loadSource("""
+        open "raw.txt" for input as #1
+        print input$(2, #1)
+        print input$(3, #1)
+        print eof(1)
+        print input$(1, #1)
+        print eof(1)
+        close #1
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["AB", "CDE", "FALSE", "F", "TRUE"])
+    }
+
+    @Test("INPUT$ reads keyboard characters")
+    func inputStringReadsKeyboardCharacters() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.keys = ["A", "B", "C"]
+
+        session.program.loadSource("""
+        print input$(2)
+        print input$(2)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["AB", "C"])
     }
 
     @Test("IBM PUT GET and RESET use legacy numbered files")
@@ -2839,6 +3043,38 @@ struct BASICCoreTests {
             "INTEGER",
             "(1)",
             "ARRAY OF INTEGER"
+        ])
+    }
+
+    @Test("Reflection field helpers enumerate and edit record fields")
+    func reflectionFieldHelpersEnumerateAndEditRecordFields() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Part
+            Sku as string meta { label: "SKU" }
+            Price as double meta { label: "Price" }
+        end type
+        dim part as Part
+        part.Sku = "ABC"
+        part.Price = 1.25
+        print fieldcount(part)
+        print fieldname$(part, 0)
+        meta = fieldmeta(part, "Sku")
+        print meta("label")
+        print fieldvalue$(part, "Price")
+        part = setfield(part, "Price", "2.5")
+        print part.Price
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "2",
+            "Sku",
+            "SKU",
+            "1.25",
+            "2.5"
         ])
     }
 
@@ -3745,10 +3981,12 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
+    var logs: [(level: String, issuer: String, module: String, text: String)] = []
+    var isBASICLoggingEnabled = true
     var input: [String] = []
     var lineInputResults: [BASICLineInputResult] = []
     var lineInputOptions: [BASICLineInputOptions] = []
@@ -3797,6 +4035,10 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
         requestBreakIfNeeded()
     }
 
+    func log(level: String, issuer: String, module: String, text: String) {
+        logs.append((level, issuer, module, text))
+    }
+
     func readLine(prompt: String) -> String? {
         input.isEmpty ? nil : input.removeFirst()
     }
@@ -3814,6 +4056,10 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     }
 
     func readKey() -> String? {
+        keys.isEmpty ? nil : keys.removeFirst()
+    }
+
+    func readBlockingKey() -> String? {
         keys.isEmpty ? nil : keys.removeFirst()
     }
 

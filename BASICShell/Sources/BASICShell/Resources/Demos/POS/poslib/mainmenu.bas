@@ -33,7 +33,8 @@ MeasureOptions:
 
 FlushKeys:
         key$ = inkey$
-        if key$ <> "" then FlushKeys
+        if key$ = "" then RenderMenu
+        goto FlushKeys
 
 RenderMenu:
         for i = 0 to count - 1

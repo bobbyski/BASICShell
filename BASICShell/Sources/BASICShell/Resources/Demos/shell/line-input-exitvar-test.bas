@@ -1,19 +1,27 @@
 #! /usr/bin/env aibasic
-' INKEY$ manual keyboard test.
-' Press keys to see their AIBasic names. Press Control-Q to exit.
+' LINE INPUT EXITVAR manual test.
+' Type text, then press Enter or a special key.
+' F10 or Escape exits the test.
 
 option local-let
 option aibasic-keys
 
-print "INKEY$ TEST"
-print "Press keys to display their names."
-print "Press Control-Q to exit."
+let text$ = "COFFEE-001"
+let key$ = ""
+
+print "LINE INPUT EXITVAR TEST"
+print "Type text. Press arrows, Tab, F-keys, Escape, or Enter."
+print "F10 or Escape exits."
+print
 
 Loop:
-    let k$ = inkey$
-    if k$ = "" then Loop
-    if k$ = chr$(17) then Done
-    print KeyName$(k$)
+    print "Field: ";
+    line input text$ length 30 default text$ exitvar key$
+    print "Text = "; text$
+    print "Exit = "; KeyName$(key$)
+    print
+    if key$ = "[F10" then Done
+    if key$ = chr$(27) then Done
     goto Loop
 
 Done:
@@ -21,6 +29,7 @@ Done:
 end
 
 function KeyName$(k$ as string) as string
+    if k$ = "" then return "NORMAL ENTER"
     if k$ = chr$(8) then return "BACKSPACE"
     if k$ = chr$(9) then return "TAB"
     if k$ = "[!T" then return "SHIFT+TAB"
@@ -28,7 +37,6 @@ function KeyName$(k$ as string) as string
     if k$ = chr$(13) then return "RETURN"
     if k$ = chr$(27) then return "ESCAPE"
 
-    if k$ = "[GP:CONNECTED" then return "GAMEPAD CONNECTED"
     if left$(k$, 4) = "[GP:" then return "GAMEPAD " + mid$(k$, 5)
 
     if len(k$) = 1 then
@@ -36,7 +44,6 @@ function KeyName$(k$ as string) as string
         if code < 32 then return "CTRL-" + chr$(code + 64) + " (" + str$(code) + ")"
         return "CHAR " + k$
     end if
-
 
     let p as integer = 2
     let mods$ = ""
@@ -59,7 +66,6 @@ function KeyName$(k$ as string) as string
     let code$ = mid$(k$, p, 1)
 
     if code$ = "F" then return mods$ + "FUNCTION " + mid$(k$, p + 1)
-
     if code$ = "G" then return mods$ + "HOME"
     if code$ = "H" then return mods$ + "UP"
     if code$ = "I" then return mods$ + "PAGE UP"

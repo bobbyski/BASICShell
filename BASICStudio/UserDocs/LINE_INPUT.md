@@ -17,10 +17,11 @@ a fixed-width field that scrolls horizontally as the input grows.
 line input "Name: "; name$ length 20 max 60
 ```
 
-`EXITVAR` can be combined with `LENGTH` and `MAX`.
+`DEFAULT` prefills the edit buffer. `EXITVAR` can be combined with `LENGTH`,
+`MAX`, and `DEFAULT` to build data-entry fields that can exit on special keys.
 
 ```basic
-line input "Choice: "; choice$ length 12 max 30 exitvar key$
+line input "SKU: "; sku$ length 18 default "COFFEE-001" exitvar key$
 ```
 
 `LINE INPUT#` reads one complete line from a legacy sequential input file.

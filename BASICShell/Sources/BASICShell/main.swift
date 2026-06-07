@@ -45,18 +45,27 @@ final class ShellLineEditor: @unchecked Sendable {
             _ = tcsetattr(fd, TCSANOW, &restored)
         }
 
-        Swift.print(prompt, terminator: "")
         fieldLength = options.fieldLength
         maxLength = options.maxLength
         fieldViewStart = 0
         fieldDisplayCursor = 0
+        var buffer = limited(options.defaultText ?? "", maxLength: options.maxLength)
+        var cursor = buffer.count
+
+        Swift.print(prompt, terminator: "")
         if let fieldLength {
-            Swift.print(String(repeating: " ", count: fieldLength) + String(repeating: "\u{1B}[D", count: fieldLength), terminator: "")
+            let visible = String(buffer.prefix(fieldLength))
+            fieldDisplayCursor = min(cursor, fieldLength)
+            Swift.print(
+                visible
+                + String(repeating: " ", count: max(0, fieldLength - visible.count))
+                + String(repeating: "\u{1B}[D", count: max(0, fieldLength - fieldDisplayCursor)),
+                terminator: ""
+            )
+        } else if !buffer.isEmpty {
+            Swift.print(buffer, terminator: "")
         }
         fflush(stdout)
-
-        var buffer = ""
-        var cursor = 0
 
         while true {
             guard let raw = readRawKey(fd: fd) else { return nil }
@@ -107,6 +116,25 @@ final class ShellLineEditor: @unchecked Sendable {
                 insert(raw, into: &buffer, cursor: &cursor)
             }
         }
+    }
+
+    func readBlockingKey() -> String? {
+        let fd = STDIN_FILENO
+        guard isatty(fd) == 1 else { return nil }
+
+        var originalTermios = termios()
+        guard tcgetattr(fd, &originalTermios) == 0 else { return nil }
+        var rawTermios = originalTermios
+        rawTermios.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        rawTermios.c_cc.16 = 1
+        rawTermios.c_cc.17 = 0
+        guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else { return nil }
+        defer {
+            var restored = originalTermios
+            _ = tcsetattr(fd, TCSANOW, &restored)
+        }
+
+        return readRawKey(fd: fd)
     }
 
     private func readRawKey(fd: Int32) -> String? {
@@ -290,7 +318,14 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost {
+    var usesColoredListing: Bool { true }
+    var isBASICLoggingEnabled: Bool { false }
+
+    func log(level: String, issuer: String, module: String, text: String) {
+        // Shell logging will grow a real viewer later; LOG is currently a no-op here.
+    }
+
     func print(_ text: String, terminator: String) {
         Swift.print(text, terminator: terminator)
     }
@@ -360,6 +395,10 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICKeyboardHost, BASI
             }
         }
         return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
+    }
+
+    func readBlockingKey() -> String? {
+        ShellLineEditor.shared.readBlockingKey()
     }
 
     private func readByteIfAvailable(fd: Int32, timeoutMicroseconds: Int32) -> UInt8? {

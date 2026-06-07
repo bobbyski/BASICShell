@@ -23,3 +23,5 @@ input #1, name$, age
 print name$, age
 close #1
 ```
+
+Use `INPUT$()` when you need a fixed number of characters instead of comma-separated fields.
