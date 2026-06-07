@@ -499,6 +499,97 @@ struct BASICCoreTests {
         #expect(host.output == ["fallthrough"])
     }
 
+    @Test("ON ERROR GOTO traps runtime errors and RESUME NEXT continues")
+    func onErrorGotoTrapsRuntimeErrorsAndResumeNextContinues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on error goto Handler
+        print 10 / 0
+        print "after"
+        end
+        Handler:
+            print "ERR", ERR
+            print "ERL", ERL
+            resume next
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "ERR           11",
+            "ERL           2",
+            "after"
+        ])
+    }
+
+    @Test("ERROR statement sets ERR and ERL in handler")
+    func errorStatementSetsErrAndErlInHandler() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on error goto Handler
+        error 42
+        end
+        Handler:
+            print "ERR", ERR
+            print "ERL", ERL
+            end
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == [
+            "ERR           42",
+            "ERL           2"
+        ])
+    }
+
+    @Test("ON ERROR GOTO zero disables runtime error trapping")
+    func onErrorGotoZeroDisablesRuntimeErrorTrapping() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on error goto Handler
+        on error goto 0
+        print 10 / 0
+        Handler:
+            print "handled"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: Division by zero"])
+    }
+
+    @Test("Breakpoint in ON ERROR handler stops after trapped runtime error")
+    func breakpointInOnErrorHandlerStopsAfterTrappedRuntimeError() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on error goto Handler
+        print 10 / 0
+        print "after"
+        end
+        Handler:
+            print "handled"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint in error handler")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        }
+
+        #expect(host.output.isEmpty)
+    }
+
     @Test("ON GOSUB selects one based target and returns")
     func onGosubSelectsOneBasedTargetAndReturns() {
         let host = TestHost()

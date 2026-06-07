@@ -12,6 +12,8 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     case contextualType(message: String, source: String, column: Int)
     /// A runtime failure raised while executing a valid program.
     case runtime(String)
+    /// A runtime failure raised by the BASIC ERROR statement.
+    case numberedRuntime(Int)
     /// An operation that requires BASICStudio graphics support on the current host.
     case studioOnlyFeature
     /// A branch target referenced a missing numbered line.
@@ -39,6 +41,7 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
             let marker = String(repeating: " ", count: max(0, column)) + "^"
             return "\(source)\n\(marker)\nType error: \(message)"
         case .runtime(let message): return "Runtime error: \(message)"
+        case .numberedRuntime(let number): return "Runtime error: Error \(number)"
         case .studioOnlyFeature: return "Unsupported feature: you must run this program in BASICStudio"
         case .missingLine(let line): return "Missing line \(line)"
         case .missingLabel(let label): return "Missing label \(label)"
@@ -3759,6 +3762,13 @@ public final class BASICInterpreter {
     private var pausedDebugCallDepth: Int?
     private var dataValues: [BASICValue] = []
     private var dataIndex = 0
+    private var errorHandlerTarget: BranchTarget?
+    private var isHandlingError = false
+    private var lastErrorNumber = 0
+    private var lastErrorLine = 0
+    private var lastErrorMessage = ""
+    private var errorResumePC: Int?
+    private var errorResumeNextPC: Int?
     private var pc = 0
     private var isPrepared = false
     private var currentSourceFileName: String?
@@ -3789,6 +3799,7 @@ public final class BASICInterpreter {
         forStack.removeAll()
         functionStack.removeAll()
         legacyFiles.removeAll()
+        resetErrorTrap()
         outputColumn = 0
         try prepare(startLine: startLine)
         try continueExecution()
@@ -4195,36 +4206,25 @@ public final class BASICInterpreter {
         }
 
         while pc < parsedLines.count {
-            let current = parsedLines[pc]
-            if current.isImported {
-                pc += 1
-                continue
-            }
-            updateExecutionLocation(current)
-            try executionControl?.checkBreak()
-            let next = try execute(current.statement, pc: pc, parsed: parsedLines)
-            switch next {
-            case .next:
-                pc += 1
-            case .jump(let index):
-                pc = index
-            case .goto(let line):
-                guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
-                pc = index
-            case .gotoLabel(let label):
-                guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
-                pc = index
-            case .returnTo(let index):
-                pc = index
-            case .end:
-                return
-            case .exitSelect:
-                guard let index = matchingEndSelect(after: pc, in: parsedLines) else {
-                    throw BASICError.runtime("EXIT SELECT without SELECT")
+            do {
+                let current = parsedLines[pc]
+                if current.isImported {
+                    pc += 1
+                    continue
                 }
-                pc = index + 1
-            case .functionReturn:
-                throw BASICError.runtime("RETURN outside FUNCTION")
+                updateExecutionLocation(current)
+                try executionControl?.checkBreak()
+                let next = try execute(current.statement, pc: pc, parsed: parsedLines)
+                try apply(flow: next, currentPC: pc, parsed: parsedLines)
+            } catch let error as BASICError {
+                if error.isDebugPause {
+                    snapshotPausedDebugState()
+                    throw error
+                }
+                if try handleRuntimeError(error, faultPC: pc, parsed: parsedLines) {
+                    continue
+                }
+                throw error
             }
 
             if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
@@ -4234,6 +4234,88 @@ public final class BASICInterpreter {
                 }
                 return
             }
+        }
+    }
+
+    private func apply(flow: Flow, currentPC: Int, parsed: [ParsedLine]) throws {
+        switch flow {
+        case .next:
+            pc = currentPC + 1
+        case .jump(let index):
+            pc = index
+        case .goto(let line):
+            guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
+            pc = index
+        case .gotoLabel(let label):
+            guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+            pc = index
+        case .returnTo(let index):
+            pc = index
+        case .end:
+            pc = parsed.count
+        case .exitSelect:
+            guard let index = matchingEndSelect(after: currentPC, in: parsed) else {
+                throw BASICError.runtime("EXIT SELECT without SELECT")
+            }
+            pc = index + 1
+        case .functionReturn:
+            throw BASICError.runtime("RETURN outside FUNCTION")
+        }
+    }
+
+    private func resetErrorTrap() {
+        errorHandlerTarget = nil
+        isHandlingError = false
+        lastErrorNumber = 0
+        lastErrorLine = 0
+        lastErrorMessage = ""
+        errorResumePC = nil
+        errorResumeNextPC = nil
+    }
+
+    @discardableResult
+    private func handleRuntimeError(_ error: BASICError, faultPC: Int, parsed: [ParsedLine]) throws -> Bool {
+        guard errorHandlerTarget != nil, !isHandlingError else {
+            return false
+        }
+        lastErrorNumber = errorNumber(for: error)
+        lastErrorLine = parsed[safe: faultPC]?.displayLineNumber ?? 0
+        lastErrorMessage = error.description
+        errorResumePC = faultPC
+        errorResumeNextPC = faultPC + 1
+        isHandlingError = true
+        try jumpToErrorHandler()
+        return true
+    }
+
+    private func jumpToErrorHandler() throws {
+        guard let target = errorHandlerTarget else {
+            throw BASICError.runtime("No error handler")
+        }
+        switch target {
+        case .line(let line):
+            guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
+            pc = index
+        case .label(let label):
+            guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+            pc = index
+        }
+    }
+
+    private func errorNumber(for error: BASICError) -> Int {
+        switch error {
+        case .numberedRuntime(let number):
+            return number
+        case .runtime(let message) where message.localizedCaseInsensitiveContains("division by zero"):
+            return 11
+        case .runtime(let message) where message.localizedCaseInsensitiveContains("type mismatch"):
+            return 13
+        case .type, .contextualType:
+            return 13
+        case .missingLine, .missingLabel:
+            return 8
+        default:
+            return 5
         }
     }
 
@@ -4635,6 +4717,25 @@ public final class BASICInterpreter {
             let localContextIndex = runtime.pushLocalContext()
             gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
             return targets[selected - 1].flow
+        case .onErrorGoto(let target):
+            errorHandlerTarget = target
+            isHandlingError = false
+            errorResumePC = nil
+            errorResumeNextPC = nil
+            return .next
+        case .error(let expression):
+            throw BASICError.numberedRuntime(try integer(expression))
+        case .resumeNext:
+            guard isHandlingError else {
+                throw BASICError.runtime("RESUME without error")
+            }
+            guard let resumeNextPC = errorResumeNextPC else {
+                throw BASICError.runtime("No error to resume")
+            }
+            isHandlingError = false
+            errorResumePC = nil
+            errorResumeNextPC = nil
+            return .jump(resumeNextPC)
         case .gosub(let target):
             let localContextIndex = runtime.pushLocalContext()
             gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
@@ -6741,6 +6842,12 @@ public final class BASICInterpreter {
         case .null:
             return .null
         case .variable(let name):
+            if name.normalized == "ERR" {
+                return .number(Double(lastErrorNumber))
+            }
+            if name.normalized == "ERL" {
+                return .number(Double(lastErrorLine))
+            }
             if let constant = builtInConstant(named: name.normalized) {
                 return constant
             }
@@ -7114,6 +7221,9 @@ private indirect enum Statement: Equatable {
     case gotoLabel(String)
     case computedGoto([BranchTarget], Expression)
     case computedGosub([BranchTarget], Expression)
+    case onErrorGoto(BranchTarget?)
+    case error(Expression)
+    case resumeNext
     case gosub(BranchTarget)
     case returnFromSubroutine
     case returnValue(Expression)
@@ -7713,6 +7823,9 @@ private struct Parser {
         if matchIdentifier("RANDOMIZE") {
             return .randomize(isStatementEnd ? nil : try parseExpression())
         }
+        if matchIdentifier("ERROR") {
+            return .error(try parseExpression())
+        }
         if matchIdentifier("ON") {
             return try parseOnStatement()
         }
@@ -7728,6 +7841,10 @@ private struct Parser {
                 return .returnFromSubroutine
             }
             return .returnValue(try parseExpression())
+        }
+        if matchIdentifier("RESUME") {
+            guard matchIdentifier("NEXT") else { throw syntax("Expected NEXT after RESUME") }
+            return .resumeNext
         }
         if matchIdentifier("PAUSE") {
             return .pause
@@ -8106,6 +8223,14 @@ private struct Parser {
     }
 
     private mutating func parseOnStatement() throws -> Statement {
+        if matchIdentifier("ERROR") {
+            guard matchIdentifier("GOTO") else { throw syntax("Expected GOTO after ON ERROR") }
+            if case .number(let value) = peek, value == 0 {
+                _ = advance()
+                return .onErrorGoto(nil)
+            }
+            return .onErrorGoto(try consumeBranchTarget("Expected line number or label after ON ERROR GOTO"))
+        }
         let selector = try parseExpression()
         if matchIdentifier("GOTO") {
             return .computedGoto(try parseBranchTargetList(), selector)
@@ -8789,7 +8914,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]
