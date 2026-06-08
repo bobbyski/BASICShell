@@ -108,7 +108,7 @@ private extension BASICError {
 }
 
 /// String storage used by the interpreter, preserving embedded NUL bytes when required.
-public struct BASICString: Equatable, CustomStringConvertible {
+public struct BASICString: Equatable, CustomStringConvertible, Sendable {
     private enum Storage: Equatable {
         case text(String)
         case data(Data)
@@ -191,7 +191,7 @@ public struct BASICString: Equatable, CustomStringConvertible {
     }
 }
 
-indirect enum BASICValue: Equatable, CustomStringConvertible {
+indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
     case empty
     case null
     case number(Double)
@@ -271,14 +271,14 @@ indirect enum BASICValue: Equatable, CustomStringConvertible {
     }
 }
 
-struct BASICArray: Equatable {
+struct BASICArray: Equatable, Sendable {
     let dimensions: [Int]
     let type: BASICType
     let isDynamic: Bool
     var values: [BASICValue]
 }
 
-struct BASICDictionary: Equatable {
+struct BASICDictionary: Equatable, Sendable {
     var values: [String: BASICValue] = [:]
 }
 
@@ -384,7 +384,7 @@ public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
     public let isOverride: Bool
 }
 
-enum BASICScalarType: String, Equatable {
+enum BASICScalarType: String, Equatable, Sendable {
     case integer = "INTEGER"
     case double = "DOUBLE"
     case string = "STRING"
@@ -392,7 +392,7 @@ enum BASICScalarType: String, Equatable {
     case variant = "VARIANT"
 }
 
-enum BASICType: Equatable {
+enum BASICType: Equatable, Sendable {
     case scalar(BASICScalarType)
     case void
     case record(String)
@@ -2912,6 +2912,16 @@ public enum BASICTaskState: String, Sendable {
     case failed
 }
 
+/// Reason a logical BASIC task is suspended.
+public enum BASICTaskSuspensionReason: Equatable, Sendable {
+    /// The task stopped at a debugger boundary.
+    case debugger
+    /// The task is waiting for a host operation such as file, timer, or network work.
+    case hostOperation(String)
+    /// The task is waiting for another task to finish.
+    case join(taskID: Int)
+}
+
 /// Immutable debugger-facing view of a logical BASIC task.
 public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     /// Stable task identifier.
@@ -2922,14 +2932,57 @@ public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     public let name: String
     /// Current task state.
     public let state: BASICTaskState
+    /// Current suspension reason when the task is suspended.
+    public let suspensionReason: BASICTaskSuspensionReason?
     /// Current source location, when execution has reached a statement.
     public let location: BASICBreakpointLocation?
     /// Whether cancellation has been requested.
     public let isCancellationRequested: Bool
     /// Number of cooperative yield boundaries reached by this task.
     public let yieldCount: Int
+    /// Number of known child tasks parented by this task.
+    public let childCount: Int
+    /// Result value for completed tasks, when available.
+    let resultValue: BASICValue?
     /// Optional error text for failed tasks.
     public let errorDescription: String?
+}
+
+/// Nonblocking join classification for a logical BASIC task.
+public enum BASICTaskJoinState: Equatable, Sendable {
+    /// No task with that id is known.
+    case missing
+    /// The task is not finished yet.
+    case waiting
+    /// The task reached normal completion.
+    case completed
+    /// The task was cancelled.
+    case cancelled
+    /// The task stopped with an error.
+    case failed(String?)
+}
+
+/// Host-side work closure used by the async/thread runtime seed.
+public typealias BASICTaskHostOperation = @Sendable () async throws -> Void
+
+/// Host-side work closure that completes a logical task with a BASIC value.
+typealias BASICTaskHostResultOperation = @Sendable () async throws -> BASICValue
+
+/// Stable user/runtime handle for a logical BASIC task.
+public struct BASICTaskHandle: Identifiable, Equatable, Sendable {
+    /// Stable task identifier.
+    public let id: Int
+    /// Optional parent task identifier for future child tasks.
+    public let parentID: Int?
+    /// Human-readable task name.
+    public let name: String
+
+    /// Creates a task handle.
+    public init(id: Int, parentID: Int? = nil, name: String) {
+        self.id = id
+        self.parentID = parentID
+        self.name = name
+    }
 }
 
 /// Logical BASIC execution unit used by the future thread/async runtime.
@@ -2939,6 +2992,8 @@ public final class BASICTask: @unchecked Sendable {
     private var currentLocation: BASICBreakpointLocation?
     private var cancellationRequested = false
     private var yieldCountValue = 0
+    private var suspensionReason: BASICTaskSuspensionReason?
+    private var resultValue: BASICValue?
     private var errorDescription: String?
 
     /// Stable task identifier.
@@ -2969,6 +3024,11 @@ public final class BASICTask: @unchecked Sendable {
         return currentLocation
     }
 
+    /// Stable handle for addressing this task without exposing mutable internals.
+    public var handle: BASICTaskHandle {
+        BASICTaskHandle(id: id, parentID: parentID, name: name)
+    }
+
     /// Requests cancellation at the next cooperative execution check.
     public func requestCancellation() {
         lock.lock()
@@ -2984,7 +3044,7 @@ public final class BASICTask: @unchecked Sendable {
     }
 
     /// Returns an immutable task snapshot.
-    public func snapshot() -> BASICTaskSnapshot {
+    public func snapshot(childCount: Int = 0) -> BASICTaskSnapshot {
         lock.lock()
         defer { lock.unlock() }
         return BASICTaskSnapshot(
@@ -2992,9 +3052,12 @@ public final class BASICTask: @unchecked Sendable {
             parentID: parentID,
             name: name,
             state: currentState,
+            suspensionReason: suspensionReason,
             location: currentLocation,
             isCancellationRequested: cancellationRequested,
             yieldCount: yieldCountValue,
+            childCount: childCount,
+            resultValue: resultValue,
             errorDescription: errorDescription
         )
     }
@@ -3002,7 +3065,17 @@ public final class BASICTask: @unchecked Sendable {
     fileprivate func markRunning() {
         lock.lock()
         currentState = .running
+        suspensionReason = nil
+        resultValue = nil
         errorDescription = nil
+        lock.unlock()
+    }
+
+    fileprivate func markReady() {
+        lock.lock()
+        currentState = .ready
+        suspensionReason = nil
+        resultValue = nil
         lock.unlock()
     }
 
@@ -3018,27 +3091,34 @@ public final class BASICTask: @unchecked Sendable {
         lock.unlock()
     }
 
-    fileprivate func markSuspended() {
+    fileprivate func markSuspended(_ reason: BASICTaskSuspensionReason = .debugger) {
         lock.lock()
         currentState = .suspended
+        suspensionReason = reason
         lock.unlock()
     }
 
-    fileprivate func markCompleted() {
+    fileprivate func markCompleted(result: BASICValue? = nil) {
         lock.lock()
         currentState = .completed
+        suspensionReason = nil
+        resultValue = result
         lock.unlock()
     }
 
     fileprivate func markCancelled() {
         lock.lock()
         currentState = .cancelled
+        suspensionReason = nil
+        resultValue = nil
         lock.unlock()
     }
 
     fileprivate func markFailed(_ error: Error) {
         lock.lock()
         currentState = .failed
+        suspensionReason = nil
+        resultValue = nil
         errorDescription = String(describing: error)
         lock.unlock()
     }
@@ -3050,6 +3130,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     private var nextID = 1
     private var tasks: [Int: BASICTask] = [:]
     private var readyQueue: [Int] = []
+    private var hostTasks: [Int: Task<Void, Never>] = [:]
     private var currentTaskID: Int?
 
     /// Creates an empty task scheduler.
@@ -3070,8 +3151,10 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     public var snapshots: [BASICTaskSnapshot] {
         lock.lock()
         let ordered = tasks.values.sorted { $0.id < $1.id }
+        let childCounts = Dictionary(grouping: tasks.values.compactMap(\.parentID), by: { $0 })
+            .mapValues(\.count)
         lock.unlock()
-        return ordered.map { $0.snapshot() }
+        return ordered.map { $0.snapshot(childCount: childCounts[$0.id] ?? 0) }
     }
 
     /// Current running or suspended task, when one has been selected.
@@ -3082,6 +3165,140 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         return tasks[currentTaskID]
     }
 
+    /// Stable handles for tasks queued to run.
+    public var readyTaskHandles: [BASICTaskHandle] {
+        lock.lock()
+        let queuedIDs = readyQueue
+        let queuedTasks = queuedIDs.compactMap { tasks[$0] }
+        lock.unlock()
+        return queuedTasks.map(\.handle)
+    }
+
+    /// Returns a stable handle for a known task id.
+    public func handle(for id: Int) -> BASICTaskHandle? {
+        lock.lock()
+        defer { lock.unlock() }
+        return tasks[id]?.handle
+    }
+
+    /// Creates a child logical task and returns its stable handle.
+    public func createChildTask(name: String, parentID: Int) -> BASICTaskHandle {
+        createTask(name: name, parentID: parentID).handle
+    }
+
+    /// Returns the nonblocking join state for a task id.
+    public func joinState(for id: Int) -> BASICTaskJoinState {
+        lock.lock()
+        let task = tasks[id]
+        lock.unlock()
+        guard let task else { return .missing }
+        let snapshot = task.snapshot()
+        if snapshot.isCancellationRequested {
+            return .cancelled
+        }
+        switch snapshot.state {
+        case .ready, .running, .suspended:
+            return .waiting
+        case .completed:
+            return .completed
+        case .cancelled:
+            return .cancelled
+        case .failed:
+            return .failed(snapshot.errorDescription)
+        }
+    }
+
+    /// Requests cooperative cancellation for a known task.
+    @discardableResult
+    public func requestCancellation(id: Int) -> Bool {
+        lock.lock()
+        let task = tasks[id]
+        let hostTask = hostTasks[id]
+        lock.unlock()
+        guard let task else { return false }
+        task.requestCancellation()
+        hostTask?.cancel()
+        return true
+    }
+
+    /// Starts a host-backed asynchronous operation represented as a logical BASIC task.
+    public func startHostOperationTask(
+        name: String,
+        parentID: Int? = nil,
+        operation: String,
+        work: @escaping BASICTaskHostOperation
+    ) -> BASICTaskHandle {
+        startHostOperationTaskWithResult(name: name, parentID: parentID, operation: operation) {
+            try await work()
+            return .empty
+        }
+    }
+
+    /// Starts a host-backed asynchronous operation that returns a BASIC value.
+    func startHostOperationTaskWithResult(
+        name: String,
+        parentID: Int? = nil,
+        operation: String,
+        work: @escaping BASICTaskHostResultOperation
+    ) -> BASICTaskHandle {
+        let task = createTask(name: name, parentID: parentID)
+        _ = suspendForHostOperation(id: task.id, operation: operation)
+        let handle = task.handle
+        let swiftTask = Task.detached { [weak self] in
+            do {
+                try Task.checkCancellation()
+                let result = try await work()
+                try Task.checkCancellation()
+                self?.finishHostOperationTask(id: handle.id, result: result, error: nil)
+            } catch is CancellationError {
+                self?.finishHostOperationTask(id: handle.id, cancelled: true, error: nil)
+            } catch {
+                self?.finishHostOperationTask(id: handle.id, error: error)
+            }
+        }
+        lock.lock()
+        hostTasks[handle.id] = swiftTask
+        lock.unlock()
+        return handle
+    }
+
+    /// Suspends a task while a host operation runs outside the interpreter.
+    @discardableResult
+    public func suspendForHostOperation(id: Int, operation: String) -> Bool {
+        lock.lock()
+        let task = tasks[id]
+        readyQueue.removeAll { $0 == id }
+        lock.unlock()
+        guard let task else { return false }
+        task.markSuspended(.hostOperation(operation))
+        return true
+    }
+
+    /// Moves a suspended task back to the ready queue after its wait condition is satisfied.
+    @discardableResult
+    public func resumeTask(id: Int) -> Bool {
+        lock.lock()
+        guard let task = tasks[id] else {
+            lock.unlock()
+            return false
+        }
+        let isAlreadyQueued = readyQueue.contains(id)
+        lock.unlock()
+
+        let snapshot = task.snapshot()
+        guard snapshot.state == .suspended, !snapshot.isCancellationRequested else {
+            return false
+        }
+
+        task.markReady()
+        lock.lock()
+        if !isAlreadyQueued {
+            readyQueue.append(id)
+        }
+        lock.unlock()
+        return true
+    }
+
     fileprivate func markRunning(_ task: BASICTask) {
         lock.lock()
         currentTaskID = task.id
@@ -3090,8 +3307,8 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         task.markRunning()
     }
 
-    fileprivate func markSuspended(_ task: BASICTask) {
-        task.markSuspended()
+    fileprivate func markSuspended(_ task: BASICTask, reason: BASICTaskSuspensionReason = .debugger) {
+        task.markSuspended(reason)
     }
 
     fileprivate func markCompleted(_ task: BASICTask) {
@@ -3104,6 +3321,26 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     fileprivate func markFailed(_ task: BASICTask, error: Error) {
         task.markFailed(error)
+    }
+
+    private func finishHostOperationTask(
+        id: Int,
+        cancelled: Bool = false,
+        result: BASICValue? = nil,
+        error: Error?
+    ) {
+        lock.lock()
+        let task = tasks[id]
+        hostTasks[id] = nil
+        lock.unlock()
+        guard let task else { return }
+        if cancelled || task.isCancellationRequested {
+            task.markCancelled()
+        } else if let error {
+            task.markFailed(error)
+        } else {
+            task.markCompleted(result: result)
+        }
     }
 }
 
@@ -3611,6 +3848,27 @@ public final class BASICSession: @unchecked Sendable {
                 return true
             }
 
+            if let path = try Self.runPath(from: trimmed) {
+                guard let fileHost = host as? BASICFileHost else {
+                    throw BASICError.runtime("RUN from file is not supported by this host")
+                }
+                do {
+                    program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
+                    fileState.lastFilePath = path
+                    let diagnostics = self.diagnostics()
+                    if diagnostics.isEmpty {
+                        try runProgram()
+                    } else {
+                        printDiagnostics()
+                    }
+                } catch let error as BASICError {
+                    throw error
+                } catch {
+                    throw BASICError.runtime("Could not run \(path): \(error.localizedDescription)")
+                }
+                return true
+            }
+
             if let startLine = try Self.runStartLine(from: trimmed) {
                 try runProgram(startLine: startLine)
                 return true
@@ -3759,6 +4017,83 @@ public final class BASICSession: @unchecked Sendable {
         taskScheduler.snapshots
     }
 
+    /// Handles for logical BASIC tasks queued to run.
+    public var readyTaskHandles: [BASICTaskHandle] {
+        taskScheduler.readyTaskHandles
+    }
+
+    /// Handle for the current logical task, when one is selected.
+    public var currentTaskHandle: BASICTaskHandle? {
+        taskScheduler.currentTask?.handle
+    }
+
+    /// Creates a child logical task under an existing or current parent task.
+    public func createChildTask(name: String, parentID: Int? = nil) -> BASICTaskHandle? {
+        let resolvedParentID: Int?
+        if let parentID {
+            resolvedParentID = parentID
+        } else {
+            resolvedParentID = currentTaskHandle?.id
+        }
+        guard let resolvedParentID else { return nil }
+        return taskScheduler.createChildTask(name: name, parentID: resolvedParentID)
+    }
+
+    /// Returns a nonblocking join classification for a logical task.
+    public func taskJoinState(id: Int) -> BASICTaskJoinState {
+        taskScheduler.joinState(for: id)
+    }
+
+    /// Suspends a logical task while a host operation runs outside BASIC.
+    @discardableResult
+    public func suspendTaskForHostOperation(id: Int, operation: String) -> Bool {
+        taskScheduler.suspendForHostOperation(id: id, operation: operation)
+    }
+
+    /// Resumes a suspended logical task after its wait condition is satisfied.
+    @discardableResult
+    public func resumeTask(id: Int) -> Bool {
+        taskScheduler.resumeTask(id: id)
+    }
+
+    /// Starts host async work represented as a logical BASIC child task.
+    public func startHostOperationTask(
+        name: String,
+        parentID: Int? = nil,
+        operation: String,
+        work: @escaping BASICTaskHostOperation
+    ) -> BASICTaskHandle {
+        let resolvedParentID = parentID ?? currentTaskHandle?.id
+        return taskScheduler.startHostOperationTask(
+            name: name,
+            parentID: resolvedParentID,
+            operation: operation,
+            work: work
+        )
+    }
+
+    /// Starts host async work that completes with a BASIC value.
+    func startHostOperationTaskWithResult(
+        name: String,
+        parentID: Int? = nil,
+        operation: String,
+        work: @escaping BASICTaskHostResultOperation
+    ) -> BASICTaskHandle {
+        let resolvedParentID = parentID ?? currentTaskHandle?.id
+        return taskScheduler.startHostOperationTaskWithResult(
+            name: name,
+            parentID: resolvedParentID,
+            operation: operation,
+            work: work
+        )
+    }
+
+    /// Requests cooperative cancellation for a logical task.
+    @discardableResult
+    public func requestTaskCancellation(id: Int) -> Bool {
+        taskScheduler.requestCancellation(id: id)
+    }
+
     /// Local variables for each debugger stack frame.
     public var debugFrameLocalVariables: [[BASICVariableSnapshot]] {
         activeInterpreter?.debugFrameLocalVariables ?? []
@@ -3817,6 +4152,14 @@ public final class BASICSession: @unchecked Sendable {
 
     private static func loadPath(from source: String) throws -> String? {
         try commandPath(keyword: "LOAD", from: source, requiresPath: true)
+    }
+
+    private static func runPath(from source: String) throws -> String? {
+        guard keywordPrefix("RUN", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 3)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard rest.hasPrefix("\"") else { return nil }
+        return try commandPath(keyword: "RUN", from: source, requiresPath: true)
     }
 
     private static func savePath(from source: String) throws -> String?? {
@@ -4500,7 +4843,11 @@ public final class BASICInterpreter {
                 if error.isDebugPause {
                     snapshotPausedDebugState()
                     if let task {
-                        taskScheduler?.markSuspended(task)
+                        if task.isCancellationRequested {
+                            taskScheduler?.markCancelled(task)
+                        } else {
+                            taskScheduler?.markSuspended(task)
+                        }
                     }
                     throw error
                 }

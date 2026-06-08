@@ -2,6 +2,23 @@ import Foundation
 import Testing
 @testable import BASICCore
 
+private final class ThreadSafeStringLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+
+    func append(_ entry: String) {
+        lock.lock()
+        entries.append(entry)
+        lock.unlock()
+    }
+
+    var snapshot: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries
+    }
+}
+
 @Suite("BASICCore")
 struct BASICCoreTests {
     @Test("Runs arithmetic and looping programs")
@@ -1698,6 +1715,27 @@ struct BASICCoreTests {
         #expect(host.output == ["7"])
     }
 
+    @Test("RUN quoted path loads and runs source")
+    func runQuotedPathLoadsAndRunsSource() {
+        let host = TestHost()
+        host.files["apps/hello.bas"] = """
+        print "file run"
+        let x = 12
+        print x
+        """
+        let session = BASICSession(host: host)
+
+        session.submit("run \"apps/hello.bas\"")
+        session.submit("save")
+
+        #expect(host.output == ["file run", "12"])
+        #expect(host.files["apps/hello.bas"] == """
+        print "file run"
+        let x = 12
+        print x
+        """)
+    }
+
     @Test("LOAD accepts classic no-space quoted path")
     func loadAcceptsClassicNoSpaceQuotedPath() {
         let host = TestHost()
@@ -1970,6 +2008,220 @@ struct BASICCoreTests {
         #expect(session.debugTasks.count == 1)
         #expect(session.debugTasks.first?.state == .completed)
         #expect(session.debugTasks.first?.yieldCount == 2)
+    }
+
+    @Test("Logical BASIC task can be cancelled by handle")
+    func logicalBasicTaskCanBeCancelledByHandle() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        yield
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let handle = session.currentTaskHandle else {
+            Issue.record("Expected current task handle")
+            return
+        }
+        #expect(handle.name == "Program")
+        #expect(session.requestTaskCancellation(id: handle.id))
+
+        control.ignoreBreakpointOnce(at: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        do {
+            try session.continueProgram(executionControl: control)
+            Issue.record("Expected cancellation break")
+        } catch BASICError.breakRequested(let line) {
+            #expect(line == 2)
+        }
+
+        #expect(host.output == ["before"])
+        #expect(session.debugTasks.first?.state == .cancelled)
+        #expect(session.debugTasks.first?.isCancellationRequested == true)
+    }
+
+    @Test("Logical BASIC task supports child handles and join states")
+    func logicalBasicTaskSupportsChildHandlesAndJoinStates() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let parent = session.currentTaskHandle,
+              let child = session.createChildTask(name: "Child work") else {
+            Issue.record("Expected parent and child handles")
+            return
+        }
+
+        #expect(child.parentID == parent.id)
+        #expect(session.debugTasks.first { $0.id == parent.id }?.childCount == 1)
+        #expect(session.taskJoinState(id: child.id) == .waiting)
+        #expect(session.taskJoinState(id: 999_999) == .missing)
+
+        #expect(session.requestTaskCancellation(id: child.id))
+        #expect(session.taskJoinState(id: child.id) == .cancelled)
+
+        control.ignoreBreakpointOnce(at: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == ["parent", "done"])
+        #expect(session.taskJoinState(id: parent.id) == .completed)
+    }
+
+    @Test("Logical BASIC task can suspend and resume for host operations")
+    func logicalBasicTaskCanSuspendAndResumeForHostOperations() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let child = session.createChildTask(name: "Timer wait") else {
+            Issue.record("Expected child handle")
+            return
+        }
+
+        #expect(session.suspendTaskForHostOperation(id: child.id, operation: "timer"))
+        let suspended = session.debugTasks.first { $0.id == child.id }
+        #expect(suspended?.state == .suspended)
+        #expect(suspended?.suspensionReason == .hostOperation("timer"))
+        #expect(session.taskJoinState(id: child.id) == .waiting)
+        #expect(!session.readyTaskHandles.contains(child))
+
+        #expect(session.resumeTask(id: child.id))
+        let resumed = session.debugTasks.first { $0.id == child.id }
+        #expect(resumed?.state == .ready)
+        #expect(resumed?.suspensionReason == nil)
+        #expect(session.readyTaskHandles.contains(child))
+
+        #expect(session.suspendTaskForHostOperation(id: child.id, operation: "network"))
+        #expect(session.requestTaskCancellation(id: child.id))
+        #expect(!session.resumeTask(id: child.id))
+        #expect(session.taskJoinState(id: child.id) == .cancelled)
+    }
+
+    @Test("Host operation tasks complete on Swift async lanes")
+    func hostOperationTasksCompleteOnSwiftAsyncLanes() async throws {
+        let session = BASICSession(host: TestHost())
+        let log = ThreadSafeStringLog()
+
+        let alpha = session.startHostOperationTask(name: "ALPHA", operation: "timer") {
+            for iterator in 1...3 {
+                log.append("ALPHA ITER \(iterator) BEFORE YIELD")
+                await Task.yield()
+                log.append("ALPHA ITER \(iterator) AFTER YIELD")
+            }
+        }
+        let beta = session.startHostOperationTask(name: "BETA", operation: "timer") {
+            for iterator in 1...3 {
+                log.append("BETA ITER \(iterator) BEFORE YIELD")
+                await Task.yield()
+                log.append("BETA ITER \(iterator) AFTER YIELD")
+            }
+        }
+
+        #expect(session.debugTasks.first { $0.id == alpha.id }?.state == .suspended)
+        #expect(session.debugTasks.first { $0.id == beta.id }?.suspensionReason == .hostOperation("timer"))
+
+        try await waitForTaskState(session, id: alpha.id, expected: .completed)
+        try await waitForTaskState(session, id: beta.id, expected: .completed)
+
+        let entries = log.snapshot
+        #expect(entries.contains("ALPHA ITER 1 BEFORE YIELD"))
+        #expect(entries.contains("BETA ITER 1 BEFORE YIELD"))
+        #expect(entries.contains("ALPHA ITER 3 AFTER YIELD"))
+        #expect(entries.contains("BETA ITER 3 AFTER YIELD"))
+        #expect(session.taskJoinState(id: alpha.id) == .completed)
+        #expect(session.taskJoinState(id: beta.id) == .completed)
+    }
+
+    @Test("Host operation tasks can complete with BASIC result values")
+    func hostOperationTasksCanCompleteWithBASICResultValues() async throws {
+        let session = BASICSession(host: TestHost())
+
+        let handle = session.startHostOperationTaskWithResult(name: "FETCH", operation: "network") {
+            await Task.yield()
+            return BASICValue.string(BASICString("payload"))
+        }
+
+        try await waitForTaskState(session, id: handle.id, expected: .completed)
+
+        let snapshot = session.debugTasks.first { $0.id == handle.id }
+        #expect(snapshot?.resultValue == .string(BASICString("payload")))
+        #expect(session.taskJoinState(id: handle.id) == .completed)
+    }
+
+    @Test("Host operation tasks report failure and cancellation")
+    func hostOperationTasksReportFailureAndCancellation() async throws {
+        let session = BASICSession(host: TestHost())
+
+        let failing = session.startHostOperationTask(name: "FAIL", operation: "network") {
+            throw BASICError.runtime("Host operation failed")
+        }
+        try await waitForTaskState(session, id: failing.id, expected: .failed)
+        if case .failed(let message) = session.taskJoinState(id: failing.id) {
+            #expect(message?.contains("Host operation failed") == true)
+        } else {
+            Issue.record("Expected failed join state")
+        }
+
+        let cancelled = session.startHostOperationTask(name: "CANCEL", operation: "timer") {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        #expect(session.requestTaskCancellation(id: cancelled.id))
+        try await waitForTaskState(session, id: cancelled.id, expected: .cancelled)
+        #expect(session.taskJoinState(id: cancelled.id) == .cancelled)
+    }
+
+    private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {
+        for _ in 0..<100 {
+            if session.debugTasks.first(where: { $0.id == id })?.state == state {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("Expected task \(id) to reach \(state)")
     }
 
     @Test("Execution control treats breakpoint file names as optional current-file metadata")

@@ -732,7 +732,9 @@ enum BundledDemos {
 func isRunCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let uppercased = trimmed.uppercased()
-    return uppercased == "RUN" || uppercased.hasPrefix("RUN ")
+    guard uppercased == "RUN" || uppercased.hasPrefix("RUN ") else { return false }
+    let rest = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
+    return rest.isEmpty || Int(rest) != nil
 }
 
 @MainActor
