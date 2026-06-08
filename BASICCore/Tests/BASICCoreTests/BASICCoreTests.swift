@@ -2185,11 +2185,14 @@ struct BASICCoreTests {
             return BASICValue.string(BASICString("payload"))
         }
 
+        #expect(session.taskAwaitState(id: handle.id) == .waiting)
         try await waitForTaskState(session, id: handle.id, expected: .completed)
 
         let snapshot = session.debugTasks.first { $0.id == handle.id }
         #expect(snapshot?.resultValue == .string(BASICString("payload")))
         #expect(session.taskJoinState(id: handle.id) == .completed)
+        #expect(session.taskAwaitState(id: handle.id) == .completed(.string(BASICString("payload"))))
+        #expect(session.taskAwaitState(id: 999_999) == .missing)
     }
 
     @Test("Host operation tasks report failure and cancellation")
@@ -2205,6 +2208,11 @@ struct BASICCoreTests {
         } else {
             Issue.record("Expected failed join state")
         }
+        if case .failed(let message) = session.taskAwaitState(id: failing.id) {
+            #expect(message?.contains("Host operation failed") == true)
+        } else {
+            Issue.record("Expected failed await state")
+        }
 
         let cancelled = session.startHostOperationTask(name: "CANCEL", operation: "timer") {
             try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -2212,6 +2220,26 @@ struct BASICCoreTests {
         #expect(session.requestTaskCancellation(id: cancelled.id))
         try await waitForTaskState(session, id: cancelled.id, expected: .cancelled)
         #expect(session.taskJoinState(id: cancelled.id) == .cancelled)
+        #expect(session.taskAwaitState(id: cancelled.id) == .cancelled)
+    }
+
+    @Test("ASYNC FUNCTION and AWAIT parse and evaluate through current function runtime")
+    func asyncFunctionAndAwaitParseAndEvaluate() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "slice 9"
+        total = await AddAsync(2, 3)
+        print "TOTAL ="; total
+        async function AddAsync(a as integer, b as integer) as integer
+            return a + b
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["slice 9", "TOTAL =5"])
     }
 
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {

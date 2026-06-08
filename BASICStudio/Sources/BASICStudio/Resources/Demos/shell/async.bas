@@ -58,11 +58,29 @@ print
 print "SLICE 7: TASK RESULT PAYLOADS"
 print "SLICE 7 HOST/API VERIFIED"
 print
+print "SLICE 8: AWAIT STATE PRIMITIVE"
+print "SLICE 8 HOST/API VERIFIED"
+print
+print "SLICE 9: ASYNC FUNCTION AND AWAIT"
+asyncTotal = await AsyncAdd(4, 5)
+if asyncTotal = 9 then Slice9Passed
+print "SLICE 9 FAILED, ASYNCTOTAL ="; asyncTotal
+end
+
+Slice9Passed:
+    print "SLICE 9 PASSED"
+    print "ASYNCTOTAL ="; asyncTotal
+    print
+
 print "FUTURE SLICES"
-print "8. ASYNC FUNCTION and AWAIT"
+print "10. RESUMABLE ASYNC SUSPENSION"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end
+
+async function AsyncAdd(a as integer, b as integer) as integer
+    return a + b
+end function
 
 AddOne:
     total = total + 1

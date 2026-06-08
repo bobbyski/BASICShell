@@ -546,6 +546,7 @@ private struct FunctionDefinition: Equatable {
     let normalizedName: String
     let parameters: [FunctionParameter]
     let returnType: BASICType
+    let isAsync: Bool
     let startIndex: Int
     let endIndex: Int
     let ownerClassName: String?
@@ -559,6 +560,7 @@ private struct FunctionDefinition: Equatable {
         normalizedName: String,
         parameters: [FunctionParameter],
         returnType: BASICType,
+        isAsync: Bool = false,
         startIndex: Int,
         endIndex: Int,
         ownerClassName: String? = nil,
@@ -571,6 +573,7 @@ private struct FunctionDefinition: Equatable {
         self.normalizedName = normalizedName
         self.parameters = parameters
         self.returnType = returnType
+        self.isAsync = isAsync
         self.startIndex = startIndex
         self.endIndex = endIndex
         self.ownerClassName = ownerClassName
@@ -2962,6 +2965,20 @@ public enum BASICTaskJoinState: Equatable, Sendable {
     case failed(String?)
 }
 
+/// Nonblocking await classification for a logical BASIC task.
+enum BASICTaskAwaitState: Equatable, Sendable {
+    /// No task with that id is known.
+    case missing
+    /// The task is not finished yet.
+    case waiting
+    /// The task completed with a BASIC value.
+    case completed(BASICValue)
+    /// The task was cancelled.
+    case cancelled
+    /// The task stopped with an error.
+    case failed(String?)
+}
+
 /// Host-side work closure used by the async/thread runtime seed.
 public typealias BASICTaskHostOperation = @Sendable () async throws -> Void
 
@@ -3201,6 +3218,28 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             return .waiting
         case .completed:
             return .completed
+        case .cancelled:
+            return .cancelled
+        case .failed:
+            return .failed(snapshot.errorDescription)
+        }
+    }
+
+    /// Returns the nonblocking await state and result value for a task id.
+    func awaitState(for id: Int) -> BASICTaskAwaitState {
+        lock.lock()
+        let task = tasks[id]
+        lock.unlock()
+        guard let task else { return .missing }
+        let snapshot = task.snapshot()
+        if snapshot.isCancellationRequested {
+            return .cancelled
+        }
+        switch snapshot.state {
+        case .ready, .running, .suspended:
+            return .waiting
+        case .completed:
+            return .completed(snapshot.resultValue ?? .empty)
         case .cancelled:
             return .cancelled
         case .failed:
@@ -4044,6 +4083,11 @@ public final class BASICSession: @unchecked Sendable {
         taskScheduler.joinState(for: id)
     }
 
+    /// Returns the nonblocking await classification and result for a logical task.
+    func taskAwaitState(id: Int) -> BASICTaskAwaitState {
+        taskScheduler.awaitState(for: id)
+    }
+
     /// Suspends a logical task while a host operation runs outside BASIC.
     @discardableResult
     public func suspendTaskForHostOperation(id: Int, operation: String) -> Bool {
@@ -4562,7 +4606,7 @@ public final class BASICInterpreter {
                 if message.contains("TYPE \(name)") {
                     return (line.fileName, line.sourceLineNumber)
                 }
-            case .functionDeclaration(let name, _, _, _, _, _):
+            case .functionDeclaration(let name, _, _, _, _, _, _):
                 let classMatches = currentClassName.map { message.contains("CLASS \($0)") } ?? true
                 if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
                     return (line.fileName, line.sourceLineNumber)
@@ -5509,7 +5553,7 @@ public final class BASICInterpreter {
                 }
                 index = endIndex + 1
                 continue
-            case .functionDeclaration(let name, let parameters, let returnType, _, _, _):
+            case .functionDeclaration(let name, let parameters, let returnType, let isAsync, _, _, _):
                 guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                     throw BASICError.runtime("FUNCTION without END FUNCTION")
                 }
@@ -5518,6 +5562,7 @@ public final class BASICInterpreter {
                     normalizedName: name.normalized,
                     parameters: parameters,
                     returnType: returnType,
+                    isAsync: isAsync,
                     startIndex: index,
                     endIndex: endIndex
                 )
@@ -5674,7 +5719,7 @@ public final class BASICInterpreter {
                             returnType: returnType
                         )
                     )
-                case .functionDeclaration(let memberName, let parameters, let returnType, _, _, _):
+                case .functionDeclaration(let memberName, let parameters, let returnType, _, _, _, _):
                     let normalizedMember = memberName.normalized
                     guard !members.contains(where: { $0.normalizedName == normalizedMember }) else {
                         throw BASICError.runtime("INTERFACE \(name) member \(memberName.name) is already defined")
@@ -5751,7 +5796,7 @@ public final class BASICInterpreter {
                         throw BASICError.runtime("CLASS \(name) cannot inherit itself")
                     }
                     baseClass = baseClassName
-                case .functionDeclaration(let methodName, let parameters, let returnType, let visibility, let isOverride, let explicitInterfaceImplementations):
+                case .functionDeclaration(let methodName, let parameters, let returnType, let isAsync, let visibility, let isOverride, let explicitInterfaceImplementations):
                     guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                         throw BASICError.runtime("FUNCTION without END FUNCTION")
                     }
@@ -5763,6 +5808,7 @@ public final class BASICInterpreter {
                         normalizedName: methodName.normalized,
                         parameters: parameters,
                         returnType: returnType,
+                        isAsync: isAsync,
                         startIndex: index,
                         endIndex: endIndex,
                         ownerClassName: name,
@@ -7546,6 +7592,8 @@ public final class BASICInterpreter {
             return .number(-value)
         case .binary(let left, let operation, let right):
             return try evaluateBinary(left, operation, right)
+        case .await(let expression):
+            return try evaluate(expression)
         case .functionCall(let name, let arguments):
             return try callFunction(name: name, arguments: arguments)
         case .pointFunction(let point):
@@ -7819,6 +7867,7 @@ private indirect enum Statement: Equatable {
         name: VariableName,
         parameters: [FunctionParameter],
         returnType: BASICType,
+        isAsync: Bool,
         visibility: BASICMemberVisibility,
         isOverride: Bool,
         explicitInterfaceImplementations: [BASICExplicitInterfaceImplementation]
@@ -7952,6 +8001,7 @@ private indirect enum Expression: Equatable {
     case newObject(String, [Expression])
     case unaryMinus(Expression)
     case binary(Expression, BinaryOperation, Expression)
+    case await(Expression)
     case functionCall(VariableName, [Expression])
     case pointFunction(GraphicsPoint)
     case chrFunction(Expression)
@@ -8262,7 +8312,11 @@ private struct Parser {
             return .restore
         }
         if matchIdentifier("FUNCTION") {
-            return try parseFunctionDeclaration(visibility: .public, isOverride: false)
+            return try parseFunctionDeclaration(visibility: .public, isOverride: false, isAsync: false)
+        }
+        if matchIdentifier("ASYNC") {
+            guard matchIdentifier("FUNCTION") else { throw syntax("Expected FUNCTION after ASYNC") }
+            return try parseFunctionDeclaration(visibility: .public, isOverride: false, isAsync: true)
         }
         if matchIdentifier("DEF") {
             return try parseDefFunction()
@@ -8619,8 +8673,12 @@ private struct Parser {
         let visibility = parseVisibilityModifier() ?? .public
         let isOverride = matchIdentifier("OVERRIDES")
         _ = matchIdentifier("VIRTUAL")
+        let isAsync = matchIdentifier("ASYNC")
         if matchIdentifier("FUNCTION") {
-            return try parseFunctionDeclaration(visibility: visibility, isOverride: isOverride)
+            return try parseFunctionDeclaration(visibility: visibility, isOverride: isOverride, isAsync: isAsync)
+        }
+        if isAsync {
+            throw syntax("Expected FUNCTION after ASYNC")
         }
         return try parseClassField(visibility: visibility)
     }
@@ -8791,7 +8849,7 @@ private struct Parser {
         return reference.isSimple ? .variable(reference.base) : .reference(reference)
     }
 
-    private mutating func parseFunctionDeclaration(visibility: BASICMemberVisibility, isOverride: Bool) throws -> Statement {
+    private mutating func parseFunctionDeclaration(visibility: BASICMemberVisibility, isOverride: Bool, isAsync: Bool) throws -> Statement {
         let name = try consumeVariableName("Expected function name")
         guard match(.leftParen) else { throw syntax("Expected (") }
         var parameters: [FunctionParameter] = []
@@ -8827,6 +8885,7 @@ private struct Parser {
             name: name,
             parameters: parameters,
             returnType: returnType,
+            isAsync: isAsync,
             visibility: visibility,
             isOverride: isOverride,
             explicitInterfaceImplementations: explicitInterfaceImplementations
@@ -9244,6 +9303,9 @@ private struct Parser {
     private mutating func parseUnary() throws -> Expression {
         if match(.minus) {
             return .unaryMinus(try parseUnary())
+        }
+        if matchIdentifier("AWAIT") {
+            return .await(try parseUnary())
         }
         return try parsePrimary()
     }
