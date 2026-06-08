@@ -200,8 +200,36 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
     case record(String, [String: BASICValue])
     case object(String, [String: BASICValue])
     case systemObject(String, Int)
+    case closure(BASICCapturedClosure)
     case array(BASICArray)
     case dictionary(BASICDictionary)
+
+    static func == (lhs: BASICValue, rhs: BASICValue) -> Bool {
+        switch (lhs, rhs) {
+        case (.empty, .empty), (.null, .null):
+            return true
+        case (.number(let left), .number(let right)):
+            return left == right
+        case (.string(let left), .string(let right)):
+            return left == right
+        case (.boolean(let left), .boolean(let right)):
+            return left == right
+        case (.record(let leftName, let leftFields), .record(let rightName, let rightFields)):
+            return leftName == rightName && leftFields == rightFields
+        case (.object(let leftName, let leftFields), .object(let rightName, let rightFields)):
+            return leftName == rightName && leftFields == rightFields
+        case (.systemObject(let leftName, let leftID), .systemObject(let rightName, let rightID)):
+            return leftName == rightName && leftID == rightID
+        case (.closure(let left), .closure(let right)):
+            return left === right
+        case (.array(let left), .array(let right)):
+            return left == right
+        case (.dictionary(let left), .dictionary(let right)):
+            return left == right
+        default:
+            return false
+        }
+    }
 
     var description: String {
         switch self {
@@ -224,6 +252,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
             return "<\(name)>"
         case .systemObject(let name, _):
             return "<\(name)>"
+        case .closure(let closure):
+            return "<FUNCTION \(closure.name)>"
         case .array(let array):
             return "<ARRAY \(array.type.name)>"
         case .dictionary(let dictionary):
@@ -237,7 +267,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .record, .object, .systemObject, .array, .dictionary: return true
+        case .record, .object, .systemObject, .closure, .array, .dictionary: return true
         }
     }
 
@@ -267,6 +297,33 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
             return (name, fields)
         default:
             return nil
+        }
+    }
+
+    var debugTypeName: String {
+        switch self {
+        case .empty:
+            return "EMPTY"
+        case .null:
+            return "NULL"
+        case .number:
+            return "DOUBLE"
+        case .string:
+            return "STRING"
+        case .boolean:
+            return "BOOLEAN"
+        case .record(let name, _):
+            return name
+        case .object(let name, _):
+            return name
+        case .systemObject(let name, _):
+            return name
+        case .closure(let closure):
+            return "FUNCTION \(closure.signatureDescription)"
+        case .array(let array):
+            return "ARRAY OF \(array.type.name)"
+        case .dictionary:
+            return "DICTIONARY"
         }
     }
 }
@@ -534,6 +591,262 @@ private struct VariableBinding: Equatable, Sendable {
     var displayName: String
     var type: BASICType
     var value: BASICValue
+}
+
+/// How an async/captured-value reference is allowed to interact with storage.
+public enum BASICCapturedReferenceAccess: String, Sendable {
+    /// The reference may read and update the target value.
+    case strongMutable = "Strong Mutable"
+    /// The reference may read the target value but should not update it.
+    case readOnly = "Read Only"
+    /// Reserved for future object references that should not keep the target alive.
+    case weak = "Weak"
+}
+
+/// Debugger-facing summary of a shared captured value cell.
+public struct BASICSharedValueSnapshot: Identifiable, Equatable, Sendable {
+    /// Stable shared cell identifier.
+    public let id: Int
+    /// Human-readable cell name.
+    public let name: String
+    /// BASIC type summary.
+    public let typeName: String
+    /// Display value summary.
+    public let value: String
+    /// Number of successful writes to the cell.
+    public let revision: Int
+    /// Intended capture/reference access policy.
+    public let access: BASICCapturedReferenceAccess
+}
+
+/// Thread-safe storage cell for future captured variables and shared async state.
+final class BASICSharedValueCell: @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentValue: BASICValue
+    private var revisionValue = 0
+
+    let id: Int
+    let name: String
+    let access: BASICCapturedReferenceAccess
+
+    init(id: Int, name: String, value: BASICValue, access: BASICCapturedReferenceAccess = .strongMutable) {
+        self.id = id
+        self.name = name
+        self.currentValue = value
+        self.access = access
+    }
+
+    var value: BASICValue {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentValue
+    }
+
+    @discardableResult
+    func set(_ value: BASICValue) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard access == .strongMutable else { return false }
+        currentValue = value
+        revisionValue += 1
+        return true
+    }
+
+    @discardableResult
+    func update(_ transform: (BASICValue) throws -> BASICValue) rethrows -> BASICValue? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard access == .strongMutable else { return nil }
+        let newValue = try transform(currentValue)
+        currentValue = newValue
+        revisionValue += 1
+        return newValue
+    }
+
+    func snapshot() -> BASICSharedValueSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return BASICSharedValueSnapshot(
+            id: id,
+            name: name,
+            typeName: currentValue.debugTypeName,
+            value: currentValue.description,
+            revision: revisionValue,
+            access: access
+        )
+    }
+}
+
+/// Heap-owned captured variable environment for future closures and async frames.
+final class BASICCapturedEnvironment: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextCellID = 1
+    private var cells: [String: BASICSharedValueCell] = [:]
+    private var order: [String] = []
+
+    /// Captures or replaces a named value in this environment.
+    @discardableResult
+    func capture(
+        name: String,
+        value: BASICValue,
+        access: BASICCapturedReferenceAccess = .strongMutable
+    ) -> BASICSharedValueSnapshot {
+        let normalized = name.uppercased()
+        let cell: BASICSharedValueCell
+        lock.lock()
+        if let existing = cells[normalized] {
+            lock.unlock()
+            _ = existing.set(value)
+            return existing.snapshot()
+        }
+        cell = BASICSharedValueCell(id: nextCellID, name: name, value: value, access: access)
+        nextCellID += 1
+        cells[normalized] = cell
+        order.append(normalized)
+        lock.unlock()
+        return cell.snapshot()
+    }
+
+    /// Returns a captured value by name.
+    func value(named name: String) -> BASICValue? {
+        cell(named: name)?.value
+    }
+
+    /// Updates a captured value by name, if the cell is mutable.
+    @discardableResult
+    func set(_ value: BASICValue, named name: String) -> Bool {
+        cell(named: name)?.set(value) ?? false
+    }
+
+    /// Applies a synchronized update to a captured value by name, if the cell is mutable.
+    @discardableResult
+    func update(named name: String, _ transform: (BASICValue) throws -> BASICValue) rethrows -> BASICValue? {
+        guard let cell = cell(named: name) else { return nil }
+        return try cell.update(transform)
+    }
+
+    /// Returns a debugger-facing snapshot for one captured value.
+    func snapshot(named name: String) -> BASICSharedValueSnapshot? {
+        cell(named: name)?.snapshot()
+    }
+
+    /// Captured values in creation order.
+    var snapshots: [BASICSharedValueSnapshot] {
+        lock.lock()
+        let orderedCells = order.compactMap { cells[$0] }
+        lock.unlock()
+        return orderedCells.map { $0.snapshot() }
+    }
+
+    /// Number of values captured by this environment.
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return cells.count
+    }
+
+    private func cell(named name: String) -> BASICSharedValueCell? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cells[name.uppercased()]
+    }
+}
+
+/// Operation stored by a captured closure.
+typealias BASICCapturedClosureOperation = @Sendable (BASICCapturedEnvironment, [BASICValue]) throws -> BASICValue
+
+/// Callable runtime value that carries captured variables with it.
+final class BASICCapturedClosure: @unchecked Sendable {
+    /// Human-readable closure name for diagnostics and debugger display.
+    let name: String
+    /// Captured variable environment owned by the closure.
+    let environment: BASICCapturedEnvironment
+    fileprivate let parameters: [FunctionParameter]
+    fileprivate let returnType: BASICType
+    fileprivate let bodyExpression: Expression?
+    private let operation: BASICCapturedClosureOperation
+
+    init(
+        name: String,
+        environment: BASICCapturedEnvironment = BASICCapturedEnvironment(),
+        operation: @escaping BASICCapturedClosureOperation
+    ) {
+        self.name = name
+        self.environment = environment
+        self.parameters = []
+        self.returnType = .scalar(.variant)
+        self.bodyExpression = nil
+        self.operation = operation
+    }
+
+    fileprivate init(
+        name: String,
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        bodyExpression: Expression,
+        environment: BASICCapturedEnvironment
+    ) {
+        self.name = name
+        self.environment = environment
+        self.parameters = parameters
+        self.returnType = returnType
+        self.bodyExpression = bodyExpression
+        self.operation = { _, _ in .empty }
+    }
+
+    /// Invokes the closure with BASIC argument values.
+    func call(arguments: [BASICValue] = []) throws -> BASICValue {
+        try operation(environment, arguments)
+    }
+
+    fileprivate func call(arguments: [BASICValue], interpreter: BASICInterpreter) throws -> BASICValue {
+        guard let bodyExpression else {
+            return try call(arguments: arguments)
+        }
+        guard arguments.count == parameters.count else {
+            throw BASICError.runtime("Function \(name) expects \(parameters.count) arguments, got \(arguments.count)")
+        }
+
+        let localContextIndex = interpreter.runtime.pushLocalContext()
+        defer { interpreter.runtime.popLocalContext() }
+        for snapshot in environment.snapshots {
+            if let capturedValue = environment.value(named: snapshot.name) {
+                try interpreter.runtime.assign(
+                    kind: .local,
+                    variable: VariableName(name: snapshot.name, column: 0),
+                    declaredType: nil,
+                    value: capturedValue
+                )
+            }
+        }
+        for (parameter, argument) in zip(parameters, arguments) {
+            try interpreter.runtime.assign(
+                kind: .local,
+                variable: parameter.variable,
+                declaredType: parameter.type,
+                value: argument
+            )
+        }
+        _ = localContextIndex
+        return try interpreter.runtime.coerce(
+            interpreter.evaluate(bodyExpression),
+            to: returnType,
+            variable: VariableName(name: name, column: 0)
+        )
+    }
+
+    /// Debugger-facing snapshots of captured values.
+    var capturedSnapshots: [BASICSharedValueSnapshot] {
+        environment.snapshots
+    }
+
+    fileprivate var signatureDescription: String {
+        guard !parameters.isEmpty else { return name }
+        let parameterList = parameters
+            .map { "\($0.variable.name) AS \($0.type.name)" }
+            .joined(separator: ", ")
+        return "(\(parameterList)) AS \(returnType.name)"
+    }
 }
 
 private struct BASICRuntimeSnapshot: Sendable {
@@ -1212,7 +1525,7 @@ private final class BASICRuntime {
             return string.rawString
         case .boolean(let boolean):
             return boolean
-        case .systemObject:
+        case .systemObject, .closure:
             throw BASICError.runtime("System objects cannot be encoded as JSON")
         case .array(let array):
             return try jsonArrayObject(for: array)
@@ -1348,6 +1661,8 @@ private final class BASICRuntime {
                 return .classType(name)
             case .systemObject(let name, _):
                 return .classType(name)
+            case .closure:
+                return .scalar(.variant)
             case .array(let array):
                 return array.type
             case .dictionary:
@@ -4554,7 +4869,7 @@ public final class BASICSession: @unchecked Sendable {
 public final class BASICInterpreter {
     private let program: BASICProgram
     private weak var host: BASICHost?
-    private let runtime: BASICRuntime
+    fileprivate let runtime: BASICRuntime
     private let fileState: BASICFileState
     private var executionControl: BASICExecutionControl?
     private let task: BASICTask?
@@ -7786,7 +8101,7 @@ public final class BASICInterpreter {
         }
     }
 
-    private func evaluate(_ expression: Expression) throws -> BASICValue {
+    fileprivate func evaluate(_ expression: Expression) throws -> BASICValue {
         switch expression {
         case .number(let value):
             return .number(value)
@@ -7796,6 +8111,23 @@ public final class BASICInterpreter {
             return .boolean(value)
         case .null:
             return .null
+        case .closure(let parameters, let returnType, let body):
+            let environment = BASICCapturedEnvironment()
+            let parameterNames = Set(parameters.map { $0.variable.normalized })
+            for capture in capturedVariableNames(in: body) where !parameterNames.contains(capture.normalized) {
+                _ = environment.capture(
+                    name: capture.name,
+                    value: runtime.value(for: capture),
+                    access: .readOnly
+                )
+            }
+            return .closure(BASICCapturedClosure(
+                name: "<closure>",
+                parameters: parameters,
+                returnType: returnType,
+                bodyExpression: body,
+                environment: environment
+            ))
         case .variable(let name):
             if name.normalized == "ERR" {
                 return .number(Double(lastErrorNumber))
@@ -7823,6 +8155,9 @@ public final class BASICInterpreter {
             }
             if Self.intrinsicFunctionNames.contains(name.normalized) {
                 return try callIntrinsicFunction(name: name, arguments: arguments)
+            }
+            if case .closure(let closure) = runtime.value(for: name) {
+                return try closure.call(arguments: arguments.map(evaluate), interpreter: self)
             }
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(evaluate), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):
@@ -7929,6 +8264,63 @@ public final class BASICInterpreter {
                 Thread.sleep(forTimeInterval: 0.001)
             }
         }
+    }
+
+    private func capturedVariableNames(in expression: Expression) -> [VariableName] {
+        var ordered: [VariableName] = []
+        var seen: Set<String> = []
+
+        func append(_ variable: VariableName) {
+            guard !seen.contains(variable.normalized),
+                  builtInConstant(named: variable.normalized) == nil else {
+                return
+            }
+            seen.insert(variable.normalized)
+            ordered.append(variable)
+        }
+
+        func visit(_ expression: Expression) {
+            switch expression {
+            case .number, .string, .boolean, .null:
+                return
+            case .closure:
+                return
+            case .variable(let name):
+                append(name)
+            case .variableReference(let reference):
+                append(reference.base)
+                reference.indexes.forEach(visit)
+                reference.fieldIndexes.flatMap { $0 }.forEach(visit)
+            case .callOrArray(let name, let arguments):
+                if functionDefinitions[name.normalized] == nil,
+                   !Self.intrinsicFunctionNames.contains(name.normalized),
+                   name.normalized != "FILE" {
+                    append(name)
+                }
+                arguments.forEach(visit)
+            case .methodCall(let receiver, _, let arguments):
+                append(receiver.base)
+                receiver.indexes.forEach(visit)
+                receiver.fieldIndexes.flatMap { $0 }.forEach(visit)
+                arguments.forEach(visit)
+            case .newObject(_, let arguments):
+                arguments.forEach(visit)
+            case .unaryMinus(let expression), .await(let expression), .chrFunction(let expression),
+                 .lenFunction(let expression), .systemFunction(let expression):
+                visit(expression)
+            case .binary(let left, _, let right):
+                visit(left)
+                visit(right)
+            case .functionCall(_, let arguments):
+                arguments.forEach(visit)
+            case .pointFunction(let point):
+                visit(point.x)
+                visit(point.y)
+            }
+        }
+
+        visit(expression)
+        return ordered
     }
 
     private func evaluatedFieldIndexes(for reference: VariableReference) throws -> [[BASICValue]] {
@@ -8307,6 +8699,7 @@ private indirect enum Expression: Equatable {
     case string(String)
     case boolean(Bool)
     case null
+    case closure(parameters: [FunctionParameter], returnType: BASICType, body: Expression)
     case variable(VariableName)
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
@@ -9632,6 +10025,9 @@ private struct Parser {
             if uppercased == "TRUE" { return .boolean(true) }
             if uppercased == "FALSE" { return .boolean(false) }
             if uppercased == "NULL" { return .null }
+            if uppercased == "FUNCTION" {
+                return try parseClosureExpression()
+            }
             if uppercased == "NEW" {
                 let className = try consumeIdentifier("Expected class name after NEW")
                 let arguments = peek == .leftParen ? try parseArgumentList() : []
@@ -9708,6 +10104,29 @@ private struct Parser {
         default:
             throw syntax("Expected expression")
         }
+    }
+
+    private mutating func parseClosureExpression() throws -> Expression {
+        guard match(.leftParen) else { throw syntax("Expected ( after FUNCTION") }
+        var parameters: [FunctionParameter] = []
+        if !match(.rightParen) {
+            repeat {
+                let parameter = try consumeVariableName("Expected closure parameter name")
+                guard matchIdentifier("AS") else { throw syntax("Parameter \(parameter.name) requires AS <type>") }
+                let type = try parseType(allowVoid: false)
+                parameters.append(FunctionParameter(variable: parameter, type: type))
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+
+        let returnType: BASICType
+        if matchIdentifier("AS") {
+            returnType = try parseType(allowVoid: false)
+        } else {
+            returnType = .scalar(.variant)
+        }
+        guard match(.equals) else { throw syntax("Expected = after closure signature") }
+        return .closure(parameters: parameters, returnType: returnType, body: try parseExpression())
     }
 
     private mutating func parsePoint(openParenAlreadyConsumed: Bool = false) throws -> GraphicsPoint {

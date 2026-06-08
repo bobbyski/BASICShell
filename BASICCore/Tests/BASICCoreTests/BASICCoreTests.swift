@@ -2529,6 +2529,207 @@ struct BASICCoreTests {
         ])
     }
 
+    @Test("Shared async value cell supports synchronized mutation")
+    func sharedAsyncValueCellSupportsSynchronizedMutation() async throws {
+        let cell = BASICSharedValueCell(id: 1, name: "sharedTotal", value: .number(0))
+
+        async let alpha: Void = {
+            for _ in 0..<50 {
+                _ = cell.update { value in
+                    .number((value.number ?? 0) + 1)
+                }
+                await Task.yield()
+            }
+        }()
+        async let beta: Void = {
+            for _ in 0..<50 {
+                _ = cell.update { value in
+                    .number((value.number ?? 0) + 1)
+                }
+                await Task.yield()
+            }
+        }()
+
+        _ = await (alpha, beta)
+
+        let snapshot = cell.snapshot()
+        #expect(snapshot.name == "sharedTotal")
+        #expect(snapshot.typeName == "DOUBLE")
+        #expect(snapshot.value == "100")
+        #expect(snapshot.revision == 100)
+        #expect(snapshot.access == .strongMutable)
+    }
+
+    @Test("Read-only async value cell reports access and rejects mutation")
+    func readOnlyAsyncValueCellReportsAccessAndRejectsMutation() {
+        let cell = BASICSharedValueCell(
+            id: 2,
+            name: "title$",
+            value: .string(BASICString("original")),
+            access: .readOnly
+        )
+
+        #expect(!cell.set(.string(BASICString("changed"))))
+        #expect(cell.update { _ in .string(BASICString("changed")) } == nil)
+
+        let snapshot = cell.snapshot()
+        #expect(snapshot.name == "title$")
+        #expect(snapshot.typeName == "STRING")
+        #expect(snapshot.value == "original")
+        #expect(snapshot.revision == 0)
+        #expect(snapshot.access == .readOnly)
+    }
+
+    @Test("Captured environment stores named cells case insensitively")
+    func capturedEnvironmentStoresNamedCellsCaseInsensitively() {
+        let environment = BASICCapturedEnvironment()
+
+        let first = environment.capture(name: "Score", value: .number(10))
+        let title = environment.capture(
+            name: "Title$",
+            value: .string(BASICString("hello")),
+            access: .readOnly
+        )
+
+        #expect(first.id == 1)
+        #expect(title.id == 2)
+        #expect(environment.count == 2)
+        #expect(environment.value(named: "score") == .number(10))
+        #expect(environment.value(named: "SCORE") == .number(10))
+        #expect(environment.value(named: "title$") == .string(BASICString("hello")))
+
+        #expect(environment.set(.number(11), named: "sCoRe"))
+        #expect(environment.value(named: "SCORE") == .number(11))
+        #expect(!environment.set(.string(BASICString("changed")), named: "TITLE$"))
+
+        let snapshots = environment.snapshots
+        #expect(snapshots.map(\.name) == ["Score", "Title$"])
+        #expect(snapshots[0].revision == 1)
+        #expect(snapshots[1].access == .readOnly)
+        #expect(snapshots[1].value == "hello")
+    }
+
+    @Test("Captured environment supports synchronized updates")
+    func capturedEnvironmentSupportsSynchronizedUpdates() async throws {
+        let environment = BASICCapturedEnvironment()
+        environment.capture(name: "counter", value: .number(0))
+
+        async let alpha: Void = {
+            for _ in 0..<75 {
+                _ = environment.update(named: "COUNTER") { value in
+                    .number((value.number ?? 0) + 1)
+                }
+                await Task.yield()
+            }
+        }()
+        async let beta: Void = {
+            for _ in 0..<25 {
+                _ = environment.update(named: "counter") { value in
+                    .number((value.number ?? 0) + 1)
+                }
+                await Task.yield()
+            }
+        }()
+
+        _ = await (alpha, beta)
+
+        let snapshot = try #require(environment.snapshot(named: "Counter"))
+        #expect(snapshot.value == "100")
+        #expect(snapshot.revision == 100)
+        #expect(snapshot.access == .strongMutable)
+    }
+
+    @Test("Captured closure reads and mutates captured environment")
+    func capturedClosureReadsAndMutatesCapturedEnvironment() throws {
+        let environment = BASICCapturedEnvironment()
+        environment.capture(name: "prefix$", value: .string(BASICString("Score: ")), access: .readOnly)
+        environment.capture(name: "count", value: .number(0))
+
+        let closure = BASICCapturedClosure(name: "Formatter", environment: environment) { environment, arguments in
+            let prefix = environment.value(named: "PREFIX$")?.string?.description ?? ""
+            let value = arguments.first?.description ?? ""
+            _ = environment.update(named: "count") { current in
+                .number((current.number ?? 0) + 1)
+            }
+            return .string(BASICString(prefix + value))
+        }
+
+        let first = try closure.call(arguments: [.number(42)])
+        let second = try closure.call(arguments: [.string(BASICString("READY"))])
+
+        #expect(first == .string(BASICString("Score: 42")))
+        #expect(second == .string(BASICString("Score: READY")))
+        #expect(environment.value(named: "count") == .number(2))
+    }
+
+    @Test("Captured closure exposes stable captured snapshots")
+    func capturedClosureExposesStableCapturedSnapshots() throws {
+        let environment = BASICCapturedEnvironment()
+        environment.capture(name: "Title$", value: .string(BASICString("Demo")), access: .readOnly)
+        environment.capture(name: "Total", value: .number(5))
+
+        let closure = BASICCapturedClosure(name: "Inspector", environment: environment) { environment, _ in
+            _ = environment.set(.number(6), named: "total")
+            return environment.value(named: "title$") ?? .empty
+        }
+
+        #expect(try closure.call() == .string(BASICString("Demo")))
+        #expect(closure.name == "Inspector")
+
+        let snapshots = closure.capturedSnapshots
+        #expect(snapshots.map(\.name) == ["Title$", "Total"])
+        #expect(snapshots[0].access == .readOnly)
+        #expect(snapshots[1].value == "6")
+        #expect(snapshots[1].revision == 1)
+    }
+
+    @Test("BASIC closure expressions use named typed parameters")
+    func basicClosureExpressionsUseNamedTypedParameters() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let add = function(left as integer, right as integer) as integer = left + right
+        print add(2, 3)
+        print add(10, -4)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["5", "6"])
+    }
+
+    @Test("BASIC closure expressions capture surrounding values by snapshot")
+    func basicClosureExpressionsCaptureSurroundingValuesBySnapshot() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        prefix$ = "Score: "
+        bonus = 5
+        formatter = function(value as integer) as string = prefix$ + str$(value + bonus)
+        prefix$ = "Changed: "
+        bonus = 100
+        print formatter(7)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Score:  12"])
+    }
+
+    @Test("BASIC closure expressions validate typed arguments")
+    func basicClosureExpressionsValidateTypedArguments() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        local twice = function(value as integer) as integer = value * 2
+        print twice("nope")
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Type error: Cannot assign non-numeric value to value"])
+    }
+
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {
         for _ in 0..<100 {
             if session.debugTasks.first(where: { $0.id == id })?.state == state {

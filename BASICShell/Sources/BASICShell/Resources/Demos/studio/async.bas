@@ -179,8 +179,26 @@ print
 print "SLICE 18: CANCELLATION WAKES AWAITERS"
 print "SLICE 18 HOST/API VERIFIED"
 print
+print "SLICE 19: MUTABLE SHARED CELLS"
+print "SLICE 19 HOST/API VERIFIED"
+print
+print "SLICE 20: READ-ONLY CAPTURE REFERENCES"
+print "SLICE 20 HOST/API VERIFIED"
+print
+print "SLICE 21: CAPTURED ENVIRONMENT CELLS"
+print "SLICE 21 HOST/API VERIFIED"
+print
+print "SLICE 22: CAPTURED CLOSURE RUNTIME"
+print "SLICE 22 HOST/API VERIFIED"
+print
+print "SLICE 23: BASIC CLOSURE SYNTAX"
+bonus = 5
+scoreText = function(value as integer) as string = "SCORE=" + str$(value + bonus)
+bonus = 100
+if scoreText(7) = "SCORE= 12" then print "SLICE 23 PASSED"
+print
 print "FUTURE SLICES"
-print "19. MUTABLE SHARED CELLS AND CLOSURES"
+print "24. EXPLICIT CAPTURE POLICY"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end
