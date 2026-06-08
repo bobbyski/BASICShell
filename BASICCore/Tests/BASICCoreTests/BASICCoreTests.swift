@@ -2141,6 +2141,105 @@ struct BASICCoreTests {
         #expect(session.taskJoinState(id: child.id) == .cancelled)
     }
 
+    @Test("Logical BASIC task captures suspended await frames")
+    func logicalBasicTaskCapturesSuspendedAwaitFrames() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let parent = session.currentTaskHandle,
+              let child = session.createChildTask(name: "Async worker") else {
+            Issue.record("Expected parent and child handles")
+            return
+        }
+
+        let frame = BASICSuspendedFrame(
+            kind: "Function",
+            name: "AsyncCaller",
+            resumeLocation: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0),
+            localScopeDepth: 1
+        )
+
+        #expect(session.suspendTaskForAwait(id: parent.id, awaitingTaskID: child.id, frame: frame))
+        let suspended = session.debugTasks.first { $0.id == parent.id }
+        #expect(suspended?.state == .suspended)
+        #expect(suspended?.suspensionReason == .join(taskID: child.id))
+        #expect(suspended?.suspendedFrames == [frame])
+        #expect(session.taskAwaitState(id: parent.id) == .waiting)
+
+        #expect(session.resumeTask(id: parent.id))
+        let resumed = session.debugTasks.first { $0.id == parent.id }
+        #expect(resumed?.state == .ready)
+        #expect(resumed?.suspendedFrames.isEmpty == true)
+    }
+
+    @Test("Completed awaited task wakes suspended parent")
+    func completedAwaitedTaskWakesSuspendedParent() async throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let parent = session.currentTaskHandle else {
+            Issue.record("Expected parent handle")
+            return
+        }
+
+        let child = session.startHostOperationTaskWithResult(name: "Async value", parentID: parent.id, operation: "test") {
+            await Task.yield()
+            return .number(42)
+        }
+        let frame = BASICSuspendedFrame(
+            kind: "Function",
+            name: "AwaitValue",
+            resumeLocation: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0),
+            localScopeDepth: 1
+        )
+
+        #expect(session.suspendTaskForAwait(id: parent.id, awaitingTaskID: child.id, frame: frame))
+        #expect(session.debugTasks.first { $0.id == parent.id }?.state == .suspended)
+        #expect(!session.readyTaskHandles.contains(parent))
+
+        try await waitForTaskState(session, id: child.id, expected: .completed)
+
+        #expect(session.taskAwaitState(id: child.id) == .completed(.number(42)))
+        let parentSnapshot = session.debugTasks.first { $0.id == parent.id }
+        #expect(parentSnapshot?.state == .ready)
+        #expect(parentSnapshot?.suspendedFrames.isEmpty == true)
+        #expect(session.readyTaskHandles.contains(parent))
+    }
+
     @Test("Host operation tasks complete on Swift async lanes")
     func hostOperationTasksCompleteOnSwiftAsyncLanes() async throws {
         let session = BASICSession(host: TestHost())
@@ -2240,6 +2339,24 @@ struct BASICCoreTests {
         try session.runProgram()
 
         #expect(host.output == ["slice 9", "TOTAL =5"])
+    }
+
+    @Test("AWAIT can resolve a user-visible host task handle")
+    func awaitCanResolveUserVisibleHostTaskHandle() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "slice 12"
+        value$ = await AsyncValue("payload")
+        print "VALUE ="; value$
+        number = await AsyncValue(12)
+        print "NUMBER ="; number
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["slice 12", "VALUE =payload", "NUMBER =12"])
     }
 
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {

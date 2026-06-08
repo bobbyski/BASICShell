@@ -72,8 +72,32 @@ Slice9Passed:
     print "ASYNCTOTAL ="; asyncTotal
     print
 
+print "SLICE 10: RESUMABLE ASYNC SUSPENSION"
+print "SLICE 10 HOST/API VERIFIED"
+print
+print "SLICE 11: COOPERATIVE AWAIT RESUME"
+print "SLICE 11 HOST/API VERIFIED"
+print
+print "SLICE 12: USER-VISIBLE SUSPENDED AWAIT"
+awaited$ = await AsyncValue("payload")
+awaitedNumber = await AsyncValue(12)
+if awaited$ = "payload" then Slice12StringPassed
+print "SLICE 12 FAILED, AWAITED ="; awaited$
+end
+
+Slice12StringPassed:
+    if awaitedNumber = 12 then Slice12Passed
+    print "SLICE 12 FAILED, NUMBER ="; awaitedNumber
+    end
+
+Slice12Passed:
+    print "SLICE 12 PASSED"
+    print "AWAITED ="; awaited$
+    print "AWAITED NUMBER ="; awaitedNumber
+    print
+
 print "FUTURE SLICES"
-print "10. RESUMABLE ASYNC SUSPENSION"
+print "13. ASYNC FUNCTION TASK SCHEDULING"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end

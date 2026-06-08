@@ -2925,6 +2925,31 @@ public enum BASICTaskSuspensionReason: Equatable, Sendable {
     case join(taskID: Int)
 }
 
+/// Resumable BASIC execution frame captured while a logical task is suspended.
+public struct BASICSuspendedFrame: Equatable, Sendable {
+    /// Human-readable frame kind, such as Program, Function, Method, or GOSUB.
+    public let kind: String
+    /// Human-readable frame name.
+    public let name: String
+    /// Source location where execution should resume.
+    public let resumeLocation: BASICBreakpointLocation?
+    /// Number of local scopes owned by this frame when it was captured.
+    public let localScopeDepth: Int
+
+    /// Creates a suspended frame snapshot.
+    public init(
+        kind: String,
+        name: String,
+        resumeLocation: BASICBreakpointLocation? = nil,
+        localScopeDepth: Int = 0
+    ) {
+        self.kind = kind
+        self.name = name
+        self.resumeLocation = resumeLocation
+        self.localScopeDepth = localScopeDepth
+    }
+}
+
 /// Immutable debugger-facing view of a logical BASIC task.
 public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     /// Stable task identifier.
@@ -2945,6 +2970,8 @@ public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     public let yieldCount: Int
     /// Number of known child tasks parented by this task.
     public let childCount: Int
+    /// Resumable BASIC frames captured while the task is suspended.
+    public let suspendedFrames: [BASICSuspendedFrame]
     /// Result value for completed tasks, when available.
     let resultValue: BASICValue?
     /// Optional error text for failed tasks.
@@ -3010,6 +3037,7 @@ public final class BASICTask: @unchecked Sendable {
     private var cancellationRequested = false
     private var yieldCountValue = 0
     private var suspensionReason: BASICTaskSuspensionReason?
+    private var suspendedFrames: [BASICSuspendedFrame] = []
     private var resultValue: BASICValue?
     private var errorDescription: String?
 
@@ -3074,6 +3102,7 @@ public final class BASICTask: @unchecked Sendable {
             isCancellationRequested: cancellationRequested,
             yieldCount: yieldCountValue,
             childCount: childCount,
+            suspendedFrames: suspendedFrames,
             resultValue: resultValue,
             errorDescription: errorDescription
         )
@@ -3083,6 +3112,7 @@ public final class BASICTask: @unchecked Sendable {
         lock.lock()
         currentState = .running
         suspensionReason = nil
+        suspendedFrames = []
         resultValue = nil
         errorDescription = nil
         lock.unlock()
@@ -3092,6 +3122,7 @@ public final class BASICTask: @unchecked Sendable {
         lock.lock()
         currentState = .ready
         suspensionReason = nil
+        suspendedFrames = []
         resultValue = nil
         lock.unlock()
     }
@@ -3108,10 +3139,11 @@ public final class BASICTask: @unchecked Sendable {
         lock.unlock()
     }
 
-    fileprivate func markSuspended(_ reason: BASICTaskSuspensionReason = .debugger) {
+    fileprivate func markSuspended(_ reason: BASICTaskSuspensionReason = .debugger, frames: [BASICSuspendedFrame] = []) {
         lock.lock()
         currentState = .suspended
         suspensionReason = reason
+        suspendedFrames = frames
         lock.unlock()
     }
 
@@ -3119,6 +3151,7 @@ public final class BASICTask: @unchecked Sendable {
         lock.lock()
         currentState = .completed
         suspensionReason = nil
+        suspendedFrames = []
         resultValue = result
         lock.unlock()
     }
@@ -3127,6 +3160,7 @@ public final class BASICTask: @unchecked Sendable {
         lock.lock()
         currentState = .cancelled
         suspensionReason = nil
+        suspendedFrames = []
         resultValue = nil
         lock.unlock()
     }
@@ -3135,6 +3169,7 @@ public final class BASICTask: @unchecked Sendable {
         lock.lock()
         currentState = .failed
         suspensionReason = nil
+        suspendedFrames = []
         resultValue = nil
         errorDescription = String(describing: error)
         lock.unlock()
@@ -3148,6 +3183,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     private var tasks: [Int: BASICTask] = [:]
     private var readyQueue: [Int] = []
     private var hostTasks: [Int: Task<Void, Never>] = [:]
+    private var awaitersByTaskID: [Int: Set<Int>] = [:]
     private var currentTaskID: Int?
 
     /// Creates an empty task scheduler.
@@ -3313,6 +3349,29 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         return true
     }
 
+    /// Suspends a task while it awaits another logical task.
+    @discardableResult
+    public func suspendForAwait(id: Int, awaitingTaskID: Int, frame: BASICSuspendedFrame) -> Bool {
+        lock.lock()
+        let task = tasks[id]
+        let awaitedTask = tasks[awaitingTaskID]
+        readyQueue.removeAll { $0 == id }
+        if task != nil, awaitedTask != nil {
+            awaitersByTaskID[awaitingTaskID, default: []].insert(id)
+        }
+        lock.unlock()
+        guard let task, let awaitedTask else { return false }
+        let awaitedSnapshot = awaitedTask.snapshot()
+        guard awaitedSnapshot.state == .ready || awaitedSnapshot.state == .running || awaitedSnapshot.state == .suspended else {
+            lock.lock()
+            awaitersByTaskID[awaitingTaskID]?.remove(id)
+            lock.unlock()
+            return false
+        }
+        task.markSuspended(.join(taskID: awaitingTaskID), frames: [frame])
+        return true
+    }
+
     /// Moves a suspended task back to the ready queue after its wait condition is satisfied.
     @discardableResult
     public func resumeTask(id: Int) -> Bool {
@@ -3331,6 +3390,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
         task.markReady()
         lock.lock()
+        removeAwaiter(id)
         if !isAlreadyQueued {
             readyQueue.append(id)
         }
@@ -3352,14 +3412,17 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     fileprivate func markCompleted(_ task: BASICTask) {
         task.markCompleted()
+        wakeAwaiters(for: task.id)
     }
 
     fileprivate func markCancelled(_ task: BASICTask) {
         task.markCancelled()
+        wakeAwaiters(for: task.id)
     }
 
     fileprivate func markFailed(_ task: BASICTask, error: Error) {
         task.markFailed(error)
+        wakeAwaiters(for: task.id)
     }
 
     private func finishHostOperationTask(
@@ -3379,6 +3442,39 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             task.markFailed(error)
         } else {
             task.markCompleted(result: result)
+        }
+        wakeAwaiters(for: id)
+    }
+
+    private func removeAwaiter(_ taskID: Int) {
+        for awaitedID in awaitersByTaskID.keys {
+            awaitersByTaskID[awaitedID]?.remove(taskID)
+            if awaitersByTaskID[awaitedID]?.isEmpty == true {
+                awaitersByTaskID[awaitedID] = nil
+            }
+        }
+    }
+
+    private func wakeAwaiters(for taskID: Int) {
+        lock.lock()
+        let waiterIDs = Array(awaitersByTaskID[taskID] ?? [])
+        awaitersByTaskID[taskID] = nil
+        let waiters = waiterIDs.compactMap { tasks[$0] }
+        lock.unlock()
+
+        for waiter in waiters {
+            let snapshot = waiter.snapshot()
+            guard snapshot.state == .suspended,
+                  snapshot.suspensionReason == .join(taskID: taskID),
+                  !snapshot.isCancellationRequested else {
+                continue
+            }
+            waiter.markReady()
+            lock.lock()
+            if !readyQueue.contains(waiter.id) {
+                readyQueue.append(waiter.id)
+            }
+            lock.unlock()
         }
     }
 }
@@ -4092,6 +4188,12 @@ public final class BASICSession: @unchecked Sendable {
     @discardableResult
     public func suspendTaskForHostOperation(id: Int, operation: String) -> Bool {
         taskScheduler.suspendForHostOperation(id: id, operation: operation)
+    }
+
+    /// Suspends a logical task while it awaits another logical task.
+    @discardableResult
+    public func suspendTaskForAwait(id: Int, awaitingTaskID: Int, frame: BASICSuspendedFrame) -> Bool {
+        taskScheduler.suspendForAwait(id: id, awaitingTaskID: awaitingTaskID, frame: frame)
     }
 
     /// Resumes a suspended logical task after its wait condition is satisfied.
@@ -6056,7 +6158,7 @@ public final class BASICInterpreter {
     }
 
     private static let intrinsicFunctionNames: Set<String> = [
-        "ABS", "ACS", "ASC", "ASN", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
+        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
         "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
@@ -6081,6 +6183,22 @@ public final class BASICInterpreter {
             return .number(Double(scalar.value))
         case "ASN":
             return .number(asin(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "ASYNCVALUE":
+            try requireArgumentCount(name.name, arguments, 1)
+            let value = try evaluate(arguments[0])
+            guard let taskScheduler else {
+                throw BASICError.runtime("ASYNCVALUE is not supported outside a running BASIC session")
+            }
+            let parentID = taskScheduler.currentTask?.id
+            let handle = taskScheduler.startHostOperationTaskWithResult(
+                name: "ASYNCVALUE",
+                parentID: parentID,
+                operation: "asyncvalue"
+            ) {
+                await Task.yield()
+                return value
+            }
+            return .number(Double(handle.id))
         case "ATN":
             return .number(atan(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "BINARY$":
@@ -7593,7 +7711,8 @@ public final class BASICInterpreter {
         case .binary(let left, let operation, let right):
             return try evaluateBinary(left, operation, right)
         case .await(let expression):
-            return try evaluate(expression)
+            let value = try evaluate(expression)
+            return try awaitTaskValueIfKnown(value) ?? value
         case .functionCall(let name, let arguments):
             return try callFunction(name: name, arguments: arguments)
         case .pointFunction(let point):
@@ -7615,6 +7734,54 @@ public final class BASICInterpreter {
             return .number(Double(string.characterCount))
         case .systemFunction(let expression):
             return .string(BASICString(try runSystemCommand(expression)))
+        }
+    }
+
+    private func awaitTaskValueIfKnown(_ value: BASICValue) throws -> BASICValue? {
+        guard let taskScheduler, let number = value.number else {
+            return nil
+        }
+        let taskID = Int(number)
+        guard taskID > 0, Double(taskID) == number else {
+            return nil
+        }
+
+        var suspendedTask: BASICTask?
+        var didSuspend = false
+        defer {
+            if didSuspend, let suspendedTask {
+                taskScheduler.markRunning(suspendedTask)
+            }
+        }
+
+        while true {
+            switch taskScheduler.awaitState(for: taskID) {
+            case .missing:
+                return nil
+            case .completed(let result):
+                return result
+            case .cancelled:
+                throw BASICError.runtime("Awaited task was cancelled")
+            case .failed(let message):
+                throw BASICError.runtime(message.map { "Awaited task failed: \($0)" } ?? "Awaited task failed")
+            case .waiting:
+                if !didSuspend {
+                    guard let currentTask = taskScheduler.currentTask else {
+                        throw BASICError.runtime("AWAIT requires a running BASIC task")
+                    }
+                    suspendedTask = currentTask
+                    let frame = BASICSuspendedFrame(
+                        kind: "Expression",
+                        name: "AWAIT",
+                        resumeLocation: currentTask.snapshot().location,
+                        localScopeDepth: functionStack.count
+                    )
+                    _ = taskScheduler.suspendForAwait(id: currentTask.id, awaitingTaskID: taskID, frame: frame)
+                    didSuspend = true
+                }
+                try executionControl?.checkBreak()
+                Thread.sleep(forTimeInterval: 0.001)
+            }
         }
     }
 

@@ -795,7 +795,7 @@ if arguments.first == "--demo" {
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
-        try BASICInterpreter(program: session.program, host: host).run()
+        try session.runProgram()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
@@ -812,7 +812,7 @@ if let scriptPath = arguments.first {
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
-        try BASICInterpreter(program: session.program, host: host).run()
+        try session.runProgram()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
