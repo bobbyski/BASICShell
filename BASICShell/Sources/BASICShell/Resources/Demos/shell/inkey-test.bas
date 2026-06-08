@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 ' INKEY$ manual keyboard test.
 ' Press keys to see their AIBasic names. Press Control-Q to exit.
 

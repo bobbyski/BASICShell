@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 ' AIBasic POS starter.
 ' This is intentionally written as a small app skeleton rather than a tiny demo:
 ' records own persisted data, classes hold formatting behavior, and the main

@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 print "JSON TEST SUITE"
 
 let q$ = chr$(34)

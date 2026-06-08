@@ -1,4 +1,4 @@
-#!/usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 print "AIBasic shell demo"
 let Count = 1
 Loop:

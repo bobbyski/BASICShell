@@ -1556,13 +1556,68 @@ struct MonacoEditor: NSViewRepresentable {
           monaco.languages.register({ id: "aibasic" });
           monaco.languages.setMonarchTokensProvider("aibasic", {
             ignoreCase: true,
+            controlKeywords: [
+              "BREAK", "CASE", "CONTINUE", "DO", "ELSE", "ELSEIF", "END", "ERROR", "EXIT",
+              "FOR", "GOSUB", "GOTO", "IF", "LOOP", "NEXT", "ON", "RESUME", "RETURN",
+              "SELECT", "STEP", "STOP", "THEN", "TO", "UNTIL", "WEND", "WHILE", "YIELD"
+            ],
+            declarationKeywords: [
+              "AS", "CLASS", "CONST", "DATA", "DECLARE", "DEFAULT", "DIM", "FUNCTION",
+              "GLOBAL", "IMPLEMENTS", "IMPORT", "INHERITS", "INTERFACE", "JSON", "LABEL",
+              "LET", "LOCAL", "ME", "META", "MODULE", "NAME", "OPTION", "OVERRIDES",
+              "PRIVATE", "PROTECTED", "PUBLIC", "READ", "RECORD", "RESTORE", "SHARED",
+              "TYPE", "VIRTUAL"
+            ],
+            ioKeywords: [
+              "CD", "CLEAR", "CLOSE", "EDIT", "FIELD", "FILES", "GET", "HELP", "INPUT",
+              "LINE", "LIST", "LOAD", "LOG", "LSET", "NEW", "OPEN", "PRINT", "PROMPT",
+              "PUT", "RANDOMIZE", "RSET", "RUN", "SAVE", "SYSTEM"
+            ],
+            graphicsKeywords: [
+              "CIRCLE", "CLS", "COLOR", "DRAW", "LOCATE", "PAINT", "POINT", "PRESET",
+              "PSET", "SCREEN"
+            ],
+            typeKeywords: [
+              "BIG", "BOOLEAN", "BOTH", "DICTIONARY", "DOUBLE", "EMPTY", "FALSE", "FILE",
+              "INTEGER", "JSON", "LITTLE", "NATIVE", "NULL", "RAW", "READ", "SINGLE",
+              "STRING", "TEXT", "TRUE", "VARIANT", "VOID", "WRITE"
+            ],
+            builtinFunctions: [
+              "ABS", "ASC", "ATN", "BINARY$", "CHR$", "CINT", "COS", "CURRENTDIR$",
+              "CVD", "CVI", "CVS", "EXP", "FIX", "FROMJSONSTRING", "INKEY$", "INPUT$",
+              "INSTR", "INT", "LEFT$", "LEN", "LOF", "LOG", "MID$", "MKD$", "MKI$",
+              "MKS$", "POINT", "RIGHT$", "RND", "SGN", "SIN", "SPACE$", "SPC", "SQR",
+              "STR$", "STRING$", "SYSTEM$", "TAB", "TAN", "TOJSONSTRING", "USING$", "VAL"
+            ],
             tokenizer: {
               root: [
-                [/\\b(PRINT|LOG|LET|GLOBAL|LOCAL|OPTION|INPUT|DATA|READ|RESTORE|GOTO|GOSUB|RETURN|FUNCTION|VOID|VARIANT|IF|THEN|ELSEIF|FOR|TO|STEP|NEXT|SELECT|CASE|ELSE|END|EXIT|REM|RUN|LIST|LOAD|SAVE|CD|PROMPT|FILES|SYSTEM|NEW|CLEAR|HELP|SCREEN|COLOR|CLS|PSET|PRESET|LINE|POINT|IS|AS|TRUE|FALSE|TYPE|INTERFACE|CLASS|IMPLEMENTS|INHERITS|PUBLIC|PRIVATE|PROTECTED|OVERRIDES|VIRTUAL|ME)\\b/, "keyword"],
-                [/".*?"/, "string"],
+                [/^\\s*#!.*$/, "comment.extension.aibasic"],
+                [/^\\s*#.*$/, "comment.extension.aibasic"],
+                [/"/, { token: "string.quote.aibasic", next: "@string" }],
+                [/\\/\\/.*$/, "comment.extension.aibasic"],
+                [/'.*$/, "comment.basic.aibasic"],
+                [/\\bREM\\b.*$/, "comment.basic.aibasic"],
+                [/^\\s*\\d+\\b/, "number.line.aibasic"],
                 [/\\b\\d+(\\.\\d+)?\\b/, "number"],
-                [/'.*$/, "comment"],
-                [/\\bREM\\b.*$/, "comment"]
+                [/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*:/, "identifier.label.aibasic"],
+                [/[A-Za-z_][A-Za-z0-9_]*\\$?/, {
+                  cases: {
+                    "@controlKeywords": "keyword.control.aibasic",
+                    "@declarationKeywords": "keyword.declaration.aibasic",
+                    "@ioKeywords": "keyword.io.aibasic",
+                    "@graphicsKeywords": "keyword.graphics.aibasic",
+                    "@typeKeywords": "keyword.type.aibasic",
+                    "@builtinFunctions": "predefined.aibasic",
+                    "@default": "identifier"
+                  }
+                }],
+                [/[<>]=?|=|\\+|-|\\*|\\//, "operator"],
+                [/[(),.:;]/, "delimiter"]
+              ],
+              string: [
+                [/""/, "string.escape.aibasic"],
+                [/[^"]+/, "string.aibasic"],
+                [/"/, { token: "string.quote.aibasic", next: "@pop" }]
               ]
             }
           });
@@ -1715,10 +1770,14 @@ final class StudioModel: ObservableObject {
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
         workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
-        promptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate ? BASICSession.defaultPromptTemplate : settings.promptTemplate
+        let savedPromptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate
+            ? BASICSession.defaultPromptTemplate
+            : settings.promptTemplate
+        promptTemplate = BASICPromptTemplateStore.load(default: savedPromptTemplate)
         fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
         isLoadingSettings = false
+        BASICPromptTemplateStore.save(promptTemplate)
         consoleText = session.prompt
 
         let arguments = Array(CommandLine.arguments.dropFirst())
@@ -2340,6 +2399,7 @@ final class StudioModel: ObservableObject {
     }
 
     private func saveSettings() {
+        BASICPromptTemplateStore.save(promptTemplate)
         StudioSettingsStore.save(
             StudioSettings(
                 editorTheme: editorTheme,

@@ -575,7 +575,10 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 }
 
 let host = ConsoleHost()
-let session = BASICSession(host: host, promptTemplate: BASICSession.shellPromptTemplate)
+let session = BASICSession(
+    host: host,
+    promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
+)
 
 func demoFileName(for name: String) -> String {
     name.hasSuffix(".bas") ? name : "\(name).bas"
@@ -830,5 +833,10 @@ while true {
     if isRunCommand(line), printDiagnosticsIfNeeded() {
         continue
     }
-    if !session.submit(line) { break }
+    let oldPromptTemplate = session.promptTemplate
+    let shouldContinue = session.submit(line)
+    if session.promptTemplate != oldPromptTemplate {
+        BASICPromptTemplateStore.save(session.promptTemplate)
+    }
+    if !shouldContinue { break }
 }

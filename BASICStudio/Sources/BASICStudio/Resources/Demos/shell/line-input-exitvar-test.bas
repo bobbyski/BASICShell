@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 ' LINE INPUT EXITVAR manual test.
 ' Type text, then press Enter or a special key.
 ' F10 or Escape exits the test.

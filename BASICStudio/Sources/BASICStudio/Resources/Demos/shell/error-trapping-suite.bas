@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 ' Error trapping smoke test for BASICStudio and BASICShell.
 ' This intentionally raises common runtime errors and verifies that
 ' ON ERROR GOTO, ERR, ERL, and RESUME NEXT keep the program moving.

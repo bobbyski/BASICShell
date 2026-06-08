@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 
 print "LEGACY FILE TEST SUITE"
 

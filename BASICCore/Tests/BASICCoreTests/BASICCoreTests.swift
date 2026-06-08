@@ -1874,6 +1874,104 @@ struct BASICCoreTests {
         #expect(host.output == ["before"])
     }
 
+    @Test("Logical BASIC task completes after RUN")
+    func logicalBasicTaskCompletesAfterRun() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "task"
+        end
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["task"])
+        #expect(session.debugTasks.count == 1)
+        #expect(session.debugTasks.first?.name == "Program")
+        #expect(session.debugTasks.first?.state == .completed)
+        #expect(session.debugTasks.first?.location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+    }
+
+    @Test("Logical BASIC task suspends at breakpoint and completes after continue")
+    func logicalBasicTaskSuspendsAtBreakpointAndCompletesAfterContinue() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print "break"
+        print "after"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        #expect(session.debugTasks.count == 1)
+        #expect(session.debugTasks.first?.state == .suspended)
+        #expect(session.debugTasks.first?.location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+
+        control.ignoreBreakpointOnce(at: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == ["before", "break", "after"])
+        #expect(session.debugTasks.count == 1)
+        #expect(session.debugTasks.first?.state == .completed)
+    }
+
+    @Test("Logical BASIC task records failed runtime error")
+    func logicalBasicTaskRecordsFailedRuntimeError() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print 10 / 0
+        print "after"
+        """)
+
+        do {
+            try session.runProgram()
+            Issue.record("Expected division by zero")
+        } catch BASICError.runtime(let message) {
+            #expect(message == "Division by zero")
+        }
+
+        #expect(host.output == ["before"])
+        #expect(session.debugTasks.count == 1)
+        #expect(session.debugTasks.first?.state == .failed)
+        #expect(session.debugTasks.first?.location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        #expect(session.debugTasks.first?.errorDescription?.contains("Division by zero") == true)
+    }
+
+    @Test("YIELD records cooperative task boundaries")
+    func yieldRecordsCooperativeTaskBoundaries() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        yield
+        yield
+        print "after"
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["before", "after"])
+        #expect(session.debugTasks.count == 1)
+        #expect(session.debugTasks.first?.state == .completed)
+        #expect(session.debugTasks.first?.yieldCount == 2)
+    }
+
     @Test("Execution control treats breakpoint file names as optional current-file metadata")
     func executionControlTreatsBreakpointFileNamesAsOptionalCurrentFileMetadata() throws {
         let host = TestHost()

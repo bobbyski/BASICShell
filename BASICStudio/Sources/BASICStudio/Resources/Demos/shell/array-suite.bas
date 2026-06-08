@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 print "ARRAY BASELINE SUITE"
 
 type Student

@@ -1,4 +1,4 @@
-#!/usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 rem BASICStudio feature demo
 ' apostrophe comment alias
 # shell-friendly comment alias

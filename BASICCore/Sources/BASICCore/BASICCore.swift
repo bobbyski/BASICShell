@@ -2896,6 +2896,217 @@ public final class BASICExecutionControl: @unchecked Sendable {
     }
 }
 
+/// Execution state for a logical BASIC task.
+public enum BASICTaskState: String, Sendable {
+    /// The task is queued and ready to run.
+    case ready
+    /// The task is currently executing.
+    case running
+    /// The task is paused at a debugger stop or future suspension point.
+    case suspended
+    /// The task reached normal completion.
+    case completed
+    /// The task stopped because cancellation or break was requested.
+    case cancelled
+    /// The task stopped with an error.
+    case failed
+}
+
+/// Immutable debugger-facing view of a logical BASIC task.
+public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
+    /// Stable task identifier.
+    public let id: Int
+    /// Optional parent task identifier for future child tasks.
+    public let parentID: Int?
+    /// Human-readable task name.
+    public let name: String
+    /// Current task state.
+    public let state: BASICTaskState
+    /// Current source location, when execution has reached a statement.
+    public let location: BASICBreakpointLocation?
+    /// Whether cancellation has been requested.
+    public let isCancellationRequested: Bool
+    /// Number of cooperative yield boundaries reached by this task.
+    public let yieldCount: Int
+    /// Optional error text for failed tasks.
+    public let errorDescription: String?
+}
+
+/// Logical BASIC execution unit used by the future thread/async runtime.
+public final class BASICTask: @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentState: BASICTaskState = .ready
+    private var currentLocation: BASICBreakpointLocation?
+    private var cancellationRequested = false
+    private var yieldCountValue = 0
+    private var errorDescription: String?
+
+    /// Stable task identifier.
+    public let id: Int
+    /// Optional parent task identifier for future child tasks.
+    public let parentID: Int?
+    /// Human-readable task name.
+    public let name: String
+
+    /// Creates a logical BASIC task.
+    public init(id: Int, parentID: Int? = nil, name: String = "Program") {
+        self.id = id
+        self.parentID = parentID
+        self.name = name
+    }
+
+    /// Current task state.
+    public var state: BASICTaskState {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentState
+    }
+
+    /// Current source location, when available.
+    public var location: BASICBreakpointLocation? {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentLocation
+    }
+
+    /// Requests cancellation at the next cooperative execution check.
+    public func requestCancellation() {
+        lock.lock()
+        cancellationRequested = true
+        lock.unlock()
+    }
+
+    /// Whether cancellation has been requested.
+    public var isCancellationRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellationRequested
+    }
+
+    /// Returns an immutable task snapshot.
+    public func snapshot() -> BASICTaskSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return BASICTaskSnapshot(
+            id: id,
+            parentID: parentID,
+            name: name,
+            state: currentState,
+            location: currentLocation,
+            isCancellationRequested: cancellationRequested,
+            yieldCount: yieldCountValue,
+            errorDescription: errorDescription
+        )
+    }
+
+    fileprivate func markRunning() {
+        lock.lock()
+        currentState = .running
+        errorDescription = nil
+        lock.unlock()
+    }
+
+    fileprivate func update(location: BASICBreakpointLocation) {
+        lock.lock()
+        currentLocation = location
+        lock.unlock()
+    }
+
+    fileprivate func recordYield() {
+        lock.lock()
+        yieldCountValue += 1
+        lock.unlock()
+    }
+
+    fileprivate func markSuspended() {
+        lock.lock()
+        currentState = .suspended
+        lock.unlock()
+    }
+
+    fileprivate func markCompleted() {
+        lock.lock()
+        currentState = .completed
+        lock.unlock()
+    }
+
+    fileprivate func markCancelled() {
+        lock.lock()
+        currentState = .cancelled
+        lock.unlock()
+    }
+
+    fileprivate func markFailed(_ error: Error) {
+        lock.lock()
+        currentState = .failed
+        errorDescription = String(describing: error)
+        lock.unlock()
+    }
+}
+
+/// Cooperative task registry and scheduler seed for BASIC execution.
+public final class BASICTaskScheduler: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextID = 1
+    private var tasks: [Int: BASICTask] = [:]
+    private var readyQueue: [Int] = []
+    private var currentTaskID: Int?
+
+    /// Creates an empty task scheduler.
+    public init() {}
+
+    /// Creates and queues a logical BASIC task.
+    public func createTask(name: String = "Program", parentID: Int? = nil) -> BASICTask {
+        lock.lock()
+        defer { lock.unlock() }
+        let task = BASICTask(id: nextID, parentID: parentID, name: name)
+        nextID += 1
+        tasks[task.id] = task
+        readyQueue.append(task.id)
+        return task
+    }
+
+    /// Returns immutable snapshots for all known tasks.
+    public var snapshots: [BASICTaskSnapshot] {
+        lock.lock()
+        let ordered = tasks.values.sorted { $0.id < $1.id }
+        lock.unlock()
+        return ordered.map { $0.snapshot() }
+    }
+
+    /// Current running or suspended task, when one has been selected.
+    public var currentTask: BASICTask? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let currentTaskID else { return nil }
+        return tasks[currentTaskID]
+    }
+
+    fileprivate func markRunning(_ task: BASICTask) {
+        lock.lock()
+        currentTaskID = task.id
+        readyQueue.removeAll { $0 == task.id }
+        lock.unlock()
+        task.markRunning()
+    }
+
+    fileprivate func markSuspended(_ task: BASICTask) {
+        task.markSuspended()
+    }
+
+    fileprivate func markCompleted(_ task: BASICTask) {
+        task.markCompleted()
+    }
+
+    fileprivate func markCancelled(_ task: BASICTask) {
+        task.markCancelled()
+    }
+
+    fileprivate func markFailed(_ task: BASICTask, error: Error) {
+        task.markFailed(error)
+    }
+}
+
 /// Precise debugger location for breakpoints and execution state.
 public struct BASICBreakpointLocation: Hashable, Sendable {
     /// Optional BASIC source file path.
@@ -3138,7 +3349,7 @@ public final class BASICProgram: @unchecked Sendable {
         "END", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB", "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE",
         "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
         "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
-        "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID"
+        "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
     ]
 
     private static func colorizedListingLine(_ source: String) -> String {
@@ -3242,6 +3453,47 @@ private final class BASICFileState {
     var lastFilePath: String?
 }
 
+/// Shared prompt-template persistence used by BASICStudio and BASICShell.
+public enum BASICPromptTemplateStore {
+    private struct Payload: Codable {
+        var promptTemplate: String
+    }
+
+    private static let fileName = "PromptSettings.json"
+
+    /// Location of the shared prompt settings file.
+    public static var settingsURL: URL {
+        let fileManager = FileManager.default
+        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base
+            .appendingPathComponent("AIBasic", isDirectory: true)
+            .appendingPathComponent(fileName)
+    }
+
+    /// Loads the shared prompt template, falling back to the provided default.
+    public static func load(default defaultTemplate: String) -> String {
+        guard let data = try? Data(contentsOf: settingsURL),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              !payload.promptTemplate.isEmpty else {
+            return defaultTemplate
+        }
+        return payload.promptTemplate
+    }
+
+    /// Saves the shared prompt template for all AIBasic hosts.
+    public static func save(_ promptTemplate: String) {
+        let url = settingsURL
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(Payload(promptTemplate: promptTemplate))
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("Unable to save AIBasic prompt settings: \(error.localizedDescription)")
+        }
+    }
+}
+
 /// High-level REPL/session facade for editing, running, and debugging BASIC programs.
 public final class BASICSession: @unchecked Sendable {
     /// Default graphical prompt template used by BASICStudio.
@@ -3267,6 +3519,7 @@ public final class BASICSession: @unchecked Sendable {
     private let host: BASICHost
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
+    private let taskScheduler = BASICTaskScheduler()
     private var activeInterpreter: BASICInterpreter?
 
     /// Creates a session bound to a host.
@@ -3400,12 +3653,15 @@ public final class BASICSession: @unchecked Sendable {
     /// Starts the program from the beginning or an optional numbered line.
     public func runProgram(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
         runtime.resetForRun()
+        let task = taskScheduler.createTask(name: "Program")
         let interpreter = BASICInterpreter(
             program: program,
             host: host,
             runtime: runtime,
             fileState: fileState,
-            executionControl: executionControl
+            executionControl: executionControl,
+            task: task,
+            taskScheduler: taskScheduler
         )
         activeInterpreter = interpreter
         do {
@@ -3496,6 +3752,11 @@ public final class BASICSession: @unchecked Sendable {
     /// Current debugger call stack.
     public var debugCallStack: [BASICCallStackFrame] {
         activeInterpreter?.debugCallStack ?? []
+    }
+
+    /// Logical BASIC task snapshots known to this session.
+    public var debugTasks: [BASICTaskSnapshot] {
+        taskScheduler.snapshots
     }
 
     /// Local variables for each debugger stack frame.
@@ -3743,6 +4004,8 @@ public final class BASICInterpreter {
     private let runtime: BASICRuntime
     private let fileState: BASICFileState
     private var executionControl: BASICExecutionControl?
+    private let task: BASICTask?
+    private weak var taskScheduler: BASICTaskScheduler?
     private var gosubStack: [GosubFrame] = []
     private var forStack: [ForFrame] = []
     private var functionStack: [FunctionFrame] = []
@@ -3776,7 +4039,7 @@ public final class BASICInterpreter {
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
-        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil)
+        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil, task: nil, taskScheduler: nil)
     }
 
     fileprivate init(
@@ -3784,13 +4047,17 @@ public final class BASICInterpreter {
         host: BASICHost,
         runtime: BASICRuntime,
         fileState: BASICFileState = BASICFileState(),
-        executionControl: BASICExecutionControl? = nil
+        executionControl: BASICExecutionControl? = nil,
+        task: BASICTask? = nil,
+        taskScheduler: BASICTaskScheduler? = nil
     ) {
         self.program = program
         self.host = host
         self.runtime = runtime
         self.fileState = fileState
         self.executionControl = executionControl
+        self.task = task
+        self.taskScheduler = taskScheduler
     }
 
     /// Starts execution, optionally from a numbered line.
@@ -4204,8 +4471,21 @@ public final class BASICInterpreter {
         if !isPrepared {
             try prepare(startLine: nil)
         }
+        if let task {
+            taskScheduler?.markRunning(task)
+        }
+
+        defer {
+            if let task, pc >= parsedLines.count, task.state == .running {
+                taskScheduler?.markCompleted(task)
+            }
+        }
 
         while pc < parsedLines.count {
+            if let task, task.isCancellationRequested {
+                taskScheduler?.markCancelled(task)
+                throw BASICError.breakRequested(parsedLines[safe: pc]?.displayLineNumber)
+            }
             do {
                 let current = parsedLines[pc]
                 if current.isImported {
@@ -4219,10 +4499,21 @@ public final class BASICInterpreter {
             } catch let error as BASICError {
                 if error.isDebugPause {
                     snapshotPausedDebugState()
+                    if let task {
+                        taskScheduler?.markSuspended(task)
+                    }
                     throw error
                 }
                 if try handleRuntimeError(error, faultPC: pc, parsed: parsedLines) {
                     continue
+                }
+                if let task {
+                    taskScheduler?.markFailed(task, error: error)
+                }
+                throw error
+            } catch {
+                if let task {
+                    taskScheduler?.markFailed(task, error: error)
                 }
                 throw error
             }
@@ -4230,6 +4521,9 @@ public final class BASICInterpreter {
             if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
                 if pc < parsedLines.count {
                     updateExecutionLocation(parsedLines[pc])
+                    if let task {
+                        taskScheduler?.markSuspended(task)
+                    }
                     throw BASICError.stepComplete(parsedLines[pc].breakpointLocation)
                 }
                 return
@@ -4322,6 +4616,7 @@ public final class BASICInterpreter {
     private func updateExecutionLocation(_ line: ParsedLine) {
         currentSourceFileName = line.fileName
         executionControl?.update(lineNumber: line.displayLineNumber, location: line.breakpointLocation)
+        task?.update(location: line.breakpointLocation)
     }
 
     private func defaultLogModuleName() -> String {
@@ -4694,6 +4989,9 @@ public final class BASICInterpreter {
                 host?.print(output, terminator: "")
                 updateOutputColumn(text: output, terminator: "")
             }
+            return .next
+        case .yield:
+            task?.recordYield()
             return .next
         case .randomize(let expression):
             let seed = try expression.map { try numeric(try evaluate($0)) } ?? Date().timeIntervalSince1970
@@ -7216,6 +7514,7 @@ private indirect enum Statement: Equatable {
     case cd(Expression?)
     case files
     case system(Expression)
+    case yield
     case randomize(Expression?)
     case goto(Int)
     case gotoLabel(String)
@@ -7819,6 +8118,9 @@ private struct Parser {
         }
         if matchIdentifier("SYSTEM") {
             return .system(try parseExpression())
+        }
+        if matchIdentifier("YIELD") {
+            return .yield
         }
         if matchIdentifier("RANDOMIZE") {
             return .randomize(isStatementEnd ? nil : try parseExpression())
@@ -8914,7 +9216,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]

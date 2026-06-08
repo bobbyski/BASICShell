@@ -1,4 +1,4 @@
-#! /usr/bin/env aibasic
+#!/usr/bin/env BASICShell
 ' File class example.
 ' Uses the modern File system class:
 '   File()
