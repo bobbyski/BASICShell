@@ -6687,6 +6687,60 @@ public final class BASICInterpreter {
         arguments: [Expression],
         allowVoid: Bool
     ) throws -> FunctionCallResult {
+        if definition.isAsync {
+            return try scheduleAsyncFunction(
+                definition: definition,
+                receiver: receiver,
+                receiverClassName: receiverClassName,
+                arguments: arguments,
+                allowVoid: allowVoid
+            )
+        }
+        return try callFunctionSynchronously(
+            definition: definition,
+            receiver: receiver,
+            receiverClassName: receiverClassName,
+            arguments: arguments,
+            allowVoid: allowVoid
+        )
+    }
+
+    private func scheduleAsyncFunction(
+        definition: FunctionDefinition,
+        receiver: BASICValue?,
+        receiverClassName: String?,
+        arguments: [Expression],
+        allowVoid: Bool
+    ) throws -> FunctionCallResult {
+        guard let taskScheduler else {
+            throw BASICError.runtime("ASYNC FUNCTION requires a running BASIC session")
+        }
+        let result = try callFunctionSynchronously(
+            definition: definition,
+            receiver: receiver,
+            receiverClassName: receiverClassName,
+            arguments: arguments,
+            allowVoid: allowVoid
+        )
+        let value = result.value
+        let handle = taskScheduler.startHostOperationTaskWithResult(
+            name: definition.displayName,
+            parentID: taskScheduler.currentTask?.id,
+            operation: "async function"
+        ) {
+            await Task.yield()
+            return value
+        }
+        return FunctionCallResult(value: .number(Double(handle.id)), receiver: result.receiver)
+    }
+
+    private func callFunctionSynchronously(
+        definition: FunctionDefinition,
+        receiver: BASICValue?,
+        receiverClassName: String?,
+        arguments: [Expression],
+        allowVoid: Bool
+    ) throws -> FunctionCallResult {
         guard allowVoid || definition.returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }

@@ -96,8 +96,26 @@ Slice12Passed:
     print "AWAITED NUMBER ="; awaitedNumber
     print
 
+print "SLICE 13: ASYNC FUNCTION TASK SCHEDULING"
+asyncHandle = AsyncAdd(6, 7)
+if asyncHandle > 0 then Slice13HandlePassed
+print "SLICE 13 FAILED, HANDLE ="; asyncHandle
+end
+
+Slice13HandlePassed:
+    asyncScheduledTotal = await asyncHandle
+    if asyncScheduledTotal = 13 then Slice13Passed
+    print "SLICE 13 FAILED, TOTAL ="; asyncScheduledTotal
+    end
+
+Slice13Passed:
+    print "SLICE 13 PASSED"
+    print "HANDLE ="; asyncHandle
+    print "SCHEDULED TOTAL ="; asyncScheduledTotal
+    print
+
 print "FUTURE SLICES"
-print "13. ASYNC FUNCTION TASK SCHEDULING"
+print "14. TRUE ASYNC BASIC BODY RESUME"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end

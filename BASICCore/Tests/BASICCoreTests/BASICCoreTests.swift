@@ -2359,6 +2359,28 @@ struct BASICCoreTests {
         #expect(host.output == ["slice 12", "VALUE =payload", "NUMBER =12"])
     }
 
+    @Test("ASYNC FUNCTION calls produce awaitable task handles")
+    func asyncFunctionCallsProduceAwaitableTaskHandles() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "slice 13"
+        handle = AsyncAdd(6, 7)
+        if handle > 0 then print "HANDLE OK"
+        total = await handle
+        print "TOTAL ="; total
+        async function AsyncAdd(a as integer, b as integer) as integer
+            return a + b
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["slice 13", "HANDLE OK", "TOTAL =13"])
+        #expect(session.debugTasks.contains { $0.name == "AsyncAdd" })
+    }
+
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {
         for _ in 0..<100 {
             if session.debugTasks.first(where: { $0.id == id })?.state == state {
