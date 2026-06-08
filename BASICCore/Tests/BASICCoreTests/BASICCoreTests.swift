@@ -2182,11 +2182,13 @@ struct BASICCoreTests {
         #expect(suspended?.suspensionReason == .join(taskID: child.id))
         #expect(suspended?.suspendedFrames == [frame])
         #expect(session.taskAwaitState(id: parent.id) == .waiting)
+        #expect(session.debugTasks.first { $0.id == child.id }?.waiterCount == 1)
 
         #expect(session.resumeTask(id: parent.id))
         let resumed = session.debugTasks.first { $0.id == parent.id }
         #expect(resumed?.state == .ready)
         #expect(resumed?.suspendedFrames.isEmpty == true)
+        #expect(session.debugTasks.first { $0.id == child.id }?.waiterCount == 0)
     }
 
     @Test("Completed awaited task wakes suspended parent")
@@ -2238,6 +2240,58 @@ struct BASICCoreTests {
         #expect(parentSnapshot?.state == .ready)
         #expect(parentSnapshot?.suspendedFrames.isEmpty == true)
         #expect(session.readyTaskHandles.contains(parent))
+        let childSnapshot = session.debugTasks.first { $0.id == child.id }
+        #expect(childSnapshot?.waiterCount == 0)
+        #expect(childSnapshot?.resultDescription == "42")
+    }
+
+    @Test("Cancelling awaited task wakes suspended parent")
+    func cancellingAwaitedTaskWakesSuspendedParent() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let parent = session.currentTaskHandle,
+              let child = session.createChildTask(name: "Cancellable child") else {
+            Issue.record("Expected parent and child handles")
+            return
+        }
+
+        let frame = BASICSuspendedFrame(
+            kind: "Expression",
+            name: "AWAIT",
+            resumeLocation: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0),
+            localScopeDepth: 0
+        )
+
+        #expect(session.suspendTaskForAwait(id: parent.id, awaitingTaskID: child.id, frame: frame))
+        #expect(session.debugTasks.first { $0.id == parent.id }?.state == .suspended)
+        #expect(session.debugTasks.first { $0.id == child.id }?.waiterCount == 1)
+
+        #expect(session.requestTaskCancellation(id: child.id))
+
+        let parentSnapshot = session.debugTasks.first { $0.id == parent.id }
+        #expect(parentSnapshot?.state == .ready)
+        #expect(parentSnapshot?.suspendedFrames.isEmpty == true)
+        #expect(session.readyTaskHandles.contains(parent))
+        #expect(session.debugTasks.first { $0.id == child.id }?.waiterCount == 0)
+        #expect(session.taskAwaitState(id: child.id) == .cancelled)
     }
 
     @Test("Host operation tasks complete on Swift async lanes")
@@ -2379,6 +2433,100 @@ struct BASICCoreTests {
 
         #expect(host.output == ["slice 13", "HANDLE OK", "TOTAL =13"])
         #expect(session.debugTasks.contains { $0.name == "AsyncAdd" })
+    }
+
+    @Test("ASYNC FUNCTION body runs on scheduled task before await result")
+    func asyncFunctionBodyRunsOnScheduledTaskBeforeAwaitResult() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "slice 14"
+        handle = AsyncBody("GAMMA", 4)
+        print "CALLER AFTER HANDLE"
+        value$ = await handle
+        print "RESULT ="; value$
+        async function AsyncBody(name$ as string, count as integer) as string
+            print "ASYNC BODY "; name$; " "; count
+            return name$ + ":" + str$(count)
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "slice 14",
+            "CALLER AFTER HANDLE",
+            "ASYNC BODY GAMMA 4",
+            "RESULT =GAMMA: 4"
+        ])
+    }
+
+    @Test("ASYNC FUNCTION body receives launch-time global snapshot")
+    func asyncFunctionBodyReceivesLaunchTimeGlobalSnapshot() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        type Payload
+            Name as string
+            Count as integer
+        end type
+        global shared as integer = 10
+        global title$ = "SNAP"
+        global payload as Payload
+        payload.Name = "Ada"
+        payload.Count = 7
+        handle = ReadSnapshot(5)
+        shared = 99
+        title$ = "LIVE"
+        payload.Name = "Grace"
+        payload.Count = 8
+        value$ = await handle
+        print "RESULT ="; value$
+        print "LIVE ="; title$; ":"; shared; ":"; payload.Name; ":"; payload.Count
+        async function ReadSnapshot(extra as integer) as string
+            return title$ + ":" + str$(shared + extra) + ":" + payload.Name + ":" + str$(payload.Count)
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "RESULT =SNAP: 15:Ada: 7",
+            "LIVE =LIVE:99:Grace:8"
+        ])
+    }
+
+    @Test("ASYNC FUNCTION failures surface at AWAIT and respect ON ERROR")
+    func asyncFunctionFailuresSurfaceAtAwaitAndRespectOnError() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on error goto Handler
+        handle = FailingAsync()
+        print "BEFORE AWAIT"
+        value = await handle
+        print "AFTER AWAIT"
+        end
+        Handler:
+            print "ERR", ERR
+            print "ERL", ERL
+            resume next
+        async function FailingAsync() as integer
+            return 10 / 0
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "BEFORE AWAIT",
+            "ERR           11",
+            "ERL           4",
+            "AFTER AWAIT"
+        ])
     }
 
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {

@@ -530,10 +530,16 @@ private struct VariableReference: Equatable {
     }
 }
 
-private struct VariableBinding: Equatable {
+private struct VariableBinding: Equatable, Sendable {
     var displayName: String
     var type: BASICType
     var value: BASICValue
+}
+
+private struct BASICRuntimeSnapshot: Sendable {
+    var globals: [String: VariableBinding]
+    var letMode: LetMode
+    var keyMode: BASICKeyMode
 }
 
 private struct FunctionParameter: Equatable {
@@ -602,6 +608,41 @@ private struct FunctionCallResult {
     let receiver: BASICValue?
 }
 
+private struct BASICHostReference: @unchecked Sendable {
+    let host: BASICHost
+}
+
+private struct BASICAsyncFunctionJob: @unchecked Sendable {
+    let program: BASICProgram
+    let host: BASICHostReference
+    let runtimeSnapshot: BASICRuntimeSnapshot
+    let definition: FunctionDefinition
+    let receiver: BASICValue?
+    let receiverClassName: String?
+    let argumentValues: [BASICValue]
+    let allowVoid: Bool
+
+    func run() async throws -> FunctionCallResult {
+        await Task.yield()
+        let runtime = BASICRuntime()
+        runtime.restore(snapshot: runtimeSnapshot)
+        let interpreter = BASICInterpreter(
+            program: program,
+            host: host.host,
+            runtime: runtime,
+            fileState: BASICFileState()
+        )
+        try interpreter.prepare(startLine: nil)
+        return try interpreter.callFunctionSynchronously(
+            definition: definition,
+            receiver: receiver,
+            receiverClassName: receiverClassName,
+            argumentValues: argumentValues,
+            allowVoid: allowVoid
+        )
+    }
+}
+
 private enum ReadTarget: Equatable {
     case variable(VariableName)
     case reference(VariableReference)
@@ -630,6 +671,16 @@ private final class BASICRuntime {
         resetForRun()
         letMode = .global
         keyMode = .aibasic
+    }
+
+    func snapshotForAsyncLaunch() -> BASICRuntimeSnapshot {
+        BASICRuntimeSnapshot(globals: globals, letMode: letMode, keyMode: keyMode)
+    }
+
+    func restore(snapshot: BASICRuntimeSnapshot) {
+        globals = snapshot.globals
+        letMode = snapshot.letMode
+        keyMode = snapshot.keyMode
     }
 
     func pushLocalContext() -> Int {
@@ -2970,8 +3021,12 @@ public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     public let yieldCount: Int
     /// Number of known child tasks parented by this task.
     public let childCount: Int
+    /// Number of tasks currently waiting for this task to finish.
+    public let waiterCount: Int
     /// Resumable BASIC frames captured while the task is suspended.
     public let suspendedFrames: [BASICSuspendedFrame]
+    /// User-facing summary of the result value for completed tasks.
+    public let resultDescription: String?
     /// Result value for completed tasks, when available.
     let resultValue: BASICValue?
     /// Optional error text for failed tasks.
@@ -3089,7 +3144,7 @@ public final class BASICTask: @unchecked Sendable {
     }
 
     /// Returns an immutable task snapshot.
-    public func snapshot(childCount: Int = 0) -> BASICTaskSnapshot {
+    public func snapshot(childCount: Int = 0, waiterCount: Int = 0) -> BASICTaskSnapshot {
         lock.lock()
         defer { lock.unlock() }
         return BASICTaskSnapshot(
@@ -3102,7 +3157,9 @@ public final class BASICTask: @unchecked Sendable {
             isCancellationRequested: cancellationRequested,
             yieldCount: yieldCountValue,
             childCount: childCount,
+            waiterCount: waiterCount,
             suspendedFrames: suspendedFrames,
+            resultDescription: resultValue?.description,
             resultValue: resultValue,
             errorDescription: errorDescription
         )
@@ -3206,8 +3263,14 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         let ordered = tasks.values.sorted { $0.id < $1.id }
         let childCounts = Dictionary(grouping: tasks.values.compactMap(\.parentID), by: { $0 })
             .mapValues(\.count)
+        let waiterCounts = awaitersByTaskID.mapValues(\.count)
         lock.unlock()
-        return ordered.map { $0.snapshot(childCount: childCounts[$0.id] ?? 0) }
+        return ordered.map { task in
+            task.snapshot(
+                childCount: childCounts[task.id] ?? 0,
+                waiterCount: waiterCounts[task.id] ?? 0
+            )
+        }
     }
 
     /// Current running or suspended task, when one has been selected.
@@ -3293,6 +3356,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         guard let task else { return false }
         task.requestCancellation()
         hostTask?.cancel()
+        wakeAwaiters(for: id)
         return true
     }
 
@@ -4732,7 +4796,7 @@ public final class BASICInterpreter {
         return parsed.first.map { ($0.fileName, $0.sourceLineNumber) }
     }
 
-    private func prepare(startLine: Int?) throws {
+    fileprivate func prepare(startLine: Int?) throws {
         let sourceLines = try expandedProgramLines()
         let parsed = try sourceLines.enumerated().flatMap { index, line in
             var parser = try Parser(source: line.source)
@@ -6715,23 +6779,35 @@ public final class BASICInterpreter {
         guard let taskScheduler else {
             throw BASICError.runtime("ASYNC FUNCTION requires a running BASIC session")
         }
-        let result = try callFunctionSynchronously(
+        guard allowVoid || definition.returnType != .void else {
+            throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
+        }
+        guard arguments.count == definition.parameters.count else {
+            throw BASICError.runtime("Function \(definition.displayName) expects \(definition.parameters.count) arguments, got \(arguments.count)")
+        }
+        let argumentValues = try arguments.map(evaluate)
+        guard let host else {
+            throw BASICError.runtime("ASYNC FUNCTION requires a host")
+        }
+        let job = BASICAsyncFunctionJob(
+            program: program,
+            host: BASICHostReference(host: host),
+            runtimeSnapshot: runtime.snapshotForAsyncLaunch(),
             definition: definition,
             receiver: receiver,
             receiverClassName: receiverClassName,
-            arguments: arguments,
+            argumentValues: argumentValues,
             allowVoid: allowVoid
         )
-        let value = result.value
         let handle = taskScheduler.startHostOperationTaskWithResult(
             name: definition.displayName,
             parentID: taskScheduler.currentTask?.id,
             operation: "async function"
         ) {
-            await Task.yield()
-            return value
+            let result = try await job.run()
+            return result.value
         }
-        return FunctionCallResult(value: .number(Double(handle.id)), receiver: result.receiver)
+        return FunctionCallResult(value: .number(Double(handle.id)), receiver: nil)
     }
 
     private func callFunctionSynchronously(
@@ -6741,17 +6817,33 @@ public final class BASICInterpreter {
         arguments: [Expression],
         allowVoid: Bool
     ) throws -> FunctionCallResult {
+        let values = try arguments.map(evaluate)
+        return try callFunctionSynchronously(
+            definition: definition,
+            receiver: receiver,
+            receiverClassName: receiverClassName,
+            argumentValues: values,
+            allowVoid: allowVoid
+        )
+    }
+
+    fileprivate func callFunctionSynchronously(
+        definition: FunctionDefinition,
+        receiver: BASICValue?,
+        receiverClassName: String?,
+        argumentValues values: [BASICValue],
+        allowVoid: Bool
+    ) throws -> FunctionCallResult {
         guard allowVoid || definition.returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }
-        guard arguments.count == definition.parameters.count else {
-            throw BASICError.runtime("Function \(definition.displayName) expects \(definition.parameters.count) arguments, got \(arguments.count)")
+        guard values.count == definition.parameters.count else {
+            throw BASICError.runtime("Function \(definition.displayName) expects \(definition.parameters.count) arguments, got \(values.count)")
         }
         guard functionStack.count < 512 else {
             throw BASICError.runtime("Function call depth exceeded")
         }
 
-        let values = try arguments.map(evaluate)
         let localContextIndex = runtime.pushLocalContext()
         if let receiver {
             try runtime.assign(

@@ -114,14 +114,92 @@ Slice13Passed:
     print "SCHEDULED TOTAL ="; asyncScheduledTotal
     print
 
+print "SLICE 14: TRUE ASYNC BASIC BODY RESUME"
+bodyHandle = AsyncBody("GAMMA", 4)
+print "CALLER AFTER BODY HANDLE"
+bodyValue$ = await bodyHandle
+if bodyValue$ = "GAMMA: 4" then Slice14Passed
+print "SLICE 14 FAILED, VALUE ="; bodyValue$
+end
+
+Slice14Passed:
+    print "SLICE 14 PASSED"
+    print "BODY VALUE ="; bodyValue$
+    print
+
+print "SLICE 15: LAUNCH-TIME GLOBAL SNAPSHOT"
+type AsyncSnapshot
+    Name as string
+    Count as integer
+end type
+global shared as integer = 10
+global title$ = "SNAP"
+global payload as AsyncSnapshot
+payload.Name = "Ada"
+payload.Count = 7
+snapshotHandle = ReadSnapshot(5)
+shared = 99
+title$ = "LIVE"
+payload.Name = "Grace"
+payload.Count = 8
+snapshotValue$ = await snapshotHandle
+if snapshotValue$ = "SNAP: 15:Ada: 7" then Slice15Passed
+print "SLICE 15 FAILED, VALUE ="; snapshotValue$
+end
+
+Slice15Passed:
+    print "SLICE 15 PASSED"
+    print "SNAPSHOT VALUE ="; snapshotValue$
+    print "LIVE VALUE ="; title$; ":"; shared; ":"; payload.Name; ":"; payload.Count
+    print
+
+print "SLICE 16: AWAIT ERROR HANDLING"
+on error goto Slice16Handler
+failingHandle = FailingAsync()
+print "SLICE 16 BEFORE AWAIT"
+failingValue = await failingHandle
+print "SLICE 16 FAILED"
+end
+
+Slice16Handler:
+    if err = 11 then Slice16Passed
+    print "SLICE 16 FAILED, ERR ="; err
+    end
+
+Slice16Passed:
+    print "SLICE 16 PASSED"
+    print "ERR ="; err
+    print "ERL ="; erl
+    print
+    on error goto 0
+
+print "SLICE 17: TASK WAITER DEBUG SUMMARIES"
+print "SLICE 17 HOST/API VERIFIED"
+print
+print "SLICE 18: CANCELLATION WAKES AWAITERS"
+print "SLICE 18 HOST/API VERIFIED"
+print
 print "FUTURE SLICES"
-print "14. TRUE ASYNC BASIC BODY RESUME"
+print "19. MUTABLE SHARED CELLS AND CLOSURES"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end
 
 async function AsyncAdd(a as integer, b as integer) as integer
     return a + b
+end function
+
+async function AsyncBody(name$ as string, count as integer) as string
+    print "ASYNC BODY "; name$; " "; count
+    return name$ + ":" + str$(count)
+end function
+
+async function ReadSnapshot(extra as integer) as string
+    return title$ + ":" + str$(shared + extra) + ":" + payload.Name + ":" + str$(payload.Count)
+end function
+
+async function FailingAsync() as integer
+    return 10 / 0
 end function
 
 AddOne:
