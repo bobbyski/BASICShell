@@ -197,8 +197,40 @@ scoreText = function(value as integer) as string = "SCORE=" + str$(value + bonus
 bonus = 100
 if scoreText(7) = "SCORE= 12" then print "SLICE 23 PASSED"
 print
+print "SLICE 24: EXPLICIT CAPTURE POLICY"
+prefix$ = "LOCKED="
+bonus = 5
+explicitScore = function(value as integer) as string captures readonly prefix$ = prefix$ + str$(value + bonus)
+prefix$ = "LIVE="
+bonus = 20
+if explicitScore(2) = "LOCKED= 22" then print "SLICE 24 PASSED"
+print
+print "SLICE 25: FUNCTION TYPE CLOSURE VARIABLES"
+function type ScoreFormatter(value as integer) as string
+local typedScore as ScoreFormatter
+typedScore = function(points as integer) as string = "TYPED=" + str$(points)
+if typedScore(25) = "TYPED= 25" then print "SLICE 25 PASSED"
+print
+print "SLICE 26: FUNCTION TYPE CALLBACKS AND FACTORIES"
+callbackScore$ = RenderScore(16, typedScore)
+factoryScore = MakeFormatter("FACTORY=")
+if callbackScore$ = "TYPED= 16" then Slice26CallbackPassed
+print "SLICE 26 FAILED, CALLBACK ="; callbackScore$
+end
+
+Slice26CallbackPassed:
+    if factoryScore(26) = "FACTORY= 26" then Slice26Passed
+    print "SLICE 26 FAILED, FACTORY ="; factoryScore(26)
+    end
+
+Slice26Passed:
+    print "SLICE 26 PASSED"
+    print "CALLBACK ="; callbackScore$
+    print "FACTORY ="; factoryScore(26)
+    print
+
 print "FUTURE SLICES"
-print "24. EXPLICIT CAPTURE POLICY"
+print "27. MULTI-LINE CLOSURES"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end
@@ -218,6 +250,14 @@ end function
 
 async function FailingAsync() as integer
     return 10 / 0
+end function
+
+function RenderScore(value as integer, formatter as ScoreFormatter) as string
+    return formatter(value)
+end function
+
+function MakeFormatter(prefix$ as string) as ScoreFormatter
+    return function(value as integer) as string = prefix$ + str$(value)
 end function
 
 AddOne:

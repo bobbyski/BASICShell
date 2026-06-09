@@ -46,6 +46,18 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Direct mode question mark aliases PRINT")
+    func directModeQuestionMarkAliasesPrint() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("? \"HELLO\"")
+        session.submit("?\"WORLD\"")
+        session.submit("? 2 + 3")
+
+        #expect(host.output == ["HELLO", "WORLD", "5"])
+    }
+
     @Test("Chained string addition prints once")
     func chainedStringAdditionPrintsOnce() {
         let host = TestHost()
@@ -1577,6 +1589,17 @@ struct BASICCoreTests {
         #expect(host.output == ["10 PRINT 1\n20 PRINT 2"])
     }
 
+    @Test("Question mark PRINT alias is direct mode only")
+    func questionMarkPrintAliasIsDirectModeOnly() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 ? \"NOPE\"")
+        session.submit("RUN")
+
+        #expect(host.output == ["? \"NOPE\"\n^\nSyntax error: Unexpected character ?"])
+    }
+
     @Test("Runs unnumbered programs with labels")
     func unnumberedLabels() throws {
         let host = TestHost()
@@ -2728,6 +2751,98 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["Type error: Cannot assign non-numeric value to value"])
+    }
+
+    @Test("BASIC closure expressions support explicit capture lists")
+    func basicClosureExpressionsSupportExplicitCaptureLists() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        prefix$ = "LOCKED="
+        bonus = 5
+        formatter = function(value as integer) as string captures readonly prefix$ = prefix$ + str$(value + bonus)
+        prefix$ = "LIVE="
+        bonus = 20
+        print formatter(2)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["LOCKED= 22"])
+    }
+
+    @Test("FUNCTION TYPE declarations type closure variables structurally")
+    func functionTypeDeclarationsTypeClosureVariablesStructurally() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function type ScoreFormatter(value as integer) as string
+        local formatter as ScoreFormatter
+        formatter = function(points as integer) as string = "SCORE=" + str$(points)
+        print formatter(12)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["SCORE= 12"])
+    }
+
+    @Test("FUNCTION TYPE declarations reject mismatched closures")
+    func functionTypeDeclarationsRejectMismatchedClosures() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function type ScoreFormatter(value as integer) as string
+        local formatter as ScoreFormatter
+        formatter = function(text$ as string) as string = text$
+        print "unreachable"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: Type Mismatch"])
+    }
+
+    @Test("FUNCTION TYPE declarations can type callback parameters")
+    func functionTypeDeclarationsCanTypeCallbackParameters() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function type ScoreFormatter(value as integer) as string
+        local formatter as ScoreFormatter
+        formatter = function(points as integer) as string = "CALLBACK=" + str$(points)
+        print RenderScore(14, formatter)
+        end
+
+        function RenderScore(value as integer, formatter as ScoreFormatter) as string
+            return formatter(value + 1)
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["CALLBACK= 15"])
+    }
+
+    @Test("FUNCTION TYPE declarations can be returned from functions")
+    func functionTypeDeclarationsCanBeReturnedFromFunctions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function type ScoreFormatter(value as integer) as string
+        local formatter as ScoreFormatter
+        formatter = MakeFormatter("FACTORY=")
+        print formatter(26)
+        end
+
+        function MakeFormatter(prefix$ as string) as ScoreFormatter
+            return function(value as integer) as string = prefix$ + str$(value)
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["FACTORY= 26"])
     }
 
     private func waitForTaskState(_ session: BASICSession, id: Int, expected state: BASICTaskState) async throws {

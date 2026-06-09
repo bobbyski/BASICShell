@@ -455,6 +455,7 @@ enum BASICType: Equatable, Sendable {
     case record(String)
     case classType(String)
     case interfaceType(String)
+    case functionType(String)
     case dictionary
 }
 
@@ -503,6 +504,14 @@ private struct BASICInterfaceDefinition: Equatable {
     let normalizedName: String
     let inheritedInterfaces: [String]
     let members: [BASICInterfaceMember]
+}
+
+private struct BASICFunctionTypeDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    let parameters: [FunctionParameter]
+    let returnType: BASICType
+    let isAsync: Bool
 }
 
 private struct BASICExplicitInterfaceImplementation: Equatable {
@@ -799,6 +808,12 @@ final class BASICCapturedClosure: @unchecked Sendable {
         try operation(environment, arguments)
     }
 
+    fileprivate func matchesSignature(of definition: BASICFunctionTypeDefinition) -> Bool {
+        guard !definition.isAsync else { return false }
+        return returnType == definition.returnType
+            && parameters.map(\.type) == definition.parameters.map(\.type)
+    }
+
     fileprivate func call(arguments: [BASICValue], interpreter: BASICInterpreter) throws -> BASICValue {
         guard let bodyExpression else {
             return try call(arguments: arguments)
@@ -858,6 +873,11 @@ private struct BASICRuntimeSnapshot: Sendable {
 private struct FunctionParameter: Equatable {
     let variable: VariableName
     let type: BASICType
+}
+
+private struct ClosureCaptureSpec: Equatable {
+    let variable: VariableName
+    let access: BASICCapturedReferenceAccess
 }
 
 private struct FunctionDefinition: Equatable {
@@ -967,6 +987,7 @@ private final class BASICRuntime {
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
+    var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
     var letMode: LetMode = .global
     var keyMode: BASICKeyMode = .aibasic
     var randomGenerator = BASICRandomGenerator()
@@ -1639,6 +1660,9 @@ private final class BASICRuntime {
         if case .record(let name) = type, interfaceDefinitions[name.uppercased()] != nil {
             return .interfaceType(name)
         }
+        if case .record(let name) = type, functionTypeDefinitions[name.uppercased()] != nil {
+            return .functionType(name)
+        }
         return type
     }
 
@@ -1689,6 +1713,19 @@ private final class BASICRuntime {
     }
 
     func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
+        if case .functionType(let name) = type {
+            if case .empty = value {
+                return .empty
+            }
+            guard let definition = functionTypeDefinitions[name.uppercased()] else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            guard case .closure(let closure) = value,
+                  closure.matchesSignature(of: definition) else {
+                throw BASICError.runtime("Type Mismatch")
+            }
+            return value
+        }
         if case .record(let name) = type {
             if case .record(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
                 return value
@@ -2085,6 +2122,8 @@ private final class BASICRuntime {
             })
             return .object(definition.displayName, fields)
         case .interfaceType:
+            return .empty
+        case .functionType:
             return .empty
         case .dictionary:
             return .dictionary(BASICDictionary())
@@ -2665,6 +2704,7 @@ private extension BASICType {
         case .record(let name): return name
         case .classType(let name): return name
         case .interfaceType(let name): return name
+        case .functionType(let name): return name
         case .dictionary: return "DICTIONARY"
         }
     }
@@ -4653,8 +4693,18 @@ public final class BASICSession: @unchecked Sendable {
 
     private func immediateProgram(for source: String) -> BASICProgram {
         let program = BASICProgram()
-        program.loadSource(source)
+        program.loadSource(Self.normalizedImmediateSource(source))
         return program
+    }
+
+    private static func normalizedImmediateSource(_ source: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("?") else { return source }
+        let rest = trimmed.dropFirst()
+        if rest.first?.isWhitespace == true || rest.isEmpty {
+            return "PRINT" + rest
+        }
+        return "PRINT " + rest
     }
 
     private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
@@ -4881,6 +4931,7 @@ public final class BASICInterpreter {
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
     private var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     private var classDefinitions: [String: BASICClassDefinition] = [:]
+    private var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
     private var legacyFiles: [Int: BASICOpenFile] = [:]
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
@@ -5017,6 +5068,8 @@ public final class BASICInterpreter {
                 runtime.recordDefinitions = recordDefinitions
                 interfaceDefinitions = try collectInterfaces(in: parsed)
                 runtime.interfaceDefinitions = interfaceDefinitions
+                functionTypeDefinitions = try collectFunctionTypes(in: parsed)
+                runtime.functionTypeDefinitions = functionTypeDefinitions
                 classDefinitions = try collectClasses(in: parsed)
                 try validateInterfaceInheritance()
                 try validateClassInheritance()
@@ -5083,6 +5136,10 @@ public final class BASICInterpreter {
                 if message.contains("INTERFACE \(name)") {
                     return (line.fileName, line.sourceLineNumber)
                 }
+            case .functionTypeDeclaration(let name, _, _, _):
+                if message.contains("FUNCTION TYPE \(name)") {
+                    return (line.fileName, line.sourceLineNumber)
+                }
             case .typeDeclaration(let name):
                 if message.contains("TYPE \(name)") {
                     return (line.fileName, line.sourceLineNumber)
@@ -5139,6 +5196,8 @@ public final class BASICInterpreter {
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
         runtime.interfaceDefinitions = interfaceDefinitions
+        functionTypeDefinitions = try collectFunctionTypes(in: parsed)
+        runtime.functionTypeDefinitions = functionTypeDefinitions
         classDefinitions = try collectClasses(in: parsed)
         try validateInterfaceInheritance()
         try validateClassInheritance()
@@ -5609,7 +5668,7 @@ public final class BASICInterpreter {
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
-        case .empty, .remark, .data, .defFunction:
+        case .empty, .remark, .data, .defFunction, .functionTypeDeclaration:
             return .next
         case .typeDeclaration:
             guard let index = matchingEndType(after: pc, in: parsed) else {
@@ -6162,6 +6221,27 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("TYPE without END TYPE")
             }
             index += 1
+        }
+        return definitions
+    }
+
+    private func collectFunctionTypes(in parsed: [ParsedLine]) throws -> [String: BASICFunctionTypeDefinition] {
+        var definitions: [String: BASICFunctionTypeDefinition] = [:]
+        for line in parsed {
+            guard case .functionTypeDeclaration(let name, let parameters, let returnType, let isAsync) = line.statement else {
+                continue
+            }
+            let normalized = name.uppercased()
+            guard definitions[normalized] == nil else {
+                throw BASICError.runtime("FUNCTION TYPE \(name) is already defined")
+            }
+            definitions[normalized] = BASICFunctionTypeDefinition(
+                displayName: name,
+                normalizedName: normalized,
+                parameters: parameters,
+                returnType: returnType,
+                isAsync: isAsync
+            )
         }
         return definitions
     }
@@ -7149,7 +7229,8 @@ public final class BASICInterpreter {
         argumentValues values: [BASICValue],
         allowVoid: Bool
     ) throws -> FunctionCallResult {
-        guard allowVoid || definition.returnType != .void else {
+        let returnType = resolvedDeclaredType(definition.returnType)
+        guard allowVoid || returnType != .void else {
             throw BASICError.runtime("VOID function \(definition.displayName) cannot be used in an expression")
         }
         guard values.count == definition.parameters.count else {
@@ -7176,7 +7257,7 @@ public final class BASICInterpreter {
             definition: definition,
             receiverClassName: receiverClassName,
             localContextIndex: localContextIndex,
-            returnValue: runtime.defaultValue(for: definition.returnType)
+            returnValue: runtime.defaultValue(for: returnType)
         ))
         defer {
             _ = functionStack.popLast()
@@ -7186,14 +7267,14 @@ public final class BASICInterpreter {
         if let bodyExpression = definition.bodyExpression {
             let value = try runtime.coerce(
                 try evaluate(bodyExpression),
-                to: definition.returnType,
+                to: returnType,
                 variable: VariableName(name: definition.displayName, column: 0)
             )
             return FunctionCallResult(value: value, receiver: receiver)
         }
 
         func resultValue() -> FunctionCallResult {
-            let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: definition.returnType)
+            let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: returnType)
             let receiver = receiver == nil ? nil : runtime.value(for: VariableName(name: "ME", column: 0))
             return FunctionCallResult(value: value, receiver: receiver)
         }
@@ -7272,7 +7353,8 @@ public final class BASICInterpreter {
         guard var frame = functionStack.popLast() else {
             throw BASICError.runtime("RETURN outside FUNCTION")
         }
-        if frame.definition.returnType == .void {
+        let returnType = resolvedDeclaredType(frame.definition.returnType)
+        if returnType == .void {
             if value != nil {
                 functionStack.append(frame)
                 throw BASICError.type(message: "VOID function \(frame.definition.displayName) cannot return a value")
@@ -7282,13 +7364,26 @@ public final class BASICInterpreter {
             return
         }
         let coerced = try runtime.coerce(
-            value ?? runtime.defaultValue(for: frame.definition.returnType),
-            to: frame.definition.returnType,
+            value ?? runtime.defaultValue(for: returnType),
+            to: returnType,
             variable: VariableName(name: frame.definition.displayName, column: 0)
         )
         frame.returnValue = coerced
         frame.didReturn = true
         functionStack.append(frame)
+    }
+
+    private func resolvedDeclaredType(_ type: BASICType) -> BASICType {
+        if case .record(let name) = type, classDefinitions[name.uppercased()] != nil || BASICRuntime.isBuiltInClass(name) {
+            return .classType(name)
+        }
+        if case .record(let name) = type, interfaceDefinitions[name.uppercased()] != nil {
+            return .interfaceType(name)
+        }
+        if case .record(let name) = type, functionTypeDefinitions[name.uppercased()] != nil {
+            return .functionType(name)
+        }
+        return type
     }
 
     private func blockIfFlow(_ condition: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
@@ -8111,14 +8206,19 @@ public final class BASICInterpreter {
             return .boolean(value)
         case .null:
             return .null
-        case .closure(let parameters, let returnType, let body):
+        case .closure(let parameters, let returnType, let captures, let body):
             let environment = BASICCapturedEnvironment()
             let parameterNames = Set(parameters.map { $0.variable.normalized })
-            for capture in capturedVariableNames(in: body) where !parameterNames.contains(capture.normalized) {
+            let captureSpecs = captures.isEmpty
+                ? capturedVariableNames(in: body)
+                    .filter { !parameterNames.contains($0.normalized) }
+                    .map { ClosureCaptureSpec(variable: $0, access: .readOnly) }
+                : captures.filter { !parameterNames.contains($0.variable.normalized) }
+            for capture in captureSpecs {
                 _ = environment.capture(
-                    name: capture.name,
-                    value: runtime.value(for: capture),
-                    access: .readOnly
+                    name: capture.variable.name,
+                    value: runtime.value(for: capture.variable),
+                    access: capture.access
                 )
             }
             return .closure(BASICCapturedClosure(
@@ -8563,6 +8663,7 @@ private indirect enum Statement: Equatable {
     case interfaceDeclaration(name: String)
     case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
     case endInterface
+    case functionTypeDeclaration(name: String, parameters: [FunctionParameter], returnType: BASICType, isAsync: Bool)
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
@@ -8699,7 +8800,7 @@ private indirect enum Expression: Equatable {
     case string(String)
     case boolean(Bool)
     case null
-    case closure(parameters: [FunctionParameter], returnType: BASICType, body: Expression)
+    case closure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: Expression)
     case variable(VariableName)
     case variableReference(VariableReference)
     case callOrArray(VariableName, [Expression])
@@ -9018,10 +9119,16 @@ private struct Parser {
             return .restore
         }
         if matchIdentifier("FUNCTION") {
+            if matchIdentifier("TYPE") {
+                return try parseFunctionTypeDeclaration(isAsync: false)
+            }
             return try parseFunctionDeclaration(visibility: .public, isOverride: false, isAsync: false)
         }
         if matchIdentifier("ASYNC") {
             guard matchIdentifier("FUNCTION") else { throw syntax("Expected FUNCTION after ASYNC") }
+            if matchIdentifier("TYPE") {
+                return try parseFunctionTypeDeclaration(isAsync: true)
+            }
             return try parseFunctionDeclaration(visibility: .public, isOverride: false, isAsync: true)
         }
         if matchIdentifier("DEF") {
@@ -9557,17 +9664,7 @@ private struct Parser {
 
     private mutating func parseFunctionDeclaration(visibility: BASICMemberVisibility, isOverride: Bool, isAsync: Bool) throws -> Statement {
         let name = try consumeVariableName("Expected function name")
-        guard match(.leftParen) else { throw syntax("Expected (") }
-        var parameters: [FunctionParameter] = []
-        if !match(.rightParen) {
-            repeat {
-                let parameter = try consumeVariableName("Expected parameter name")
-                guard matchIdentifier("AS") else { throw syntax("Parameter \(parameter.name) requires AS <type>") }
-                let type = try parseType(allowVoid: false)
-                parameters.append(FunctionParameter(variable: parameter, type: type))
-            } while match(.comma)
-            guard match(.rightParen) else { throw syntax("Expected )") }
-        }
+        let parameters = try parseFunctionParameterList()
 
         let returnType: BASICType
         if matchIdentifier("AS") {
@@ -9596,6 +9693,33 @@ private struct Parser {
             isOverride: isOverride,
             explicitInterfaceImplementations: explicitInterfaceImplementations
         )
+    }
+
+    private mutating func parseFunctionTypeDeclaration(isAsync: Bool) throws -> Statement {
+        let name = try consumeIdentifier("Expected function type name")
+        let parameters = try parseFunctionParameterList()
+        guard matchIdentifier("AS") else { throw syntax("FUNCTION TYPE \(name) requires AS <type>") }
+        return .functionTypeDeclaration(
+            name: name,
+            parameters: parameters,
+            returnType: try parseType(allowVoid: true),
+            isAsync: isAsync
+        )
+    }
+
+    private mutating func parseFunctionParameterList() throws -> [FunctionParameter] {
+        guard match(.leftParen) else { throw syntax("Expected (") }
+        var parameters: [FunctionParameter] = []
+        if !match(.rightParen) {
+            repeat {
+                let parameter = try consumeVariableName("Expected parameter name")
+                guard matchIdentifier("AS") else { throw syntax("Parameter \(parameter.name) requires AS <type>") }
+                let type = try parseType(allowVoid: false)
+                parameters.append(FunctionParameter(variable: parameter, type: type))
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
+        return parameters
     }
 
     private mutating func parseDefFunction() throws -> Statement {
@@ -10125,8 +10249,37 @@ private struct Parser {
         } else {
             returnType = .scalar(.variant)
         }
+        let captures = try parseClosureCaptures()
         guard match(.equals) else { throw syntax("Expected = after closure signature") }
-        return .closure(parameters: parameters, returnType: returnType, body: try parseExpression())
+        return .closure(parameters: parameters, returnType: returnType, captures: captures, body: try parseExpression())
+    }
+
+    private mutating func parseClosureCaptures() throws -> [ClosureCaptureSpec] {
+        guard matchIdentifier("CAPTURES") else { return [] }
+        var captures: [ClosureCaptureSpec] = []
+        repeat {
+            let access = try parseClosureCaptureAccess()
+            let variable = try consumeVariableName("Expected capture variable name")
+            captures.append(ClosureCaptureSpec(variable: variable, access: access))
+        } while match(.comma)
+        return captures
+    }
+
+    private mutating func parseClosureCaptureAccess() throws -> BASICCapturedReferenceAccess {
+        if matchIdentifier("READONLY") {
+            return .readOnly
+        }
+        if matchIdentifier("READ") {
+            guard match(.minus), matchIdentifier("ONLY") else { throw syntax("Expected READ-ONLY") }
+            return .readOnly
+        }
+        if matchIdentifier("STRONG") || matchIdentifier("MUTABLE") {
+            return .strongMutable
+        }
+        if matchIdentifier("WEAK") {
+            return .weak
+        }
+        return .readOnly
     }
 
     private mutating func parsePoint(openParenAlreadyConsumed: Bool = false) throws -> GraphicsPoint {
