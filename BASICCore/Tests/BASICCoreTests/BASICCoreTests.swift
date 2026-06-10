@@ -2518,14 +2518,14 @@ struct BASICCoreTests {
 
         session.program.loadSource("""
         print "BEFORE SLEEP"
-        slept = await Sleep(1)
+        slept = await Sleep(25)
         print "SLEPT ="; slept
         print "AFTER SLEEP"
         """)
 
         try session.runProgram()
 
-        #expect(host.output == ["BEFORE SLEEP", "SLEPT =1", "AFTER SLEEP"])
+        #expect(host.output == ["BEFORE SLEEP", "SLEPT =25", "AFTER SLEEP"])
         #expect(session.eventLoop.isEmpty)
     }
 

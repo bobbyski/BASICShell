@@ -1,5 +1,5 @@
 {
-  "originHash" : "ea4d4bf4ddb31d9ff1c09b9ba7b543e63df84852f3dc05f111d34f506e8ec1d6",
+  "originHash" : "3767399439e6e3f0bc675fb792bbe941f424c59735a3313031f90ae3edcd321d",
   "pins" : [
     {
       "identity" : "networkimage",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",
       "state" : {
-        "revision" : "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b",
-        "version" : "1.7.1"
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
       }
     },
     {
@@ -40,10 +40,19 @@
     {
       "identity" : "swiftterm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm",
+      "location" : "https://github.com/bobbyski/SwiftTerm",
       "state" : {
         "branch" : "main",
         "revision" : "86456ca32aaa81cadb4ca8dbe8be4546ffbccd18"
+      }
+    },
+    {
+      "identity" : "vectorterminalsdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/bobbyski/VectorTerminalSDK.git",
+      "state" : {
+        "branch" : "develop",
+        "revision" : "dd3d7933c672bb811c9662fbd6ab39b27fe14bb8"
       }
     }
   ],

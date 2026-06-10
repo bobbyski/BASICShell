@@ -299,8 +299,8 @@ Slice39Passed:
 
 print "SLICE 40: MAIN-ACTOR HOST ADAPTERS AND TIMER POC"
 print "BEFORE TIMER"
-slept = await Sleep(1)
-if slept = 1 then Slice40Passed
+slept = await Sleep(5000)
+if slept = 5000 then Slice40Passed
 print "SLICE 40 FAILED, SLEPT ="; slept
 end
 
