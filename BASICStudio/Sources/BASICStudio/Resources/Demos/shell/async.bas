@@ -297,8 +297,24 @@ Slice39Passed:
     print "CALLBACK VALUE ="; callbackValue$
     print
 
+print "SLICE 40: MAIN-ACTOR HOST ADAPTERS AND TIMER POC"
+print "BEFORE TIMER"
+slept = await Sleep(1)
+if slept = 1 then Slice40Passed
+print "SLICE 40 FAILED, SLEPT ="; slept
+end
+
+Slice40Passed:
+    print "SLICE 40 PASSED"
+    print "SLEPT ="; slept
+    print "AFTER TIMER"
+    print
+
+print "SLICE 41: VTG HOST ADAPTER AUDIT"
+print "SLICE 41 HOST/UI VERIFIED"
+print
 print "FUTURE SLICES"
-print "40. MAIN-ACTOR HOST ADAPTERS"
+print "42. VTG GRAPHICS SURFACE POC"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end

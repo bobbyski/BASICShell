@@ -2511,6 +2511,24 @@ struct BASICCoreTests {
         #expect(session.eventLoop.isEmpty)
     }
 
+    @Test("SLEEP creates an awaitable timer host task")
+    func sleepCreatesAwaitableTimerHostTask() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "BEFORE SLEEP"
+        slept = await Sleep(1)
+        print "SLEPT ="; slept
+        print "AFTER SLEEP"
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["BEFORE SLEEP", "SLEPT =1", "AFTER SLEEP"])
+        #expect(session.eventLoop.isEmpty)
+    }
+
     @Test("Host operation tasks report failure and cancellation")
     func hostOperationTasksReportFailureAndCancellation() async throws {
         let session = BASICSession(host: TestHost())

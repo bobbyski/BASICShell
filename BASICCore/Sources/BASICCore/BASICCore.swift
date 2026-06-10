@@ -2888,6 +2888,12 @@ public protocol BASICConsoleHost: BASICHost {
     func locate(row: Int, column: Int) throws
 }
 
+/// Host marker for UI surfaces whose mutations must run on the main actor.
+public protocol BASICMainActorHost: BASICHost {
+    /// Runs a UI-bound operation synchronously on the host's main actor.
+    func runOnMainActorSync(_ operation: @MainActor () -> Void)
+}
+
 /// Host interface for BASIC and system log collection.
 public protocol BASICLoggingHost: BASICHost {
     /// Whether BASIC LOG statements and interpreter log hooks should be emitted.
@@ -7345,7 +7351,7 @@ public final class BASICInterpreter {
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
-        "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN",
+        "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN", "SLEEP",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
         "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
@@ -7492,6 +7498,27 @@ public final class BASICInterpreter {
             return .number(value == 0 ? 0 : (value < 0 ? -1 : 1))
         case "SEC":
             return .number(1 / cos(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "SLEEP":
+            try requireArgumentCount(name.name, arguments, 1)
+            let milliseconds = max(0, try integer(arguments[0]))
+            guard let taskScheduler else {
+                throw BASICError.runtime("SLEEP is not supported outside a running BASIC session")
+            }
+            let parentID = taskScheduler.currentTask?.id
+            let nanoseconds = UInt64(milliseconds) * 1_000_000
+            let handle = taskScheduler.startHostOperationTaskWithResult(
+                name: "SLEEP",
+                parentID: parentID,
+                operation: "timer"
+            ) {
+                if nanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } else {
+                    await Task.yield()
+                }
+                return .number(Double(milliseconds))
+            }
+            return .number(Double(handle.id))
         case "SIN":
             return .number(sin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SPACE$":

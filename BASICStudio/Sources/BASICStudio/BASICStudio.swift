@@ -3570,8 +3570,12 @@ struct UserDoc: Identifiable, Hashable {
 
 extension StudioModel: StudioDebuggerInterface {}
 
-extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost {
+extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICMainActorHost {
     nonisolated var usesColoredListing: Bool { true }
+
+    nonisolated func runOnMainActorSync(_ operation: @MainActor () -> Void) {
+        runOnMainSync(operation)
+    }
 
     nonisolated var isBASICLoggingEnabled: Bool {
         valueOnMainSync { isLoggingEnabled }
@@ -3812,43 +3816,52 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
 }
 
 extension StudioModel: BASICGraphicsHost {
-    nonisolated func setScreenMode(_ mode: BASICScreenMode) {
-        runOnMainSync {
-            graphics.setMode(mode)
+    nonisolated private func mutateGraphics(_ operation: @MainActor (GraphicsFramebuffer) -> Void) {
+        runOnMainActorSync {
+            operation(graphics)
             graphicsRevision += 1
         }
     }
 
+    nonisolated private func readGraphicsValue<T: Sendable>(_ operation: @MainActor (GraphicsFramebuffer) -> T) -> T {
+        valueOnMainSync {
+            operation(graphics)
+        }
+    }
+
+    nonisolated func setScreenMode(_ mode: BASICScreenMode) {
+        mutateGraphics { graphics in
+            graphics.setMode(mode)
+        }
+    }
+
     nonisolated func setGraphicsColor(_ color: Int) {
-        runOnMainSync {
+        runOnMainActorSync {
             graphics.currentColor = color
         }
     }
 
     nonisolated func clearGraphics(color: Int?) {
-        runOnMainSync {
+        mutateGraphics { graphics in
             graphics.clear(color: color)
-            graphicsRevision += 1
         }
     }
 
     nonisolated func setPixel(x: Int, y: Int, color: Int) {
-        runOnMainSync {
+        mutateGraphics { graphics in
             graphics.setPixel(x: x, y: y, color: color)
-            graphicsRevision += 1
         }
     }
 
     nonisolated func getPixel(x: Int, y: Int) -> Int {
-        valueOnMainSync {
+        readGraphicsValue { graphics in
             graphics.getPixel(x: x, y: y)
         }
     }
 
     nonisolated func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
-        runOnMainSync {
+        mutateGraphics { graphics in
             graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color)
-            graphicsRevision += 1
         }
     }
 }
