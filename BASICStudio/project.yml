@@ -2,21 +2,24 @@ name: BASICStudio
 options:
   bundleIdPrefix: com.aibasic
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "16.0"
   createIntermediateGroups: true
 packages:
   BASICCore:
     path: ../BASICCore
   SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    branch: main
+    url: https://github.com/bobbyski/SwiftTerm.git
+    from: 1.1.0
+  VectorTerminalSDK:
+    url: https://github.com/bobbyski/VectorTerminalSDK.git
+    from: 1.1.0
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.1
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "16.0"
 targets:
   BASICStudio:
     type: application
@@ -33,6 +36,8 @@ targets:
         product: BASICCore
       - package: SwiftTerm
         product: SwiftTerm
+      - package: VectorTerminalSDK
+        product: VectorTerminalSDK
       - package: MarkdownUI
         product: MarkdownUI
     settings:

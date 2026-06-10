@@ -1,6 +1,7 @@
 import BASICCore
 import Darwin
 import Foundation
+import VectorTerminalSDK
 
 final class ShellLineEditor: @unchecked Sendable {
     static let shared = ShellLineEditor()
@@ -318,9 +319,15 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
+    private lazy var vtgCanvas: VectorTerminalCanvas = {
+        guard isatty(STDOUT_FILENO) == 1 else {
+            return .noOp()
+        }
+        return (try? VectorTerminalCanvas()) ?? .noOp()
+    }()
 
     func log(level: String, issuer: String, module: String, text: String) {
         // Shell logging will grow a real viewer later; LOG is currently a no-op here.
@@ -571,6 +578,75 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
     private func ensureParentDirectory(for path: String) throws {
         let url = URL(fileURLWithPath: expandedPath(path))
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    }
+
+    private func vtgColor(_ value: String?) -> VTGColor? {
+        guard let value, value.lowercased() != "none" else { return nil }
+        return VTGColor(value)
+    }
+
+    func vectorTerminalClear() throws {
+        vtgCanvas.clear()
+    }
+
+    func vectorTerminalPresent() throws {
+        vtgCanvas.present()
+    }
+
+    func vectorTerminalDelete(id: String) throws {
+        vtgCanvas.delete(id: id)
+    }
+
+    func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws {
+        vtgCanvas.pixel(id: id, x: x, y: y, color: VTGColor(color), layer: layer)
+    }
+
+    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws {
+        vtgCanvas.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VTGColor(stroke), width: width, layer: layer)
+    }
+
+    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws {
+        vtgCanvas.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, layer: layer)
+    }
+
+    func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
+        vtgCanvas.circle(id: id, cx: cx, cy: cy, radius: radius, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, layer: layer)
+    }
+
+    func vectorTerminalEllipse(id: String, cx: Int, cy: Int, rx: Int, ry: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
+        vtgCanvas.ellipse(id: id, cx: cx, cy: cy, rx: rx, ry: ry, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, layer: layer)
+    }
+
+    func vectorTerminalText(id: String, x: Int, y: Int, value: String, color: String, size: Int, layer: Int?) throws {
+        vtgCanvas.text(id: id, x: x, y: y, value: value, color: VTGColor(color), size: size, layer: layer)
+    }
+
+    func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws {
+        vtgCanvas.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VTGColor(stroke), width: width, layer: layer)
+    }
+
+    func vectorTerminalSetDefaultLayer(_ layer: Int) throws {
+        vtgCanvas.setDefaultLayer(layer)
+    }
+
+    func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws {
+        vtgCanvas.setViewportMode(layer: layer, width: width, height: height, scale: VTGViewportScaleMode(rawValue: scale.lowercased()) ?? .fit)
+    }
+
+    func vectorTerminalClearViewportMode(layer: Int) throws {
+        vtgCanvas.clearViewportMode(layer: layer)
+    }
+
+    func vectorTerminalClearScreen() throws {
+        vtgCanvas.clearScreen()
+    }
+
+    func vectorTerminalWriteText(_ value: String) throws {
+        vtgCanvas.writeText(value)
+    }
+
+    func vectorTerminalMoveCursor(row: Int, column: Int) throws {
+        vtgCanvas.moveCursor(row: row, column: column)
     }
 }
 

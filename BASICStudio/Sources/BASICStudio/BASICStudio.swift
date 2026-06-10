@@ -6,6 +6,7 @@ import MarkdownUI
 import SwiftUI
 import SwiftTerm
 import UniformTypeIdentifiers
+import VectorTerminalSDK
 import WebKit
 
 @main
@@ -1748,6 +1749,13 @@ final class StudioModel: ObservableObject {
     let bundledExamples = StudioModel.availableBundledExamples()
 
     let graphics = GraphicsFramebuffer()
+    var vtgDataSink: ((Data) -> Void)?
+    private lazy var vtgOutput = ClosureVTGOutput { [weak self] data in
+        self?.runOnMainActorSync {
+            self?.vtgDataSink?(data)
+        }
+    }
+    private lazy var vtgCanvas = VectorTerminalCanvas.hostValidated(output: vtgOutput)
     private var shouldRunStartupProgram = false
     private var isLoadingSettings = true
     private var currentProgramURL: URL?
@@ -3815,6 +3823,84 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
     }
 }
 
+extension StudioModel: BASICVectorTerminalHost {
+    nonisolated private func useVTGCanvas(_ operation: @MainActor (VectorTerminalCanvas) -> Void) {
+        runOnMainActorSync {
+            operation(vtgCanvas)
+        }
+    }
+
+    nonisolated private func vtgColor(_ value: String?) -> VectorTerminalSDK.VTGColor? {
+        guard let value, value.lowercased() != "none" else { return nil }
+        return VectorTerminalSDK.VTGColor(value)
+    }
+
+    nonisolated func vectorTerminalClear() throws {
+        useVTGCanvas { $0.clear() }
+    }
+
+    nonisolated func vectorTerminalPresent() throws {
+        useVTGCanvas { $0.present() }
+    }
+
+    nonisolated func vectorTerminalDelete(id: String) throws {
+        useVTGCanvas { $0.delete(id: id) }
+    }
+
+    nonisolated func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws {
+        useVTGCanvas { $0.pixel(id: id, x: x, y: y, color: VectorTerminalSDK.VTGColor(color), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws {
+        useVTGCanvas { $0.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws {
+        useVTGCanvas { $0.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
+        useVTGCanvas { $0.circle(id: id, cx: cx, cy: cy, radius: radius, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalEllipse(id: String, cx: Int, cy: Int, rx: Int, ry: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
+        useVTGCanvas { $0.ellipse(id: id, cx: cx, cy: cy, rx: rx, ry: ry, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalText(id: String, x: Int, y: Int, value: String, color: String, size: Int, layer: Int?) throws {
+        useVTGCanvas { $0.text(id: id, x: x, y: y, value: value, color: VectorTerminalSDK.VTGColor(color), size: size, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws {
+        useVTGCanvas { $0.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalSetDefaultLayer(_ layer: Int) throws {
+        useVTGCanvas { $0.setDefaultLayer(layer) }
+    }
+
+    nonisolated func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws {
+        let mode = VTGViewportScaleMode(rawValue: scale.lowercased()) ?? .fit
+        useVTGCanvas { $0.setViewportMode(layer: layer, width: width, height: height, scale: mode) }
+    }
+
+    nonisolated func vectorTerminalClearViewportMode(layer: Int) throws {
+        useVTGCanvas { $0.clearViewportMode(layer: layer) }
+    }
+
+    nonisolated func vectorTerminalClearScreen() throws {
+        useVTGCanvas { $0.clearScreen() }
+    }
+
+    nonisolated func vectorTerminalWriteText(_ value: String) throws {
+        useVTGCanvas { $0.writeText(value) }
+    }
+
+    nonisolated func vectorTerminalMoveCursor(row: Int, column: Int) throws {
+        useVTGCanvas { $0.moveCursor(row: row, column: column) }
+    }
+}
+
 extension StudioModel: BASICGraphicsHost {
     nonisolated private func mutateGraphics(_ operation: @MainActor (GraphicsFramebuffer) -> Void) {
         runOnMainActorSync {
@@ -3931,11 +4017,13 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
     func makeNSView(context: Context) -> AIBasicTerminalContainerView {
         let view = AIBasicTerminalContainerView()
         view.model = model
+        view.connectVTG(to: model)
         return view
     }
 
     func updateNSView(_ nsView: AIBasicTerminalContainerView, context: Context) {
         nsView.model = model
+        nsView.connectVTG(to: model)
         nsView.render(
             consoleText: model.consoleText,
             graphics: model.graphics,
@@ -3951,7 +4039,7 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
 final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDelegate {
     weak var model: StudioModel?
 
-    private let terminalView = TerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
+    private let terminalView = VectorTerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
     private let overlayView = GraphicsOverlayView(frame: .zero)
     private var renderedCharacterCount = 0
     private var renderedRevision = -1
@@ -4122,9 +4210,16 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         model?.updateLiveTerminalSize(columns: newCols, rows: newRows)
+        terminalView.notifyVTGResizeIfNeeded()
     }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    func connectVTG(to model: StudioModel) {
+        model.vtgDataSink = { [weak self] data in
+            self?.terminalView.feedVTG(data)
+        }
+    }
 
     private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),

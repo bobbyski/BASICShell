@@ -1018,12 +1018,14 @@ private final class BASICRuntime {
     var randomGenerator = BASICRandomGenerator()
     private var fileObjects: [Int: BASICOpenFile] = [:]
     private var nextFileObjectID = 1
+    private var nextVectorTerminalObjectID = 1
 
     func resetForRun() {
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()
         nextFileObjectID = 1
+        nextVectorTerminalObjectID = 1
     }
 
     func clearAll() {
@@ -1231,7 +1233,12 @@ private final class BASICRuntime {
     }
 
     static func isBuiltInClass(_ name: String) -> Bool {
-        name.uppercased() == "FILE"
+        switch name.uppercased() {
+        case "FILE", "VECTORTERMINAL", "VTG":
+            return true
+        default:
+            return false
+        }
     }
 
     func fileObject(isOpen: Bool = false) -> BASICValue {
@@ -1239,6 +1246,12 @@ private final class BASICRuntime {
         nextFileObjectID += 1
         fileObjects[id] = BASICOpenFile(isOpen: isOpen)
         return .systemObject("File", id)
+    }
+
+    func vectorTerminalObject() -> BASICValue {
+        let id = nextVectorTerminalObjectID
+        nextVectorTerminalObjectID += 1
+        return .systemObject("VectorTerminal", id)
     }
 
     func value(
@@ -1301,11 +1314,15 @@ private final class BASICRuntime {
         return value
     }
 
-    func callSystemObjectMethod(typeName: String, id: Int, method: String, arguments: [BASICValue], fileHost: BASICFileHost? = nil, jsonDecoder: ((String) throws -> BASICValue)? = nil, jsonEncoder: ((BASICValue, Bool) throws -> String)? = nil) throws -> BASICValue {
-        guard typeName.uppercased() == "FILE" else {
+    func callSystemObjectMethod(typeName: String, id: Int, method: String, arguments: [BASICValue], fileHost: BASICFileHost? = nil, vectorTerminalHost: BASICVectorTerminalHost? = nil, jsonDecoder: ((String) throws -> BASICValue)? = nil, jsonEncoder: ((BASICValue, Bool) throws -> String)? = nil) throws -> BASICValue {
+        switch typeName.uppercased() {
+        case "FILE":
+            return try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
+        case "VECTORTERMINAL", "VTG":
+            return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
+        default:
             throw BASICError.runtime("\(typeName) has no method \(method)")
         }
-        return try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
     }
 
     func localSnapshots() -> [BASICVariableSnapshot] {
@@ -2120,6 +2137,166 @@ private final class BASICRuntime {
         return type
     }
 
+    private func callVectorTerminalMethod(method: String, arguments: [BASICValue], host: BASICVectorTerminalHost?) throws -> BASICValue {
+        guard let host else {
+            throw BASICError.runtime("VectorTerminal graphics are not supported by this host")
+        }
+
+        let normalized = method.uppercased()
+        switch normalized {
+        case "CLEAR":
+            try requireArgumentCount(arguments, 0, method: "clear")
+            try host.vectorTerminalClear()
+        case "PRESENT":
+            try requireArgumentCount(arguments, 0, method: "present")
+            try host.vectorTerminalPresent()
+        case "DELETE":
+            try requireArgumentCount(arguments, 1, method: "delete")
+            try host.vectorTerminalDelete(id: try stringValue(arguments[0]))
+        case "PIXEL":
+            guard (4...5).contains(arguments.count) else { throw BASICError.runtime("pixel expects 4 or 5 arguments") }
+            try host.vectorTerminalPixel(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                color: try stringValue(arguments[3]),
+                layer: try optionalInteger(arguments, at: 4)
+            )
+        case "LINE":
+            guard (6...8).contains(arguments.count) else { throw BASICError.runtime("line expects 6 to 8 arguments") }
+            try host.vectorTerminalLine(
+                id: try stringValue(arguments[0]),
+                x1: try integerValue(arguments[1]),
+                y1: try integerValue(arguments[2]),
+                x2: try integerValue(arguments[3]),
+                y2: try integerValue(arguments[4]),
+                stroke: try stringValue(arguments[5]),
+                width: try optionalInteger(arguments, at: 6) ?? 1,
+                layer: try optionalInteger(arguments, at: 7)
+            )
+        case "RECT":
+            guard (5...10).contains(arguments.count) else { throw BASICError.runtime("rect expects 5 to 10 arguments") }
+            try host.vectorTerminalRect(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                width: try integerValue(arguments[3]),
+                height: try integerValue(arguments[4]),
+                stroke: try optionalString(arguments, at: 5),
+                fill: try optionalString(arguments, at: 6),
+                lineWidth: try optionalInteger(arguments, at: 7) ?? 1,
+                radius: try optionalInteger(arguments, at: 8) ?? 0,
+                layer: try optionalInteger(arguments, at: 9)
+            )
+        case "CIRCLE":
+            guard (4...8).contains(arguments.count) else { throw BASICError.runtime("circle expects 4 to 8 arguments") }
+            try host.vectorTerminalCircle(
+                id: try stringValue(arguments[0]),
+                cx: try integerValue(arguments[1]),
+                cy: try integerValue(arguments[2]),
+                radius: try integerValue(arguments[3]),
+                stroke: try optionalString(arguments, at: 4),
+                fill: try optionalString(arguments, at: 5),
+                lineWidth: try optionalInteger(arguments, at: 6) ?? 1,
+                layer: try optionalInteger(arguments, at: 7)
+            )
+        case "ELLIPSE":
+            guard (5...9).contains(arguments.count) else { throw BASICError.runtime("ellipse expects 5 to 9 arguments") }
+            try host.vectorTerminalEllipse(
+                id: try stringValue(arguments[0]),
+                cx: try integerValue(arguments[1]),
+                cy: try integerValue(arguments[2]),
+                rx: try integerValue(arguments[3]),
+                ry: try integerValue(arguments[4]),
+                stroke: try optionalString(arguments, at: 5),
+                fill: try optionalString(arguments, at: 6),
+                lineWidth: try optionalInteger(arguments, at: 7) ?? 1,
+                layer: try optionalInteger(arguments, at: 8)
+            )
+        case "TEXT":
+            guard (5...7).contains(arguments.count) else { throw BASICError.runtime("text expects 5 to 7 arguments") }
+            try host.vectorTerminalText(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                value: try stringValue(arguments[3]),
+                color: try stringValue(arguments[4]),
+                size: try optionalInteger(arguments, at: 5) ?? 14,
+                layer: try optionalInteger(arguments, at: 6)
+            )
+        case "VECTORPRINT":
+            guard (5...8).contains(arguments.count) else { throw BASICError.runtime("vectorPrint expects 5 to 8 arguments") }
+            try host.vectorTerminalVectorPrint(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                height: try integerValue(arguments[3]),
+                value: try stringValue(arguments[4]),
+                stroke: try optionalString(arguments, at: 5) ?? "#f8fafc",
+                width: try optionalInteger(arguments, at: 6) ?? 1,
+                layer: try optionalInteger(arguments, at: 7)
+            )
+        case "SETDEFAULTLAYER":
+            try requireArgumentCount(arguments, 1, method: "setDefaultLayer")
+            try host.vectorTerminalSetDefaultLayer(try integerValue(arguments[0]))
+        case "SETVIEWPORTMODE":
+            guard (3...4).contains(arguments.count) else { throw BASICError.runtime("setViewportMode expects 3 or 4 arguments") }
+            try host.vectorTerminalSetViewportMode(
+                layer: try integerValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                scale: try optionalString(arguments, at: 3) ?? "fit"
+            )
+        case "CLEARVIEWPORTMODE":
+            try requireArgumentCount(arguments, 1, method: "clearViewportMode")
+            try host.vectorTerminalClearViewportMode(layer: try integerValue(arguments[0]))
+        case "CLEARSCREEN":
+            try requireArgumentCount(arguments, 0, method: "clearScreen")
+            try host.vectorTerminalClearScreen()
+        case "WRITETEXT":
+            try requireArgumentCount(arguments, 1, method: "writeText")
+            try host.vectorTerminalWriteText(try stringValue(arguments[0]))
+        case "MOVECURSOR":
+            try requireArgumentCount(arguments, 2, method: "moveCursor")
+            try host.vectorTerminalMoveCursor(row: try integerValue(arguments[0]), column: try integerValue(arguments[1]))
+        default:
+            throw BASICError.runtime("VectorTerminal has no method \(method)")
+        }
+        return .empty
+    }
+
+    private func requireArgumentCount(_ arguments: [BASICValue], _ expected: Int, method: String) throws {
+        guard arguments.count == expected else {
+            throw BASICError.runtime("\(method) expects \(expected) arguments")
+        }
+    }
+
+    private func stringValue(_ value: BASICValue) throws -> String {
+        guard let string = value.string else { throw BASICError.runtime("Expected a string") }
+        return string.description
+    }
+
+    private func optionalString(_ arguments: [BASICValue], at index: Int) throws -> String? {
+        guard arguments.indices.contains(index), arguments[index] != .empty, arguments[index] != .null else {
+            return nil
+        }
+        return try stringValue(arguments[index])
+    }
+
+    private func integerValue(_ value: BASICValue) throws -> Int {
+        guard let number = value.number, number.rounded() == number else {
+            throw BASICError.runtime("Expected an integer")
+        }
+        return Int(number)
+    }
+
+    private func optionalInteger(_ arguments: [BASICValue], at index: Int) throws -> Int? {
+        guard arguments.indices.contains(index), arguments[index] != .empty, arguments[index] != .null else {
+            return nil
+        }
+        return try integerValue(arguments[index])
+    }
+
     func defaultValue(for type: BASICType) -> BASICValue {
         switch type {
         case .void: return .empty
@@ -2137,7 +2314,12 @@ private final class BASICRuntime {
             return .record(definition.displayName, fields)
         case .classType(let name):
             if Self.isBuiltInClass(name) {
-                return fileObject()
+                switch name.uppercased() {
+                case "VECTORTERMINAL", "VTG":
+                    return vectorTerminalObject()
+                default:
+                    return fileObject()
+                }
             }
             guard let definition = classDefinitions[name.uppercased()] else {
                 return .object(name, [:])
@@ -2864,6 +3046,42 @@ public protocol BASICFileHost: BASICHost {
 public protocol BASICSystemHost: BASICHost {
     /// Runs a shell command and returns combined output.
     func runSystemCommand(_ command: String) throws -> String
+}
+
+/// Host interface for direct VectorTerminal Graphics (VTG) SDK operations.
+public protocol BASICVectorTerminalHost: BASICHost {
+    /// Clears retained VTG scene primitives.
+    func vectorTerminalClear() throws
+    /// Presents pending VTG scene updates.
+    func vectorTerminalPresent() throws
+    /// Deletes one retained VTG primitive by id.
+    func vectorTerminalDelete(id: String) throws
+    /// Draws or replaces one VTG pixel primitive.
+    func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws
+    /// Draws or replaces one VTG line primitive.
+    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws
+    /// Draws or replaces one VTG rectangle primitive.
+    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws
+    /// Draws or replaces one VTG circle primitive.
+    func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws
+    /// Draws or replaces one VTG ellipse primitive.
+    func vectorTerminalEllipse(id: String, cx: Int, cy: Int, rx: Int, ry: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws
+    /// Draws or replaces host-rendered VTG text.
+    func vectorTerminalText(id: String, x: Int, y: Int, value: String, color: String, size: Int, layer: Int?) throws
+    /// Draws or replaces vector text.
+    func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws
+    /// Changes the default VTG layer.
+    func vectorTerminalSetDefaultLayer(_ layer: Int) throws
+    /// Enables fixed-resolution viewport mapping for a VTG layer.
+    func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws
+    /// Clears fixed-resolution viewport mapping for a VTG layer.
+    func vectorTerminalClearViewportMode(layer: Int) throws
+    /// Clears the ANSI text screen through the SDK helper.
+    func vectorTerminalClearScreen() throws
+    /// Writes plain ANSI text through the SDK helper.
+    func vectorTerminalWriteText(_ value: String) throws
+    /// Moves the ANSI cursor through the SDK helper.
+    func vectorTerminalMoveCursor(row: Int, column: Int) throws
 }
 
 /// Host interface for non-blocking INKEY$ keyboard input.
@@ -7748,6 +7966,7 @@ public final class BASICInterpreter {
                 method: method.name,
                 arguments: try arguments.map(evaluate),
                 fileHost: host as? BASICFileHost,
+                vectorTerminalHost: host as? BASICVectorTerminalHost,
                 jsonDecoder: { [runtime] source in try runtime.valueFromJSONString(source, permissive: true) },
                 jsonEncoder: { [runtime] value, pretty in try runtime.jsonString(for: value, pretty: pretty) }
             )
@@ -9074,6 +9293,9 @@ public final class BASICInterpreter {
             if name.normalized == "FILE" {
                 return try constructFile(arguments: arguments)
             }
+            if name.normalized == "VECTORTERMINAL" || name.normalized == "VTG" {
+                return try constructVectorTerminal(arguments: arguments)
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -9089,6 +9311,9 @@ public final class BASICInterpreter {
         case .newObject(let className, let arguments):
             if className.uppercased() == "FILE" {
                 return try constructFile(arguments: arguments)
+            }
+            if className.uppercased() == "VECTORTERMINAL" || className.uppercased() == "VTG" {
+                return try constructVectorTerminal(arguments: arguments)
             }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
@@ -9500,6 +9725,13 @@ public final class BASICInterpreter {
             )
         }
         return file
+    }
+
+    private func constructVectorTerminal(arguments: [Expression]) throws -> BASICValue {
+        guard arguments.isEmpty else {
+            throw BASICError.runtime("VectorTerminal expects 0 arguments")
+        }
+        return runtime.vectorTerminalObject()
     }
 
     private func evaluateBinary(_ leftExpression: Expression, _ operation: BinaryOperation, _ rightExpression: Expression) throws -> BASICValue {
