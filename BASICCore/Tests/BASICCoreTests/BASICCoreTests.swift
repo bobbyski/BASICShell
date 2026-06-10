@@ -1592,6 +1592,12 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["Unsupported feature: you must run this program in BASICStudio"])
+
+        let paintHost = TextOnlyHost()
+        let paintSession = BASICSession(host: paintHost)
+        paintSession.submit("paint (1,1), 2")
+
+        #expect(paintHost.output == ["Unsupported feature: you must run this program in BASICStudio"])
     }
 
     @Test("Stores and lists numbered lines")
@@ -1947,6 +1953,27 @@ struct BASICCoreTests {
 
         session.program.loadSource("""
         10 print "tick": goto 10
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected break")
+        } catch BASICError.breakRequested(let line) {
+            #expect(line == 10)
+        }
+    }
+
+    @Test("INPUT$ observes break while waiting for keyboard input")
+    func inputStringObservesBreakWhileWaitingForKeyboardInput() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        host.breakOnBlockingKeyRead = true
+        host.executionControl = control
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        10 a$ = input$(1)
+        20 print "not reached"
         """)
 
         do {
@@ -4216,6 +4243,8 @@ struct BASICCoreTests {
         preset (2,3)
         print point(2,3)
         line (0,0)-(4,4), 3
+        circle (10,11), 5, 4
+        paint (1,1), 5, 3
         """)
         session.submit("run")
 
@@ -4227,6 +4256,72 @@ struct BASICCoreTests {
         #expect(host.lines.first?.2 == 4)
         #expect(host.lines.first?.3 == 4)
         #expect(host.lines.first?.4 == 3)
+        #expect(host.circles.count == 1)
+        #expect(host.circles.first?.0 == 10)
+        #expect(host.circles.first?.1 == 11)
+        #expect(host.circles.first?.2 == 5)
+        #expect(host.circles.first?.3 == 4)
+        #expect(host.fills.count == 1)
+        #expect(host.fills.first?.0 == 1)
+        #expect(host.fills.first?.1 == 1)
+        #expect(host.fills.first?.2 == 5)
+        #expect(host.fills.first?.3 == 3)
+    }
+
+    @Test("COLOR supplies default graphics foreground")
+    func colorSuppliesDefaultGraphicsForeground() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        color 2
+        pset (2,3)
+        line (0,0)-(4,4)
+        circle (10,11), 5
+        paint (1,1), 2
+        """)
+        session.submit("run")
+
+        #expect(host.graphicsColor == 2)
+        #expect(host.pixels["2,3"] == 2)
+        #expect(host.lines.first?.4 == 2)
+        #expect(host.circles.first?.3 == 2)
+        #expect(host.fills.first?.2 == 2)
+    }
+
+    @Test("COLOR accepts text background")
+    func colorAcceptsTextBackground() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        color 2, 0
+        print "GREEN ON BLACK"
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["\u{001B}[38;2;34;197;94;48;2;0;0;0mGREEN ON BLACK"])
+    }
+
+    @Test("COLOR accepts quoted full color strings")
+    func colorAcceptsQuotedFullColorStrings() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        color "orange,alpha: 50%", "000000"
+        print "TRANSLUCENT ORANGE"
+        screen 1
+        pset (2,3)
+        line (0,0)-(4,4), "255,0,0,128"
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["\u{001B}[38;2;255;165;0;48;2;0;0;0mTRANSLUCENT ORANGE"])
+        #expect(host.fullGraphicsColor?.cssHex == "#ffa50080")
+        #expect(host.fullPixels["2,3"]?.cssHex == "#ffa50080")
+        #expect(host.fullLines.first?.4.cssHex == "#ff000080")
     }
 
     @Test("DIM supports numeric and string arrays")
@@ -5462,6 +5557,7 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var systemCommands: [String] = []
     var systemOutputs: [String: String] = [:]
     var breakAfterOutputCount: Int?
+    var breakOnBlockingKeyRead = false
     weak var executionControl: BASICExecutionControl?
     var screenMode: BASICScreenMode?
     var columns = 80
@@ -5469,6 +5565,14 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var locations: [(Int, Int)] = []
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
+    var circles: [(Int, Int, Int, Int)] = []
+    var fills: [(Int, Int, Int, Int?)] = []
+    var graphicsColor: Int?
+    var fullPixels: [String: BASICColor] = [:]
+    var fullLines: [(Int, Int, Int, Int, BASICColor)] = []
+    var fullCircles: [(Int, Int, Int, BASICColor)] = []
+    var fullFills: [(Int, Int, BASICColor, BASICColor?)] = []
+    var fullGraphicsColor: BASICColor?
 
     func print(_ text: String, terminator: String) {
         pendingOutput += text
@@ -5526,7 +5630,11 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     }
 
     func readBlockingKey() -> String? {
-        keys.isEmpty ? nil : keys.removeFirst()
+        if breakOnBlockingKeyRead {
+            executionControl?.requestBreak()
+            return nil
+        }
+        return keys.isEmpty ? nil : keys.removeFirst()
     }
 
     func screenColumns() -> Int {
@@ -5595,7 +5703,14 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
         pixels.removeAll()
     }
 
-    func setGraphicsColor(_ color: Int) {}
+    func setGraphicsColor(_ color: Int) {
+        graphicsColor = color
+    }
+
+    func setGraphicsColor(_ color: BASICColor) {
+        fullGraphicsColor = color
+        graphicsColor = color.legacyIndex
+    }
 
     func clearGraphics(color: Int?) {
         pixels.removeAll()
@@ -5605,12 +5720,40 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
         pixels["\(x),\(y)"] = color
     }
 
+    func setPixel(x: Int, y: Int, color: BASICColor) {
+        fullPixels["\(x),\(y)"] = color
+        pixels["\(x),\(y)"] = color.legacyIndex ?? 1
+    }
+
     func getPixel(x: Int, y: Int) -> Int {
         pixels["\(x),\(y)"] ?? 0
     }
 
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
         lines.append((x1, y1, x2, y2, color))
+    }
+
+    func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
+        fullLines.append((x1, y1, x2, y2, color))
+        lines.append((x1, y1, x2, y2, color.legacyIndex ?? 1))
+    }
+
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {
+        circles.append((cx, cy, radius, color))
+    }
+
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor) {
+        fullCircles.append((cx, cy, radius, color))
+        circles.append((cx, cy, radius, color.legacyIndex ?? 1))
+    }
+
+    func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) {
+        fills.append((x, y, color, borderColor))
+    }
+
+    func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
+        fullFills.append((x, y, color, borderColor))
+        fills.append((x, y, color.legacyIndex ?? 1, borderColor?.legacyIndex))
     }
 
     private func requestBreakIfNeeded() {

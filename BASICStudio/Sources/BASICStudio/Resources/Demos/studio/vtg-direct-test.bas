@@ -20,4 +20,10 @@ vtg.vectorPrint("retro", 96, 226, 52, "AIBASIC VTG", "#22c55e", 2, 1)
 vtg.present()
 
 print "VTG commands sent. Traditional BASIC graphics were not used."
+locate screenheight - 2, 1
+print "Press any key to exit.";
+wait$ = input$(1)
+cls
+vtg.clear()
+vtg.present()
 end

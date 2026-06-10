@@ -2,16 +2,24 @@
 ' Traditional BASIC graphics command test.
 ' This intentionally avoids the direct VectorTerminal SDK wrapper.
 
-print "BASIC GRAPHICS COMMAND TEST"
+cls
 screen 1
 color 2
-line (20,20)-(180,20), 2
-line (180,20)-(180,120), 3
-line (180,120)-(20,120), 1
-line (20,120)-(20,20), 2
-line (20,20)-(180,120), 1
-line (180,20)-(20,120), 2
-pset (100,70), 3
-print "POINT CENTER =", point(100,70)
+line (80,80)-(220,80), 2
+line (220,80)-(220,160), 2
+line (220,160)-(80,160), 2
+line (80,160)-(80,80), 2
+paint (150,120), 6, 2
+line (80,80)-(220,160), 1
+line (220,80)-(80,160), 2
+circle (150,120), 28, 3
+pset (150,120), 3
+locate screenheight - 5, 1
+print "BASIC GRAPHICS COMMAND TEST"
+print "POINT CENTER =", point(150,120)
 print "Legacy BASIC graphics commands completed."
+locate screenheight - 2, 1
+print "Press any key to exit.";
+wait$ = input$(1)
+cls
 end

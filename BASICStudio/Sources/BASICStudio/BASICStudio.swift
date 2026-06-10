@@ -608,7 +608,7 @@ final class StudioInputCoordinator: @unchecked Sendable {
 
     func waitForRawKey() -> String? {
         condition.lock()
-        while keyBuffer.isEmpty && (isProgramRunning || isAwaitingRawKey) {
+        while keyBuffer.isEmpty && isAwaitingRawKey {
             condition.wait()
         }
         let key = keyBuffer.isEmpty ? nil : keyBuffer.removeFirst()
@@ -1756,6 +1756,7 @@ final class StudioModel: ObservableObject {
         }
     }
     private lazy var vtgCanvas = VectorTerminalCanvas.hostValidated(output: vtgOutput)
+    private var basicGraphicsOperationID = 0
     private var shouldRunStartupProgram = false
     private var isLoadingSettings = true
     private var currentProgramURL: URL?
@@ -3915,9 +3916,34 @@ extension StudioModel: BASICGraphicsHost {
         }
     }
 
+    nonisolated private func basicGraphicsColor(_ color: Int) -> VectorTerminalSDK.VTGColor {
+        let palette = [
+            "#000000", "#60a5fa", "#22c55e", "#06b6d4",
+            "#ef4444", "#d946ef", "#f59e0b", "#e5e7eb",
+            "#6b7280", "#93c5fd", "#86efac", "#67e8f9",
+            "#fca5a5", "#f0abfc", "#fde047", "#ffffff"
+        ]
+        let index = ((color % palette.count) + palette.count) % palette.count
+        return VectorTerminalSDK.VTGColor(palette[index])
+    }
+
+    nonisolated private func basicGraphicsColor(_ color: BASICColor) -> VectorTerminalSDK.VTGColor {
+        VectorTerminalSDK.VTGColor(color.cssHex)
+    }
+
+    @MainActor
+    private func nextBasicGraphicsID(_ prefix: String) -> String {
+        basicGraphicsOperationID += 1
+        return "basic-\(prefix)-\(basicGraphicsOperationID)"
+    }
+
     nonisolated func setScreenMode(_ mode: BASICScreenMode) {
-        mutateGraphics { graphics in
+        runOnMainActorSync {
             graphics.setMode(mode)
+            graphicsRevision += 1
+            basicGraphicsOperationID = 0
+            vtgCanvas.clear()
+            vtgCanvas.present()
         }
     }
 
@@ -3927,15 +3953,37 @@ extension StudioModel: BASICGraphicsHost {
         }
     }
 
+    nonisolated func setGraphicsColor(_ color: BASICColor) {
+        runOnMainActorSync {
+            graphics.currentColor = color.legacyIndex ?? 1
+        }
+    }
+
     nonisolated func clearGraphics(color: Int?) {
-        mutateGraphics { graphics in
+        runOnMainActorSync {
             graphics.clear(color: color)
+            graphicsRevision += 1
+            basicGraphicsOperationID = 0
+            vtgCanvas.clear()
+            vtgCanvas.present()
         }
     }
 
     nonisolated func setPixel(x: Int, y: Int, color: Int) {
-        mutateGraphics { graphics in
+        runOnMainActorSync {
             graphics.setPixel(x: x, y: y, color: color)
+            graphicsRevision += 1
+            vtgCanvas.pixel(id: nextBasicGraphicsID("pixel"), x: x, y: y, color: basicGraphicsColor(color), layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func setPixel(x: Int, y: Int, color: BASICColor) {
+        runOnMainActorSync {
+            graphics.setPixel(x: x, y: y, color: color.legacyIndex ?? 1)
+            graphicsRevision += 1
+            vtgCanvas.pixel(id: nextBasicGraphicsID("pixel"), x: x, y: y, color: basicGraphicsColor(color), layer: nil)
+            vtgCanvas.present()
         }
     }
 
@@ -3946,8 +3994,60 @@ extension StudioModel: BASICGraphicsHost {
     }
 
     nonisolated func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
-        mutateGraphics { graphics in
+        runOnMainActorSync {
             graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color)
+            graphicsRevision += 1
+            vtgCanvas.line(id: nextBasicGraphicsID("line"), x1: x1, y1: y1, x2: x2, y2: y2, stroke: basicGraphicsColor(color), width: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
+        runOnMainActorSync {
+            graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color.legacyIndex ?? 1)
+            graphicsRevision += 1
+            vtgCanvas.line(id: nextBasicGraphicsID("line"), x1: x1, y1: y1, x2: x2, y2: y2, stroke: basicGraphicsColor(color), width: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {
+        runOnMainActorSync {
+            graphics.drawCircle(cx: cx, cy: cy, radius: radius, color: color)
+            graphicsRevision += 1
+            vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor) {
+        runOnMainActorSync {
+            graphics.drawCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
+            graphicsRevision += 1
+            vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) {
+        runOnMainActorSync {
+            let changed = graphics.paintFill(x: x, y: y, color: color, borderColor: borderColor)
+            graphicsRevision += 1
+            for point in changed {
+                vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: point.x, y: point.y, color: basicGraphicsColor(color), layer: nil)
+            }
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
+        runOnMainActorSync {
+            let changed = graphics.paintFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
+            graphicsRevision += 1
+            for point in changed {
+                vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: point.x, y: point.y, color: basicGraphicsColor(color), layer: nil)
+            }
+            vtgCanvas.present()
         }
     }
 }
@@ -4005,6 +4105,64 @@ final class GraphicsFramebuffer {
         }
     }
 
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {
+        var x = max(0, radius)
+        var y = 0
+        var error = 1 - x
+
+        while x >= y {
+            setCirclePoints(cx: cx, cy: cy, x: x, y: y, color: color)
+            y += 1
+            if error < 0 {
+                error += 2 * y + 1
+            } else {
+                x -= 1
+                error += 2 * (y - x) + 1
+            }
+        }
+    }
+
+    private func setCirclePoints(cx: Int, cy: Int, x: Int, y: Int, color: Int) {
+        setPixel(x: cx + x, y: cy + y, color: color)
+        setPixel(x: cx + y, y: cy + x, color: color)
+        setPixel(x: cx - y, y: cy + x, color: color)
+        setPixel(x: cx - x, y: cy + y, color: color)
+        setPixel(x: cx - x, y: cy - y, color: color)
+        setPixel(x: cx - y, y: cy - x, color: color)
+        setPixel(x: cx + y, y: cy - x, color: color)
+        setPixel(x: cx + x, y: cy - y, color: color)
+    }
+
+    func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) -> [(x: Int, y: Int)] {
+        guard isEnabled, x >= 0, y >= 0, x < mode.width, y < mode.height else { return [] }
+        let fillColor = normalized(color)
+        let border = borderColor.map(normalized)
+        let startColor = getPixel(x: x, y: y)
+        guard startColor != fillColor, border != startColor else { return [] }
+
+        var changed: [(x: Int, y: Int)] = []
+        var stack = [(x: x, y: y)]
+        var visited = Set<Int>()
+
+        while let point = stack.popLast() {
+            guard point.x >= 0, point.y >= 0, point.x < mode.width, point.y < mode.height else { continue }
+            let index = point.y * mode.width + point.x
+            guard visited.insert(index).inserted else { continue }
+            let current = pixels[index]
+            if let border, current == border { continue }
+            guard current == startColor else { continue }
+
+            pixels[index] = fillColor
+            changed.append(point)
+            stack.append((point.x + 1, point.y))
+            stack.append((point.x - 1, point.y))
+            stack.append((point.x, point.y + 1))
+            stack.append((point.x, point.y - 1))
+        }
+
+        return changed
+    }
+
     private func normalized(_ color: Int) -> Int {
         guard mode.colorCount > 0 else { return max(0, color) }
         return max(0, color) % mode.colorCount
@@ -4026,8 +4184,6 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
         nsView.connectVTG(to: model)
         nsView.render(
             consoleText: model.consoleText,
-            graphics: model.graphics,
-            revision: model.graphicsRevision,
             screenSize: model.terminalScreenSize,
             fontFamily: model.fontFamily,
             fontSize: model.fontSize
@@ -4040,9 +4196,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     weak var model: StudioModel?
 
     private let terminalView = VectorTerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
-    private let overlayView = GraphicsOverlayView(frame: .zero)
     private var renderedCharacterCount = 0
-    private var renderedRevision = -1
     private var renderedScreenSize: TerminalScreenSize?
     private var renderedFontFamily: String?
     private var renderedFontSize: Double?
@@ -4084,7 +4238,6 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         installKeyMonitor()
 
         addSubview(terminalView)
-        addSubview(overlayView, positioned: .above, relativeTo: terminalView)
     }
 
     private func installKeyMonitor() {
@@ -4115,7 +4268,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         applyScreenSize(force: false)
     }
 
-    func render(consoleText: String, graphics: GraphicsFramebuffer, revision: Int, screenSize: TerminalScreenSize, fontFamily: String, fontSize: Double) {
+    func render(consoleText: String, screenSize: TerminalScreenSize, fontFamily: String, fontSize: Double) {
         if renderedFontFamily != fontFamily || renderedFontSize != fontSize {
             applyFont(family: fontFamily, size: fontSize)
             renderedFontFamily = fontFamily
@@ -4141,12 +4294,6 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             feedTerminal(newText)
             renderedCharacterCount = consoleText.count
         }
-
-        if revision != renderedRevision {
-            overlayView.framebuffer = graphics
-            overlayView.needsDisplay = true
-            renderedRevision = revision
-        }
     }
 
     private func applyScreenSize(force: Bool) {
@@ -4164,20 +4311,16 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 height: height
             )
             terminalView.frame = frame
-            overlayView.frame = frame
             terminalView.needsDisplay = true
-            overlayView.needsDisplay = true
             return
         }
 
         guard force || bounds.width > 0 else { return }
         terminalView.frame = bounds
-        overlayView.frame = bounds
         terminalView.sizeChanged(source: terminalView.getTerminal())
         let terminal = terminalView.getTerminal()
         model?.updateLiveTerminalSize(columns: terminal.cols, rows: terminal.rows)
         terminalView.needsDisplay = true
-        overlayView.needsDisplay = true
     }
 
     private func feedTerminal(_ text: String) {
@@ -4628,81 +4771,4 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-}
-
-final class GraphicsOverlayView: NSView {
-    weak var framebuffer: GraphicsFramebuffer?
-
-    override var isOpaque: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let framebuffer, framebuffer.isEnabled else { return }
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-
-        let destination = aspectFitRect(
-            source: CGSize(width: framebuffer.mode.width, height: framebuffer.mode.height),
-            destination: bounds.insetBy(dx: 8, dy: 8)
-        )
-        guard destination.width > 0, destination.height > 0 else { return }
-
-        context.saveGState()
-        context.interpolationQuality = .none
-        context.setFillColor(NSColor.black.withAlphaComponent(0.08).cgColor)
-        context.fill(destination)
-
-        let pixelWidth = destination.width / CGFloat(framebuffer.mode.width)
-        let pixelHeight = destination.height / CGFloat(framebuffer.mode.height)
-
-        for y in 0..<framebuffer.mode.height {
-            for x in 0..<framebuffer.mode.width {
-                let color = framebuffer.getPixel(x: x, y: y)
-                guard color != 0 else { continue }
-                context.setFillColor(Self.palette[color % Self.palette.count].cgColor)
-                context.fill(CGRect(
-                    x: destination.minX + CGFloat(x) * pixelWidth,
-                    y: destination.maxY - CGFloat(y + 1) * pixelHeight,
-                    width: max(1, pixelWidth),
-                    height: max(1, pixelHeight)
-                ))
-            }
-        }
-
-        context.restoreGState()
-    }
-
-    private func aspectFitRect(source: CGSize, destination: CGRect) -> CGRect {
-        guard source.width > 0, source.height > 0 else { return .zero }
-        let scale = min(destination.width / source.width, destination.height / source.height)
-        let width = floor(source.width * scale)
-        let height = floor(source.height * scale)
-        return CGRect(
-            x: destination.midX - width / 2,
-            y: destination.midY - height / 2,
-            width: width,
-            height: height
-        )
-    }
-
-    private static let palette: [NSColor] = [
-        .clear,
-        .white,
-        .systemRed,
-        .systemGreen,
-        .systemBlue,
-        .systemYellow,
-        .systemPurple,
-        .systemOrange,
-        .systemCyan,
-        .systemPink,
-        .lightGray,
-        .darkGray,
-        NSColor(calibratedRed: 0.0, green: 0.7, blue: 0.35, alpha: 1),
-        NSColor(calibratedRed: 0.6, green: 0.35, blue: 1.0, alpha: 1),
-        NSColor(calibratedRed: 1.0, green: 0.45, blue: 0.1, alpha: 1),
-        .black
-    ]
 }

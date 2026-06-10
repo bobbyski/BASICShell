@@ -2138,7 +2138,7 @@ private final class BASICRuntime {
     }
 
     private func callVectorTerminalMethod(method: String, arguments: [BASICValue], host: BASICVectorTerminalHost?) throws -> BASICValue {
-        guard let host else {
+        guard let host, host.isVectorTerminalAvailable else {
             throw BASICError.runtime("VectorTerminal graphics are not supported by this host")
         }
 
@@ -3050,6 +3050,8 @@ public protocol BASICSystemHost: BASICHost {
 
 /// Host interface for direct VectorTerminal Graphics (VTG) SDK operations.
 public protocol BASICVectorTerminalHost: BASICHost {
+    /// Indicates whether direct VTG operations are available on the current host.
+    var isVectorTerminalAvailable: Bool { get }
     /// Clears retained VTG scene primitives.
     func vectorTerminalClear() throws
     /// Presents pending VTG scene updates.
@@ -3082,6 +3084,11 @@ public protocol BASICVectorTerminalHost: BASICHost {
     func vectorTerminalWriteText(_ value: String) throws
     /// Moves the ANSI cursor through the SDK helper.
     func vectorTerminalMoveCursor(row: Int, column: Int) throws
+}
+
+public extension BASICVectorTerminalHost {
+    /// Default for hosts that conform only when VTG is available.
+    var isVectorTerminalAvailable: Bool { true }
 }
 
 /// Host interface for non-blocking INKEY$ keyboard input.
@@ -4552,20 +4559,198 @@ public struct BASICScreenMode: Equatable, Sendable {
     }
 }
 
+/// A resolved BASIC color, supporting legacy palette indexes and full RGBA colors.
+public struct BASICColor: Equatable, Sendable {
+    /// Red byte.
+    public let red: Int
+    /// Green byte.
+    public let green: Int
+    /// Blue byte.
+    public let blue: Int
+    /// Alpha byte.
+    public let alpha: Int
+    /// Original legacy palette index when the color came from a classic BASIC integer.
+    public let legacyIndex: Int?
+
+    /// Creates an RGBA color, clamping all components to byte range.
+    public init(red: Int, green: Int, blue: Int, alpha: Int = 255, legacyIndex: Int? = nil) {
+        self.red = Self.clampByte(red)
+        self.green = Self.clampByte(green)
+        self.blue = Self.clampByte(blue)
+        self.alpha = Self.clampByte(alpha)
+        self.legacyIndex = legacyIndex
+    }
+
+    /// Creates a legacy BASIC palette color.
+    public static func legacy(_ index: Int) -> BASICColor {
+        let palette = [
+            (0, 0, 0), (96, 165, 250), (34, 197, 94), (6, 182, 212),
+            (239, 68, 68), (217, 70, 239), (245, 158, 11), (229, 231, 235),
+            (107, 114, 128), (147, 197, 253), (134, 239, 172), (103, 232, 249),
+            (252, 165, 165), (240, 171, 252), (253, 224, 71), (255, 255, 255)
+        ]
+        let normalized = ((index % palette.count) + palette.count) % palette.count
+        let color = palette[normalized]
+        return BASICColor(red: color.0, green: color.1, blue: color.2, legacyIndex: index)
+    }
+
+    /// Parses a BASIC color string: optional-# hex, named colors, named colors with alpha, or comma-separated RGBA bytes.
+    public static func parse(_ rawValue: String) throws -> BASICColor {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let color = parseRGBABytes(value) {
+            return color
+        }
+        if let color = parseHex(value) {
+            return color
+        }
+        if let color = parseNamed(value) {
+            return color
+        }
+        throw BASICError.runtime("Invalid color")
+    }
+
+    /// CSS-style lowercase hex string suitable for VTG true-color APIs.
+    public var cssHex: String {
+        String(format: "#%02x%02x%02x%02x", red, green, blue, alpha)
+    }
+
+    private static func clampByte(_ value: Int) -> Int {
+        min(255, max(0, value))
+    }
+
+    private static func parseHex(_ value: String) -> BASICColor? {
+        let hex = value.hasPrefix("#") ? String(value.dropFirst()) : value
+        guard hex.count == 6 || hex.count == 8,
+              hex.allSatisfy({ $0.isHexDigit }),
+              let number = UInt32(hex, radix: 16) else { return nil }
+        if hex.count == 6 {
+            return BASICColor(
+                red: Int((number >> 16) & 0xff),
+                green: Int((number >> 8) & 0xff),
+                blue: Int(number & 0xff)
+            )
+        }
+        return BASICColor(
+            red: Int((number >> 24) & 0xff),
+            green: Int((number >> 16) & 0xff),
+            blue: Int((number >> 8) & 0xff),
+            alpha: Int(number & 0xff)
+        )
+    }
+
+    private static func parseRGBABytes(_ value: String) -> BASICColor? {
+        let parts = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count == 3 || parts.count == 4,
+              let red = Int(parts[0]),
+              let green = Int(parts[1]),
+              let blue = Int(parts[2]) else { return nil }
+        let alpha = parts.count == 4 ? (Int(parts[3]) ?? 255) : 255
+        return BASICColor(red: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    private static func parseNamed(_ value: String) -> BASICColor? {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let name = parts.first?.lowercased(),
+              let rgb = namedColors[name] else { return nil }
+        var alpha = 255
+        for part in parts.dropFirst() {
+            let lowered = part.lowercased()
+            guard lowered.hasPrefix("alpha:") else { continue }
+            alpha = parseAlpha(String(lowered.dropFirst("alpha:".count))) ?? alpha
+        }
+        return BASICColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: alpha)
+    }
+
+    private static func parseAlpha(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("%"), let percent = Double(trimmed.dropLast()) {
+            return clampByte(Int((percent / 100.0 * 255.0).rounded()))
+        }
+        return Int(trimmed).map(clampByte)
+    }
+
+    private static let namedColors: [String: (Int, Int, Int)] = [
+        "black": (0, 0, 0),
+        "blue": (0, 0, 255),
+        "cyan": (0, 255, 255),
+        "gray": (128, 128, 128),
+        "green": (0, 128, 0),
+        "grey": (128, 128, 128),
+        "magenta": (255, 0, 255),
+        "orange": (255, 165, 0),
+        "purple": (128, 0, 128),
+        "red": (255, 0, 0),
+        "white": (255, 255, 255),
+        "yellow": (255, 255, 0)
+    ]
+}
+
 /// Host interface for pixel graphics used by BASICStudio.
 public protocol BASICGraphicsHost: BASICHost {
+    /// Indicates whether graphics operations are available on the current host.
+    var isGraphicsAvailable: Bool { get }
+    /// Message to report when the host exists but graphics are unavailable.
+    var graphicsUnavailableMessage: String { get }
     /// Selects a graphics screen mode.
     func setScreenMode(_ mode: BASICScreenMode)
     /// Sets the current graphics drawing color.
     func setGraphicsColor(_ color: Int)
+    /// Sets the current graphics drawing color using the full-color model.
+    func setGraphicsColor(_ color: BASICColor)
     /// Clears the graphics layer, optionally with a color.
     func clearGraphics(color: Int?)
     /// Sets one graphics pixel.
     func setPixel(x: Int, y: Int, color: Int)
+    /// Sets one graphics pixel using the full-color model.
+    func setPixel(x: Int, y: Int, color: BASICColor)
     /// Reads one graphics pixel.
     func getPixel(x: Int, y: Int) -> Int
     /// Draws one line segment.
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int)
+    /// Draws one line segment using the full-color model.
+    func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor)
+    /// Draws one circle outline.
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: Int)
+    /// Draws one circle outline using the full-color model.
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor)
+    /// Flood-fills a bounded graphics region.
+    func paintFill(x: Int, y: Int, color: Int, borderColor: Int?)
+    /// Flood-fills a bounded graphics region using the full-color model.
+    func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?)
+}
+
+public extension BASICGraphicsHost {
+    /// Default for hosts that conform only when graphics are available.
+    var isGraphicsAvailable: Bool { true }
+
+    /// Default message for hosts that do not expose a more specific graphics policy.
+    var graphicsUnavailableMessage: String { "Unsupported feature: you must run this program in BASICStudio" }
+
+    /// Sets the current graphics drawing color using the full-color model.
+    func setGraphicsColor(_ color: BASICColor) {
+        setGraphicsColor(color.legacyIndex ?? 1)
+    }
+
+    /// Sets one graphics pixel using the full-color model.
+    func setPixel(x: Int, y: Int, color: BASICColor) {
+        setPixel(x: x, y: y, color: color.legacyIndex ?? 1)
+    }
+
+    /// Draws one line segment using the full-color model.
+    func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
+        drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color.legacyIndex ?? 1)
+    }
+
+    /// Draws one circle outline using the full-color model.
+    func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor) {
+        drawCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
+    }
+
+    /// Flood-fills a bounded graphics region using the full-color model.
+    func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
+        paintFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
+    }
 }
 
 public extension BASICHost {
@@ -5757,6 +5942,9 @@ public final class BASICInterpreter {
     private var currentSourceFileName: String?
     private var currentLogModuleOverride: String?
     private var lastParseErrorLocation: (fileName: String?, lineNumber: Int)?
+    private var currentGraphicsColor = BASICColor.legacy(1)
+    private var currentTextForeground = BASICColor.legacy(7)
+    private var currentTextBackground: BASICColor?
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
@@ -6673,18 +6861,26 @@ public final class BASICInterpreter {
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
             graphicsHost.setScreenMode(screenMode(for: modeNumber))
             return .next
-        case .color(let expression):
-            let color = try integer(expression)
-            guard let graphicsHost = host as? BASICGraphicsHost else {
-                throw BASICError.studioOnlyFeature
+        case .color(let expressions):
+            let (color, background) = try resolveColorStatement(expressions)
+            currentTextForeground = color
+            currentTextBackground = background
+            host?.print(ansiColorSequence(foreground: color, background: background), terminator: "")
+            currentGraphicsColor = color
+            if let graphicsHost = host as? BASICGraphicsHost, graphicsHost.isGraphicsAvailable {
+                graphicsHost.setGraphicsColor(color)
             }
-            graphicsHost.setGraphicsColor(color)
             return .next
         case .cls:
             host?.printLine("\u{001B}[2J\u{001B}[H")
-            (host as? BASICGraphicsHost)?.clearGraphics(color: nil)
+            if let graphicsHost = host as? BASICGraphicsHost, graphicsHost.isGraphicsAvailable {
+                graphicsHost.clearGraphics(color: nil)
+            }
             outputColumn = 0
             return .next
         case .locate(let rowExpression, let columnExpression):
@@ -6703,31 +6899,74 @@ public final class BASICInterpreter {
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
             let resolved = try resolve(point: point)
-            let resolvedColor = try color.map(integer) ?? 1
+            let resolvedColor = try color.map(resolveColor) ?? currentGraphicsColor
             graphicsHost.setPixel(x: resolved.x, y: resolved.y, color: resolvedColor)
             return .next
         case .preset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
             let resolved = try resolve(point: point)
-            let resolvedColor = try color.map(integer) ?? 0
+            let resolvedColor = try color.map(resolveColor) ?? BASICColor.legacy(0)
             graphicsHost.setPixel(x: resolved.x, y: resolved.y, color: resolvedColor)
             return .next
         case .line(let start, let end, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
             let resolvedStart = try resolve(point: start)
             let resolvedEnd = try resolve(point: end)
-            let resolvedColor = try color.map(integer) ?? 1
+            let resolvedColor = try color.map(resolveColor) ?? currentGraphicsColor
             graphicsHost.drawLine(
                 x1: resolvedStart.x,
                 y1: resolvedStart.y,
                 x2: resolvedEnd.x,
                 y2: resolvedEnd.y,
                 color: resolvedColor
+            )
+            return .next
+        case .circle(let center, let radius, let color):
+            guard let graphicsHost = host as? BASICGraphicsHost else {
+                throw BASICError.studioOnlyFeature
+            }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
+            let resolvedCenter = try resolve(point: center)
+            let resolvedRadius = try integer(radius)
+            let resolvedColor = try color.map(resolveColor) ?? currentGraphicsColor
+            graphicsHost.drawCircle(
+                cx: resolvedCenter.x,
+                cy: resolvedCenter.y,
+                radius: resolvedRadius,
+                color: resolvedColor
+            )
+            return .next
+        case .paint(let point, let color, let borderColor):
+            guard let graphicsHost = host as? BASICGraphicsHost else {
+                throw BASICError.studioOnlyFeature
+            }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
+            let resolvedPoint = try resolve(point: point)
+            let resolvedColor = try resolveColor(color)
+            let resolvedBorderColor = try borderColor.map(resolveColor)
+            graphicsHost.paintFill(
+                x: resolvedPoint.x,
+                y: resolvedPoint.y,
+                color: resolvedColor,
+                borderColor: resolvedBorderColor
             )
             return .next
         case .assignment(let kind, let variable, let declaredType, let expression):
@@ -8672,11 +8911,18 @@ public final class BASICInterpreter {
         let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
         var result = ""
         if let keyboardHost = host as? BASICBlockingKeyboardHost {
-            while result.count < count, let rawKey = keyboardHost.readBlockingKey() {
+            while result.count < count {
+                try executionControl?.checkBreak()
+                guard let rawKey = keyboardHost.readBlockingKey() else {
+                    try executionControl?.checkBreak()
+                    break
+                }
                 result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
+                try executionControl?.checkBreak()
             }
         } else if let keyboardHost = host as? BASICKeyboardHost {
             while result.count < count, let rawKey = keyboardHost.readKey(), !rawKey.isEmpty {
+                try executionControl?.checkBreak()
                 result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
             }
         }
@@ -9349,6 +9595,9 @@ public final class BASICInterpreter {
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
             let resolved = try resolve(point: point)
             return .number(Double(graphicsHost.getPixel(x: resolved.x, y: resolved.y)))
         case .chrFunction(let expression):
@@ -9609,9 +9858,11 @@ public final class BASICInterpreter {
             case .printUsing(let format, let values, _), .printFileUsing(_, let format, let values, _):
                 visit(format)
                 values.forEach(visit)
-            case .module(let expression), .screen(let expression), .color(let expression), .load(let expression),
+            case .module(let expression), .screen(let expression), .load(let expression),
                  .system(let expression), .error(let expression):
                 visit(expression)
+            case .color(let expressions):
+                expressions.forEach(visit)
             case .randomize(let expression), .save(let expression), .cd(let expression), .closeFile(let expression):
                 expression.map(visit)
             case .locate(let row, let column):
@@ -9624,6 +9875,14 @@ public final class BASICInterpreter {
                 visit(start)
                 visit(end)
                 color.map(visit)
+            case .circle(let center, let radius, let color):
+                visit(center)
+                visit(radius)
+                color.map(visit)
+            case .paint(let point, let color, let borderColor):
+                visit(point)
+                visit(color)
+                borderColor.map(visit)
             case .dim(_, let variable, let dimensions, _):
                 localNames.insert(variable.normalized)
                 dimensions.compactMap { $0 }.forEach(visit)
@@ -9838,6 +10097,26 @@ public final class BASICInterpreter {
         (try integer(point.x), try integer(point.y))
     }
 
+    private func resolveColor(_ expression: Expression) throws -> BASICColor {
+        let value = try evaluate(expression)
+        if let string = value.string {
+            return try BASICColor.parse(string.description)
+        }
+        guard let number = value.number else {
+            throw BASICError.runtime("Expected a color")
+        }
+        return BASICColor.legacy(Int(number.rounded()))
+    }
+
+    private func resolveColorStatement(_ expressions: [Expression]) throws -> (foreground: BASICColor, background: BASICColor?) {
+        guard !expressions.isEmpty, expressions.count <= 2 else {
+            throw BASICError.runtime("COLOR expects foreground and optional background")
+        }
+        let foreground = try resolveColor(expressions[0])
+        let background = expressions.count == 2 ? try resolveColor(expressions[1]) : nil
+        return (foreground, background)
+    }
+
     private func screenMode(for number: Int) -> BASICScreenMode {
         switch number {
         case 0:
@@ -9851,6 +10130,14 @@ public final class BASICInterpreter {
         default:
             return BASICScreenMode(number: number, width: 320, height: 200, colorCount: 16)
         }
+    }
+
+    private func ansiColorSequence(foreground: BASICColor, background: BASICColor?) -> String {
+        var parts = ["38;2;\(foreground.red);\(foreground.green);\(foreground.blue)"]
+        if let background {
+            parts.append("48;2;\(background.red);\(background.green);\(background.blue)")
+        }
+        return "\u{001B}[\(parts.joined(separator: ";"))m"
     }
 }
 
@@ -9964,12 +10251,14 @@ private indirect enum Statement: Equatable {
     case log(level: Expression, parts: [PrintPart])
     case module(Expression)
     case screen(Expression)
-    case color(Expression)
+    case color([Expression])
     case cls
     case locate(row: Expression, column: Expression)
     case pset(GraphicsPoint, Expression?)
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
+    case circle(GraphicsPoint, Expression, Expression?)
+    case paint(GraphicsPoint, Expression, Expression?)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
     case closureAssignment(AssignmentKind, VariableName, BASICType?, [FunctionParameter], BASICType, [ClosureCaptureSpec], [ClosureBodyLine])
     case referenceAssignment(VariableReference, Expression?)
@@ -10562,8 +10851,11 @@ private struct Parser {
             return .screen(mode)
         }
         if matchIdentifier("COLOR") {
-            let color = try parseExpression()
-            return .color(color)
+            var colors = [try parseExpression()]
+            while match(.comma) {
+                colors.append(try parseExpression())
+            }
+            return .color(colors)
         }
         if matchIdentifier("CLS") {
             return .cls
@@ -10582,6 +10874,20 @@ private struct Parser {
             let point = try parsePoint()
             let color = match(.comma) ? try parseExpression() : nil
             return .preset(point, color)
+        }
+        if matchIdentifier("CIRCLE") {
+            let center = try parsePoint()
+            guard match(.comma) else { throw syntax("Expected , after CIRCLE center") }
+            let radius = try parseExpression()
+            let color = match(.comma) ? try parseExpression() : nil
+            return .circle(center, radius, color)
+        }
+        if matchIdentifier("PAINT") {
+            let point = try parsePoint()
+            guard match(.comma) else { throw syntax("Expected , after PAINT point") }
+            let color = try parseExpression()
+            let borderColor = match(.comma) ? try parseExpression() : nil
+            return .paint(point, color, borderColor)
         }
         if matchIdentifier("LINE") {
             if matchIdentifier("INPUT") {
@@ -11849,7 +12155,7 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
+        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
