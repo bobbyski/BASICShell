@@ -1738,6 +1738,8 @@ final class StudioModel: ObservableObject {
     @Published var debuggerLocalVariables: [BASICVariableSnapshot] = []
     @Published var debuggerFrameLocalVariables: [[BASICVariableSnapshot]] = []
     @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
+    @Published var debuggerTasks: [BASICTaskSnapshot] = []
+    @Published var debuggerSelectedTaskID: Int?
     @Published var isLoggingEnabled = true
     @Published var logEntries: [StudioLogEntry] = []
     @Published var showUserLogs = true
@@ -1750,13 +1752,14 @@ final class StudioModel: ObservableObject {
     private var isLoadingSettings = true
     private var currentProgramURL: URL?
     private var currentProgramFileName: String?
-    private let executionQueue = DispatchQueue(label: "AIBasic.Studio.Execution", qos: .userInitiated)
+    private let executionLane = BASICWorkerLane(label: "AIBasic.Studio.Execution")
     private var activeExecutionControl: BASICExecutionControl?
     private let inputCoordinator = StudioInputCoordinator()
     private let consoleInputState = StudioConsoleInputState()
     private let gamepadInputCoordinator = StudioGamepadInputCoordinator()
     private var suppressNextEmptyProgramSubmit = false
     private var suppressNextProgramNewlineKey = false
+    private var debuggerTaskRefreshTask: Task<Void, Never>?
 
     private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
 
@@ -1880,8 +1883,25 @@ final class StudioModel: ObservableObject {
         return debuggerFrameLocalVariables[index]
     }
 
+    var debuggerSelectedTask: BASICTaskSnapshot? {
+        guard let debuggerSelectedTaskID else { return nil }
+        return debuggerTasks.first { $0.id == debuggerSelectedTaskID }
+    }
+
     func selectDebuggerCallStackFrame(_ frame: BASICCallStackFrame) {
         debuggerSelectedCallStackFrameIndex = frame.index
+    }
+
+    func selectDebuggerTask(_ task: BASICTaskSnapshot) {
+        debuggerSelectedTaskID = debuggerSelectedTaskID == task.id ? nil : task.id
+    }
+
+    func cancelSelectedDebuggerTask() {
+        guard let task = debuggerSelectedTask,
+              task.state == .ready || task.state == .running || task.state == .suspended else { return }
+        _ = session.requestTaskCancellation(id: task.id)
+        debuggerTasks = session.debugTasks
+        normalizeSelectedDebuggerTask()
     }
 
     func updateLiveTerminalSize(columns: Int, rows: Int) {
@@ -2018,6 +2038,8 @@ final class StudioModel: ObservableObject {
         debuggerLocalVariables = []
         debuggerFrameLocalVariables = []
         debuggerGlobalVariables = []
+        debuggerTasks = session.debugTasks
+        debuggerSelectedTaskID = nil
         activeExecutionControl = nil
     }
 
@@ -2236,6 +2258,15 @@ final class StudioModel: ObservableObject {
         case stepOver
         case stepOut
         case runStep
+
+        var isStepCommand: Bool {
+            switch self {
+            case .stepInto, .stepOver, .stepOut, .runStep:
+                return true
+            case .run, .continueExecution:
+                return false
+            }
+        }
     }
 
     private func startProgramRun(startLine: Int?, command: DebugRunCommand = .run) {
@@ -2256,11 +2287,17 @@ final class StudioModel: ObservableObject {
         case .stepOut:
             control.setMode(.stepOut(depth: session.debugCallDepth))
         }
+        if command.isStepCommand {
+            control.setTargetTaskID(debuggerSelectedTaskID ?? session.currentTaskHandle?.id)
+        }
         if command == .continueExecution || command == .stepInto || command == .stepOver || command == .stepOut {
             control.ignoreBreakpointOnce(at: activeExecutionControl?.location)
         }
         activeExecutionControl = control
         isProgramRunning = true
+        debuggerTasks = session.debugTasks
+        normalizeSelectedDebuggerTask()
+        startDebuggerTaskRefresh()
         inputCoordinator.setProgramRunning(true)
         isProgramPaused = false
         if command == .run || command == .runStep {
@@ -2268,7 +2305,7 @@ final class StudioModel: ObservableObject {
         }
         let session = session
 
-        executionQueue.async { [weak self, session, control, startLine, command] in
+        let accepted = executionLane.submit { [weak self, session, control, startLine, command] in
             let result: Result<Void, Error>
             do {
                 switch command {
@@ -2285,6 +2322,9 @@ final class StudioModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.finishProgramRun(result)
             }
+        }
+        if !accepted {
+            finishProgramRun(.failure(BASICError.runtime("Program is already running")))
         }
     }
 
@@ -2323,6 +2363,9 @@ final class StudioModel: ObservableObject {
         }
 
         isProgramPaused = paused
+        debuggerTasks = session.debugTasks
+        normalizeSelectedDebuggerTask()
+        stopDebuggerTaskRefresh()
         if paused {
             debuggerCallStack = session.debugCallStack
             debuggerLocalVariables = session.debugLocalVariables
@@ -2350,6 +2393,31 @@ final class StudioModel: ObservableObject {
         }
         if !shouldSuppressConsolePause {
             consoleText += prompt
+        }
+    }
+
+    private func startDebuggerTaskRefresh() {
+        debuggerTaskRefreshTask?.cancel()
+        debuggerTaskRefreshTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                guard self.isProgramRunning else { break }
+                self.debuggerTasks = self.session.debugTasks
+                self.normalizeSelectedDebuggerTask()
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+        }
+    }
+
+    private func stopDebuggerTaskRefresh() {
+        debuggerTaskRefreshTask?.cancel()
+        debuggerTaskRefreshTask = nil
+    }
+
+    private func normalizeSelectedDebuggerTask() {
+        guard let selectedID = debuggerSelectedTaskID,
+              debuggerTasks.contains(where: { $0.id == selectedID }) else {
+            debuggerSelectedTaskID = debuggerTasks.first?.id
+            return
         }
     }
 
@@ -2784,6 +2852,7 @@ struct LogPane: View {
 
 struct DebugPane: View {
     @ObservedObject var model: StudioModel
+    @State private var isTasksExpanded = true
     @State private var isCallStackExpanded = true
     @State private var isLocalsExpanded = false
     @State private var isGlobalsExpanded = false
@@ -2832,6 +2901,17 @@ struct DebugPane: View {
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 10) {
+                            DisclosureGroup("Tasks", isExpanded: $isTasksExpanded) {
+                                taskList(
+                                    model.debuggerTasks,
+                                    selectedTaskID: model.debuggerSelectedTaskID,
+                                    selectTask: model.selectDebuggerTask
+                                )
+                                if let selectedTask = model.debuggerSelectedTask {
+                                    selectedTaskDetail(selectedTask)
+                                }
+                            }
+
                             DisclosureGroup("Call Stack", isExpanded: $isCallStackExpanded) {
                                 callStackList(
                                     model.debuggerCallStack,
@@ -2879,9 +2959,17 @@ struct DebugPane: View {
             debugButton("Step Out", systemImage: "arrow.up.to.line", isEnabled: model.isProgramPaused && !model.isProgramRunning) {
                 model.stepOutDebugging()
             }
+            debugButton("Cancel Task", systemImage: "xmark.circle", isEnabled: canCancelSelectedTask) {
+                model.cancelSelectedDebuggerTask()
+            }
 
             Spacer(minLength: 0)
         }
+    }
+
+    private var canCancelSelectedTask: Bool {
+        guard let task = model.debuggerSelectedTask else { return false }
+        return task.state == .ready || task.state == .running || task.state == .suspended
     }
 
     private func debugButton(_ title: String, systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
@@ -2901,6 +2989,303 @@ struct DebugPane: View {
         let maximumCodeHeight = max(minimumCodeHeight, totalHeight - minimumVariablesHeight)
         let preferredHeight = codePaneHeight ?? max(260, totalHeight * 0.62)
         return min(max(preferredHeight, minimumCodeHeight), maximumCodeHeight)
+    }
+
+    @ViewBuilder
+    private func taskList(
+        _ tasks: [BASICTaskSnapshot],
+        selectedTaskID: Int?,
+        selectTask: @escaping (BASICTaskSnapshot) -> Void
+    ) -> some View {
+        if tasks.isEmpty {
+            Text("No tasks are available.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(tasks) { task in
+                    Button {
+                        selectTask(task)
+                    } label: {
+                        taskRow(task, isSelected: task.id == selectedTaskID)
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func taskRow(_ task: BASICTaskSnapshot, isSelected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("#\(task.id)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .leading)
+                Text(task.name)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(task.state.rawValue.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(taskStateColor(task.state).opacity(0.18), in: Capsule())
+                    .foregroundStyle(taskStateColor(task.state))
+            }
+
+            HStack(spacing: 10) {
+                if let parentID = task.parentID {
+                    taskMetadata("parent #\(parentID)")
+                }
+                if task.childCount > 0 {
+                    taskMetadata("\(task.childCount) child\(task.childCount == 1 ? "" : "ren")")
+                }
+                if task.waiterCount > 0 {
+                    taskMetadata("\(task.waiterCount) waiter\(task.waiterCount == 1 ? "" : "s")")
+                }
+                if task.yieldCount > 0 {
+                    taskMetadata("yields \(task.yieldCount)")
+                }
+                if let location = task.location {
+                    taskMetadata("line \(location.lineNumber)")
+                }
+            }
+
+            if let reason = taskSuspensionText(task.suspensionReason) {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if let result = task.resultDescription, !result.isEmpty {
+                Text("result: \(result)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let error = task.errorDescription, !error.isEmpty {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+        .font(.caption)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+        )
+    }
+
+    private func selectedTaskDetail(_ task: BASICTaskSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Selected Task")
+                    .fontWeight(.semibold)
+                Spacer(minLength: 0)
+                Text("#\(task.id)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            taskDetailGrid(task)
+            if !task.suspendedFrames.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Suspended Frames")
+                        .font(.caption.weight(.semibold))
+                    ForEach(Array(task.suspendedFrames.enumerated()), id: \.offset) { index, frame in
+                        suspendedFrameRow(frame, index: index)
+                    }
+                }
+            } else {
+                Text("No suspended frames are captured for this task.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if !task.suspendedGlobalVariables.isEmpty {
+                DisclosureGroup("Captured Globals") {
+                    VStack(spacing: 0) {
+                        ForEach(task.suspendedGlobalVariables) { variable in
+                            variableNode(variable, indent: 12)
+                            Divider()
+                        }
+                    }
+                }
+                .font(.caption2)
+            }
+        }
+        .font(.caption)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.48))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .padding(.top, 4)
+    }
+
+    private func taskDetailGrid(_ task: BASICTaskSnapshot) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+            GridRow {
+                taskDetailLabel("Name")
+                taskDetailValue(task.name)
+            }
+            GridRow {
+                taskDetailLabel("State")
+                taskDetailValue(task.state.rawValue.uppercased())
+            }
+            if let parentID = task.parentID {
+                GridRow {
+                    taskDetailLabel("Parent")
+                    taskDetailValue("#\(parentID)")
+                }
+            }
+            GridRow {
+                taskDetailLabel("Children")
+                taskDetailValue("\(task.childCount)")
+            }
+            GridRow {
+                taskDetailLabel("Waiters")
+                taskDetailValue("\(task.waiterCount)")
+            }
+            GridRow {
+                taskDetailLabel("Yields")
+                taskDetailValue("\(task.yieldCount)")
+            }
+            if let location = task.location {
+                GridRow {
+                    taskDetailLabel("Location")
+                    taskDetailValue(taskLocationText(location))
+                }
+            }
+            if let reason = taskSuspensionText(task.suspensionReason) {
+                GridRow {
+                    taskDetailLabel("Waiting")
+                    taskDetailValue(reason)
+                }
+            }
+            if let result = task.resultDescription, !result.isEmpty {
+                GridRow {
+                    taskDetailLabel("Result")
+                    taskDetailValue(result)
+                }
+            }
+            if let error = task.errorDescription, !error.isEmpty {
+                GridRow {
+                    taskDetailLabel("Error")
+                    taskDetailValue(error, color: .red)
+                }
+            }
+        }
+    }
+
+    private func suspendedFrameRow(_ frame: BASICSuspendedFrame, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("\(index)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, alignment: .leading)
+                Text(frame.kind)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 70, alignment: .leading)
+                Text(frame.name)
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let location = frame.resumeLocation {
+                    Text(taskLocationText(location))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            if !frame.localVariables.isEmpty {
+                DisclosureGroup("Locals") {
+                    VStack(spacing: 0) {
+                        ForEach(frame.localVariables) { variable in
+                            variableNode(variable, indent: 12)
+                            Divider()
+                        }
+                    }
+                }
+                .font(.caption2)
+                .padding(.leading, 26)
+            }
+        }
+        .font(.caption2)
+        .padding(.vertical, 3)
+    }
+
+    private func taskDetailLabel(_ value: String) -> some View {
+        Text(value)
+            .foregroundStyle(.secondary)
+            .frame(width: 62, alignment: .leading)
+    }
+
+    private func taskDetailValue(_ value: String, color: SwiftUI.Color = .primary) -> some View {
+        Text(value)
+            .foregroundStyle(color)
+            .lineLimit(2)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func taskLocationText(_ location: BASICBreakpointLocation) -> String {
+        var text = "line \(location.lineNumber)"
+        if location.statementNumber > 0 {
+            text += " stmt \(location.statementNumber)"
+        }
+        if let fileName = location.fileName,
+           !fileName.isEmpty {
+            text += " \(URL(fileURLWithPath: fileName).lastPathComponent)"
+        }
+        return text
+    }
+
+    private func taskMetadata(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private func taskStateColor(_ state: BASICTaskState) -> SwiftUI.Color {
+        switch state {
+        case .ready:
+            return .yellow
+        case .running:
+            return .accentColor
+        case .suspended:
+            return .orange
+        case .completed:
+            return .green
+        case .cancelled:
+            return .secondary
+        case .failed:
+            return .red
+        }
+    }
+
+    private func taskSuspensionText(_ reason: BASICTaskSuspensionReason?) -> String? {
+        guard let reason else { return nil }
+        switch reason {
+        case .debugger:
+            return "paused in debugger"
+        case .hostOperation(let operation):
+            return "waiting for host operation: \(operation)"
+        case .join(let taskID):
+            return "waiting for task #\(taskID)"
+        }
     }
 
     @ViewBuilder
@@ -3417,7 +3802,12 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
     }
 
     nonisolated func runSystemCommand(_ command: String) throws -> String {
-        try BASICSystemCommand.run(command, workingDirectory: workingDirectorySnapshot())
+        try BASICSystemCommand.run(
+            command,
+            workingDirectory: workingDirectorySnapshot(),
+            columns: screenColumns(),
+            rows: screenRows()
+        )
     }
 }
 

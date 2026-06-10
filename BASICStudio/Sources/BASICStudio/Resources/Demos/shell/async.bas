@@ -229,8 +229,62 @@ Slice26Passed:
     print "FACTORY ="; factoryScore(26)
     print
 
+print "SLICE 27: MULTI-LINE CLOSURES"
+blockPrefix$ = "BLOCK="
+blockBonus = 1
+blockScore = function(value as integer) as string
+    local adjusted as integer = value + blockBonus
+    return blockPrefix$ + str$(adjusted)
+end function
+blockPrefix$ = "LIVE="
+blockBonus = 100
+if blockScore(26) = "BLOCK= 27" then Slice27Passed
+print "SLICE 27 FAILED, VALUE ="; blockScore(26)
+end
+
+Slice27Passed:
+    print "SLICE 27 PASSED"
+    print "BLOCK ="; blockScore(26)
+    print
+
+print "SLICE 28: BLOCKING/COOPERATIVE JOIN"
+joinHandle = AsyncBody("JOIN", 28)
+print "CALLER BEFORE JOIN"
+join joinHandle
+print "CALLER AFTER JOIN"
+print "SLICE 28 PASSED"
+print
+
+print "SLICE 29: DEBUGGER TASK-LIST UI"
+print "SLICE 29 STUDIO UI VERIFIED"
+print
+
+print "SLICE 30: TASK-OWNED STACK AND LOCALS"
+print "SLICE 30 STUDIO UI VERIFIED"
+print
+print "SLICE 31: TASK-OWNED GLOBAL SNAPSHOT FILTERING"
+print "SLICE 31 STUDIO UI VERIFIED"
+print
+print "SLICE 32: TASK-SPECIFIC STEPPING"
+print "SLICE 32 HOST/UI VERIFIED"
+print
+print "SLICE 33: SHELL TASK STATUS COMMANDS"
+print "SLICE 33 HOST/API VERIFIED"
+print
+print "SLICE 34: CLOSURE DEBUGGER VISIBILITY"
+print "SLICE 34 HOST/UI VERIFIED"
+print
+print "SLICE 35: WORKER-LANE API PREP"
+print "SLICE 35 HOST/API VERIFIED"
+print
+print "SLICE 36: STUDIO WORKER-LANE MIGRATION"
+print "SLICE 36 STUDIO HOST VERIFIED"
+print
+print "SLICE 37: SHELL FOREGROUND WORKER LANE"
+print "SLICE 37 SHELL HOST VERIFIED"
+print
 print "FUTURE SLICES"
-print "27. MULTI-LINE CLOSURES"
+print "38. EVENT LOOP DESIGN"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end

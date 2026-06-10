@@ -19,6 +19,23 @@ private final class ThreadSafeStringLog: @unchecked Sendable {
     }
 }
 
+private final class ThreadSafeValueBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Value?
+
+    func store(_ value: Value) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
+    }
+
+    var value: Value? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+}
+
 @Suite("BASICCore")
 struct BASICCoreTests {
     @Test("Runs arithmetic and looping programs")
@@ -1862,6 +1879,36 @@ struct BASICCoreTests {
         #expect(host.output == ["hello"])
     }
 
+    @Test("SYSTEM command runner receives terminal dimensions")
+    func systemCommandRunnerReceivesTerminalDimensions() throws {
+        let output = try BASICSystemCommand.run("printf \"$COLUMNS,$LINES\"", columns: 132, rows: 43)
+
+        #expect(output == "132,43")
+    }
+
+    @Test("SYSTEM command runner presents a terminal to column-aware tools")
+    func systemCommandRunnerPresentsTerminalToColumnAwareTools() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIBasic-system-ls-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        for name in ["alpha", "beta", "gamma"] {
+            FileManager.default.createFile(
+                atPath: directory.appendingPathComponent(name).path,
+                contents: Data()
+            )
+        }
+
+        let output = try BASICSystemCommand.run("ls", workingDirectory: directory, columns: 80, rows: 24)
+        let lines = output.split(whereSeparator: \.isNewline)
+
+        #expect(output.contains("alpha"))
+        #expect(output.contains("beta"))
+        #expect(output.contains("gamma"))
+        #expect(lines.count == 1)
+    }
+
     @Test("SYSTEM$ function returns command output")
     func systemFunctionReturnsCommandOutput() {
         let host = TestHost()
@@ -2214,6 +2261,69 @@ struct BASICCoreTests {
         #expect(session.debugTasks.first { $0.id == child.id }?.waiterCount == 0)
     }
 
+    @Test("Suspended task frames retain local variable snapshots")
+    func suspendedTaskFramesRetainLocalVariableSnapshots() throws {
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        ])
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        print "parent"
+        yield
+        print "done"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 2, statementNumber: 0))
+        }
+
+        guard let parent = session.currentTaskHandle,
+              let child = session.createChildTask(name: "Child") else {
+            Issue.record("Expected parent and child handles")
+            return
+        }
+        let local = BASICVariableSnapshot(
+            path: "Local:count",
+            name: "count",
+            typeName: "INTEGER",
+            value: "30",
+            scope: .local,
+            children: []
+        )
+        let frame = BASICSuspendedFrame(
+            kind: "Function",
+            name: "Worker",
+            resumeLocation: BASICBreakpointLocation(lineNumber: 30, statementNumber: 0),
+            localScopeDepth: 1,
+            localVariables: [local]
+        )
+        let global = BASICVariableSnapshot(
+            path: "Global:total",
+            name: "total",
+            typeName: "DOUBLE",
+            value: "31",
+            scope: .global,
+            children: []
+        )
+
+        #expect(session.suspendTaskForAwait(
+            id: parent.id,
+            awaitingTaskID: child.id,
+            frames: [frame],
+            globalVariables: [global]
+        ))
+        let snapshot = session.debugTasks.first { $0.id == parent.id }
+        #expect(snapshot?.suspendedFrames.first?.localVariables == [local])
+        #expect(snapshot?.suspendedGlobalVariables == [global])
+
+        _ = session.requestTaskCancellation(id: parent.id)
+        _ = session.requestTaskCancellation(id: child.id)
+    }
+
     @Test("Completed awaited task wakes suspended parent")
     func completedAwaitedTaskWakesSuspendedParent() async throws {
         let host = TestHost()
@@ -2482,6 +2592,33 @@ struct BASICCoreTests {
             "CALLER AFTER HANDLE",
             "ASYNC BODY GAMMA 4",
             "RESULT =GAMMA: 4"
+        ])
+    }
+
+    @Test("JOIN waits for an async task and discards its result")
+    func joinWaitsForAsyncTaskAndDiscardsResult() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "slice 28"
+        handle = AsyncBody("JOINED", 28)
+        print "CALLER BEFORE JOIN"
+        join handle
+        print "CALLER AFTER JOIN"
+        async function AsyncBody(name$ as string, count as integer) as string
+            print "ASYNC BODY "; name$; " "; count
+            return name$ + ":" + str$(count)
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "slice 28",
+            "CALLER BEFORE JOIN",
+            "ASYNC BODY JOINED 28",
+            "CALLER AFTER JOIN"
         ])
     }
 
@@ -2769,6 +2906,66 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["LOCKED= 22"])
+    }
+
+    @Test("Debugger snapshots expose closure signatures and captures")
+    func debuggerSnapshotsExposeClosureSignaturesAndCaptures() throws {
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        ])
+        let session = BASICSession(host: TestHost())
+
+        session.program.loadSource("""
+        prefix$ = "LOCKED="
+        bonus = 5
+        formatter = function(value as integer) as string captures readonly prefix$, readonly bonus = prefix$ + str$(value + bonus)
+        yield
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 4, statementNumber: 0))
+        }
+
+        let formatter = try #require(session.debugGlobalVariables.first { $0.name == "formatter" })
+        #expect(formatter.typeName == "FUNCTION (value AS INTEGER) AS STRING")
+        #expect(formatter.value == "2 captures")
+        let signature = try #require(formatter.children.first { $0.name == "Signature" })
+        #expect(signature.value == "(value AS INTEGER) AS STRING")
+        let captures = try #require(formatter.children.first { $0.name == "Captured Values" })
+        #expect(captures.value == "2 captures")
+        #expect(captures.children.contains {
+            $0.name == "prefix$" && $0.typeName == "STRING" && $0.value == "LOCKED= [Read Only, rev 0]"
+        })
+        #expect(captures.children.contains {
+            $0.name == "bonus" && $0.typeName == "DOUBLE" && $0.value == "5 [Read Only, rev 0]"
+        })
+    }
+
+    @Test("BASIC closure expressions support multi-line bodies")
+    func basicClosureExpressionsSupportMultiLineBodies() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        function type ScoreFormatter(value as integer) as string
+        prefix$ = "BLOCK="
+        bonus = 4
+        local formatter as ScoreFormatter
+        formatter = function(value as integer) as string
+            local adjusted as integer = value + bonus
+            return prefix$ + str$(adjusted)
+        end function
+        prefix$ = "LIVE="
+        bonus = 100
+        print formatter(6)
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["BLOCK= 10"])
     }
 
     @Test("FUNCTION TYPE declarations type closure variables structurally")
@@ -3530,6 +3727,25 @@ struct BASICCoreTests {
         }
 
         #expect(host.output == ["one"])
+    }
+
+    @Test("Execution control can target stepping to a logical task")
+    func executionControlCanTargetSteppingToLogicalTask() throws {
+        let host = TestHost()
+        let control = BASICExecutionControl()
+        control.setMode(.stepInto)
+        control.setTargetTaskID(999)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "one"
+        print "two"
+        """)
+
+        try session.runProgram(executionControl: control)
+
+        #expect(host.output == ["one", "two"])
+        #expect(session.debugTasks.first?.state == .completed)
     }
 
     @Test("Execution steps through FOR NEXT loops")
@@ -5050,6 +5266,85 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["Runtime error: Code$ is PRIVATE"])
+    }
+
+    @Test("TASKS commands report logical task status")
+    func tasksCommandsReportLogicalTaskStatus() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "task body"
+        """)
+        session.submit("run")
+        session.submit("tasks")
+        session.submit("task 1")
+
+        let output = host.output.joined(separator: "\n")
+        #expect(output.contains("task body"))
+        #expect(output.contains("Tasks:"))
+        #expect(output.contains("#1 COMPLETED Program"))
+        #expect(output.contains("yields=0"))
+    }
+
+    @Test("BASIC worker lane rejects overlapping work")
+    func basicWorkerLaneRejectsOverlappingWork() {
+        let lane = BASICWorkerLane(label: "AIBasicTests.WorkerLane.Overlap")
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+
+        #expect(lane.submit {
+            started.signal()
+            _ = release.wait(timeout: .now() + 2)
+            finished.signal()
+        })
+        #expect(started.wait(timeout: .now() + 2) == .success)
+        #expect(lane.isRunning)
+        #expect(!lane.submit {})
+
+        release.signal()
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+    }
+
+    @Test("BASIC worker lane runs session programs asynchronously")
+    func basicWorkerLaneRunsSessionProgramsAsynchronously() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let lane = BASICWorkerLane(label: "AIBasicTests.WorkerLane.Session")
+        let resultBox = ThreadSafeValueBox<BASICWorkerLaneRunResult>()
+        let finished = DispatchSemaphore(value: 0)
+
+        session.program.loadSource("""
+        print "worker lane"
+        """)
+
+        #expect(session.runProgram(on: lane) { result in
+            resultBox.store(result)
+            finished.signal()
+        })
+
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(resultBox.value == .success)
+        #expect(host.output == ["worker lane"])
+        #expect(!lane.isRunning)
+    }
+
+    @Test("Foreground RUN commands can use a worker lane synchronously")
+    func foregroundRunCommandsCanUseWorkerLaneSynchronously() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let lane = BASICWorkerLane(label: "AIBasicTests.WorkerLane.Foreground")
+        session.foregroundRunLane = lane
+
+        session.program.loadSource("""
+        print "foreground lane"
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["foreground lane"])
+        #expect(!lane.isRunning)
+        #expect(session.debugTasks.first?.state == .completed)
     }
 }
 

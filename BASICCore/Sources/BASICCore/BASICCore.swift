@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// Errors produced while parsing, validating, or running BASIC source.
 public enum BASICError: Error, CustomStringConvertible, Equatable {
@@ -773,6 +776,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
     fileprivate let parameters: [FunctionParameter]
     fileprivate let returnType: BASICType
     fileprivate let bodyExpression: Expression?
+    fileprivate let bodyStatements: [ClosureBodyLine]?
     private let operation: BASICCapturedClosureOperation
 
     init(
@@ -785,6 +789,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
         self.parameters = []
         self.returnType = .scalar(.variant)
         self.bodyExpression = nil
+        self.bodyStatements = nil
         self.operation = operation
     }
 
@@ -800,6 +805,23 @@ final class BASICCapturedClosure: @unchecked Sendable {
         self.parameters = parameters
         self.returnType = returnType
         self.bodyExpression = bodyExpression
+        self.bodyStatements = nil
+        self.operation = { _, _ in .empty }
+    }
+
+    fileprivate init(
+        name: String,
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        bodyStatements: [ClosureBodyLine],
+        environment: BASICCapturedEnvironment
+    ) {
+        self.name = name
+        self.environment = environment
+        self.parameters = parameters
+        self.returnType = returnType
+        self.bodyExpression = nil
+        self.bodyStatements = bodyStatements
         self.operation = { _, _ in .empty }
     }
 
@@ -815,7 +837,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
     }
 
     fileprivate func call(arguments: [BASICValue], interpreter: BASICInterpreter) throws -> BASICValue {
-        guard let bodyExpression else {
+        guard bodyExpression != nil || bodyStatements != nil else {
             return try call(arguments: arguments)
         }
         guard arguments.count == parameters.count else {
@@ -843,11 +865,14 @@ final class BASICCapturedClosure: @unchecked Sendable {
             )
         }
         _ = localContextIndex
-        return try interpreter.runtime.coerce(
-            interpreter.evaluate(bodyExpression),
-            to: returnType,
-            variable: VariableName(name: name, column: 0)
-        )
+        if let bodyExpression {
+            return try interpreter.runtime.coerce(
+                interpreter.evaluate(bodyExpression),
+                to: returnType,
+                variable: VariableName(name: name, column: 0)
+            )
+        }
+        return try interpreter.callClosureBlock(self)
     }
 
     /// Debugger-facing snapshots of captured values.
@@ -2468,6 +2493,15 @@ private final class BASICRuntime {
                 scope: scope,
                 children: []
             )
+        case .closure(let closure):
+            return BASICVariableSnapshot(
+                path: path,
+                name: name,
+                typeName: value.debugTypeName,
+                value: "\(closure.capturedSnapshots.count) captures",
+                scope: scope,
+                children: closureSnapshotChildren(closure, scope: scope, parentPath: path)
+            )
         default:
             return BASICVariableSnapshot(
                 path: path,
@@ -2478,6 +2512,45 @@ private final class BASICRuntime {
                 children: []
             )
         }
+    }
+
+    private func closureSnapshotChildren(
+        _ closure: BASICCapturedClosure,
+        scope: BASICVariableScope,
+        parentPath: String
+    ) -> [BASICVariableSnapshot] {
+        var children = [
+            BASICVariableSnapshot(
+                path: "\(parentPath).Signature",
+                name: "Signature",
+                typeName: "FUNCTION",
+                value: closure.signatureDescription,
+                scope: scope,
+                children: []
+            )
+        ]
+        let captures = closure.capturedSnapshots
+        guard !captures.isEmpty else { return children }
+        children.append(
+            BASICVariableSnapshot(
+                path: "\(parentPath).Captured Values",
+                name: "Captured Values",
+                typeName: "CAPTURES",
+                value: "\(captures.count) captures",
+                scope: scope,
+                children: captures.map {
+                    BASICVariableSnapshot(
+                        path: "\(parentPath).Captured Values.\($0.name)",
+                        name: $0.name,
+                        typeName: $0.typeName,
+                        value: "\($0.value) [\($0.access.rawValue), rev \($0.revision)]",
+                        scope: scope,
+                        children: []
+                    )
+                }
+            )
+        )
+        return children
     }
 
     private func objectFieldSnapshots(
@@ -3157,19 +3230,55 @@ public extension BASICFileHost {
 public extension BASICSystemHost {
     /// Default SYSTEM implementation using `/bin/sh -lc`.
     func runSystemCommand(_ command: String) throws -> String {
-        try BASICSystemCommand.run(command)
+        let dimensions = self as? BASICConsoleHost
+        return try BASICSystemCommand.run(
+            command,
+            columns: dimensions?.screenColumns(),
+            rows: dimensions?.screenRows()
+        )
     }
 }
 
 /// Helper for running shell commands for hosts that allow SYSTEM support.
 public enum BASICSystemCommand {
     /// Runs a command through `/bin/sh -lc` and returns combined stdout/stderr text.
-    public static func run(_ command: String, workingDirectory: URL? = nil) throws -> String {
+    public static func run(
+        _ command: String,
+        workingDirectory: URL? = nil,
+        columns: Int? = nil,
+        rows: Int? = nil
+    ) throws -> String {
+        #if canImport(Darwin)
+        if columns != nil || rows != nil {
+            return try runWithPseudoTerminal(
+                command,
+                workingDirectory: workingDirectory,
+                columns: columns,
+                rows: rows
+            )
+        }
+        #endif
+
+        return try runWithPipe(
+            command,
+            workingDirectory: workingDirectory,
+            columns: columns,
+            rows: rows
+        )
+    }
+
+    private static func runWithPipe(
+        _ command: String,
+        workingDirectory: URL?,
+        columns: Int?,
+        rows: Int?
+    ) throws -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-lc", command]
         process.currentDirectoryURL = workingDirectory
+        process.environment = terminalEnvironment(columns: columns, rows: rows)
         process.standardOutput = pipe
         process.standardError = pipe
 
@@ -3182,6 +3291,68 @@ public enum BASICSystemCommand {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    #if canImport(Darwin)
+    private static func runWithPseudoTerminal(
+        _ command: String,
+        workingDirectory: URL?,
+        columns: Int?,
+        rows: Int?
+    ) throws -> String {
+        var master: Int32 = -1
+        var slave: Int32 = -1
+        var windowSize = winsize(
+            ws_row: UInt16(max(1, rows ?? 25)),
+            ws_col: UInt16(max(1, columns ?? 80)),
+            ws_xpixel: 0,
+            ws_ypixel: 0
+        )
+        guard openpty(&master, &slave, nil, nil, &windowSize) == 0 else {
+            throw BASICError.runtime("Could not create terminal for command")
+        }
+
+        let process = Process()
+        let masterHandle = FileHandle(fileDescriptor: master, closeOnDealloc: true)
+        let outputHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: true)
+        let errorHandle = FileHandle(fileDescriptor: dup(slave), closeOnDealloc: true)
+        let inputHandle = FileHandle(fileDescriptor: open("/dev/null", O_RDONLY), closeOnDealloc: true)
+
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-lc", command]
+        process.currentDirectoryURL = workingDirectory
+        process.environment = terminalEnvironment(columns: columns, rows: rows)
+        process.standardInput = inputHandle
+        process.standardOutput = outputHandle
+        process.standardError = errorHandle
+
+        do {
+            try process.run()
+        } catch {
+            outputHandle.closeFile()
+            errorHandle.closeFile()
+            inputHandle.closeFile()
+            throw BASICError.runtime("Could not execute command: \(error.localizedDescription)")
+        }
+
+        outputHandle.closeFile()
+        errorHandle.closeFile()
+        inputHandle.closeFile()
+        let data = masterHandle.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+    #endif
+
+    private static func terminalEnvironment(columns: Int?, rows: Int?) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        if let columns {
+            environment["COLUMNS"] = String(max(1, columns))
+        }
+        if let rows {
+            environment["LINES"] = String(max(1, rows))
+        }
+        return environment
     }
 }
 
@@ -3206,6 +3377,7 @@ public final class BASICExecutionControl: @unchecked Sendable {
     private var breakpoints: [BASICBreakpointLocation] = []
     private var ignoredBreakpointLocation: BASICBreakpointLocation?
     private var mode: BASICExecutionMode = .run
+    private var targetTaskID: Int?
 
     /// Creates an execution control with no pending breakpoints or break request.
     public init() {}
@@ -3254,6 +3426,13 @@ public final class BASICExecutionControl: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Restricts debugger stepping pauses to a specific logical BASIC task.
+    public func setTargetTaskID(_ taskID: Int?) {
+        lock.lock()
+        targetTaskID = taskID
+        lock.unlock()
+    }
+
     /// Suppresses one breakpoint stop at a matching location.
     public func ignoreBreakpointOnce(at location: BASICBreakpointLocation?) {
         lock.lock()
@@ -3289,9 +3468,12 @@ public final class BASICExecutionControl: @unchecked Sendable {
         }
     }
 
-    fileprivate func shouldPauseAfterStep(callDepth: Int) -> Bool {
+    fileprivate func shouldPauseAfterStep(callDepth: Int, taskID: Int?) -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        if let targetTaskID, targetTaskID != taskID {
+            return false
+        }
         switch mode {
         case .run:
             return false
@@ -3341,18 +3523,22 @@ public struct BASICSuspendedFrame: Equatable, Sendable {
     public let resumeLocation: BASICBreakpointLocation?
     /// Number of local scopes owned by this frame when it was captured.
     public let localScopeDepth: Int
+    /// Local variable snapshot for this frame at the suspension point.
+    public let localVariables: [BASICVariableSnapshot]
 
     /// Creates a suspended frame snapshot.
     public init(
         kind: String,
         name: String,
         resumeLocation: BASICBreakpointLocation? = nil,
-        localScopeDepth: Int = 0
+        localScopeDepth: Int = 0,
+        localVariables: [BASICVariableSnapshot] = []
     ) {
         self.kind = kind
         self.name = name
         self.resumeLocation = resumeLocation
         self.localScopeDepth = localScopeDepth
+        self.localVariables = localVariables
     }
 }
 
@@ -3380,6 +3566,8 @@ public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     public let waiterCount: Int
     /// Resumable BASIC frames captured while the task is suspended.
     public let suspendedFrames: [BASICSuspendedFrame]
+    /// Global variable snapshot captured while the task is suspended.
+    public let suspendedGlobalVariables: [BASICVariableSnapshot]
     /// User-facing summary of the result value for completed tasks.
     public let resultDescription: String?
     /// Result value for completed tasks, when available.
@@ -3448,6 +3636,7 @@ public final class BASICTask: @unchecked Sendable {
     private var yieldCountValue = 0
     private var suspensionReason: BASICTaskSuspensionReason?
     private var suspendedFrames: [BASICSuspendedFrame] = []
+    private var suspendedGlobalVariables: [BASICVariableSnapshot] = []
     private var resultValue: BASICValue?
     private var errorDescription: String?
 
@@ -3514,6 +3703,7 @@ public final class BASICTask: @unchecked Sendable {
             childCount: childCount,
             waiterCount: waiterCount,
             suspendedFrames: suspendedFrames,
+            suspendedGlobalVariables: suspendedGlobalVariables,
             resultDescription: resultValue?.description,
             resultValue: resultValue,
             errorDescription: errorDescription
@@ -3525,6 +3715,7 @@ public final class BASICTask: @unchecked Sendable {
         currentState = .running
         suspensionReason = nil
         suspendedFrames = []
+        suspendedGlobalVariables = []
         resultValue = nil
         errorDescription = nil
         lock.unlock()
@@ -3535,6 +3726,7 @@ public final class BASICTask: @unchecked Sendable {
         currentState = .ready
         suspensionReason = nil
         suspendedFrames = []
+        suspendedGlobalVariables = []
         resultValue = nil
         lock.unlock()
     }
@@ -3551,11 +3743,16 @@ public final class BASICTask: @unchecked Sendable {
         lock.unlock()
     }
 
-    fileprivate func markSuspended(_ reason: BASICTaskSuspensionReason = .debugger, frames: [BASICSuspendedFrame] = []) {
+    fileprivate func markSuspended(
+        _ reason: BASICTaskSuspensionReason = .debugger,
+        frames: [BASICSuspendedFrame] = [],
+        globalVariables: [BASICVariableSnapshot] = []
+    ) {
         lock.lock()
         currentState = .suspended
         suspensionReason = reason
         suspendedFrames = frames
+        suspendedGlobalVariables = globalVariables
         lock.unlock()
     }
 
@@ -3564,6 +3761,7 @@ public final class BASICTask: @unchecked Sendable {
         currentState = .completed
         suspensionReason = nil
         suspendedFrames = []
+        suspendedGlobalVariables = []
         resultValue = result
         lock.unlock()
     }
@@ -3573,6 +3771,7 @@ public final class BASICTask: @unchecked Sendable {
         currentState = .cancelled
         suspensionReason = nil
         suspendedFrames = []
+        suspendedGlobalVariables = []
         resultValue = nil
         lock.unlock()
     }
@@ -3582,6 +3781,7 @@ public final class BASICTask: @unchecked Sendable {
         currentState = .failed
         suspensionReason = nil
         suspendedFrames = []
+        suspendedGlobalVariables = []
         resultValue = nil
         errorDescription = String(describing: error)
         lock.unlock()
@@ -3771,6 +3971,17 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     /// Suspends a task while it awaits another logical task.
     @discardableResult
     public func suspendForAwait(id: Int, awaitingTaskID: Int, frame: BASICSuspendedFrame) -> Bool {
+        suspendForAwait(id: id, awaitingTaskID: awaitingTaskID, frames: [frame])
+    }
+
+    /// Suspends a task while it awaits another logical task and captures its resumable stack.
+    @discardableResult
+    public func suspendForAwait(
+        id: Int,
+        awaitingTaskID: Int,
+        frames: [BASICSuspendedFrame],
+        globalVariables: [BASICVariableSnapshot] = []
+    ) -> Bool {
         lock.lock()
         let task = tasks[id]
         let awaitedTask = tasks[awaitingTaskID]
@@ -3787,7 +3998,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             lock.unlock()
             return false
         }
-        task.markSuspended(.join(taskID: awaitingTaskID), frames: [frame])
+        task.markSuspended(.join(taskID: awaitingTaskID), frames: frames, globalVariables: globalVariables)
         return true
     }
 
@@ -3895,6 +4106,74 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             }
             lock.unlock()
         }
+    }
+}
+
+/// Result reported when a BASIC program submitted to a worker lane finishes.
+public enum BASICWorkerLaneRunResult: Equatable, Sendable {
+    /// The submitted program completed normally.
+    case success
+    /// The submitted program failed, broke, or stopped with a user-visible error.
+    case failure(String)
+}
+
+/// Serialized execution lane for running BASIC work away from a caller thread.
+public final class BASICWorkerLane: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let lock = NSLock()
+    private var running = false
+
+    /// Creates a worker lane backed by a serial dispatch queue.
+    public init(label: String = "AIBasic.BASICWorkerLane") {
+        self.queue = DispatchQueue(label: label, qos: .userInitiated)
+    }
+
+    /// True while a submitted operation is active on the lane.
+    public var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return running
+    }
+
+    /// Submits one operation to the lane, returning false if another operation is active.
+    @discardableResult
+    public func submit(_ operation: @escaping @Sendable () -> Void) -> Bool {
+        lock.lock()
+        guard !running else {
+            lock.unlock()
+            return false
+        }
+        running = true
+        lock.unlock()
+
+        queue.async { [weak self] in
+            operation()
+            self?.finishOperation()
+        }
+        return true
+    }
+
+    private func finishOperation() {
+        lock.lock()
+        running = false
+        lock.unlock()
+    }
+}
+
+private final class BASICWorkerLaneResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedResult: Result<Void, Error>?
+
+    func store(_ result: Result<Void, Error>) {
+        lock.lock()
+        storedResult = result
+        lock.unlock()
+    }
+
+    var result: Result<Void, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedResult
     }
 }
 
@@ -4138,7 +4417,7 @@ public final class BASICProgram: @unchecked Sendable {
     private static let listingKeywords: Set<String> = [
         "AS", "ASYNC", "AWAIT", "CASE", "CLASS", "CLOSE", "COLOR", "DATA", "DIM", "ELSE", "ELSEIF",
         "END", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB", "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE",
-        "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
+        "JOIN", "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
         "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
         "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
     ]
@@ -4312,6 +4591,8 @@ public final class BASICSession: @unchecked Sendable {
     private let fileState = BASICFileState()
     private let taskScheduler = BASICTaskScheduler()
     private var activeInterpreter: BASICInterpreter?
+    /// Optional lane used by synchronous foreground RUN commands.
+    public var foregroundRunLane: BASICWorkerLane?
 
     /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
@@ -4411,7 +4692,7 @@ public final class BASICSession: @unchecked Sendable {
                     fileState.lastFilePath = path
                     let diagnostics = self.diagnostics()
                     if diagnostics.isEmpty {
-                        try runProgram()
+                        try runProgramInForeground()
                     } else {
                         printDiagnostics()
                     }
@@ -4424,7 +4705,7 @@ public final class BASICSession: @unchecked Sendable {
             }
 
             if let startLine = try Self.runStartLine(from: trimmed) {
-                try runProgram(startLine: startLine)
+                try runProgramInForeground(startLine: startLine)
                 return true
             }
 
@@ -4438,6 +4719,19 @@ public final class BASICSession: @unchecked Sendable {
                 return true
             }
 
+            let upper = trimmed.uppercased()
+            if upper == "TASKS" || upper == "TASKS DETAIL" {
+                printTaskStatus(detail: upper == "TASKS DETAIL")
+                return true
+            }
+            let taskParts = trimmed.split(whereSeparator: { $0.isWhitespace })
+            if taskParts.count == 2,
+               taskParts[0].caseInsensitiveCompare("TASK") == .orderedSame,
+               let taskID = Int(taskParts[1]) {
+                printTaskDetail(id: taskID)
+                return true
+            }
+
             switch trimmed.uppercased() {
             case "NEW":
                 program.clear()
@@ -4446,7 +4740,7 @@ public final class BASICSession: @unchecked Sendable {
             case "CLEAR":
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PROMPT, FILES, SYSTEM, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PROMPT, FILES, SYSTEM, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             case "QUIT", "EXIT":
                 return false
@@ -4460,6 +4754,123 @@ public final class BASICSession: @unchecked Sendable {
         }
 
         return true
+    }
+
+    private func printTaskStatus(detail: Bool) {
+        let tasks = debugTasks.sorted { $0.id < $1.id }
+        guard !tasks.isEmpty else {
+            host.printLine("No tasks.")
+            return
+        }
+        host.printLine("Tasks:")
+        for task in tasks {
+            host.printLine(taskSummaryLine(task))
+            if detail {
+                for line in taskDetailLines(task).dropFirst() {
+                    host.printLine(line)
+                }
+            }
+        }
+    }
+
+    private func printTaskDetail(id: Int) {
+        guard let task = debugTasks.first(where: { $0.id == id }) else {
+            host.printLine("Task #\(id) not found.")
+            return
+        }
+        for line in taskDetailLines(task) {
+            host.printLine(line)
+        }
+    }
+
+    private func taskSummaryLine(_ task: BASICTaskSnapshot) -> String {
+        var pieces = ["#\(task.id)", task.state.rawValue.uppercased(), task.name]
+        if let parentID = task.parentID {
+            pieces.append("parent=#\(parentID)")
+        }
+        if let location = task.location {
+            pieces.append(taskLocationDescription(location))
+        }
+        pieces.append("yields=\(task.yieldCount)")
+        if task.childCount > 0 {
+            pieces.append("children=\(task.childCount)")
+        }
+        if task.waiterCount > 0 {
+            pieces.append("waiters=\(task.waiterCount)")
+        }
+        if let result = task.resultDescription {
+            pieces.append("result=\(shortTaskText(result))")
+        }
+        if let error = task.errorDescription {
+            pieces.append("error=\(shortTaskText(error))")
+        }
+        return pieces.joined(separator: " ")
+    }
+
+    private func taskDetailLines(_ task: BASICTaskSnapshot) -> [String] {
+        var lines = [taskSummaryLine(task)]
+        if let reason = task.suspensionReason {
+            lines.append("  Waiting: \(taskSuspensionDescription(reason))")
+        }
+        if !task.suspendedFrames.isEmpty {
+            lines.append("  Frames:")
+            for (index, frame) in task.suspendedFrames.enumerated() {
+                var frameLine = "    \(index): \(frame.kind) \(frame.name)"
+                if let location = frame.resumeLocation {
+                    frameLine += " \(taskLocationDescription(location))"
+                }
+                if frame.localScopeDepth > 0 {
+                    frameLine += " scopes=\(frame.localScopeDepth)"
+                }
+                lines.append(frameLine)
+                for variable in frame.localVariables {
+                    lines.append(contentsOf: taskVariableLines(variable, indent: "      "))
+                }
+            }
+        }
+        if !task.suspendedGlobalVariables.isEmpty {
+            lines.append("  Captured Globals:")
+            for variable in task.suspendedGlobalVariables {
+                lines.append(contentsOf: taskVariableLines(variable, indent: "    "))
+            }
+        }
+        return lines
+    }
+
+    private func taskVariableLines(_ variable: BASICVariableSnapshot, indent: String) -> [String] {
+        var lines = ["\(indent)\(variable.name) \(variable.typeName) = \(shortTaskText(variable.value))"]
+        for child in variable.children {
+            lines.append(contentsOf: taskVariableLines(child, indent: indent + "  "))
+        }
+        return lines
+    }
+
+    private func taskLocationDescription(_ location: BASICBreakpointLocation) -> String {
+        var text = "line=\(location.lineNumber)"
+        if location.statementNumber > 0 {
+            text += ":\(location.statementNumber)"
+        }
+        if let fileName = location.fileName, !fileName.isEmpty {
+            text += " file=\(fileName)"
+        }
+        return text
+    }
+
+    private func taskSuspensionDescription(_ reason: BASICTaskSuspensionReason) -> String {
+        switch reason {
+        case .debugger:
+            return "debugger"
+        case .hostOperation(let operation):
+            return "host operation \(operation)"
+        case .join(let taskID):
+            return "task #\(taskID)"
+        }
+    }
+
+    private func shortTaskText(_ text: String) -> String {
+        let collapsed = text.replacingOccurrences(of: "\n", with: "\\n")
+        guard collapsed.count > 48 else { return collapsed }
+        return String(collapsed.prefix(45)) + "..."
     }
 
     /// Starts the program from the beginning or an optional numbered line.
@@ -4490,6 +4901,64 @@ public final class BASICSession: @unchecked Sendable {
         } catch {
             activeInterpreter = nil
             throw error
+        }
+    }
+
+    /// Runs the program synchronously, using the configured foreground lane when present.
+    public func runProgramInForeground(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
+        guard let foregroundRunLane else {
+            try runProgram(startLine: startLine, executionControl: executionControl)
+            return
+        }
+        try runProgramSynchronously(on: foregroundRunLane, startLine: startLine, executionControl: executionControl)
+    }
+
+    /// Submits a program run to a serialized worker lane.
+    @discardableResult
+    public func runProgram(
+        on lane: BASICWorkerLane,
+        startLine: Int? = nil,
+        executionControl: BASICExecutionControl? = nil,
+        completion: @escaping @Sendable (BASICWorkerLaneRunResult) -> Void
+    ) -> Bool {
+        lane.submit { [self] in
+            do {
+                try runProgram(startLine: startLine, executionControl: executionControl)
+                completion(.success)
+            } catch {
+                completion(.failure(String(describing: error)))
+            }
+        }
+    }
+
+    /// Submits a program run to a serialized worker lane and blocks until it finishes.
+    public func runProgramSynchronously(
+        on lane: BASICWorkerLane,
+        startLine: Int? = nil,
+        executionControl: BASICExecutionControl? = nil
+    ) throws {
+        let finished = DispatchSemaphore(value: 0)
+        let resultBox = BASICWorkerLaneResultBox()
+        let accepted = lane.submit { [self] in
+            do {
+                try runProgram(startLine: startLine, executionControl: executionControl)
+                resultBox.store(.success(()))
+            } catch {
+                resultBox.store(.failure(error))
+            }
+            finished.signal()
+        }
+        guard accepted else {
+            throw BASICError.runtime("Program is already running")
+        }
+        finished.wait()
+        switch resultBox.result {
+        case .success:
+            return
+        case .failure(let error):
+            throw error
+        case .none:
+            throw BASICError.runtime("Program finished without a result")
         }
     }
 
@@ -4613,6 +5082,22 @@ public final class BASICSession: @unchecked Sendable {
     @discardableResult
     public func suspendTaskForAwait(id: Int, awaitingTaskID: Int, frame: BASICSuspendedFrame) -> Bool {
         taskScheduler.suspendForAwait(id: id, awaitingTaskID: awaitingTaskID, frame: frame)
+    }
+
+    /// Suspends a logical task while it awaits another logical task and captures debugger snapshots.
+    @discardableResult
+    public func suspendTaskForAwait(
+        id: Int,
+        awaitingTaskID: Int,
+        frames: [BASICSuspendedFrame],
+        globalVariables: [BASICVariableSnapshot] = []
+    ) -> Bool {
+        taskScheduler.suspendForAwait(
+            id: id,
+            awaitingTaskID: awaitingTaskID,
+            frames: frames,
+            globalVariables: globalVariables
+        )
     }
 
     /// Resumes a suspended logical task after its wait condition is satisfied.
@@ -4955,6 +5440,7 @@ public final class BASICInterpreter {
     private var isPrepared = false
     private var currentSourceFileName: String?
     private var currentLogModuleOverride: String?
+    private var lastParseErrorLocation: (fileName: String?, lineNumber: Int)?
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
@@ -5002,6 +5488,10 @@ public final class BASICInterpreter {
 
         for (index, line) in rootLines.enumerated() {
             do {
+                var closureHeaderParser = try Parser(source: line.source)
+                if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
+                    continue
+                }
                 var parser = try Parser(source: line.source)
                 _ = try parser.parseStatement()
             } catch let error as BASICError {
@@ -5029,37 +5519,23 @@ public final class BASICInterpreter {
 
         do {
             let sourceLines = try expandedProgramLines()
-            var parsed: [ParsedLine] = []
-            for (index, line) in sourceLines.enumerated() {
-                do {
-                    var parser = try Parser(source: line.source)
-                    let statement = try parser.parseStatement()
-                    parsed += ParsedLine.flatten(
-                        number: line.number,
-                        fileName: line.fileName,
-                        sourceLineNumber: line.sourceLineNumber ?? index + 1,
-                        isImported: line.isImported,
-                        statement: statement
+            let parsed: [ParsedLine]
+            do {
+                parsed = try parsedProgramLines(from: sourceLines)
+            } catch let error as BASICError {
+                let location = lastParseErrorLocation
+                diagnostics.append(
+                    diagnostic(
+                        for: error,
+                        fileName: location?.fileName,
+                        sourceLineNumber: location?.lineNumber ?? 1,
+                        fallbackColumn: 0
                     )
-                } catch let error as BASICError {
-                    diagnostics.append(
-                        diagnostic(
-                            for: error,
-                            fileName: line.fileName,
-                            sourceLineNumber: line.sourceLineNumber ?? index + 1,
-                            fallbackColumn: 0
-                        )
-                    )
-                } catch {
-                    diagnostics.append(
-                        BASICDiagnostic(
-                            fileName: line.fileName,
-                            lineNumber: line.sourceLineNumber ?? index + 1,
-                            column: 0,
-                            message: "Unexpected error: \(error)"
-                        )
-                    )
-                }
+                )
+                return diagnostics
+            } catch {
+                diagnostics.append(BASICDiagnostic(lineNumber: 1, column: 0, message: "Unexpected error: \(error)"))
+                return diagnostics
             }
             guard diagnostics.isEmpty else { return diagnostics }
 
@@ -5083,7 +5559,15 @@ public final class BASICInterpreter {
 
             return diagnostics
         } catch let error as BASICError {
-            return [diagnostic(for: error, sourceLineNumber: 1, fallbackColumn: 0)]
+            let location = lastParseErrorLocation
+            return [
+                diagnostic(
+                    for: error,
+                    fileName: location?.fileName,
+                    sourceLineNumber: location?.lineNumber ?? 1,
+                    fallbackColumn: 0
+                )
+            ]
         } catch {
             return [BASICDiagnostic(lineNumber: 1, column: 0, message: "Unexpected error: \(error)")]
         }
@@ -5168,19 +5652,99 @@ public final class BASICInterpreter {
         return parsed.first.map { ($0.fileName, $0.sourceLineNumber) }
     }
 
-    fileprivate func prepare(startLine: Int?) throws {
-        let sourceLines = try expandedProgramLines()
-        let parsed = try sourceLines.enumerated().flatMap { index, line in
+    private func parsedProgramLines(from sourceLines: [ProgramLine]) throws -> [ParsedLine] {
+        lastParseErrorLocation = nil
+        var parsed: [ParsedLine] = []
+        var index = 0
+        while index < sourceLines.count {
+            let line = sourceLines[index]
+            var headerParser = try Parser(source: line.source)
+            let header: (
+                kind: AssignmentKind,
+                variable: VariableName,
+                declaredType: BASICType?,
+                parameters: [FunctionParameter],
+                returnType: BASICType,
+                captures: [ClosureCaptureSpec]
+            )?
+            do {
+                header = try headerParser.parseClosureBlockAssignmentHeader()
+            } catch let error as BASICError {
+                lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? index + 1)
+                throw error
+            }
+            if let header {
+                var body: [ClosureBodyLine] = []
+                index += 1
+                var foundEnd = false
+                while index < sourceLines.count {
+                    let bodyLine = sourceLines[index]
+                    var parser = try Parser(source: bodyLine.source)
+                    let statement: Statement
+                    do {
+                        statement = try parser.parseStatement()
+                    } catch let error as BASICError {
+                        lastParseErrorLocation = (bodyLine.fileName, bodyLine.sourceLineNumber ?? index + 1)
+                        throw error
+                    }
+                    if case .endFunction = statement {
+                        foundEnd = true
+                        break
+                    }
+                    body.append(
+                        ClosureBodyLine(
+                            fileName: bodyLine.fileName,
+                            sourceLineNumber: bodyLine.sourceLineNumber ?? index + 1,
+                            statement: statement
+                        )
+                    )
+                    index += 1
+                }
+                guard foundEnd else {
+                    throw BASICError.runtime("FUNCTION closure without END FUNCTION")
+                }
+                parsed += ParsedLine.flatten(
+                    number: line.number,
+                    fileName: line.fileName,
+                    sourceLineNumber: line.sourceLineNumber ?? parsed.count + 1,
+                    isImported: line.isImported,
+                    statement: .closureAssignment(
+                        header.kind,
+                        header.variable,
+                        header.declaredType,
+                        header.parameters,
+                        header.returnType,
+                        header.captures,
+                        body
+                    )
+                )
+                index += 1
+                continue
+            }
+
             var parser = try Parser(source: line.source)
-            let statement = try parser.parseStatement()
-            return ParsedLine.flatten(
+            let statement: Statement
+            do {
+                statement = try parser.parseStatement()
+            } catch let error as BASICError {
+                lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? index + 1)
+                throw error
+            }
+            parsed += ParsedLine.flatten(
                 number: line.number,
                 fileName: line.fileName,
                 sourceLineNumber: line.sourceLineNumber ?? index + 1,
                 isImported: line.isImported,
                 statement: statement
             )
+            index += 1
         }
+        return parsed
+    }
+
+    fileprivate func prepare(startLine: Int?) throws {
+        let sourceLines = try expandedProgramLines()
+        let parsed = try parsedProgramLines(from: sourceLines)
         parsedLines = parsed
         lineIndexByNumber = [:]
         lineIndexByLabel = [:]
@@ -5257,12 +5821,21 @@ public final class BASICInterpreter {
         for line in lines {
             let parsedStatement: Statement
             do {
-                var parser = try Parser(source: line.source)
-                parsedStatement = try parser.parseStatement()
-            } catch {
-                if line.isImported {
+                var closureHeaderParser = try Parser(source: line.source)
+                if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     expanded.append(line)
                     continue
+                }
+                var parser = try Parser(source: line.source)
+                parsedStatement = try parser.parseStatement()
+            } catch let error as BASICError {
+                if line.isImported {
+                    lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? expanded.count + 1)
+                }
+                throw error
+            } catch {
+                if line.isImported {
+                    lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? expanded.count + 1)
                 }
                 throw error
             }
@@ -5449,7 +6022,7 @@ public final class BASICInterpreter {
                 throw error
             }
 
-            if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
+            if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth, taskID: task?.id) == true {
                 if pc < parsedLines.count {
                     updateExecutionLocation(parsedLines[pc])
                     if let task {
@@ -5643,6 +6216,36 @@ public final class BASICInterpreter {
         return snapshots
     }
 
+    private func currentSuspendedFrames(
+        fallbackKind: String,
+        fallbackName: String,
+        fallbackLocation: BASICBreakpointLocation?
+    ) -> [BASICSuspendedFrame] {
+        let stack = currentDebugCallStack()
+        let frameLocals = currentDebugFrameLocalVariables()
+        guard !stack.isEmpty else {
+            return [
+                BASICSuspendedFrame(
+                    kind: fallbackKind,
+                    name: fallbackName,
+                    resumeLocation: fallbackLocation,
+                    localScopeDepth: functionStack.count,
+                    localVariables: runtime.localSnapshots()
+                )
+            ]
+        }
+
+        return stack.enumerated().map { offset, frame in
+            BASICSuspendedFrame(
+                kind: frame.kind,
+                name: frame.name,
+                resumeLocation: frame.location ?? fallbackLocation,
+                localScopeDepth: max(0, functionStack.count - offset),
+                localVariables: frameLocals[safe: offset] ?? []
+            )
+        }
+    }
+
     private func debugFrameKind(for definition: FunctionDefinition) -> String {
         guard definition.ownerClassName != nil else { return "Function" }
         if definition.normalizedName == "NEW" { return "Constructor" }
@@ -5818,6 +6421,34 @@ public final class BASICInterpreter {
             }
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
             return .next
+        case .closureAssignment(let kind, let variable, let declaredType, let parameters, let returnType, let captures, let body):
+            let environment = BASICCapturedEnvironment()
+            let parameterNames = Set(parameters.map { $0.variable.normalized })
+            let captureSpecs = captures.isEmpty
+                ? capturedVariableNames(in: body)
+                    .filter { !parameterNames.contains($0.normalized) }
+                    .map { ClosureCaptureSpec(variable: $0, access: .readOnly) }
+                : captures.filter { !parameterNames.contains($0.variable.normalized) }
+            for capture in captureSpecs {
+                _ = environment.capture(
+                    name: capture.variable.name,
+                    value: runtime.value(for: capture.variable),
+                    access: capture.access
+                )
+            }
+            try runtime.assign(
+                kind: kind,
+                variable: variable,
+                declaredType: declaredType,
+                value: .closure(BASICCapturedClosure(
+                    name: variable.name,
+                    parameters: parameters,
+                    returnType: returnType,
+                    bodyStatements: body,
+                    environment: environment
+                ))
+            )
+            return .next
         case .referenceAssignment(let reference, let expression):
             let value = try expression.map(evaluate)
             try runtime.assign(
@@ -5920,6 +6551,9 @@ public final class BASICInterpreter {
                 host?.print(output, terminator: "")
                 updateOutputColumn(text: output, terminator: "")
             }
+            return .next
+        case .join(let expression):
+            try joinTask(try evaluate(expression))
             return .next
         case .yield:
             task?.recordYield()
@@ -7321,7 +7955,7 @@ public final class BASICInterpreter {
                     return resultValue()
                 }
 
-                if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth) == true {
+                if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth, taskID: task?.id) == true {
                     if pc < definition.endIndex {
                         updateExecutionLocation(parsed[pc])
                         throw BASICError.stepComplete(parsed[pc].breakpointLocation)
@@ -7336,6 +7970,77 @@ public final class BASICInterpreter {
         }
 
         return resultValue()
+    }
+
+    fileprivate func callClosureBlock(_ closure: BASICCapturedClosure) throws -> BASICValue {
+        guard let bodyStatements = closure.bodyStatements else {
+            throw BASICError.runtime("Closure has no block body")
+        }
+        let returnType = resolvedDeclaredType(closure.returnType)
+        let definition = FunctionDefinition(
+            displayName: closure.name,
+            normalizedName: closure.name.uppercased(),
+            parameters: closure.parameters,
+            returnType: returnType,
+            startIndex: 0,
+            endIndex: bodyStatements.count
+        )
+        functionStack.append(FunctionFrame(
+            definition: definition,
+            receiverClassName: nil,
+            localContextIndex: 0,
+            returnValue: runtime.defaultValue(for: returnType)
+        ))
+        defer { _ = functionStack.popLast() }
+
+        let parsed = bodyStatements.enumerated().map { index, line in
+            ParsedLine(
+                number: nil,
+                displayLineNumber: line.sourceLineNumber,
+                fileName: line.fileName,
+                sourceLineNumber: line.sourceLineNumber,
+                statementNumber: index,
+                isImported: false,
+                statement: line.statement
+            )
+        }
+        var labelIndexByName: [String: Int] = [:]
+        for (index, line) in parsed.enumerated() {
+            if let label = line.statement.label {
+                labelIndexByName[label.uppercased()] = index
+            }
+        }
+
+        var pc = 0
+        while pc < parsed.count {
+            let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
+            switch flow {
+            case .next:
+                pc += 1
+            case .jump(let index):
+                pc = index
+            case .gotoLabel(let label):
+                guard let index = labelIndexByName[label.uppercased()] else {
+                    throw BASICError.missingLabel(label)
+                }
+                pc = index
+            case .goto(let line):
+                throw BASICError.runtime("GOTO line \(line) is not supported inside closure bodies yet")
+            case .returnTo:
+                throw BASICError.runtime("RETURN without GOSUB")
+            case .exitSelect:
+                guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                    throw BASICError.runtime("EXIT SELECT without SELECT")
+                }
+                pc = index + 1
+            case .functionReturn, .end:
+                let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: returnType)
+                return try runtime.coerce(value, to: returnType, variable: VariableName(name: closure.name, column: 0))
+            }
+        }
+
+        let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: returnType)
+        return try runtime.coerce(value, to: returnType, variable: VariableName(name: closure.name, column: 0))
     }
 
     private func assignFunctionReturnIfNeeded(variable: VariableName, declaredType: BASICType?, value: BASICValue?) throws -> Bool {
@@ -8351,13 +9056,69 @@ public final class BASICInterpreter {
                         throw BASICError.runtime("AWAIT requires a running BASIC task")
                     }
                     suspendedTask = currentTask
-                    let frame = BASICSuspendedFrame(
-                        kind: "Expression",
-                        name: "AWAIT",
-                        resumeLocation: currentTask.snapshot().location,
-                        localScopeDepth: functionStack.count
+                    let frames = currentSuspendedFrames(
+                        fallbackKind: "Expression",
+                        fallbackName: "AWAIT",
+                        fallbackLocation: currentTask.snapshot().location
                     )
-                    _ = taskScheduler.suspendForAwait(id: currentTask.id, awaitingTaskID: taskID, frame: frame)
+                    _ = taskScheduler.suspendForAwait(
+                        id: currentTask.id,
+                        awaitingTaskID: taskID,
+                        frames: frames,
+                        globalVariables: runtime.globalSnapshots()
+                    )
+                    didSuspend = true
+                }
+                try executionControl?.checkBreak()
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+        }
+    }
+
+    private func joinTask(_ value: BASICValue) throws {
+        guard let taskScheduler, let number = value.number else {
+            throw BASICError.runtime("JOIN requires a task handle")
+        }
+        let taskID = Int(number)
+        guard taskID > 0, Double(taskID) == number else {
+            throw BASICError.runtime("JOIN requires a task handle")
+        }
+
+        var suspendedTask: BASICTask?
+        var didSuspend = false
+        defer {
+            if didSuspend, let suspendedTask {
+                taskScheduler.markRunning(suspendedTask)
+            }
+        }
+
+        while true {
+            switch taskScheduler.joinState(for: taskID) {
+            case .missing:
+                throw BASICError.runtime("JOIN requires a known task handle")
+            case .completed:
+                return
+            case .cancelled:
+                throw BASICError.runtime("Joined task was cancelled")
+            case .failed(let message):
+                throw BASICError.runtime(message.map { "Joined task failed: \($0)" } ?? "Joined task failed")
+            case .waiting:
+                if !didSuspend {
+                    guard let currentTask = taskScheduler.currentTask else {
+                        throw BASICError.runtime("JOIN requires a running BASIC task")
+                    }
+                    suspendedTask = currentTask
+                    let frames = currentSuspendedFrames(
+                        fallbackKind: "Statement",
+                        fallbackName: "JOIN",
+                        fallbackLocation: currentTask.snapshot().location
+                    )
+                    _ = taskScheduler.suspendForAwait(
+                        id: currentTask.id,
+                        awaitingTaskID: taskID,
+                        frames: frames,
+                        globalVariables: runtime.globalSnapshots()
+                    )
                     didSuspend = true
                 }
                 try executionControl?.checkBreak()
@@ -8420,6 +9181,170 @@ public final class BASICInterpreter {
         }
 
         visit(expression)
+        return ordered
+    }
+
+    private func capturedVariableNames(in body: [ClosureBodyLine]) -> [VariableName] {
+        var ordered: [VariableName] = []
+        var seen: Set<String> = []
+        var localNames: Set<String> = []
+
+        func append(_ variable: VariableName) {
+            guard !seen.contains(variable.normalized),
+                  !localNames.contains(variable.normalized),
+                  builtInConstant(named: variable.normalized) == nil else {
+                return
+            }
+            seen.insert(variable.normalized)
+            ordered.append(variable)
+        }
+
+        func visit(_ expression: Expression) {
+            for variable in capturedVariableNames(in: expression) {
+                append(variable)
+            }
+        }
+
+        func visitPrintParts(_ parts: [PrintPart]) {
+            for part in parts {
+                if case .expression(let expression) = part {
+                    visit(expression)
+                }
+            }
+        }
+
+        func visit(_ point: GraphicsPoint) {
+            visit(point.x)
+            visit(point.y)
+        }
+
+        func visit(_ target: ReadTarget, capturesBase: Bool) {
+            switch target {
+            case .variable(let variable):
+                if capturesBase {
+                    append(variable)
+                }
+            case .reference(let reference):
+                if capturesBase {
+                    append(reference.base)
+                }
+                reference.indexes.forEach(visit)
+                reference.fieldIndexes.flatMap { $0 }.forEach(visit)
+            }
+        }
+
+        func visit(_ action: ConditionalAction) {
+            if case .statement(let statement) = action {
+                visit(statement)
+            }
+        }
+
+        func visit(_ statement: Statement) {
+            switch statement {
+            case .assignment(let kind, let variable, _, let expression):
+                if kind == .local {
+                    localNames.insert(variable.normalized)
+                } else if kind == .bare, expression == nil {
+                    localNames.insert(variable.normalized)
+                }
+                expression.map(visit)
+            case .closureAssignment(let kind, let variable, _, _, _, _, let nestedBody):
+                if kind == .local {
+                    localNames.insert(variable.normalized)
+                }
+                for variable in capturedVariableNames(in: nestedBody) {
+                    append(variable)
+                }
+            case .referenceAssignment(let reference, let expression):
+                append(reference.base)
+                reference.indexes.forEach(visit)
+                reference.fieldIndexes.flatMap { $0 }.forEach(visit)
+                expression.map(visit)
+            case .print(let parts), .log(_, let parts), .printFile(_, let parts), .putFile(_, let parts):
+                visitPrintParts(parts)
+            case .printUsing(let format, let values, _), .printFileUsing(_, let format, let values, _):
+                visit(format)
+                values.forEach(visit)
+            case .module(let expression), .screen(let expression), .color(let expression), .load(let expression),
+                 .system(let expression), .error(let expression):
+                visit(expression)
+            case .randomize(let expression), .save(let expression), .cd(let expression), .closeFile(let expression):
+                expression.map(visit)
+            case .locate(let row, let column):
+                visit(row)
+                visit(column)
+            case .pset(let point, let color), .preset(let point, let color):
+                visit(point)
+                color.map(visit)
+            case .line(let start, let end, let color):
+                visit(start)
+                visit(end)
+                color.map(visit)
+            case .dim(_, let variable, let dimensions, _):
+                localNames.insert(variable.normalized)
+                dimensions.compactMap { $0 }.forEach(visit)
+            case .input(let prompt, let target):
+                prompt.map(visit)
+                visit(target, capturesBase: false)
+            case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength, let defaultValue):
+                prompt.map(visit)
+                fieldLength.map(visit)
+                maxLength.map(visit)
+                defaultValue.map(visit)
+                visit(target, capturesBase: false)
+                exitTarget.map { visit($0, capturesBase: false) }
+            case .openFile(let path, _, let number):
+                visit(path)
+                visit(number)
+            case .getFile(let number, let targets), .inputFile(let number, let targets):
+                visit(number)
+                targets.forEach { visit($0, capturesBase: false) }
+            case .resetFile(let number):
+                visit(number)
+            case .lineInputFile(let number, let target):
+                visit(number)
+                visit(target, capturesBase: false)
+            case .expression(let expression), .returnValue(let expression), .selectCase(let expression),
+                 .blockIf(let expression):
+                visit(expression)
+            case .ifThen(let condition, let thenAction, let elseAction):
+                visit(condition)
+                visit(thenAction)
+                elseAction.map(visit)
+            case .forLoop(let variable, let start, let end, let step):
+                localNames.insert(variable.normalized)
+                visit(start)
+                visit(end)
+                step.map(visit)
+            case .caseClause(let clauses):
+                for clause in clauses {
+                    switch clause {
+                    case .equals(let expression), .comparison(_, let expression):
+                        visit(expression)
+                    case .range(let lower, let upper):
+                        visit(lower)
+                        visit(upper)
+                    }
+                }
+            case .labeled(_, let nested):
+                visit(nested)
+            case .sequence(let statements):
+                statements.forEach(visit)
+            case .read(let targets):
+                targets.forEach { visit($0, capturesBase: false) }
+            case .computedGoto(_, let expression), .computedGosub(_, let expression), .elseIf(let expression):
+                visit(expression)
+            case .defFunction(_, _, _, let body):
+                visit(body)
+            default:
+                break
+            }
+        }
+
+        for line in body {
+            visit(line.statement)
+        }
+
         return ordered
     }
 
@@ -8695,6 +9620,7 @@ private indirect enum Statement: Equatable {
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
+    case closureAssignment(AssignmentKind, VariableName, BASICType?, [FunctionParameter], BASICType, [ClosureCaptureSpec], [ClosureBodyLine])
     case referenceAssignment(VariableReference, Expression?)
     case expression(Expression)
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
@@ -8716,6 +9642,7 @@ private indirect enum Statement: Equatable {
     case cd(Expression?)
     case files
     case system(Expression)
+    case join(Expression)
     case yield
     case randomize(Expression?)
     case goto(Int)
@@ -8749,6 +9676,12 @@ private indirect enum Statement: Equatable {
         if case .labeled(let name, _) = self { return name }
         return nil
     }
+}
+
+private struct ClosureBodyLine: Equatable {
+    let fileName: String?
+    let sourceLineNumber: Int
+    let statement: Statement
 }
 
 private enum CaseClause: Equatable {
@@ -9059,6 +9992,50 @@ private struct Parser {
         return .sequence(statements)
     }
 
+    mutating func parseClosureBlockAssignmentHeader() throws -> (
+        kind: AssignmentKind,
+        variable: VariableName,
+        declaredType: BASICType?,
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        captures: [ClosureCaptureSpec]
+    )? {
+        let start = current
+        let kind: AssignmentKind
+        if matchIdentifier("LET") {
+            kind = .letValue
+        } else if matchIdentifier("LOCAL") {
+            kind = .local
+        } else if matchIdentifier("GLOBAL") {
+            kind = .global
+        } else {
+            kind = .bare
+        }
+
+        guard case .identifier = peek else {
+            current = start
+            return nil
+        }
+
+        let variable = try consumeVariableName("Expected variable name")
+        let declaredType = try parseOptionalType(for: variable)
+        guard match(.equals) else {
+            current = start
+            return nil
+        }
+        guard matchIdentifier("FUNCTION") else {
+            current = start
+            return nil
+        }
+        let signature = try parseClosureSignature()
+        guard isStatementEnd else {
+            current = start
+            return nil
+        }
+        try consumeEnd()
+        return (kind, variable, declaredType, signature.parameters, signature.returnType, signature.captures)
+    }
+
     private mutating func parseSingleStatement() throws -> Statement {
         if isAtEnd { return .empty }
         if case .identifier(let name) = peek, peekNext == .colon, !Self.statementKeywords.contains(name.uppercased()) {
@@ -9332,6 +10309,9 @@ private struct Parser {
         }
         if matchIdentifier("SYSTEM") {
             return .system(try parseExpression())
+        }
+        if matchIdentifier("JOIN") {
+            return .join(try parseExpression())
         }
         if matchIdentifier("YIELD") {
             return .yield
@@ -10231,6 +11211,16 @@ private struct Parser {
     }
 
     private mutating func parseClosureExpression() throws -> Expression {
+        let signature = try parseClosureSignature()
+        guard match(.equals) else { throw syntax("Expected = after closure signature") }
+        return .closure(parameters: signature.parameters, returnType: signature.returnType, captures: signature.captures, body: try parseExpression())
+    }
+
+    private mutating func parseClosureSignature() throws -> (
+        parameters: [FunctionParameter],
+        returnType: BASICType,
+        captures: [ClosureCaptureSpec]
+    ) {
         guard match(.leftParen) else { throw syntax("Expected ( after FUNCTION") }
         var parameters: [FunctionParameter] = []
         if !match(.rightParen) {
@@ -10250,8 +11240,7 @@ private struct Parser {
             returnType = .scalar(.variant)
         }
         let captures = try parseClosureCaptures()
-        guard match(.equals) else { throw syntax("Expected = after closure signature") }
-        return .closure(parameters: parameters, returnType: returnType, captures: captures, body: try parseExpression())
+        return (parameters, returnType, captures)
     }
 
     private mutating func parseClosureCaptures() throws -> [ClosureCaptureSpec] {
@@ -10510,7 +11499,7 @@ private struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]

@@ -575,10 +575,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 }
 
 let host = ConsoleHost()
+let shellExecutionLane = BASICWorkerLane(label: "AIBasic.Shell.Execution")
 let session = BASICSession(
     host: host,
     promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
 )
+session.foregroundRunLane = shellExecutionLane
 
 func demoFileName(for name: String) -> String {
     name.hasSuffix(".bas") ? name : "\(name).bas"
@@ -795,7 +797,7 @@ if arguments.first == "--demo" {
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
-        try session.runProgram()
+        try session.runProgramInForeground()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
@@ -812,7 +814,7 @@ if let scriptPath = arguments.first {
         if printDiagnosticsIfNeeded() {
             exit(1)
         }
-        try session.runProgram()
+        try session.runProgramInForeground()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
