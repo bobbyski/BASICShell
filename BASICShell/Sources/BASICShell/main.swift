@@ -582,6 +582,10 @@ let session = BASICSession(
 )
 session.foregroundRunLane = shellExecutionLane
 
+func drainSessionEventLoop() {
+    _ = session.eventLoop.runUntilIdle()
+}
+
 func demoFileName(for name: String) -> String {
     name.hasSuffix(".bas") ? name : "\(name).bas"
 }
@@ -798,6 +802,7 @@ if arguments.first == "--demo" {
             exit(1)
         }
         try session.runProgramInForeground()
+        drainSessionEventLoop()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
@@ -815,6 +820,7 @@ if let scriptPath = arguments.first {
             exit(1)
         }
         try session.runProgramInForeground()
+        drainSessionEventLoop()
         exit(0)
     } catch let error as BASICError {
         host.printLine(error.description)
@@ -832,6 +838,7 @@ while true {
     guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()
+        drainSessionEventLoop()
         continue
     }
     if isRunCommand(line), printDiagnosticsIfNeeded() {
@@ -842,5 +849,6 @@ while true {
     if session.promptTemplate != oldPromptTemplate {
         BASICPromptTemplateStore.save(session.promptTemplate)
     }
+    drainSessionEventLoop()
     if !shouldContinue { break }
 }

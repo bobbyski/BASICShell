@@ -4177,6 +4177,61 @@ private final class BASICWorkerLaneResultBox: @unchecked Sendable {
     }
 }
 
+/// Thread-safe FIFO event loop for host callbacks that must re-enter a BASIC session at safe boundaries.
+public final class BASICEventLoop: @unchecked Sendable {
+    private let lock = NSLock()
+    private var queue: [@Sendable () -> Void] = []
+
+    /// Creates an empty event loop.
+    public init() {}
+
+    /// Number of callbacks waiting to run.
+    public var pendingCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return queue.count
+    }
+
+    /// Whether the loop has no pending callbacks.
+    public var isEmpty: Bool {
+        pendingCount == 0
+    }
+
+    /// Adds a callback to the tail of the event queue.
+    public func post(_ operation: @escaping @Sendable () -> Void) {
+        lock.lock()
+        queue.append(operation)
+        lock.unlock()
+    }
+
+    /// Runs one pending callback, returning false when the queue is empty.
+    @discardableResult
+    public func runOne() -> Bool {
+        let operation: (@Sendable () -> Void)?
+        lock.lock()
+        if queue.isEmpty {
+            operation = nil
+        } else {
+            operation = queue.removeFirst()
+        }
+        lock.unlock()
+
+        guard let operation else { return false }
+        operation()
+        return true
+    }
+
+    /// Runs pending callbacks until the queue is empty, including callbacks posted by callbacks.
+    @discardableResult
+    public func runUntilIdle(limit: Int = .max) -> Int {
+        var count = 0
+        while count < limit, runOne() {
+            count += 1
+        }
+        return count
+    }
+}
+
 /// Precise debugger location for breakpoints and execution state.
 public struct BASICBreakpointLocation: Hashable, Sendable {
     /// Optional BASIC source file path.
@@ -4593,6 +4648,8 @@ public final class BASICSession: @unchecked Sendable {
     private var activeInterpreter: BASICInterpreter?
     /// Optional lane used by synchronous foreground RUN commands.
     public var foregroundRunLane: BASICWorkerLane?
+    /// Host callback queue for future async completions and Shell/Studio event-loop integration.
+    public let eventLoop = BASICEventLoop()
 
     /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {

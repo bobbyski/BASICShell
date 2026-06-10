@@ -5346,6 +5346,47 @@ struct BASICCoreTests {
         #expect(!lane.isRunning)
         #expect(session.debugTasks.first?.state == .completed)
     }
+
+    @Test("BASIC event loop runs callbacks in FIFO order")
+    func basicEventLoopRunsCallbacksInFIFOOrder() {
+        let eventLoop = BASICEventLoop()
+        let log = ThreadSafeStringLog()
+
+        eventLoop.post { log.append("first") }
+        eventLoop.post { log.append("second") }
+
+        #expect(eventLoop.pendingCount == 2)
+        #expect(eventLoop.runUntilIdle() == 2)
+        #expect(log.snapshot == ["first", "second"])
+        #expect(eventLoop.isEmpty)
+    }
+
+    @Test("BASIC event loop drains callbacks posted by callbacks")
+    func basicEventLoopDrainsCallbacksPostedByCallbacks() {
+        let eventLoop = BASICEventLoop()
+        let log = ThreadSafeStringLog()
+
+        eventLoop.post {
+            log.append("outer")
+            eventLoop.post { log.append("inner") }
+        }
+
+        #expect(eventLoop.runUntilIdle() == 2)
+        #expect(log.snapshot == ["outer", "inner"])
+        #expect(eventLoop.isEmpty)
+    }
+
+    @Test("BASIC session owns a host event loop")
+    func basicSessionOwnsHostEventLoop() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let log = ThreadSafeStringLog()
+
+        session.eventLoop.post { log.append("session event") }
+
+        #expect(session.eventLoop.runUntilIdle() == 1)
+        #expect(log.snapshot == ["session event"])
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
