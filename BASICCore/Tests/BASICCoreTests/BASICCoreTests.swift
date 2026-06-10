@@ -2481,6 +2481,36 @@ struct BASICCoreTests {
         #expect(session.taskAwaitState(id: 999_999) == .missing)
     }
 
+    @Test("Host operation completions post through the session event loop")
+    func hostOperationCompletionsPostThroughSessionEventLoop() async throws {
+        let session = BASICSession(host: TestHost())
+
+        let handle = session.startHostOperationTaskWithResult(name: "CALLBACK", operation: "network") {
+            BASICValue.string(BASICString("callback"))
+        }
+
+        try await waitForEventLoopPending(session, expected: 1)
+        #expect(session.eventLoop.pendingCount == 1)
+        #expect(session.eventLoop.runUntilIdle() == 1)
+        #expect(session.taskAwaitState(id: handle.id) == .completed(.string(BASICString("callback"))))
+    }
+
+    @Test("BASIC AWAIT drains host completion callbacks")
+    func basicAwaitDrainsHostCompletionCallbacks() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        value$ = await AsyncValue("callback")
+        print "VALUE ="; value$
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["VALUE =callback"])
+        #expect(session.eventLoop.isEmpty)
+    }
+
     @Test("Host operation tasks report failure and cancellation")
     func hostOperationTasksReportFailureAndCancellation() async throws {
         let session = BASICSession(host: TestHost())
@@ -3050,6 +3080,16 @@ struct BASICCoreTests {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         Issue.record("Expected task \(id) to reach \(state)")
+    }
+
+    private func waitForEventLoopPending(_ session: BASICSession, expected count: Int) async throws {
+        for _ in 0..<100 {
+            if session.eventLoop.pendingCount >= count {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("Expected event loop to have at least \(count) pending callback(s)")
     }
 
     @Test("Execution control treats breakpoint file names as optional current-file metadata")

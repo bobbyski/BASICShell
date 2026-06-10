@@ -3777,20 +3777,31 @@ public final class BASICTask: @unchecked Sendable {
     }
 
     fileprivate func markFailed(_ error: Error) {
+        markFailed(message: String(describing: error))
+    }
+
+    fileprivate func markFailed(message: String) {
         lock.lock()
         currentState = .failed
         suspensionReason = nil
         suspendedFrames = []
         suspendedGlobalVariables = []
         resultValue = nil
-        errorDescription = String(describing: error)
+        errorDescription = message
         lock.unlock()
     }
 }
 
 /// Cooperative task registry and scheduler seed for BASIC execution.
 public final class BASICTaskScheduler: @unchecked Sendable {
+    private enum HostCompletion: Sendable {
+        case success(BASICValue)
+        case cancelled
+        case failure(String)
+    }
+
     private let lock = NSLock()
+    private let completionEventLoop: BASICEventLoop?
     private var nextID = 1
     private var tasks: [Int: BASICTask] = [:]
     private var readyQueue: [Int] = []
@@ -3799,7 +3810,9 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     private var currentTaskID: Int?
 
     /// Creates an empty task scheduler.
-    public init() {}
+    public init(completionEventLoop: BASICEventLoop? = nil) {
+        self.completionEventLoop = completionEventLoop
+    }
 
     /// Creates and queues a logical BASIC task.
     public func createTask(name: String = "Program", parentID: Int? = nil) -> BASICTask {
@@ -3814,6 +3827,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     /// Returns immutable snapshots for all known tasks.
     public var snapshots: [BASICTaskSnapshot] {
+        drainCompletionCallbacks()
         lock.lock()
         let ordered = tasks.values.sorted { $0.id < $1.id }
         let childCounts = Dictionary(grouping: tasks.values.compactMap(\.parentID), by: { $0 })
@@ -3830,6 +3844,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     /// Current running or suspended task, when one has been selected.
     public var currentTask: BASICTask? {
+        drainCompletionCallbacks()
         lock.lock()
         defer { lock.unlock() }
         guard let currentTaskID else { return nil }
@@ -3838,6 +3853,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     /// Stable handles for tasks queued to run.
     public var readyTaskHandles: [BASICTaskHandle] {
+        drainCompletionCallbacks()
         lock.lock()
         let queuedIDs = readyQueue
         let queuedTasks = queuedIDs.compactMap { tasks[$0] }
@@ -3859,6 +3875,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     /// Returns the nonblocking join state for a task id.
     public func joinState(for id: Int) -> BASICTaskJoinState {
+        drainCompletionCallbacks()
         lock.lock()
         let task = tasks[id]
         lock.unlock()
@@ -3881,6 +3898,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
 
     /// Returns the nonblocking await state and result value for a task id.
     func awaitState(for id: Int) -> BASICTaskAwaitState {
+        drainCompletionCallbacks()
         lock.lock()
         let task = tasks[id]
         lock.unlock()
@@ -3943,11 +3961,11 @@ public final class BASICTaskScheduler: @unchecked Sendable {
                 try Task.checkCancellation()
                 let result = try await work()
                 try Task.checkCancellation()
-                self?.finishHostOperationTask(id: handle.id, result: result, error: nil)
+                self?.completeHostOperationTask(id: handle.id, completion: .success(result))
             } catch is CancellationError {
-                self?.finishHostOperationTask(id: handle.id, cancelled: true, error: nil)
+                self?.completeHostOperationTask(id: handle.id, completion: .cancelled)
             } catch {
-                self?.finishHostOperationTask(id: handle.id, error: error)
+                self?.completeHostOperationTask(id: handle.id, completion: .failure(String(describing: error)))
             }
         }
         lock.lock()
@@ -4055,23 +4073,37 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         wakeAwaiters(for: task.id)
     }
 
-    private func finishHostOperationTask(
-        id: Int,
-        cancelled: Bool = false,
-        result: BASICValue? = nil,
-        error: Error?
-    ) {
+    private func drainCompletionCallbacks() {
+        _ = completionEventLoop?.runUntilIdle(limit: 64)
+    }
+
+    private func completeHostOperationTask(id: Int, completion: HostCompletion) {
+        guard let completionEventLoop else {
+            finishHostOperationTask(id: id, completion: completion)
+            return
+        }
+        completionEventLoop.post { [weak self] in
+            self?.finishHostOperationTask(id: id, completion: completion)
+        }
+    }
+
+    private func finishHostOperationTask(id: Int, completion: HostCompletion) {
         lock.lock()
         let task = tasks[id]
         hostTasks[id] = nil
         lock.unlock()
         guard let task else { return }
-        if cancelled || task.isCancellationRequested {
+        if task.isCancellationRequested {
             task.markCancelled()
-        } else if let error {
-            task.markFailed(error)
         } else {
-            task.markCompleted(result: result)
+            switch completion {
+            case .success(let result):
+                task.markCompleted(result: result)
+            case .cancelled:
+                task.markCancelled()
+            case .failure(let message):
+                task.markFailed(message: message)
+            }
         }
         wakeAwaiters(for: id)
     }
@@ -4644,17 +4676,20 @@ public final class BASICSession: @unchecked Sendable {
     private let host: BASICHost
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
-    private let taskScheduler = BASICTaskScheduler()
+    private let taskScheduler: BASICTaskScheduler
     private var activeInterpreter: BASICInterpreter?
     /// Optional lane used by synchronous foreground RUN commands.
     public var foregroundRunLane: BASICWorkerLane?
     /// Host callback queue for future async completions and Shell/Studio event-loop integration.
-    public let eventLoop = BASICEventLoop()
+    public let eventLoop: BASICEventLoop
 
     /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
         self.host = host
         self.promptTemplate = promptTemplate
+        let eventLoop = BASICEventLoop()
+        self.eventLoop = eventLoop
+        self.taskScheduler = BASICTaskScheduler(completionEventLoop: eventLoop)
     }
 
     /// Submits one console line, returning false when the caller should exit.

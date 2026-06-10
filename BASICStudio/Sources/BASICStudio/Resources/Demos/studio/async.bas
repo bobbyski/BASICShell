@@ -286,8 +286,19 @@ print
 print "SLICE 38: SHARED HOST EVENT LOOP"
 print "SLICE 38 HOST/API VERIFIED"
 print
+print "SLICE 39: HOST CALLBACK INTEGRATION"
+callbackValue$ = await AsyncValue("callback")
+if callbackValue$ = "callback" then Slice39Passed
+print "SLICE 39 FAILED, VALUE ="; callbackValue$
+end
+
+Slice39Passed:
+    print "SLICE 39 PASSED"
+    print "CALLBACK VALUE ="; callbackValue$
+    print
+
 print "FUTURE SLICES"
-print "39. HOST CALLBACK INTEGRATION"
+print "40. MAIN-ACTOR HOST ADAPTERS"
 print
 print "ASYNC SUITE BASELINE COMPLETE"
 end
