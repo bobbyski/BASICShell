@@ -7,19 +7,47 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0057004C4A2148E02E99D2A2 /* LogPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6405A0933EA2491CDDF863 /* LogPane.swift */; };
+		123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */; };
+		2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
+		2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38AB3D82C7A880B72971A1D /* StudioFonts.swift */; };
 		34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */; };
+		3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */; };
+		43F22C7C5E351E6D8886C112 /* DebugPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = F768CDEF475FDA4603BD917D /* DebugPane.swift */; };
+		4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
 		4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
 		74D0835107EBA56BF18A331D /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; };
+		8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CB8284FB31709C1BD017047 /* MonacoEditor.swift */; };
+		986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
+		A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */; };
 		BF42A79B77B89643F0C31695 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = EF38E292B830FC5A0F76CE1D /* MarkdownUI */; };
+		C08D96C34D79759D44AF4197 /* BASICStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */; };
+		CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
 		DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */ = {isa = PBXBuildFile; productRef = A5E611364F88C87B9EAAD4AF /* BASICCore */; };
+		FFB04B116964DB84B8244602 /* GraphicsFramebuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0CB8284FB31709C1BD017047 /* MonacoEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonacoEditor.swift; sourceTree = "<group>"; };
+		1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudioApp.swift; sourceTree = "<group>"; };
+		22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDocumentationPane.swift; sourceTree = "<group>"; };
 		2F75838E7973F9367D5B0837 /* BASICCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCore; path = ../BASICCore; sourceTree = SOURCE_ROOT; };
+		338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModelHostConformance.swift; sourceTree = "<group>"; };
 		393A6113D352F2C1DAC75002 /* BASICStudio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BASICStudio.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4374AC2CA731F78F135C262B /* StudioTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTypes.swift; sourceTree = "<group>"; };
+		5472221B9FB79FDAA9BB355A /* StudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioSettings.swift; sourceTree = "<group>"; };
+		6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModel.swift; sourceTree = "<group>"; };
+		7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermGraphicsConsole.swift; sourceTree = "<group>"; };
 		8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdPromptEditorView.swift; sourceTree = "<group>"; };
 		97D345D0E032E06BB808DA86 /* BASICStudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudio.swift; sourceTree = "<group>"; };
+		9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphicsFramebuffer.swift; sourceTree = "<group>"; };
+		A38AB3D82C7A880B72971A1D /* StudioFonts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioFonts.swift; sourceTree = "<group>"; };
+		C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioInputCoordinator.swift; sourceTree = "<group>"; };
+		DB6405A0933EA2491CDDF863 /* LogPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPane.swift; sourceTree = "<group>"; };
+		E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioView.swift; sourceTree = "<group>"; };
+		F768CDEF475FDA4603BD917D /* DebugPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPane.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +102,20 @@
 			isa = PBXGroup;
 			children = (
 				97D345D0E032E06BB808DA86 /* BASICStudio.swift */,
+				1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */,
+				F768CDEF475FDA4603BD917D /* DebugPane.swift */,
+				9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */,
+				DB6405A0933EA2491CDDF863 /* LogPane.swift */,
+				0CB8284FB31709C1BD017047 /* MonacoEditor.swift */,
+				A38AB3D82C7A880B72971A1D /* StudioFonts.swift */,
+				C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */,
+				6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */,
+				338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */,
+				5472221B9FB79FDAA9BB355A /* StudioSettings.swift */,
+				4374AC2CA731F78F135C262B /* StudioTypes.swift */,
+				E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */,
+				7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */,
+				22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */,
 				BE666396AA58CBDE82B152A4 /* NerdPromptEditorView */,
 			);
 			path = BASICStudio;
@@ -157,7 +199,21 @@
 			buildActionMask = 2147483647;
 			files = (
 				9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */,
+				C08D96C34D79759D44AF4197 /* BASICStudioApp.swift in Sources */,
+				43F22C7C5E351E6D8886C112 /* DebugPane.swift in Sources */,
+				FFB04B116964DB84B8244602 /* GraphicsFramebuffer.swift in Sources */,
+				0057004C4A2148E02E99D2A2 /* LogPane.swift in Sources */,
+				8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */,
 				34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */,
+				2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */,
+				4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */,
+				3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */,
+				693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */,
+				CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */,
+				2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */,
+				986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */,
+				A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */,
+				123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

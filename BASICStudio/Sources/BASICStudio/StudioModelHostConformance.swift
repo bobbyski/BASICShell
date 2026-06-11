@@ -9,4 +9,4 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
-// BASICStudio has been split into focused files in this directory.
+// StudioModel host conformances live in StudioModel.swift so private model internals stay private.
