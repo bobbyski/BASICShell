@@ -14,6 +14,8 @@ line (80,80)-(220,160), 1
 line (220,80)-(80,160), 2
 circle (150,120), 28, 3
 pset (150,120), 3
+pset (260,90), 4
+draw "C5R50D30L50U30"
 locate screenheight - 5, 1
 print "BASIC GRAPHICS COMMAND TEST"
 print "POINT CENTER =", point(150,120)

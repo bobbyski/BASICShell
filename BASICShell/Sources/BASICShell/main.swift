@@ -664,6 +664,80 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         return VTGColor(value)
     }
 
+    private func vtgLineCap(_ value: String?) -> VTGLineCap? {
+        guard let value else { return nil }
+        return VTGLineCap(rawValue: value.lowercased())
+    }
+
+    private func vtgLineJoin(_ value: String?) -> VTGLineJoin? {
+        guard let value else { return nil }
+        return VTGLineJoin(rawValue: value.lowercased())
+    }
+
+    private func vtgSpriteFilter(_ value: String) -> VTGSpriteFilter {
+        VTGSpriteFilter(rawValue: value.lowercased()) ?? .smooth
+    }
+
+    private func ansiColor(_ value: String) throws -> ANSIColor {
+        switch value.lowercased() {
+        case "black": return .black
+        case "red": return .red
+        case "green": return .green
+        case "yellow": return .yellow
+        case "blue": return .blue
+        case "magenta": return .magenta
+        case "cyan": return .cyan
+        case "white": return .white
+        default: throw BASICError.runtime("Unknown ANSI color \(value)")
+        }
+    }
+
+    private func canvasSnapshot(_ canvas: VTGCanvas?) -> BASICVectorTerminalCanvasSnapshot? {
+        guard let canvas else { return nil }
+        return BASICVectorTerminalCanvasSnapshot(
+            width: canvas.width,
+            height: canvas.height,
+            source: canvas.source,
+            rawResponse: canvas.rawResponse
+        )
+    }
+
+    private func capabilityJSON(_ capabilities: VTGCapabilities?) -> String? {
+        guard let capabilities else { return nil }
+        var object: [String: Any] = [
+            "commands": capabilities.commands,
+            "planned": capabilities.planned,
+            "primitives": capabilities.primitives,
+            "underTextPrimitives": capabilities.underTextPrimitives,
+            "formats": capabilities.formats,
+            "raster": capabilities.raster,
+            "sprites": capabilities.sprites,
+            "events": capabilities.events,
+            "colors": capabilities.colors,
+            "textPlaneStatus": capabilities.textPlaneStatus.rawValue,
+            "rawResponse": capabilities.rawResponse
+        ]
+        object["protocolName"] = capabilities.protocolName
+        object["schema"] = capabilities.schema
+        object["version"] = capabilities.version
+        object["renderer"] = capabilities.renderer
+        object["layers"] = capabilities.layers
+        object["defaultLayer"] = capabilities.defaultLayer
+        object["textPlane"] = capabilities.textPlane
+        object["layerScroll"] = capabilities.layerScroll
+        object["layerAlpha"] = capabilities.layerAlpha
+        object["clip"] = capabilities.clip
+        object["hit"] = capabilities.hit
+        if let canvas = capabilities.canvas {
+            object["canvas"] = ["width": canvas.width, "height": canvas.height, "source": canvas.source ?? ""]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return json
+    }
+
     private func basicGraphicsColor(_ color: Int) -> VTGColor {
         let palette = [
             "#000000", "#60a5fa", "#22c55e", "#06b6d4",
@@ -939,16 +1013,46 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.pixel(id: id, x: x, y: y, color: VTGColor(color), layer: layer)
     }
 
-    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws {
+    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, layer: Int?) throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
-        vtgCanvas.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VTGColor(stroke), width: width, layer: layer)
+        vtgCanvas.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), layer: layer)
     }
 
-    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws {
+    func vectorTerminalDraw(id: String, points: [(x: Int, y: Int)], stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
-        vtgCanvas.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, layer: layer)
+        vtgCanvas.draw(id: id, points: points.map { VTGPoint(x: $0.x, y: $0.y) }, stroke: VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer)
+    }
+
+    func vectorTerminalQuadraticCurve(id: String, x1: Int, y1: Int, cx: Int, cy: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.quadraticCurve(id: id, x1: x1, y1: y1, cx: cx, cy: cy, x2: x2, y2: y2, stroke: VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer)
+    }
+
+    func vectorTerminalCubicCurve(id: String, x1: Int, y1: Int, c1x: Int, c1y: Int, c2x: Int, c2y: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.cubicCurve(id: id, x1: x1, y1: y1, c1x: c1x, c1y: c1y, c2x: c2x, c2y: c2y, x2: x2, y2: y2, stroke: VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer)
+    }
+
+    func vectorTerminalPath(id: String, payload: String, stroke: String?, fill: String?, lineWidth: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.path(id: id, payload: payload, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer)
+    }
+
+    func vectorTerminalTriangle(id: String, x1: Int, y1: Int, x2: Int, y2: Int, x3: Int, y3: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, lineJoin: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.triangle(id: id, p1: VTGPoint(x: x1, y: y1), p2: VTGPoint(x: x2, y: y2), p3: VTGPoint(x: x3, y: y3), stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, lineJoin: vtgLineJoin(lineJoin), layer: layer)
+    }
+
+    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, corners: String?, lineJoin: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, corners: corners, lineJoin: vtgLineJoin(lineJoin), layer: layer)
     }
 
     func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
@@ -975,10 +1079,118 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VTGColor(stroke), width: width, layer: layer)
     }
 
+    func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.image(id: id, x: x, y: y, width: width, height: height, pngData: data, filter: vtgSpriteFilter(filter), layer: layer)
+    }
+
+    func vectorTerminalImageJPEG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.image(id: id, x: x, y: y, width: width, height: height, jpegData: data, filter: vtgSpriteFilter(filter), layer: layer)
+    }
+
+    func vectorTerminalUploadSpritePNG(id: String, width: Int, height: Int, data: Data, filter: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.uploadSprite(id: id, width: width, height: height, pngData: data, filter: vtgSpriteFilter(filter))
+    }
+
+    func vectorTerminalUploadSpriteJPEG(id: String, width: Int, height: Int, data: Data, filter: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.uploadSprite(id: id, width: width, height: height, jpegData: data, filter: vtgSpriteFilter(filter))
+    }
+
+    func vectorTerminalUploadVectorSprite(id: String, width: Int, height: Int, path: String, stroke: String?, fill: String?, lineWidth: Double) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.uploadVectorSprite(id: id, width: width, height: height, path: path, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth)
+    }
+
+    func vectorTerminalUploadIndexedSprite(id: String, width: Int, height: Int, pixels: [Int], palette: [String], transparentIndex: Int?, filter: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.uploadIndexedSprite(id: id, width: width, height: height, pixels: pixels, palette: palette.map { VTGColor($0) }, transparentIndex: transparentIndex, filter: vtgSpriteFilter(filter))
+    }
+
+    func vectorTerminalSprite(id: String, imageID: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double, anchorY: Double, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.sprite(id: id, imageID: imageID, x: x, y: y, rotation: rotation, scale: scale, anchorX: anchorX, anchorY: anchorY, layer: layer)
+    }
+
+    func vectorTerminalMoveSprite(id: String, x: Int, y: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.moveSprite(id: id, x: x, y: y)
+    }
+
+    func vectorTerminalRotateSprite(id: String, rotation: Double) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.rotateSprite(id: id, rotation: rotation)
+    }
+
+    func vectorTerminalAnchorSprite(id: String, anchorX: Double, anchorY: Double) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.anchorSprite(id: id, anchorX: anchorX, anchorY: anchorY)
+    }
+
+    func vectorTerminalTransformSprite(id: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double?, anchorY: Double?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.transformSprite(id: id, x: x, y: y, rotation: rotation, scale: scale, anchorX: anchorX, anchorY: anchorY)
+    }
+
+    func vectorTerminalRemoveSprite(id: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.removeSprite(id: id)
+    }
+
+    func vectorTerminalClearSprites() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearSprites()
+    }
+
     func vectorTerminalSetDefaultLayer(_ layer: Int) throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.setDefaultLayer(layer)
+    }
+
+    func vectorTerminalSetLayer(id: String, layer: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setLayer(id: id, layer: layer)
+    }
+
+    func vectorTerminalScrollLayer(_ layer: Int, x: Int, y: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.scrollLayer(layer, x: x, y: y)
+    }
+
+    func vectorTerminalSetLayerAlpha(_ layer: Int, alpha: Double) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setLayerAlpha(layer, alpha: alpha)
+    }
+
+    func vectorTerminalClipLayer(_ layer: Int, x: Int, y: Int, width: Int, height: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clipLayer(layer, x: x, y: y, width: width, height: height)
+    }
+
+    func vectorTerminalClearLayerClip(_ layer: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearLayerClip(layer)
     }
 
     func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws {
@@ -993,10 +1205,162 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.clearViewportMode(layer: layer)
     }
 
+    func vectorTerminalSetViewportScale(layer: Int, scale: Double, x: Int, y: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setViewportScale(layer: layer, scale: scale, x: x, y: y)
+    }
+
+    func vectorTerminalHitRegion(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?, target: String?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.hitRegion(id: id, x: x, y: y, width: width, height: height, layer: layer, target: target)
+    }
+
+    func vectorTerminalClearHitRegions(id: String?, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearHitRegions(id: id, layer: layer)
+    }
+
+    func vectorTerminalStartFrame(id: String, timeoutMilliseconds: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.startFrame(id: id, timeoutMilliseconds: timeoutMilliseconds)
+    }
+
+    func vectorTerminalEndFrame(id: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.endFrame(id: id)
+    }
+
+    func vectorTerminalCancelFrame(id: String) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.cancelFrame(id: id)
+    }
+
+    func vectorTerminalQueryCapabilities(timeoutMilliseconds: Int) throws -> String? {
+        try requireVectorTerminal()
+        return vtgCanvas.queryCapabilities(timeoutMilliseconds: timeoutMilliseconds)
+    }
+
+    func vectorTerminalQueryCapabilityInfo(timeoutMilliseconds: Int) throws -> String? {
+        try requireVectorTerminal()
+        return capabilityJSON(vtgCanvas.queryCapabilityInfo(timeoutMilliseconds: timeoutMilliseconds))
+    }
+
+    func vectorTerminalQueryCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        try requireVectorTerminal()
+        return canvasSnapshot(vtgCanvas.queryCanvas(timeoutMilliseconds: timeoutMilliseconds))
+    }
+
+    func vectorTerminalQuerySize(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        try requireVectorTerminal()
+        return canvasSnapshot(vtgCanvas.querySize(timeoutMilliseconds: timeoutMilliseconds))
+    }
+
+    func vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        try requireVectorTerminal()
+        return canvasSnapshot(vtgCanvas.queryCurrentCanvas(timeoutMilliseconds: timeoutMilliseconds))
+    }
+
+    func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot? {
+        BASICVectorTerminalCellSnapshot(columns: screenColumns(), rows: screenRows())
+    }
+
+    func vectorTerminalEnableResizeEvents() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.enableResizeEvents()
+    }
+
+    func vectorTerminalDisableResizeEvents() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.disableResizeEvents()
+    }
+
+    func vectorTerminalEnableMouseReporting(mode: String?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        if let mode {
+            vtgCanvas.enableMouseReporting(mode: mode)
+        } else {
+            vtgCanvas.enableMouseReporting()
+        }
+    }
+
+    func vectorTerminalDisableMouseReporting() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.disableMouseReporting()
+    }
+
+    func vectorTerminalReadEvent(timeoutMilliseconds: Int) throws -> String? {
+        try requireVectorTerminal()
+        return vtgCanvas.readEvent(timeoutMilliseconds: timeoutMilliseconds).map { "\($0)" }
+    }
+
+    func vectorTerminalEnterAlternateScreen() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.enterAlternateScreen()
+    }
+
+    func vectorTerminalLeaveAlternateScreen() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.leaveAlternateScreen()
+    }
+
+    func vectorTerminalEnableBracketedPaste() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.enableBracketedPaste()
+    }
+
+    func vectorTerminalDisableBracketedPaste() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.disableBracketedPaste()
+    }
+
+    func vectorTerminalEnableFocusReporting() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.enableFocusReporting()
+    }
+
+    func vectorTerminalDisableFocusReporting() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.disableFocusReporting()
+    }
+
     func vectorTerminalClearScreen() throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.clearScreen()
+    }
+
+    func vectorTerminalClearScrollbackAndScreen() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearScrollbackAndScreen()
+    }
+
+    func vectorTerminalClearLine() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearLine()
+    }
+
+    func vectorTerminalClearToEndOfLine() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearToEndOfLine()
     }
 
     func vectorTerminalWriteText(_ value: String) throws {
@@ -1009,6 +1373,114 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.moveCursor(row: row, column: column)
+    }
+
+    func vectorTerminalSetCursor(row: Int, column: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setCursor(row: row, column: column)
+    }
+
+    func vectorTerminalMoveCursorUp(_ count: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.moveCursorUp(count)
+    }
+
+    func vectorTerminalMoveCursorDown(_ count: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.moveCursorDown(count)
+    }
+
+    func vectorTerminalMoveCursorForward(_ count: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.moveCursorForward(count)
+    }
+
+    func vectorTerminalMoveCursorBackward(_ count: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.moveCursorBackward(count)
+    }
+
+    func vectorTerminalSaveCursor() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.saveCursor()
+    }
+
+    func vectorTerminalRestoreCursor() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.restoreCursor()
+    }
+
+    func vectorTerminalHideCursor() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.hideCursor()
+    }
+
+    func vectorTerminalShowCursor() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.showCursor()
+    }
+
+    func vectorTerminalResetTextAttributes() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.resetTextAttributes()
+    }
+
+    func vectorTerminalBold(_ enabled: Bool) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.bold(enabled)
+    }
+
+    func vectorTerminalUnderline(_ enabled: Bool) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.underline(enabled)
+    }
+
+    func vectorTerminalInverse(_ enabled: Bool) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.inverse(enabled)
+    }
+
+    func vectorTerminalSetForeground(_ color: String, bright: Bool) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setForeground(try ansiColor(color), bright: bright)
+    }
+
+    func vectorTerminalSetBackground(_ color: String, bright: Bool) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setBackground(try ansiColor(color), bright: bright)
+    }
+
+    func vectorTerminalSetForegroundRGB(red: Int, green: Int, blue: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setForegroundRGB(red: red, green: green, blue: blue)
+    }
+
+    func vectorTerminalSetBackgroundRGB(red: Int, green: Int, blue: Int) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.setBackgroundRGB(red: red, green: green, blue: blue)
+    }
+
+    func vectorTerminalBell() throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.bell()
     }
 }
 

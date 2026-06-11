@@ -164,19 +164,19 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         }
     }
 
+    var rawData: Data {
+        switch storage {
+        case .text(let value): return Data(value.utf8)
+        case .data(let data): return data
+        }
+    }
+
     func concatenating(_ other: BASICString) -> BASICString {
         switch (storage, other.storage) {
         case (.text(let left), .text(let right)):
             return BASICString(left + right)
         default:
-            return BASICString(data: data + other.data)
-        }
-    }
-
-    private var data: Data {
-        switch storage {
-        case .text(let value): return Data(value.utf8)
-        case .data(let data): return data
+            return BASICString(data: rawData + other.rawData)
         }
     }
 
@@ -559,6 +559,36 @@ private enum LetMode: Equatable {
 private enum BASICKeyMode: Equatable {
     case aibasic
     case ibm
+}
+
+/// BASIC-visible event selector registered with `ON <type> [subtype] CALL`.
+public struct BASICEventSelector: Hashable, Sendable, CustomStringConvertible {
+    /// Primary event type, normalized to uppercase.
+    public let type: String
+    /// Optional subtype, normalized to uppercase.
+    public let subtype: String?
+
+    /// Creates an event selector.
+    public init(type: String, subtype: String? = nil) {
+        self.type = type.uppercased()
+        let trimmedSubtype = subtype?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.subtype = trimmedSubtype?.isEmpty == false ? trimmedSubtype?.uppercased() : nil
+    }
+
+    /// Stable display name used by diagnostics and host bridges.
+    public var description: String {
+        [type, subtype].compactMap { $0 }.joined(separator: " ")
+    }
+}
+
+/// Snapshot of a registered BASIC event handler.
+public struct BASICEventHandlerRegistration: Equatable, Sendable {
+    /// Event selector handled by the registered function.
+    public let selector: BASICEventSelector
+    /// Handler name as typed by the user.
+    public let handlerName: String
+    /// Case-normalized handler name for lookup.
+    public let normalizedHandlerName: String
 }
 
 private enum AssignmentKind: Equatable {
@@ -1016,7 +1046,11 @@ private final class BASICRuntime {
     var letMode: LetMode = .global
     var keyMode: BASICKeyMode = .aibasic
     var randomGenerator = BASICRandomGenerator()
+    var lastErrorNumber = 0
+    var lastErrorLine = 0
+    var lastErrorMessage = ""
     private var fileObjects: [Int: BASICOpenFile] = [:]
+    private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
 
@@ -1024,14 +1058,28 @@ private final class BASICRuntime {
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()
+        eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
+        clearLastError()
     }
 
     func clearAll() {
         resetForRun()
         letMode = .global
         keyMode = .aibasic
+    }
+
+    func clearLastError() {
+        lastErrorNumber = 0
+        lastErrorLine = 0
+        lastErrorMessage = ""
+    }
+
+    func setLastError(number: Int, line: Int, message: String) {
+        lastErrorNumber = number
+        lastErrorLine = line
+        lastErrorMessage = message
     }
 
     func snapshotForAsyncLaunch() -> BASICRuntimeSnapshot {
@@ -1042,6 +1090,26 @@ private final class BASICRuntime {
         globals = snapshot.globals
         letMode = snapshot.letMode
         keyMode = snapshot.keyMode
+    }
+
+    var eventHandlerRegistrations: [BASICEventHandlerRegistration] {
+        eventHandlers.values.sorted { $0.selector.description < $1.selector.description }
+    }
+
+    func setEventHandler(selector: BASICEventSelector, handler: VariableName) {
+        eventHandlers[selector] = BASICEventHandlerRegistration(
+            selector: selector,
+            handlerName: handler.name,
+            normalizedHandlerName: handler.normalized
+        )
+    }
+
+    func clearEventHandler(selector: BASICEventSelector) {
+        eventHandlers.removeValue(forKey: selector)
+    }
+
+    func eventHandler(for selector: BASICEventSelector) -> BASICEventHandlerRegistration? {
+        eventHandlers[selector]
     }
 
     func pushLocalContext() -> Int {
@@ -2163,7 +2231,8 @@ private final class BASICRuntime {
                 layer: try optionalInteger(arguments, at: 4)
             )
         case "LINE":
-            guard (6...8).contains(arguments.count) else { throw BASICError.runtime("line expects 6 to 8 arguments") }
+            guard (6...9).contains(arguments.count) else { throw BASICError.runtime("line expects 6 to 9 arguments") }
+            let lineStyle = try vectorTerminalLineStyleArguments(arguments)
             try host.vectorTerminalLine(
                 id: try stringValue(arguments[0]),
                 x1: try integerValue(arguments[1]),
@@ -2172,10 +2241,86 @@ private final class BASICRuntime {
                 y2: try integerValue(arguments[4]),
                 stroke: try stringValue(arguments[5]),
                 width: try optionalInteger(arguments, at: 6) ?? 1,
+                lineCap: lineStyle.lineCap,
+                layer: lineStyle.layer
+            )
+        case "DRAW":
+            guard (3...7).contains(arguments.count) else { throw BASICError.runtime("draw expects 3 to 7 arguments") }
+            try host.vectorTerminalDraw(
+                id: try stringValue(arguments[0]),
+                points: try vtgPoints(from: arguments[1]),
+                stroke: try stringValue(arguments[2]),
+                width: try optionalInteger(arguments, at: 3) ?? 1,
+                lineCap: try optionalString(arguments, at: 4),
+                lineJoin: try optionalString(arguments, at: 5),
+                layer: try optionalInteger(arguments, at: 6)
+            )
+        case "QUADRATICCURVE":
+            guard (8...12).contains(arguments.count) else { throw BASICError.runtime("quadraticCurve expects 8 to 12 arguments") }
+            try host.vectorTerminalQuadraticCurve(
+                id: try stringValue(arguments[0]),
+                x1: try integerValue(arguments[1]),
+                y1: try integerValue(arguments[2]),
+                cx: try integerValue(arguments[3]),
+                cy: try integerValue(arguments[4]),
+                x2: try integerValue(arguments[5]),
+                y2: try integerValue(arguments[6]),
+                stroke: try stringValue(arguments[7]),
+                width: try optionalInteger(arguments, at: 8) ?? 1,
+                lineCap: try optionalString(arguments, at: 9),
+                lineJoin: try optionalString(arguments, at: 10),
+                layer: try optionalInteger(arguments, at: 11)
+            )
+        case "CUBICCURVE":
+            guard (10...14).contains(arguments.count) else { throw BASICError.runtime("cubicCurve expects 10 to 14 arguments") }
+            try host.vectorTerminalCubicCurve(
+                id: try stringValue(arguments[0]),
+                x1: try integerValue(arguments[1]),
+                y1: try integerValue(arguments[2]),
+                c1x: try integerValue(arguments[3]),
+                c1y: try integerValue(arguments[4]),
+                c2x: try integerValue(arguments[5]),
+                c2y: try integerValue(arguments[6]),
+                x2: try integerValue(arguments[7]),
+                y2: try integerValue(arguments[8]),
+                stroke: try stringValue(arguments[9]),
+                width: try optionalInteger(arguments, at: 10) ?? 1,
+                lineCap: try optionalString(arguments, at: 11),
+                lineJoin: try optionalString(arguments, at: 12),
+                layer: try optionalInteger(arguments, at: 13)
+            )
+        case "PATH":
+            guard (2...8).contains(arguments.count) else { throw BASICError.runtime("path expects 2 to 8 arguments") }
+            try host.vectorTerminalPath(
+                id: try stringValue(arguments[0]),
+                payload: try stringValue(arguments[1]),
+                stroke: try optionalString(arguments, at: 2) ?? "#f8fafc",
+                fill: try optionalString(arguments, at: 3),
+                lineWidth: try optionalInteger(arguments, at: 4) ?? 1,
+                lineCap: try optionalString(arguments, at: 5),
+                lineJoin: try optionalString(arguments, at: 6),
                 layer: try optionalInteger(arguments, at: 7)
             )
+        case "TRIANGLE":
+            guard (7...13).contains(arguments.count) else { throw BASICError.runtime("triangle expects 7 to 13 arguments") }
+            try host.vectorTerminalTriangle(
+                id: try stringValue(arguments[0]),
+                x1: try integerValue(arguments[1]),
+                y1: try integerValue(arguments[2]),
+                x2: try integerValue(arguments[3]),
+                y2: try integerValue(arguments[4]),
+                x3: try integerValue(arguments[5]),
+                y3: try integerValue(arguments[6]),
+                stroke: try optionalString(arguments, at: 7) ?? "#f8fafc",
+                fill: try optionalString(arguments, at: 8),
+                lineWidth: try optionalInteger(arguments, at: 9) ?? 1,
+                radius: try optionalInteger(arguments, at: 10) ?? 0,
+                lineJoin: try optionalString(arguments, at: 11),
+                layer: try optionalInteger(arguments, at: 12)
+            )
         case "RECT":
-            guard (5...10).contains(arguments.count) else { throw BASICError.runtime("rect expects 5 to 10 arguments") }
+            guard (5...12).contains(arguments.count) else { throw BASICError.runtime("rect expects 5 to 12 arguments") }
+            let rectStyle = try vectorTerminalRectStyleArguments(arguments)
             try host.vectorTerminalRect(
                 id: try stringValue(arguments[0]),
                 x: try integerValue(arguments[1]),
@@ -2186,7 +2331,9 @@ private final class BASICRuntime {
                 fill: try optionalString(arguments, at: 6),
                 lineWidth: try optionalInteger(arguments, at: 7) ?? 1,
                 radius: try optionalInteger(arguments, at: 8) ?? 0,
-                layer: try optionalInteger(arguments, at: 9)
+                corners: rectStyle.corners,
+                lineJoin: rectStyle.lineJoin,
+                layer: rectStyle.layer
             )
         case "CIRCLE":
             guard (4...8).contains(arguments.count) else { throw BASICError.runtime("circle expects 4 to 8 arguments") }
@@ -2236,9 +2383,138 @@ private final class BASICRuntime {
                 width: try optionalInteger(arguments, at: 6) ?? 1,
                 layer: try optionalInteger(arguments, at: 7)
             )
+        case "IMAGEPNG":
+            guard (6...8).contains(arguments.count) else { throw BASICError.runtime("imagePng expects 6 to 8 arguments") }
+            try host.vectorTerminalImagePNG(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                width: try integerValue(arguments[3]),
+                height: try integerValue(arguments[4]),
+                data: try dataValue(arguments[5]),
+                filter: try optionalString(arguments, at: 6) ?? "smooth",
+                layer: try optionalInteger(arguments, at: 7)
+            )
+        case "IMAGEJPEG":
+            guard (6...8).contains(arguments.count) else { throw BASICError.runtime("imageJpeg expects 6 to 8 arguments") }
+            try host.vectorTerminalImageJPEG(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                width: try integerValue(arguments[3]),
+                height: try integerValue(arguments[4]),
+                data: try dataValue(arguments[5]),
+                filter: try optionalString(arguments, at: 6) ?? "smooth",
+                layer: try optionalInteger(arguments, at: 7)
+            )
+        case "UPLOADSPRITEPNG":
+            guard (4...5).contains(arguments.count) else { throw BASICError.runtime("uploadSpritePng expects 4 or 5 arguments") }
+            try host.vectorTerminalUploadSpritePNG(
+                id: try stringValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                data: try dataValue(arguments[3]),
+                filter: try optionalString(arguments, at: 4) ?? "smooth"
+            )
+        case "UPLOADSPRITEJPEG":
+            guard (4...5).contains(arguments.count) else { throw BASICError.runtime("uploadSpriteJpeg expects 4 or 5 arguments") }
+            try host.vectorTerminalUploadSpriteJPEG(
+                id: try stringValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                data: try dataValue(arguments[3]),
+                filter: try optionalString(arguments, at: 4) ?? "smooth"
+            )
+        case "UPLOADVECTORSPRITE":
+            guard (4...7).contains(arguments.count) else { throw BASICError.runtime("uploadVectorSprite expects 4 to 7 arguments") }
+            try host.vectorTerminalUploadVectorSprite(
+                id: try stringValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                path: try stringValue(arguments[3]),
+                stroke: try optionalString(arguments, at: 4),
+                fill: try optionalString(arguments, at: 5),
+                lineWidth: try optionalDouble(arguments, at: 6) ?? 1
+            )
+        case "UPLOADSPRITE":
+            guard (5...7).contains(arguments.count) else { throw BASICError.runtime("uploadSprite expects 5 to 7 arguments") }
+            try host.vectorTerminalUploadIndexedSprite(
+                id: try stringValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                pixels: try integerList(arguments[3]),
+                palette: try stringList(arguments[4]),
+                transparentIndex: try optionalInteger(arguments, at: 5),
+                filter: try optionalString(arguments, at: 6) ?? "nearest"
+            )
+        case "UPLOADINDEXEDSPRITE":
+            guard (5...7).contains(arguments.count) else { throw BASICError.runtime("uploadIndexedSprite expects 5 to 7 arguments") }
+            try host.vectorTerminalUploadIndexedSprite(
+                id: try stringValue(arguments[0]),
+                width: try integerValue(arguments[1]),
+                height: try integerValue(arguments[2]),
+                pixels: try integerList(arguments[3]),
+                palette: try stringList(arguments[4]),
+                transparentIndex: try optionalInteger(arguments, at: 5),
+                filter: try optionalString(arguments, at: 6) ?? "nearest"
+            )
+        case "SPRITE":
+            guard (4...9).contains(arguments.count) else { throw BASICError.runtime("sprite expects 4 to 9 arguments") }
+            try host.vectorTerminalSprite(
+                id: try stringValue(arguments[0]),
+                imageID: try stringValue(arguments[1]),
+                x: try integerValue(arguments[2]),
+                y: try integerValue(arguments[3]),
+                rotation: try optionalDouble(arguments, at: 4) ?? 0,
+                scale: try optionalDouble(arguments, at: 5) ?? 1,
+                anchorX: try optionalDouble(arguments, at: 6) ?? 0.5,
+                anchorY: try optionalDouble(arguments, at: 7) ?? 0.5,
+                layer: try optionalInteger(arguments, at: 8)
+            )
+        case "MOVESPRITE":
+            try requireArgumentCount(arguments, 3, method: "moveSprite")
+            try host.vectorTerminalMoveSprite(id: try stringValue(arguments[0]), x: try integerValue(arguments[1]), y: try integerValue(arguments[2]))
+        case "ROTATESPRITE":
+            try requireArgumentCount(arguments, 2, method: "rotateSprite")
+            try host.vectorTerminalRotateSprite(id: try stringValue(arguments[0]), rotation: try doubleValue(arguments[1]))
+        case "ANCHORSPRITE":
+            try requireArgumentCount(arguments, 3, method: "anchorSprite")
+            try host.vectorTerminalAnchorSprite(id: try stringValue(arguments[0]), anchorX: try doubleValue(arguments[1]), anchorY: try doubleValue(arguments[2]))
+        case "TRANSFORMSPRITE":
+            guard (5...7).contains(arguments.count) else { throw BASICError.runtime("transformSprite expects 5 to 7 arguments") }
+            try host.vectorTerminalTransformSprite(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                rotation: try doubleValue(arguments[3]),
+                scale: try doubleValue(arguments[4]),
+                anchorX: try optionalDouble(arguments, at: 5),
+                anchorY: try optionalDouble(arguments, at: 6)
+            )
+        case "REMOVESPRITE":
+            try requireArgumentCount(arguments, 1, method: "removeSprite")
+            try host.vectorTerminalRemoveSprite(id: try stringValue(arguments[0]))
+        case "CLEARSPRITES":
+            try requireArgumentCount(arguments, 0, method: "clearSprites")
+            try host.vectorTerminalClearSprites()
         case "SETDEFAULTLAYER":
             try requireArgumentCount(arguments, 1, method: "setDefaultLayer")
             try host.vectorTerminalSetDefaultLayer(try integerValue(arguments[0]))
+        case "SETLAYER":
+            try requireArgumentCount(arguments, 2, method: "setLayer")
+            try host.vectorTerminalSetLayer(id: try stringValue(arguments[0]), layer: try integerValue(arguments[1]))
+        case "SCROLLLAYER":
+            try requireArgumentCount(arguments, 3, method: "scrollLayer")
+            try host.vectorTerminalScrollLayer(try integerValue(arguments[0]), x: try integerValue(arguments[1]), y: try integerValue(arguments[2]))
+        case "SETLAYERALPHA":
+            try requireArgumentCount(arguments, 2, method: "setLayerAlpha")
+            try host.vectorTerminalSetLayerAlpha(try integerValue(arguments[0]), alpha: try doubleValue(arguments[1]))
+        case "CLIPLAYER":
+            try requireArgumentCount(arguments, 5, method: "clipLayer")
+            try host.vectorTerminalClipLayer(try integerValue(arguments[0]), x: try integerValue(arguments[1]), y: try integerValue(arguments[2]), width: try integerValue(arguments[3]), height: try integerValue(arguments[4]))
+        case "CLEARLAYERCLIP":
+            try requireArgumentCount(arguments, 1, method: "clearLayerClip")
+            try host.vectorTerminalClearLayerClip(try integerValue(arguments[0]))
         case "SETVIEWPORTMODE":
             guard (3...4).contains(arguments.count) else { throw BASICError.runtime("setViewportMode expects 3 or 4 arguments") }
             try host.vectorTerminalSetViewportMode(
@@ -2250,15 +2526,153 @@ private final class BASICRuntime {
         case "CLEARVIEWPORTMODE":
             try requireArgumentCount(arguments, 1, method: "clearViewportMode")
             try host.vectorTerminalClearViewportMode(layer: try integerValue(arguments[0]))
+        case "SETVIEWPORTSCALE":
+            try requireArgumentCount(arguments, 4, method: "setViewportScale")
+            try host.vectorTerminalSetViewportScale(layer: try integerValue(arguments[0]), scale: try doubleValue(arguments[1]), x: try integerValue(arguments[2]), y: try integerValue(arguments[3]))
+        case "HITREGION":
+            guard (5...7).contains(arguments.count) else { throw BASICError.runtime("hitRegion expects 5 to 7 arguments") }
+            try host.vectorTerminalHitRegion(id: try stringValue(arguments[0]), x: try integerValue(arguments[1]), y: try integerValue(arguments[2]), width: try integerValue(arguments[3]), height: try integerValue(arguments[4]), layer: try optionalInteger(arguments, at: 5), target: try optionalString(arguments, at: 6))
+        case "CLEARHITREGIONS":
+            guard arguments.count <= 2 else { throw BASICError.runtime("clearHitRegions expects 0 to 2 arguments") }
+            try host.vectorTerminalClearHitRegions(id: try optionalString(arguments, at: 0), layer: try optionalInteger(arguments, at: 1))
+        case "STARTFRAME":
+            guard (1...2).contains(arguments.count) else { throw BASICError.runtime("startFrame expects 1 or 2 arguments") }
+            try host.vectorTerminalStartFrame(id: try stringValue(arguments[0]), timeoutMilliseconds: try optionalInteger(arguments, at: 1) ?? 250)
+        case "ENDFRAME":
+            try requireArgumentCount(arguments, 1, method: "endFrame")
+            try host.vectorTerminalEndFrame(id: try stringValue(arguments[0]))
+        case "CANCELFRAME":
+            try requireArgumentCount(arguments, 1, method: "cancelFrame")
+            try host.vectorTerminalCancelFrame(id: try stringValue(arguments[0]))
+        case "QUERYCAPABILITIES":
+            guard arguments.count <= 1 else { throw BASICError.runtime("queryCapabilities expects 0 or 1 arguments") }
+            return .string(BASICString(try host.vectorTerminalQueryCapabilities(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750) ?? ""))
+        case "QUERYCAPABILITYINFO":
+            guard arguments.count <= 1 else { throw BASICError.runtime("queryCapabilityInfo expects 0 or 1 arguments") }
+            return .string(BASICString(try host.vectorTerminalQueryCapabilityInfo(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750) ?? ""))
+        case "QUERYCANVAS":
+            guard arguments.count <= 1 else { throw BASICError.runtime("queryCanvas expects 0 or 1 arguments") }
+            return vtgCanvasValue(try host.vectorTerminalQueryCanvas(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750))
+        case "QUERYSIZE":
+            guard arguments.count <= 1 else { throw BASICError.runtime("querySize expects 0 or 1 arguments") }
+            return vtgCanvasValue(try host.vectorTerminalQuerySize(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750))
+        case "QUERYCURRENTCANVAS":
+            guard arguments.count <= 1 else { throw BASICError.runtime("queryCurrentCanvas expects 0 or 1 arguments") }
+            return vtgCanvasValue(try host.vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750))
+        case "CANVASWIDTH":
+            guard arguments.count <= 1 else { throw BASICError.runtime("canvasWidth expects 0 or 1 arguments") }
+            return .number(Double(try host.vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750)?.width ?? 0))
+        case "CANVASHEIGHT":
+            guard arguments.count <= 1 else { throw BASICError.runtime("canvasHeight expects 0 or 1 arguments") }
+            return .number(Double(try host.vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750)?.height ?? 0))
+        case "QUERYTERMINALCELLSIZE":
+            try requireArgumentCount(arguments, 0, method: "queryTerminalCellSize")
+            return vtgCellValue(try host.vectorTerminalQueryTerminalCellSize())
+        case "ENABLERESIZEEVENTS":
+            try requireArgumentCount(arguments, 0, method: "enableResizeEvents")
+            try host.vectorTerminalEnableResizeEvents()
+        case "DISABLERESIZEEVENTS":
+            try requireArgumentCount(arguments, 0, method: "disableResizeEvents")
+            try host.vectorTerminalDisableResizeEvents()
+        case "ENABLEMOUSEREPORTING":
+            guard arguments.count <= 1 else { throw BASICError.runtime("enableMouseReporting expects 0 or 1 arguments") }
+            try host.vectorTerminalEnableMouseReporting(mode: try optionalString(arguments, at: 0))
+        case "DISABLEMOUSEREPORTING":
+            try requireArgumentCount(arguments, 0, method: "disableMouseReporting")
+            try host.vectorTerminalDisableMouseReporting()
+        case "READEVENT":
+            guard arguments.count <= 1 else { throw BASICError.runtime("readEvent expects 0 or 1 arguments") }
+            return .string(BASICString(try host.vectorTerminalReadEvent(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 0) ?? ""))
+        case "ENTERALTERNATESCREEN":
+            try requireArgumentCount(arguments, 0, method: "enterAlternateScreen")
+            try host.vectorTerminalEnterAlternateScreen()
+        case "LEAVEALTERNATESCREEN":
+            try requireArgumentCount(arguments, 0, method: "leaveAlternateScreen")
+            try host.vectorTerminalLeaveAlternateScreen()
+        case "ENABLEBRACKETEDPASTE":
+            try requireArgumentCount(arguments, 0, method: "enableBracketedPaste")
+            try host.vectorTerminalEnableBracketedPaste()
+        case "DISABLEBRACKETEDPASTE":
+            try requireArgumentCount(arguments, 0, method: "disableBracketedPaste")
+            try host.vectorTerminalDisableBracketedPaste()
+        case "ENABLEFOCUSREPORTING":
+            try requireArgumentCount(arguments, 0, method: "enableFocusReporting")
+            try host.vectorTerminalEnableFocusReporting()
+        case "DISABLEFOCUSREPORTING":
+            try requireArgumentCount(arguments, 0, method: "disableFocusReporting")
+            try host.vectorTerminalDisableFocusReporting()
         case "CLEARSCREEN":
             try requireArgumentCount(arguments, 0, method: "clearScreen")
             try host.vectorTerminalClearScreen()
+        case "CLEARSCROLLBACKANDSCREEN":
+            try requireArgumentCount(arguments, 0, method: "clearScrollbackAndScreen")
+            try host.vectorTerminalClearScrollbackAndScreen()
+        case "CLEARLINE":
+            try requireArgumentCount(arguments, 0, method: "clearLine")
+            try host.vectorTerminalClearLine()
+        case "CLEARTOENDOFLINE":
+            try requireArgumentCount(arguments, 0, method: "clearToEndOfLine")
+            try host.vectorTerminalClearToEndOfLine()
         case "WRITETEXT":
             try requireArgumentCount(arguments, 1, method: "writeText")
             try host.vectorTerminalWriteText(try stringValue(arguments[0]))
         case "MOVECURSOR":
             try requireArgumentCount(arguments, 2, method: "moveCursor")
             try host.vectorTerminalMoveCursor(row: try integerValue(arguments[0]), column: try integerValue(arguments[1]))
+        case "SETCURSOR":
+            try requireArgumentCount(arguments, 2, method: "setCursor")
+            try host.vectorTerminalSetCursor(row: try integerValue(arguments[0]), column: try integerValue(arguments[1]))
+        case "MOVECURSORUP":
+            guard arguments.count <= 1 else { throw BASICError.runtime("moveCursorUp expects 0 or 1 arguments") }
+            try host.vectorTerminalMoveCursorUp(try optionalInteger(arguments, at: 0) ?? 1)
+        case "MOVECURSORDOWN":
+            guard arguments.count <= 1 else { throw BASICError.runtime("moveCursorDown expects 0 or 1 arguments") }
+            try host.vectorTerminalMoveCursorDown(try optionalInteger(arguments, at: 0) ?? 1)
+        case "MOVECURSORFORWARD":
+            guard arguments.count <= 1 else { throw BASICError.runtime("moveCursorForward expects 0 or 1 arguments") }
+            try host.vectorTerminalMoveCursorForward(try optionalInteger(arguments, at: 0) ?? 1)
+        case "MOVECURSORBACKWARD":
+            guard arguments.count <= 1 else { throw BASICError.runtime("moveCursorBackward expects 0 or 1 arguments") }
+            try host.vectorTerminalMoveCursorBackward(try optionalInteger(arguments, at: 0) ?? 1)
+        case "SAVECURSOR":
+            try requireArgumentCount(arguments, 0, method: "saveCursor")
+            try host.vectorTerminalSaveCursor()
+        case "RESTORECURSOR":
+            try requireArgumentCount(arguments, 0, method: "restoreCursor")
+            try host.vectorTerminalRestoreCursor()
+        case "HIDECURSOR":
+            try requireArgumentCount(arguments, 0, method: "hideCursor")
+            try host.vectorTerminalHideCursor()
+        case "SHOWCURSOR":
+            try requireArgumentCount(arguments, 0, method: "showCursor")
+            try host.vectorTerminalShowCursor()
+        case "RESETTEXTATTRIBUTES":
+            try requireArgumentCount(arguments, 0, method: "resetTextAttributes")
+            try host.vectorTerminalResetTextAttributes()
+        case "BOLD":
+            guard arguments.count <= 1 else { throw BASICError.runtime("bold expects 0 or 1 arguments") }
+            try host.vectorTerminalBold(try optionalBoolean(arguments, at: 0) ?? true)
+        case "UNDERLINE":
+            guard arguments.count <= 1 else { throw BASICError.runtime("underline expects 0 or 1 arguments") }
+            try host.vectorTerminalUnderline(try optionalBoolean(arguments, at: 0) ?? true)
+        case "INVERSE":
+            guard arguments.count <= 1 else { throw BASICError.runtime("inverse expects 0 or 1 arguments") }
+            try host.vectorTerminalInverse(try optionalBoolean(arguments, at: 0) ?? true)
+        case "SETFOREGROUND":
+            guard (1...2).contains(arguments.count) else { throw BASICError.runtime("setForeground expects 1 or 2 arguments") }
+            try host.vectorTerminalSetForeground(try stringValue(arguments[0]), bright: try optionalBoolean(arguments, at: 1) ?? false)
+        case "SETBACKGROUND":
+            guard (1...2).contains(arguments.count) else { throw BASICError.runtime("setBackground expects 1 or 2 arguments") }
+            try host.vectorTerminalSetBackground(try stringValue(arguments[0]), bright: try optionalBoolean(arguments, at: 1) ?? false)
+        case "SETFOREGROUNDRGB":
+            try requireArgumentCount(arguments, 3, method: "setForegroundRGB")
+            try host.vectorTerminalSetForegroundRGB(red: try integerValue(arguments[0]), green: try integerValue(arguments[1]), blue: try integerValue(arguments[2]))
+        case "SETBACKGROUNDRGB":
+            try requireArgumentCount(arguments, 3, method: "setBackgroundRGB")
+            try host.vectorTerminalSetBackgroundRGB(red: try integerValue(arguments[0]), green: try integerValue(arguments[1]), blue: try integerValue(arguments[2]))
+        case "BELL":
+            try requireArgumentCount(arguments, 0, method: "bell")
+            try host.vectorTerminalBell()
         default:
             throw BASICError.runtime("VectorTerminal has no method \(method)")
         }
@@ -2283,6 +2697,47 @@ private final class BASICRuntime {
         return try stringValue(arguments[index])
     }
 
+    private func vectorTerminalLineStyleArguments(_ arguments: [BASICValue]) throws -> (lineCap: String?, layer: Int?) {
+        var lineCap: String?
+        var layer: Int?
+        if arguments.indices.contains(7), arguments[7] != .empty, arguments[7] != .null {
+            if arguments[7].string != nil {
+                lineCap = try stringValue(arguments[7])
+            } else {
+                layer = try integerValue(arguments[7])
+            }
+        }
+        if arguments.indices.contains(8), arguments[8] != .empty, arguments[8] != .null {
+            layer = try integerValue(arguments[8])
+        }
+        return (lineCap, layer)
+    }
+
+    private func vectorTerminalRectStyleArguments(_ arguments: [BASICValue]) throws -> (corners: String?, lineJoin: String?, layer: Int?) {
+        var corners: String?
+        var lineJoin: String?
+        var layer: Int?
+        if arguments.indices.contains(9), arguments[9] != .empty, arguments[9] != .null {
+            if arguments[9].string != nil {
+                corners = try stringValue(arguments[9])
+            } else {
+                layer = try integerValue(arguments[9])
+            }
+        }
+        if arguments.indices.contains(10), arguments[10] != .empty, arguments[10] != .null {
+            if arguments[10].string != nil {
+                lineJoin = try stringValue(arguments[10])
+            } else {
+                guard layer == nil else { throw BASICError.runtime("rect layer must be the final argument") }
+                layer = try integerValue(arguments[10])
+            }
+        }
+        if arguments.indices.contains(11), arguments[11] != .empty, arguments[11] != .null {
+            layer = try integerValue(arguments[11])
+        }
+        return (corners, lineJoin, layer)
+    }
+
     private func integerValue(_ value: BASICValue) throws -> Int {
         guard let number = value.number, number.rounded() == number else {
             throw BASICError.runtime("Expected an integer")
@@ -2290,11 +2745,143 @@ private final class BASICRuntime {
         return Int(number)
     }
 
+    private func doubleValue(_ value: BASICValue) throws -> Double {
+        guard let number = value.number else {
+            throw BASICError.runtime("Expected a number")
+        }
+        return number
+    }
+
+    private func dataValue(_ value: BASICValue) throws -> Data {
+        guard let string = value.string else { throw BASICError.runtime("Expected a string") }
+        let raw = string.rawString
+        if raw.lowercased().hasPrefix("base64:") {
+            let payload = String(raw.dropFirst("base64:".count))
+            guard let decoded = Data(base64Encoded: payload) else {
+                throw BASICError.runtime("Invalid base64 data")
+            }
+            return decoded
+        }
+        return string.rawData
+    }
+
     private func optionalInteger(_ arguments: [BASICValue], at index: Int) throws -> Int? {
         guard arguments.indices.contains(index), arguments[index] != .empty, arguments[index] != .null else {
             return nil
         }
         return try integerValue(arguments[index])
+    }
+
+    private func optionalDouble(_ arguments: [BASICValue], at index: Int) throws -> Double? {
+        guard arguments.indices.contains(index), arguments[index] != .empty, arguments[index] != .null else {
+            return nil
+        }
+        return try doubleValue(arguments[index])
+    }
+
+    private func optionalBoolean(_ arguments: [BASICValue], at index: Int) throws -> Bool? {
+        guard arguments.indices.contains(index), arguments[index] != .empty, arguments[index] != .null else {
+            return nil
+        }
+        switch arguments[index] {
+        case .boolean(let value):
+            return value
+        case .number(let value):
+            return value != 0
+        default:
+            throw BASICError.runtime("Expected a boolean")
+        }
+    }
+
+    private func vtgPoints(from value: BASICValue) throws -> [(x: Int, y: Int)] {
+        if case .array(let array) = value {
+            guard array.values.count >= 4, array.values.count.isMultiple(of: 2) else {
+                throw BASICError.runtime("draw points array must contain x,y pairs")
+            }
+            var points: [(x: Int, y: Int)] = []
+            var index = 0
+            while index < array.values.count {
+                points.append((x: try integerValue(array.values[index]), y: try integerValue(array.values[index + 1])))
+                index += 2
+            }
+            return points
+        }
+        if case .string(let string) = value {
+            let numbers = string.description
+                .split { $0 == "," || $0 == " " || $0 == ";" }
+                .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            guard numbers.count >= 4, numbers.count.isMultiple(of: 2) else {
+                throw BASICError.runtime("draw points string must contain x,y pairs")
+            }
+            var points: [(x: Int, y: Int)] = []
+            var index = 0
+            while index < numbers.count {
+                points.append((x: numbers[index], y: numbers[index + 1]))
+                index += 2
+            }
+            return points
+        }
+        throw BASICError.runtime("draw points must be an array or x,y string")
+    }
+
+    private func integerList(_ value: BASICValue) throws -> [Int] {
+        if case .array(let array) = value {
+            return try array.values.map { try integerValue($0) }
+        }
+        if case .string(let string) = value {
+            return try string.description
+                .split { $0 == "," || $0 == " " || $0 == ";" }
+                .map {
+                    guard let value = Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                        throw BASICError.runtime("Expected an integer list")
+                    }
+                    return value
+                }
+        }
+        throw BASICError.runtime("Expected an integer array or list")
+    }
+
+    private func stringList(_ value: BASICValue) throws -> [String] {
+        if case .array(let array) = value {
+            return try array.values.map { try stringValue($0) }
+        }
+        if case .string(let string) = value {
+            return string.description
+                .split { $0 == "," || $0 == ";" }
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        throw BASICError.runtime("Expected a string array or list")
+    }
+
+    private func dictionaryMember(_ value: BASICValue, key: String) throws -> BASICValue {
+        guard case .dictionary(let dictionary) = value else {
+            throw BASICError.runtime("Expected a dictionary")
+        }
+        return dictionary.values[key] ?? .empty
+    }
+
+    private func vtgCanvasValue(_ canvas: BASICVectorTerminalCanvasSnapshot?) -> BASICValue {
+        guard let canvas else { return .empty }
+        var values: [String: BASICValue] = [
+            "width": .number(Double(canvas.width)),
+            "height": .number(Double(canvas.height))
+        ]
+        if let source = canvas.source {
+            values["source"] = .string(BASICString(source))
+        }
+        if let rawResponse = canvas.rawResponse {
+            values["rawResponse"] = .string(BASICString(rawResponse))
+        }
+        return .dictionary(BASICDictionary(values: values))
+    }
+
+    private func vtgCellValue(_ cell: BASICVectorTerminalCellSnapshot?) -> BASICValue {
+        guard let cell else { return .empty }
+        return .dictionary(BASICDictionary(values: [
+            "columns": .number(Double(cell.columns)),
+            "rows": .number(Double(cell.rows))
+        ]))
     }
 
     func defaultValue(for type: BASICType) -> BASICValue {
@@ -3048,6 +3635,38 @@ public protocol BASICSystemHost: BASICHost {
     func runSystemCommand(_ command: String) throws -> String
 }
 
+/// Public canvas snapshot returned by VectorTerminal host adapters.
+public struct BASICVectorTerminalCanvasSnapshot: Sendable {
+    /// VTG pixel width.
+    public let width: Int
+    /// VTG pixel height.
+    public let height: Int
+    /// Source query or host source that produced the snapshot.
+    public let source: String?
+    /// Raw response text, when available.
+    public let rawResponse: String?
+
+    public init(width: Int, height: Int, source: String? = nil, rawResponse: String? = nil) {
+        self.width = width
+        self.height = height
+        self.source = source
+        self.rawResponse = rawResponse
+    }
+}
+
+/// Public terminal cell snapshot returned by VectorTerminal host adapters.
+public struct BASICVectorTerminalCellSnapshot: Sendable {
+    /// Visible terminal columns.
+    public let columns: Int
+    /// Visible terminal rows.
+    public let rows: Int
+
+    public init(columns: Int, rows: Int) {
+        self.columns = columns
+        self.rows = rows
+    }
+}
+
 /// Host interface for direct VectorTerminal Graphics (VTG) SDK operations.
 public protocol BASICVectorTerminalHost: BASICHost {
     /// Indicates whether direct VTG operations are available on the current host.
@@ -3061,9 +3680,19 @@ public protocol BASICVectorTerminalHost: BASICHost {
     /// Draws or replaces one VTG pixel primitive.
     func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws
     /// Draws or replaces one VTG line primitive.
-    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws
+    func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, layer: Int?) throws
+    /// Draws or replaces one VTG polyline primitive.
+    func vectorTerminalDraw(id: String, points: [(x: Int, y: Int)], stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws
+    /// Draws or replaces one VTG quadratic curve.
+    func vectorTerminalQuadraticCurve(id: String, x1: Int, y1: Int, cx: Int, cy: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws
+    /// Draws or replaces one VTG cubic curve.
+    func vectorTerminalCubicCurve(id: String, x1: Int, y1: Int, c1x: Int, c1y: Int, c2x: Int, c2y: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws
+    /// Draws or replaces one VTG path primitive.
+    func vectorTerminalPath(id: String, payload: String, stroke: String?, fill: String?, lineWidth: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws
+    /// Draws or replaces one VTG triangle primitive.
+    func vectorTerminalTriangle(id: String, x1: Int, y1: Int, x2: Int, y2: Int, x3: Int, y3: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, lineJoin: String?, layer: Int?) throws
     /// Draws or replaces one VTG rectangle primitive.
-    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws
+    func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, corners: String?, lineJoin: String?, layer: Int?) throws
     /// Draws or replaces one VTG circle primitive.
     func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws
     /// Draws or replaces one VTG ellipse primitive.
@@ -3072,18 +3701,142 @@ public protocol BASICVectorTerminalHost: BASICHost {
     func vectorTerminalText(id: String, x: Int, y: Int, value: String, color: String, size: Int, layer: Int?) throws
     /// Draws or replaces vector text.
     func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws
+    /// Draws or replaces a retained PNG image.
+    func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws
+    /// Draws or replaces a retained JPEG image.
+    func vectorTerminalImageJPEG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws
+    /// Uploads a PNG sprite asset.
+    func vectorTerminalUploadSpritePNG(id: String, width: Int, height: Int, data: Data, filter: String) throws
+    /// Uploads a JPEG sprite asset.
+    func vectorTerminalUploadSpriteJPEG(id: String, width: Int, height: Int, data: Data, filter: String) throws
+    /// Uploads a vector sprite asset.
+    func vectorTerminalUploadVectorSprite(id: String, width: Int, height: Int, path: String, stroke: String?, fill: String?, lineWidth: Double) throws
+    /// Uploads a palette-indexed sprite asset.
+    func vectorTerminalUploadIndexedSprite(id: String, width: Int, height: Int, pixels: [Int], palette: [String], transparentIndex: Int?, filter: String) throws
+    /// Places or replaces a retained sprite instance.
+    func vectorTerminalSprite(id: String, imageID: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double, anchorY: Double, layer: Int?) throws
+    /// Moves a retained sprite instance.
+    func vectorTerminalMoveSprite(id: String, x: Int, y: Int) throws
+    /// Rotates a retained sprite instance.
+    func vectorTerminalRotateSprite(id: String, rotation: Double) throws
+    /// Sets a retained sprite anchor.
+    func vectorTerminalAnchorSprite(id: String, anchorX: Double, anchorY: Double) throws
+    /// Transforms a retained sprite instance.
+    func vectorTerminalTransformSprite(id: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double?, anchorY: Double?) throws
+    /// Removes a sprite asset and dependent instances.
+    func vectorTerminalRemoveSprite(id: String) throws
+    /// Removes all sprite assets and instances.
+    func vectorTerminalClearSprites() throws
     /// Changes the default VTG layer.
     func vectorTerminalSetDefaultLayer(_ layer: Int) throws
+    /// Moves a retained VTG object to a layer.
+    func vectorTerminalSetLayer(id: String, layer: Int) throws
+    /// Scrolls an overlay layer.
+    func vectorTerminalScrollLayer(_ layer: Int, x: Int, y: Int) throws
+    /// Sets an overlay layer alpha.
+    func vectorTerminalSetLayerAlpha(_ layer: Int, alpha: Double) throws
+    /// Clips a VTG layer.
+    func vectorTerminalClipLayer(_ layer: Int, x: Int, y: Int, width: Int, height: Int) throws
+    /// Clears a VTG layer clip.
+    func vectorTerminalClearLayerClip(_ layer: Int) throws
     /// Enables fixed-resolution viewport mapping for a VTG layer.
     func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws
     /// Clears fixed-resolution viewport mapping for a VTG layer.
     func vectorTerminalClearViewportMode(layer: Int) throws
+    /// Overrides fixed-resolution viewport placement.
+    func vectorTerminalSetViewportScale(layer: Int, scale: Double, x: Int, y: Int) throws
+    /// Registers a VTG hit region.
+    func vectorTerminalHitRegion(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?, target: String?) throws
+    /// Clears VTG hit regions.
+    func vectorTerminalClearHitRegions(id: String?, layer: Int?) throws
+    /// Starts an offscreen VTG frame.
+    func vectorTerminalStartFrame(id: String, timeoutMilliseconds: Int) throws
+    /// Ends an offscreen VTG frame.
+    func vectorTerminalEndFrame(id: String) throws
+    /// Cancels an offscreen VTG frame.
+    func vectorTerminalCancelFrame(id: String) throws
+    /// Queries raw VTG capabilities.
+    func vectorTerminalQueryCapabilities(timeoutMilliseconds: Int) throws -> String?
+    /// Queries parsed VTG capabilities as JSON.
+    func vectorTerminalQueryCapabilityInfo(timeoutMilliseconds: Int) throws -> String?
+    /// Queries VTG canvas size.
+    func vectorTerminalQueryCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot?
+    /// Queries legacy VTG size.
+    func vectorTerminalQuerySize(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot?
+    /// Queries current VTG canvas size using SDK fallback order.
+    func vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot?
+    /// Queries terminal cell size.
+    func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot?
+    /// Enables VTG resize events.
+    func vectorTerminalEnableResizeEvents() throws
+    /// Disables VTG resize events.
+    func vectorTerminalDisableResizeEvents() throws
+    /// Enables VTG mouse reporting.
+    func vectorTerminalEnableMouseReporting(mode: String?) throws
+    /// Disables VTG mouse reporting.
+    func vectorTerminalDisableMouseReporting() throws
+    /// Reads one VTG event.
+    func vectorTerminalReadEvent(timeoutMilliseconds: Int) throws -> String?
+    /// Enters alternate screen mode.
+    func vectorTerminalEnterAlternateScreen() throws
+    /// Leaves alternate screen mode.
+    func vectorTerminalLeaveAlternateScreen() throws
+    /// Enables bracketed paste.
+    func vectorTerminalEnableBracketedPaste() throws
+    /// Disables bracketed paste.
+    func vectorTerminalDisableBracketedPaste() throws
+    /// Enables focus reporting.
+    func vectorTerminalEnableFocusReporting() throws
+    /// Disables focus reporting.
+    func vectorTerminalDisableFocusReporting() throws
     /// Clears the ANSI text screen through the SDK helper.
     func vectorTerminalClearScreen() throws
+    /// Clears scrollback and the ANSI text screen through the SDK helper.
+    func vectorTerminalClearScrollbackAndScreen() throws
+    /// Clears the current ANSI line.
+    func vectorTerminalClearLine() throws
+    /// Clears the current ANSI line to the end.
+    func vectorTerminalClearToEndOfLine() throws
     /// Writes plain ANSI text through the SDK helper.
     func vectorTerminalWriteText(_ value: String) throws
     /// Moves the ANSI cursor through the SDK helper.
     func vectorTerminalMoveCursor(row: Int, column: Int) throws
+    /// Sets the ANSI cursor through the SDK helper.
+    func vectorTerminalSetCursor(row: Int, column: Int) throws
+    /// Moves the ANSI cursor up.
+    func vectorTerminalMoveCursorUp(_ count: Int) throws
+    /// Moves the ANSI cursor down.
+    func vectorTerminalMoveCursorDown(_ count: Int) throws
+    /// Moves the ANSI cursor forward.
+    func vectorTerminalMoveCursorForward(_ count: Int) throws
+    /// Moves the ANSI cursor backward.
+    func vectorTerminalMoveCursorBackward(_ count: Int) throws
+    /// Saves the ANSI cursor.
+    func vectorTerminalSaveCursor() throws
+    /// Restores the ANSI cursor.
+    func vectorTerminalRestoreCursor() throws
+    /// Hides the ANSI cursor.
+    func vectorTerminalHideCursor() throws
+    /// Shows the ANSI cursor.
+    func vectorTerminalShowCursor() throws
+    /// Resets ANSI text attributes.
+    func vectorTerminalResetTextAttributes() throws
+    /// Toggles ANSI bold.
+    func vectorTerminalBold(_ enabled: Bool) throws
+    /// Toggles ANSI underline.
+    func vectorTerminalUnderline(_ enabled: Bool) throws
+    /// Toggles ANSI inverse video.
+    func vectorTerminalInverse(_ enabled: Bool) throws
+    /// Sets ANSI foreground color.
+    func vectorTerminalSetForeground(_ color: String, bright: Bool) throws
+    /// Sets ANSI background color.
+    func vectorTerminalSetBackground(_ color: String, bright: Bool) throws
+    /// Sets ANSI RGB foreground color.
+    func vectorTerminalSetForegroundRGB(red: Int, green: Int, blue: Int) throws
+    /// Sets ANSI RGB background color.
+    func vectorTerminalSetBackgroundRGB(red: Int, green: Int, blue: Int) throws
+    /// Emits ANSI bell.
+    func vectorTerminalBell() throws
 }
 
 public extension BASICVectorTerminalHost {
@@ -4751,6 +5504,7 @@ public extension BASICGraphicsHost {
     func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
         paintFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
     }
+
 }
 
 public extension BASICHost {
@@ -5099,6 +5853,11 @@ public final class BASICSession: @unchecked Sendable {
         let eventLoop = BASICEventLoop()
         self.eventLoop = eventLoop
         self.taskScheduler = BASICTaskScheduler(completionEventLoop: eventLoop)
+    }
+
+    /// Event handlers registered by the current or most recent program run.
+    public var eventHandlers: [BASICEventHandlerRegistration] {
+        runtime.eventHandlerRegistrations
     }
 
     /// Submits one console line, returning false when the caller should exit.
@@ -5932,9 +6691,6 @@ public final class BASICInterpreter {
     private var dataIndex = 0
     private var errorHandlerTarget: BranchTarget?
     private var isHandlingError = false
-    private var lastErrorNumber = 0
-    private var lastErrorLine = 0
-    private var lastErrorMessage = ""
     private var errorResumePC: Int?
     private var errorResumeNextPC: Int?
     private var pc = 0
@@ -5945,6 +6701,7 @@ public final class BASICInterpreter {
     private var currentGraphicsColor = BASICColor.legacy(1)
     private var currentTextForeground = BASICColor.legacy(7)
     private var currentTextBackground: BASICColor?
+    private var currentGraphicsPoint = (x: 0, y: 0)
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
@@ -6568,21 +7325,20 @@ public final class BASICInterpreter {
     private func resetErrorTrap() {
         errorHandlerTarget = nil
         isHandlingError = false
-        lastErrorNumber = 0
-        lastErrorLine = 0
-        lastErrorMessage = ""
         errorResumePC = nil
         errorResumeNextPC = nil
     }
 
     @discardableResult
     private func handleRuntimeError(_ error: BASICError, faultPC: Int, parsed: [ParsedLine]) throws -> Bool {
+        runtime.setLastError(
+            number: errorNumber(for: error),
+            line: parsed[safe: faultPC]?.displayLineNumber ?? 0,
+            message: error.description
+        )
         guard errorHandlerTarget != nil, !isHandlingError else {
             return false
         }
-        lastErrorNumber = errorNumber(for: error)
-        lastErrorLine = parsed[safe: faultPC]?.displayLineNumber ?? 0
-        lastErrorMessage = error.description
         errorResumePC = faultPC
         errorResumeNextPC = faultPC + 1
         isHandlingError = true
@@ -6905,6 +7661,7 @@ public final class BASICInterpreter {
             let resolved = try resolve(point: point)
             let resolvedColor = try color.map(resolveColor) ?? currentGraphicsColor
             graphicsHost.setPixel(x: resolved.x, y: resolved.y, color: resolvedColor)
+            currentGraphicsPoint = resolved
             return .next
         case .preset(let point, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -6916,6 +7673,7 @@ public final class BASICInterpreter {
             let resolved = try resolve(point: point)
             let resolvedColor = try color.map(resolveColor) ?? BASICColor.legacy(0)
             graphicsHost.setPixel(x: resolved.x, y: resolved.y, color: resolvedColor)
+            currentGraphicsPoint = resolved
             return .next
         case .line(let start, let end, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -6934,6 +7692,7 @@ public final class BASICInterpreter {
                 y2: resolvedEnd.y,
                 color: resolvedColor
             )
+            currentGraphicsPoint = resolvedEnd
             return .next
         case .circle(let center, let radius, let color):
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -6951,6 +7710,7 @@ public final class BASICInterpreter {
                 radius: resolvedRadius,
                 color: resolvedColor
             )
+            currentGraphicsPoint = resolvedCenter
             return .next
         case .paint(let point, let color, let borderColor):
             guard let graphicsHost = host as? BASICGraphicsHost else {
@@ -6968,6 +7728,16 @@ public final class BASICInterpreter {
                 color: resolvedColor,
                 borderColor: resolvedBorderColor
             )
+            currentGraphicsPoint = resolvedPoint
+            return .next
+        case .draw(let expression):
+            guard let graphicsHost = host as? BASICGraphicsHost else {
+                throw BASICError.studioOnlyFeature
+            }
+            guard graphicsHost.isGraphicsAvailable else {
+                throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
+            }
+            try drawGraphicsPath(try string(expression), graphicsHost: graphicsHost)
             return .next
         case .assignment(let kind, let variable, let declaredType, let expression):
             let value = try expression.map(evaluate)
@@ -7140,6 +7910,12 @@ public final class BASICInterpreter {
             isHandlingError = false
             errorResumePC = nil
             errorResumeNextPC = nil
+            return .next
+        case .onEventCall(let selector, let handler):
+            guard functionDefinitions[handler.normalized] != nil else {
+                throw BASICError.runtime("Function \(handler.name) is not defined")
+            }
+            runtime.setEventHandler(selector: selector, handler: handler)
             return .next
         case .error(let expression):
             throw BASICError.numberedRuntime(try integer(expression))
@@ -7806,10 +8582,10 @@ public final class BASICInterpreter {
     }
 
     private static let intrinsicFunctionNames: Set<String> = [
-        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DEC",
+        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
         "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN", "SLEEP",
-        "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "POS",
+        "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
         "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
     ]
@@ -7863,6 +8639,11 @@ public final class BASICInterpreter {
             return .number(1 / tan(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "CSC":
             return .number(1 / sin(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "DATE$":
+            try requireArgumentCount(name.name, arguments, 0)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM-dd-yyyy"
+            return .string(BASICString(formatter.string(from: Date())))
         case "DEC":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments) * 180 / Double.pi)
         case "EXP":
@@ -7997,6 +8778,11 @@ public final class BASICInterpreter {
             return .string(BASICString(String(repeating: " ", count: target - 1)))
         case "TAN":
             return .number(tan(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "TIME$":
+            try requireArgumentCount(name.name, arguments, 0)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss"
+            return .string(BASICString(formatter.string(from: Date())))
         case "TOJSONSTRING":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try evaluate(arguments[0])
@@ -9519,10 +10305,10 @@ public final class BASICInterpreter {
             ))
         case .variable(let name):
             if name.normalized == "ERR" {
-                return .number(Double(lastErrorNumber))
+                return .number(Double(runtime.lastErrorNumber))
             }
             if name.normalized == "ERL" {
-                return .number(Double(lastErrorLine))
+                return .number(Double(runtime.lastErrorLine))
             }
             if let constant = builtInConstant(named: name.normalized) {
                 return constant
@@ -9883,6 +10669,8 @@ public final class BASICInterpreter {
                 visit(point)
                 visit(color)
                 borderColor.map(visit)
+            case .draw(let expression):
+                visit(expression)
             case .dim(_, let variable, let dimensions, _):
                 localNames.insert(variable.normalized)
                 dimensions.compactMap { $0 }.forEach(visit)
@@ -10097,6 +10885,120 @@ public final class BASICInterpreter {
         (try integer(point.x), try integer(point.y))
     }
 
+    private func drawGraphicsPath(_ source: String, graphicsHost: BASICGraphicsHost) throws {
+        let characters = Array(source)
+        var index = 0
+        var drawColor = currentGraphicsColor
+        var blankNext = false
+        var noUpdateNext = false
+
+        func skipSeparators() {
+            while index < characters.count {
+                let character = characters[index]
+                if character == " " || character == "\t" || character == ";" {
+                    index += 1
+                } else {
+                    break
+                }
+            }
+        }
+
+        func readSignedNumber(default defaultValue: Int? = nil) throws -> Int {
+            skipSeparators()
+            let start = index
+            if index < characters.count, characters[index] == "+" || characters[index] == "-" {
+                index += 1
+            }
+            while index < characters.count, characters[index].isNumber {
+                index += 1
+            }
+            guard index > start else {
+                if let defaultValue { return defaultValue }
+                throw BASICError.runtime("DRAW expected number")
+            }
+            guard let value = Int(String(characters[start..<index])) else {
+                throw BASICError.runtime("DRAW expected number")
+            }
+            return value
+        }
+
+        func drawTo(_ x: Int, _ y: Int) {
+            let old = currentGraphicsPoint
+            if !blankNext {
+                graphicsHost.drawLine(x1: old.x, y1: old.y, x2: x, y2: y, color: drawColor)
+            }
+            if !noUpdateNext {
+                currentGraphicsPoint = (x, y)
+            }
+            blankNext = false
+            noUpdateNext = false
+        }
+
+        func drawRelative(dx: Int, dy: Int) {
+            drawTo(currentGraphicsPoint.x + dx, currentGraphicsPoint.y + dy)
+        }
+
+        while index < characters.count {
+            skipSeparators()
+            guard index < characters.count else { break }
+            let command = String(characters[index]).uppercased()
+            index += 1
+
+            switch command {
+            case "B":
+                blankNext = true
+            case "N":
+                noUpdateNext = true
+            case "C":
+                let color = try readSignedNumber()
+                drawColor = .legacy(color)
+                currentGraphicsColor = drawColor
+                graphicsHost.setGraphicsColor(drawColor)
+            case "U":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: 0, dy: -amount)
+            case "D":
+                drawRelative(dx: 0, dy: try readSignedNumber(default: 1))
+            case "L":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: -amount, dy: 0)
+            case "R":
+                drawRelative(dx: try readSignedNumber(default: 1), dy: 0)
+            case "E":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: amount, dy: -amount)
+            case "F":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: amount, dy: amount)
+            case "G":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: -amount, dy: amount)
+            case "H":
+                let amount = try readSignedNumber(default: 1)
+                drawRelative(dx: -amount, dy: -amount)
+            case "M":
+                skipSeparators()
+                let xStart = index
+                let x = try readSignedNumber()
+                let xWasRelative = xStart < characters.count && (characters[xStart] == "+" || characters[xStart] == "-")
+                skipSeparators()
+                guard index < characters.count, characters[index] == "," else {
+                    throw BASICError.runtime("DRAW expected comma in M command")
+                }
+                index += 1
+                skipSeparators()
+                let yStart = index
+                let y = try readSignedNumber()
+                let yWasRelative = yStart < characters.count && (characters[yStart] == "+" || characters[yStart] == "-")
+                let targetX = xWasRelative ? currentGraphicsPoint.x + x : x
+                let targetY = yWasRelative ? currentGraphicsPoint.y + y : y
+                drawTo(targetX, targetY)
+            default:
+                throw BASICError.runtime("DRAW unknown command \(command)")
+            }
+        }
+    }
+
     private func resolveColor(_ expression: Expression) throws -> BASICColor {
         let value = try evaluate(expression)
         if let string = value.string {
@@ -10259,6 +11161,7 @@ private indirect enum Statement: Equatable {
     case line(GraphicsPoint, GraphicsPoint, Expression?)
     case circle(GraphicsPoint, Expression, Expression?)
     case paint(GraphicsPoint, Expression, Expression?)
+    case draw(Expression)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)
     case closureAssignment(AssignmentKind, VariableName, BASICType?, [FunctionParameter], BASICType, [ClosureCaptureSpec], [ClosureBodyLine])
     case referenceAssignment(VariableReference, Expression?)
@@ -10290,6 +11193,7 @@ private indirect enum Statement: Equatable {
     case computedGoto([BranchTarget], Expression)
     case computedGosub([BranchTarget], Expression)
     case onErrorGoto(BranchTarget?)
+    case onEventCall(BASICEventSelector, VariableName)
     case error(Expression)
     case resumeNext
     case gosub(BranchTarget)
@@ -10889,6 +11793,9 @@ private struct Parser {
             let borderColor = match(.comma) ? try parseExpression() : nil
             return .paint(point, color, borderColor)
         }
+        if matchIdentifier("DRAW") {
+            return .draw(try parseExpression())
+        }
         if matchIdentifier("LINE") {
             if matchIdentifier("INPUT") {
                 if match(.hash) {
@@ -11406,6 +12313,9 @@ private struct Parser {
             }
             return .onErrorGoto(try consumeBranchTarget("Expected line number or label after ON ERROR GOTO"))
         }
+        if let eventSelector = try parseEventSelector() {
+            return .onEventCall(eventSelector, try consumeVariableName("Expected function name after CALL"))
+        }
         let selector = try parseExpression()
         if matchIdentifier("GOTO") {
             return .computedGoto(try parseBranchTargetList(), selector)
@@ -11414,6 +12324,25 @@ private struct Parser {
             return .computedGosub(try parseBranchTargetList(), selector)
         }
         throw syntax("Expected GOTO or GOSUB after ON expression")
+    }
+
+    private mutating func parseEventSelector() throws -> BASICEventSelector? {
+        let checkpoint = current
+        guard case .identifier(let eventType) = peek else { return nil }
+        _ = advance()
+        if matchIdentifier("CALL") {
+            return BASICEventSelector(type: eventType)
+        }
+        guard case .identifier(let subtype) = peek else {
+            current = checkpoint
+            return nil
+        }
+        _ = advance()
+        guard matchIdentifier("CALL") else {
+            current = checkpoint
+            return nil
+        }
+        return BASICEventSelector(type: eventType, subtype: subtype)
     }
 
     private mutating func parseBranchTargetList() throws -> [BranchTarget] {
@@ -12155,7 +13084,7 @@ private struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT",
+        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"

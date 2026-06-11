@@ -1697,6 +1697,7 @@ final class StudioModel: ObservableObject {
     }
     private var liveTerminalColumns = 80
     private var liveTerminalRows = 25
+    private var liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(width: 0, height: 0, source: "VectorTerminalView")
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
@@ -1916,6 +1917,14 @@ final class StudioModel: ObservableObject {
     func updateLiveTerminalSize(columns: Int, rows: Int) {
         liveTerminalColumns = max(1, columns)
         liveTerminalRows = max(1, rows)
+    }
+
+    func updateLiveVTGCanvasSize(width: Int, height: Int) {
+        liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(
+            width: max(1, width),
+            height: max(1, height),
+            source: "VectorTerminalView"
+        )
     }
 
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
@@ -3836,6 +3845,80 @@ extension StudioModel: BASICVectorTerminalHost {
         return VectorTerminalSDK.VTGColor(value)
     }
 
+    nonisolated private func vtgLineCap(_ value: String?) -> VectorTerminalSDK.VTGLineCap? {
+        guard let value else { return nil }
+        return VectorTerminalSDK.VTGLineCap(rawValue: value.lowercased())
+    }
+
+    nonisolated private func vtgLineJoin(_ value: String?) -> VectorTerminalSDK.VTGLineJoin? {
+        guard let value else { return nil }
+        return VectorTerminalSDK.VTGLineJoin(rawValue: value.lowercased())
+    }
+
+    nonisolated private func vtgSpriteFilter(_ value: String) -> VectorTerminalSDK.VTGSpriteFilter {
+        VectorTerminalSDK.VTGSpriteFilter(rawValue: value.lowercased()) ?? .smooth
+    }
+
+    nonisolated private func ansiColor(_ value: String) throws -> VectorTerminalSDK.ANSIColor {
+        switch value.lowercased() {
+        case "black": return .black
+        case "red": return .red
+        case "green": return .green
+        case "yellow": return .yellow
+        case "blue": return .blue
+        case "magenta": return .magenta
+        case "cyan": return .cyan
+        case "white": return .white
+        default: throw BASICError.runtime("Unknown ANSI color \(value)")
+        }
+    }
+
+    nonisolated private func canvasSnapshot(_ canvas: VectorTerminalSDK.VTGCanvas?) -> BASICVectorTerminalCanvasSnapshot? {
+        guard let canvas else { return nil }
+        return BASICVectorTerminalCanvasSnapshot(
+            width: canvas.width,
+            height: canvas.height,
+            source: canvas.source,
+            rawResponse: canvas.rawResponse
+        )
+    }
+
+    nonisolated private func capabilityJSON(_ capabilities: VectorTerminalSDK.VTGCapabilities?) -> String? {
+        guard let capabilities else { return nil }
+        var object: [String: Any] = [
+            "commands": capabilities.commands,
+            "planned": capabilities.planned,
+            "primitives": capabilities.primitives,
+            "underTextPrimitives": capabilities.underTextPrimitives,
+            "formats": capabilities.formats,
+            "raster": capabilities.raster,
+            "sprites": capabilities.sprites,
+            "events": capabilities.events,
+            "colors": capabilities.colors,
+            "textPlaneStatus": capabilities.textPlaneStatus.rawValue,
+            "rawResponse": capabilities.rawResponse
+        ]
+        object["protocolName"] = capabilities.protocolName
+        object["schema"] = capabilities.schema
+        object["version"] = capabilities.version
+        object["renderer"] = capabilities.renderer
+        object["layers"] = capabilities.layers
+        object["defaultLayer"] = capabilities.defaultLayer
+        object["textPlane"] = capabilities.textPlane
+        object["layerScroll"] = capabilities.layerScroll
+        object["layerAlpha"] = capabilities.layerAlpha
+        object["clip"] = capabilities.clip
+        object["hit"] = capabilities.hit
+        if let canvas = capabilities.canvas {
+            object["canvas"] = ["width": canvas.width, "height": canvas.height, "source": canvas.source ?? ""]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return json
+    }
+
     nonisolated func vectorTerminalClear() throws {
         useVTGCanvas { $0.clear() }
     }
@@ -3852,12 +3935,32 @@ extension StudioModel: BASICVectorTerminalHost {
         useVTGCanvas { $0.pixel(id: id, x: x, y: y, color: VectorTerminalSDK.VTGColor(color), layer: layer) }
     }
 
-    nonisolated func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, layer: Int?) throws {
-        useVTGCanvas { $0.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, layer: layer) }
+    nonisolated func vectorTerminalLine(id: String, x1: Int, y1: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, layer: Int?) throws {
+        useVTGCanvas { $0.line(id: id, x1: x1, y1: y1, x2: x2, y2: y2, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), layer: layer) }
     }
 
-    nonisolated func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, layer: Int?) throws {
-        useVTGCanvas { $0.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, layer: layer) }
+    nonisolated func vectorTerminalDraw(id: String, points: [(x: Int, y: Int)], stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.draw(id: id, points: points.map { VTGPoint(x: $0.x, y: $0.y) }, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalQuadraticCurve(id: String, x1: Int, y1: Int, cx: Int, cy: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.quadraticCurve(id: id, x1: x1, y1: y1, cx: cx, cy: cy, x2: x2, y2: y2, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalCubicCurve(id: String, x1: Int, y1: Int, c1x: Int, c1y: Int, c2x: Int, c2y: Int, x2: Int, y2: Int, stroke: String, width: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.cubicCurve(id: id, x1: x1, y1: y1, c1x: c1x, c1y: c1y, c2x: c2x, c2y: c2y, x2: x2, y2: y2, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalPath(id: String, payload: String, stroke: String?, fill: String?, lineWidth: Int, lineCap: String?, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.path(id: id, payload: payload, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, lineCap: vtgLineCap(lineCap), lineJoin: vtgLineJoin(lineJoin), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalTriangle(id: String, x1: Int, y1: Int, x2: Int, y2: Int, x3: Int, y3: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.triangle(id: id, p1: VTGPoint(x: x1, y: y1), p2: VTGPoint(x: x2, y: y2), p3: VTGPoint(x: x3, y: y3), stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, lineJoin: vtgLineJoin(lineJoin), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalRect(id: String, x: Int, y: Int, width: Int, height: Int, stroke: String?, fill: String?, lineWidth: Int, radius: Int, corners: String?, lineJoin: String?, layer: Int?) throws {
+        useVTGCanvas { $0.rect(id: id, x: x, y: y, width: width, height: height, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth, radius: radius, corners: corners, lineJoin: vtgLineJoin(lineJoin), layer: layer) }
     }
 
     nonisolated func vectorTerminalCircle(id: String, cx: Int, cy: Int, radius: Int, stroke: String?, fill: String?, lineWidth: Int, layer: Int?) throws {
@@ -3876,12 +3979,84 @@ extension StudioModel: BASICVectorTerminalHost {
         useVTGCanvas { $0.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, layer: layer) }
     }
 
+    nonisolated func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
+        useVTGCanvas { $0.image(id: id, x: x, y: y, width: width, height: height, pngData: data, filter: vtgSpriteFilter(filter), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalImageJPEG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
+        useVTGCanvas { $0.image(id: id, x: x, y: y, width: width, height: height, jpegData: data, filter: vtgSpriteFilter(filter), layer: layer) }
+    }
+
+    nonisolated func vectorTerminalUploadSpritePNG(id: String, width: Int, height: Int, data: Data, filter: String) throws {
+        useVTGCanvas { $0.uploadSprite(id: id, width: width, height: height, pngData: data, filter: vtgSpriteFilter(filter)) }
+    }
+
+    nonisolated func vectorTerminalUploadSpriteJPEG(id: String, width: Int, height: Int, data: Data, filter: String) throws {
+        useVTGCanvas { $0.uploadSprite(id: id, width: width, height: height, jpegData: data, filter: vtgSpriteFilter(filter)) }
+    }
+
+    nonisolated func vectorTerminalUploadVectorSprite(id: String, width: Int, height: Int, path: String, stroke: String?, fill: String?, lineWidth: Double) throws {
+        useVTGCanvas { $0.uploadVectorSprite(id: id, width: width, height: height, path: path, stroke: vtgColor(stroke), fill: vtgColor(fill), lineWidth: lineWidth) }
+    }
+
+    nonisolated func vectorTerminalUploadIndexedSprite(id: String, width: Int, height: Int, pixels: [Int], palette: [String], transparentIndex: Int?, filter: String) throws {
+        useVTGCanvas { $0.uploadIndexedSprite(id: id, width: width, height: height, pixels: pixels, palette: palette.map { VectorTerminalSDK.VTGColor($0) }, transparentIndex: transparentIndex, filter: vtgSpriteFilter(filter)) }
+    }
+
+    nonisolated func vectorTerminalSprite(id: String, imageID: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double, anchorY: Double, layer: Int?) throws {
+        useVTGCanvas { $0.sprite(id: id, imageID: imageID, x: x, y: y, rotation: rotation, scale: scale, anchorX: anchorX, anchorY: anchorY, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalMoveSprite(id: String, x: Int, y: Int) throws {
+        useVTGCanvas { $0.moveSprite(id: id, x: x, y: y) }
+    }
+
+    nonisolated func vectorTerminalRotateSprite(id: String, rotation: Double) throws {
+        useVTGCanvas { $0.rotateSprite(id: id, rotation: rotation) }
+    }
+
+    nonisolated func vectorTerminalAnchorSprite(id: String, anchorX: Double, anchorY: Double) throws {
+        useVTGCanvas { $0.anchorSprite(id: id, anchorX: anchorX, anchorY: anchorY) }
+    }
+
+    nonisolated func vectorTerminalTransformSprite(id: String, x: Int, y: Int, rotation: Double, scale: Double, anchorX: Double?, anchorY: Double?) throws {
+        useVTGCanvas { $0.transformSprite(id: id, x: x, y: y, rotation: rotation, scale: scale, anchorX: anchorX, anchorY: anchorY) }
+    }
+
+    nonisolated func vectorTerminalRemoveSprite(id: String) throws {
+        useVTGCanvas { $0.removeSprite(id: id) }
+    }
+
+    nonisolated func vectorTerminalClearSprites() throws {
+        useVTGCanvas { $0.clearSprites() }
+    }
+
     nonisolated func vectorTerminalSetDefaultLayer(_ layer: Int) throws {
         useVTGCanvas { $0.setDefaultLayer(layer) }
     }
 
+    nonisolated func vectorTerminalSetLayer(id: String, layer: Int) throws {
+        useVTGCanvas { $0.setLayer(id: id, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalScrollLayer(_ layer: Int, x: Int, y: Int) throws {
+        useVTGCanvas { $0.scrollLayer(layer, x: x, y: y) }
+    }
+
+    nonisolated func vectorTerminalSetLayerAlpha(_ layer: Int, alpha: Double) throws {
+        useVTGCanvas { $0.setLayerAlpha(layer, alpha: alpha) }
+    }
+
+    nonisolated func vectorTerminalClipLayer(_ layer: Int, x: Int, y: Int, width: Int, height: Int) throws {
+        useVTGCanvas { $0.clipLayer(layer, x: x, y: y, width: width, height: height) }
+    }
+
+    nonisolated func vectorTerminalClearLayerClip(_ layer: Int) throws {
+        useVTGCanvas { $0.clearLayerClip(layer) }
+    }
+
     nonisolated func vectorTerminalSetViewportMode(layer: Int, width: Int, height: Int, scale: String) throws {
-        let mode = VTGViewportScaleMode(rawValue: scale.lowercased()) ?? .fit
+        let mode = VectorTerminalSDK.VTGViewportScaleMode(rawValue: scale.lowercased()) ?? .fit
         useVTGCanvas { $0.setViewportMode(layer: layer, width: width, height: height, scale: mode) }
     }
 
@@ -3889,8 +4064,145 @@ extension StudioModel: BASICVectorTerminalHost {
         useVTGCanvas { $0.clearViewportMode(layer: layer) }
     }
 
+    nonisolated func vectorTerminalSetViewportScale(layer: Int, scale: Double, x: Int, y: Int) throws {
+        useVTGCanvas { $0.setViewportScale(layer: layer, scale: scale, x: x, y: y) }
+    }
+
+    nonisolated func vectorTerminalHitRegion(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?, target: String?) throws {
+        useVTGCanvas { $0.hitRegion(id: id, x: x, y: y, width: width, height: height, layer: layer, target: target) }
+    }
+
+    nonisolated func vectorTerminalClearHitRegions(id: String?, layer: Int?) throws {
+        useVTGCanvas { $0.clearHitRegions(id: id, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalStartFrame(id: String, timeoutMilliseconds: Int) throws {
+        useVTGCanvas { $0.startFrame(id: id, timeoutMilliseconds: timeoutMilliseconds) }
+    }
+
+    nonisolated func vectorTerminalEndFrame(id: String) throws {
+        useVTGCanvas { $0.endFrame(id: id) }
+    }
+
+    nonisolated func vectorTerminalCancelFrame(id: String) throws {
+        useVTGCanvas { $0.cancelFrame(id: id) }
+    }
+
+    nonisolated func vectorTerminalQueryCapabilities(timeoutMilliseconds: Int) throws -> String? {
+        var result: String?
+        runOnMainSync { result = vtgCanvas.queryCapabilities(timeoutMilliseconds: timeoutMilliseconds) }
+        return result
+    }
+
+    nonisolated func vectorTerminalQueryCapabilityInfo(timeoutMilliseconds: Int) throws -> String? {
+        var result: String?
+        runOnMainSync { result = capabilityJSON(vtgCanvas.queryCapabilityInfo(timeoutMilliseconds: timeoutMilliseconds)) }
+        return result
+    }
+
+    nonisolated func vectorTerminalQueryCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
+        runOnMainSync {
+            result = liveVTGCanvasSize
+            if let queried = canvasSnapshot(vtgCanvas.queryCanvas(timeoutMilliseconds: timeoutMilliseconds)) {
+                result = queried
+            }
+        }
+        return result
+    }
+
+    nonisolated func vectorTerminalQuerySize(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
+        runOnMainSync {
+            result = liveVTGCanvasSize
+            if let queried = canvasSnapshot(vtgCanvas.querySize(timeoutMilliseconds: timeoutMilliseconds)) {
+                result = queried
+            }
+        }
+        return result
+    }
+
+    nonisolated func vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
+        var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
+        runOnMainSync {
+            result = liveVTGCanvasSize
+            if let queried = canvasSnapshot(vtgCanvas.queryCurrentCanvas(timeoutMilliseconds: timeoutMilliseconds)) {
+                result = queried
+            }
+        }
+        return result
+    }
+
+    nonisolated func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot? {
+        BASICVectorTerminalCellSnapshot(columns: screenColumns(), rows: screenRows())
+    }
+
+    nonisolated func vectorTerminalEnableResizeEvents() throws {
+        useVTGCanvas { $0.enableResizeEvents() }
+    }
+
+    nonisolated func vectorTerminalDisableResizeEvents() throws {
+        useVTGCanvas { $0.disableResizeEvents() }
+    }
+
+    nonisolated func vectorTerminalEnableMouseReporting(mode: String?) throws {
+        useVTGCanvas {
+            if let mode {
+                $0.enableMouseReporting(mode: mode)
+            } else {
+                $0.enableMouseReporting()
+            }
+        }
+    }
+
+    nonisolated func vectorTerminalDisableMouseReporting() throws {
+        useVTGCanvas { $0.disableMouseReporting() }
+    }
+
+    nonisolated func vectorTerminalReadEvent(timeoutMilliseconds: Int) throws -> String? {
+        var result: String?
+        runOnMainSync { result = vtgCanvas.readEvent(timeoutMilliseconds: timeoutMilliseconds).map { "\($0)" } }
+        return result
+    }
+
+    nonisolated func vectorTerminalEnterAlternateScreen() throws {
+        useVTGCanvas { $0.enterAlternateScreen() }
+    }
+
+    nonisolated func vectorTerminalLeaveAlternateScreen() throws {
+        useVTGCanvas { $0.leaveAlternateScreen() }
+    }
+
+    nonisolated func vectorTerminalEnableBracketedPaste() throws {
+        useVTGCanvas { $0.enableBracketedPaste() }
+    }
+
+    nonisolated func vectorTerminalDisableBracketedPaste() throws {
+        useVTGCanvas { $0.disableBracketedPaste() }
+    }
+
+    nonisolated func vectorTerminalEnableFocusReporting() throws {
+        useVTGCanvas { $0.enableFocusReporting() }
+    }
+
+    nonisolated func vectorTerminalDisableFocusReporting() throws {
+        useVTGCanvas { $0.disableFocusReporting() }
+    }
+
     nonisolated func vectorTerminalClearScreen() throws {
         useVTGCanvas { $0.clearScreen() }
+    }
+
+    nonisolated func vectorTerminalClearScrollbackAndScreen() throws {
+        useVTGCanvas { $0.clearScrollbackAndScreen() }
+    }
+
+    nonisolated func vectorTerminalClearLine() throws {
+        useVTGCanvas { $0.clearLine() }
+    }
+
+    nonisolated func vectorTerminalClearToEndOfLine() throws {
+        useVTGCanvas { $0.clearToEndOfLine() }
     }
 
     nonisolated func vectorTerminalWriteText(_ value: String) throws {
@@ -3899,6 +4211,80 @@ extension StudioModel: BASICVectorTerminalHost {
 
     nonisolated func vectorTerminalMoveCursor(row: Int, column: Int) throws {
         useVTGCanvas { $0.moveCursor(row: row, column: column) }
+    }
+
+    nonisolated func vectorTerminalSetCursor(row: Int, column: Int) throws {
+        useVTGCanvas { $0.setCursor(row: row, column: column) }
+    }
+
+    nonisolated func vectorTerminalMoveCursorUp(_ count: Int) throws {
+        useVTGCanvas { $0.moveCursorUp(count) }
+    }
+
+    nonisolated func vectorTerminalMoveCursorDown(_ count: Int) throws {
+        useVTGCanvas { $0.moveCursorDown(count) }
+    }
+
+    nonisolated func vectorTerminalMoveCursorForward(_ count: Int) throws {
+        useVTGCanvas { $0.moveCursorForward(count) }
+    }
+
+    nonisolated func vectorTerminalMoveCursorBackward(_ count: Int) throws {
+        useVTGCanvas { $0.moveCursorBackward(count) }
+    }
+
+    nonisolated func vectorTerminalSaveCursor() throws {
+        useVTGCanvas { $0.saveCursor() }
+    }
+
+    nonisolated func vectorTerminalRestoreCursor() throws {
+        useVTGCanvas { $0.restoreCursor() }
+    }
+
+    nonisolated func vectorTerminalHideCursor() throws {
+        useVTGCanvas { $0.hideCursor() }
+    }
+
+    nonisolated func vectorTerminalShowCursor() throws {
+        useVTGCanvas { $0.showCursor() }
+    }
+
+    nonisolated func vectorTerminalResetTextAttributes() throws {
+        useVTGCanvas { $0.resetTextAttributes() }
+    }
+
+    nonisolated func vectorTerminalBold(_ enabled: Bool) throws {
+        useVTGCanvas { $0.bold(enabled) }
+    }
+
+    nonisolated func vectorTerminalUnderline(_ enabled: Bool) throws {
+        useVTGCanvas { $0.underline(enabled) }
+    }
+
+    nonisolated func vectorTerminalInverse(_ enabled: Bool) throws {
+        useVTGCanvas { $0.inverse(enabled) }
+    }
+
+    nonisolated func vectorTerminalSetForeground(_ color: String, bright: Bool) throws {
+        let parsed = try ansiColor(color)
+        useVTGCanvas { $0.setForeground(parsed, bright: bright) }
+    }
+
+    nonisolated func vectorTerminalSetBackground(_ color: String, bright: Bool) throws {
+        let parsed = try ansiColor(color)
+        useVTGCanvas { $0.setBackground(parsed, bright: bright) }
+    }
+
+    nonisolated func vectorTerminalSetForegroundRGB(red: Int, green: Int, blue: Int) throws {
+        useVTGCanvas { $0.setForegroundRGB(red: red, green: green, blue: blue) }
+    }
+
+    nonisolated func vectorTerminalSetBackgroundRGB(red: Int, green: Int, blue: Int) throws {
+        useVTGCanvas { $0.setBackgroundRGB(red: red, green: green, blue: blue) }
+    }
+
+    nonisolated func vectorTerminalBell() throws {
+        useVTGCanvas { $0.bell() }
     }
 }
 
@@ -4311,6 +4697,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 height: height
             )
             terminalView.frame = frame
+            let canvas = terminalView.currentVTGCanvas()
+            model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
             terminalView.needsDisplay = true
             return
         }
@@ -4320,6 +4708,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.sizeChanged(source: terminalView.getTerminal())
         let terminal = terminalView.getTerminal()
         model?.updateLiveTerminalSize(columns: terminal.cols, rows: terminal.rows)
+        let canvas = terminalView.currentVTGCanvas()
+        model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
         terminalView.needsDisplay = true
     }
 
@@ -4353,6 +4743,8 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         model?.updateLiveTerminalSize(columns: newCols, rows: newRows)
+        let canvas = terminalView.currentVTGCanvas()
+        model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
         terminalView.notifyVTGResizeIfNeeded()
     }
     func setTerminalTitle(source: TerminalView, title: String) {}

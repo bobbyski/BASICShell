@@ -545,6 +545,59 @@ struct BASICCoreTests {
         #expect(host.output == ["fallthrough"])
     }
 
+    @Test("ON event CALL registers VTG event handlers")
+    func onEventCallRegistersVTGEventHandlers() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on resize call ResizeChanged
+        on mouse up call MouseUp
+        on gamepad button call GamepadButton
+        end
+
+        function ResizeChanged(event as variant)
+        end function
+
+        function MouseUp(event as variant)
+        end function
+
+        function GamepadButton(event as variant)
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(session.eventHandlers == [
+            BASICEventHandlerRegistration(selector: BASICEventSelector(type: "GAMEPAD", subtype: "BUTTON"), handlerName: "GamepadButton", normalizedHandlerName: "GAMEPADBUTTON"),
+            BASICEventHandlerRegistration(selector: BASICEventSelector(type: "MOUSE", subtype: "UP"), handlerName: "MouseUp", normalizedHandlerName: "MOUSEUP"),
+            BASICEventHandlerRegistration(selector: BASICEventSelector(type: "RESIZE"), handlerName: "ResizeChanged", normalizedHandlerName: "RESIZECHANGED")
+        ])
+    }
+
+    @Test("ON event CALL requires a defined handler")
+    func onEventCallRequiresDefinedHandler() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on mouse move call MissingHandler
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: Function MissingHandler is not defined"])
+    }
+
+    @Test("DATE$ and TIME$ return BASIC clock strings")
+    func dateAndTimeReturnClockStrings() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("print len(date$()); \",\"; len(time$())")
+
+        #expect(host.output == ["10,8"])
+    }
+
     @Test("ON ERROR GOTO traps runtime errors and RESUME NEXT continues")
     func onErrorGotoTrapsRuntimeErrorsAndResumeNextContinues() {
         let host = TestHost()
@@ -606,6 +659,28 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["Runtime error: Division by zero"])
+    }
+
+    @Test("ERR and ERL remain visible after unhandled runtime errors")
+    func errAndErlRemainVisibleAfterUnhandledRuntimeErrors() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print "before"
+        print 10 / 0
+        print "after"
+        """)
+        session.submit("RUN")
+        session.submit("?ERR")
+        session.submit("?ERL")
+
+        #expect(host.output == [
+            "before",
+            "Runtime error: Division by zero",
+            "11",
+            "2"
+        ])
     }
 
     @Test("Breakpoint in ON ERROR handler stops after trapped runtime error")
@@ -1598,6 +1673,12 @@ struct BASICCoreTests {
         paintSession.submit("paint (1,1), 2")
 
         #expect(paintHost.output == ["Unsupported feature: you must run this program in BASICStudio"])
+
+        let drawHost = TextOnlyHost()
+        let drawSession = BASICSession(host: drawHost)
+        drawSession.submit("draw \"R10\"")
+
+        #expect(drawHost.output == ["Unsupported feature: you must run this program in BASICStudio"])
     }
 
     @Test("Stores and lists numbered lines")
@@ -4245,17 +4326,27 @@ struct BASICCoreTests {
         line (0,0)-(4,4), 3
         circle (10,11), 5, 4
         paint (1,1), 5, 3
+        pset (20,20), 4
+        draw "R5D5L5U5"
         """)
         session.submit("run")
 
         #expect(host.screenMode?.number == 1)
         #expect(host.output == ["2", "0"])
-        #expect(host.lines.count == 1)
+        #expect(host.lines.count == 5)
         #expect(host.lines.first?.0 == 0)
         #expect(host.lines.first?.1 == 0)
         #expect(host.lines.first?.2 == 4)
         #expect(host.lines.first?.3 == 4)
         #expect(host.lines.first?.4 == 3)
+        #expect(host.lines[1].0 == 20)
+        #expect(host.lines[1].1 == 20)
+        #expect(host.lines[1].2 == 25)
+        #expect(host.lines[1].3 == 20)
+        #expect(host.lines[4].0 == 20)
+        #expect(host.lines[4].1 == 25)
+        #expect(host.lines[4].2 == 20)
+        #expect(host.lines[4].3 == 20)
         #expect(host.circles.count == 1)
         #expect(host.circles.first?.0 == 10)
         #expect(host.circles.first?.1 == 11)
@@ -4280,14 +4371,56 @@ struct BASICCoreTests {
         line (0,0)-(4,4)
         circle (10,11), 5
         paint (1,1), 2
+        pset (20,20)
+        draw "R5"
         """)
         session.submit("run")
 
         #expect(host.graphicsColor == 2)
         #expect(host.pixels["2,3"] == 2)
         #expect(host.lines.first?.4 == 2)
+        #expect(host.lines.last?.4 == 2)
         #expect(host.circles.first?.3 == 2)
         #expect(host.fills.first?.2 == 2)
+    }
+
+    @Test("DRAW supports motion strings and inline palette color changes")
+    func drawSupportsMotionStringsAndInlineColorChanges() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        pset (10,10), 1
+        draw "C3R4D2BL2NUL1M20,20M+5,+0"
+        """)
+        session.submit("run")
+
+        #expect(host.lines.count == 6)
+        #expect(host.lines[0].0 == 10)
+        #expect(host.lines[0].1 == 10)
+        #expect(host.lines[0].2 == 14)
+        #expect(host.lines[0].3 == 10)
+        #expect(host.lines[0].4 == 3)
+        #expect(host.lines[1].2 == 14)
+        #expect(host.lines[1].3 == 12)
+        #expect(host.lines[2].0 == 12)
+        #expect(host.lines[2].1 == 12)
+        #expect(host.lines[2].2 == 12)
+        #expect(host.lines[2].3 == 11)
+        #expect(host.lines[3].0 == 12)
+        #expect(host.lines[3].1 == 12)
+        #expect(host.lines[3].2 == 11)
+        #expect(host.lines[3].3 == 12)
+        #expect(host.lines[4].0 == 11)
+        #expect(host.lines[4].1 == 12)
+        #expect(host.lines[4].2 == 20)
+        #expect(host.lines[4].3 == 20)
+        #expect(host.lines[5].0 == 20)
+        #expect(host.lines[5].1 == 20)
+        #expect(host.lines[5].2 == 25)
+        #expect(host.lines[5].3 == 20)
+        #expect(host.graphicsColor == 3)
     }
 
     @Test("COLOR accepts text background")
