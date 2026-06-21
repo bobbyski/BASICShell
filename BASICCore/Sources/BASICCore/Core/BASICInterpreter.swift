@@ -39,6 +39,7 @@ public final class BASICInterpreter {
     private var errorResumeNextPC: Int?
     private var pc = 0
     private var isPrepared = false
+    private var loggedMissingEventSelectors: Set<String> = []
     private var currentSourceFileName: String?
     private var currentLogModuleOverride: String?
     private var lastParseErrorLocation: (fileName: String?, lineNumber: Int)?
@@ -80,6 +81,7 @@ public final class BASICInterpreter {
         forStack.removeAll()
         functionStack.removeAll()
         legacyFiles.removeAll()
+        loggedMissingEventSelectors.removeAll()
         resetErrorTrap()
         outputColumn = 0
         try prepare(startLine: startLine)
@@ -2710,17 +2712,11 @@ public final class BASICInterpreter {
             ?? selector.subtype.map { _ in runtime.eventHandler(for: BASICEventSelector(type: selector.type)) }
             ?? nil
         guard let registration else {
-            logTarget(
-                module: "BASICInterpreter.swift",
-                text: "event handler missing selector=\(selector.description)"
-            )
+            logMissingEventHandler(selector: selector, detail: nil)
             return
         }
         guard let definition = functionDefinitions[registration.normalizedHandlerName] else {
-            logTarget(
-                module: "BASICInterpreter.swift",
-                text: "event handler function missing selector=\(selector.description) handler=\(registration.handlerName)"
-            )
+            logMissingEventHandler(selector: selector, detail: " handler=\(registration.handlerName)")
             return
         }
         logTarget(
@@ -2754,6 +2750,17 @@ public final class BASICInterpreter {
             return
         }
         loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
+    }
+
+    private func logMissingEventHandler(selector: BASICEventSelector, detail: String?) {
+        let key = selector.description + (detail ?? "")
+        guard loggedMissingEventSelectors.insert(key).inserted else {
+            return
+        }
+        logTarget(
+            module: "BASICInterpreter.swift",
+            text: "event handler missing selector=\(selector.description)\(detail ?? "")"
+        )
     }
 
     func callClosureBlock(_ closure: BASICCapturedClosure) throws -> BASICValue {
