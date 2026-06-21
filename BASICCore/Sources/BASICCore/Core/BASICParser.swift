@@ -810,6 +810,9 @@ struct Parser {
         if let eventSelector = try parseEventSelector() {
             return .onEventCall(eventSelector, try consumeVariableName("Expected function name after CALL"))
         }
+        if let timerEvent = try parseTimerEventStatement() {
+            return timerEvent
+        }
         let selector = try parseExpression()
         if matchIdentifier("GOTO") {
             return .computedGoto(try parseBranchTargetList(), selector)
@@ -818,6 +821,31 @@ struct Parser {
             return .computedGosub(try parseBranchTargetList(), selector)
         }
         throw syntax("Expected GOTO or GOSUB after ON expression")
+    }
+
+    private mutating func parseTimerEventStatement() throws -> Statement? {
+        let checkpoint = current
+        guard case .identifier = peek else { return nil }
+        let timer = try consumeVariableName("Expected timer variable after ON")
+        let ticks: Expression?
+        if match(.leftParen) {
+            ticks = try parseExpression()
+            guard match(.rightParen) else {
+                current = checkpoint
+                return nil
+            }
+        } else {
+            ticks = nil
+        }
+        guard matchIdentifier("GOSUB") || matchIdentifier("CALL") else {
+            current = checkpoint
+            return nil
+        }
+        return .onTimerEvent(
+            timer: timer,
+            ticks: ticks,
+            handler: try consumeVariableName("Expected timer handler name")
+        )
     }
 
     private mutating func parseEventSelector() throws -> BASICEventSelector? {

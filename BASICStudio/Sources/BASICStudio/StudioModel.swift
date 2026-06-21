@@ -261,6 +261,21 @@ final class StudioModel: ObservableObject {
         )
     }
 
+    func postVTGResizeEvent(width: Int, height: Int) {
+        session.postResizeEvent(width: max(1, width), height: max(1, height))
+    }
+
+    func postVTGMouseEvent(subtype: String, x: Double, y: Double, button: Int, buttons: Int, duration: Double) {
+        session.postMouseEvent(
+            subtype: subtype,
+            x: x,
+            y: y,
+            button: button,
+            buttons: buttons,
+            duration: duration
+        )
+    }
+
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
         let location = BASICBreakpointLocation(
             fileName: debuggerFileName,
@@ -1606,6 +1621,7 @@ extension StudioModel: BASICVectorTerminalHost {
         var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
         runOnMainSync {
             result = liveVTGCanvasSize
+            guard timeoutMilliseconds > 0 else { return }
             if let queried = canvasSnapshot(vtgCanvas.queryCanvas(timeoutMilliseconds: timeoutMilliseconds)) {
                 result = queried
             }
@@ -1617,6 +1633,7 @@ extension StudioModel: BASICVectorTerminalHost {
         var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
         runOnMainSync {
             result = liveVTGCanvasSize
+            guard timeoutMilliseconds > 0 else { return }
             if let queried = canvasSnapshot(vtgCanvas.querySize(timeoutMilliseconds: timeoutMilliseconds)) {
                 result = queried
             }
@@ -1628,6 +1645,7 @@ extension StudioModel: BASICVectorTerminalHost {
         var result = BASICVectorTerminalCanvasSnapshot(width: 1, height: 1, source: "VectorTerminalView")
         runOnMainSync {
             result = liveVTGCanvasSize
+            guard timeoutMilliseconds > 0 else { return }
             if let queried = canvasSnapshot(vtgCanvas.queryCurrentCanvas(timeoutMilliseconds: timeoutMilliseconds)) {
                 result = queried
             }

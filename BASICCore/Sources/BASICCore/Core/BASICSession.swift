@@ -3,7 +3,80 @@ import Foundation
 import Darwin
 #endif
 
-public final class BASICSession: @unchecked Sendable {
+private final class BASICTimerControlBlock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let queue: DispatchQueue
+    private let intervalMilliseconds: Int
+    private let repeating: Bool
+    private let fire: @Sendable (_ sequence: Int, _ intervalMilliseconds: Int) -> Void
+    private var source: DispatchSourceTimer?
+    private var sequence = 0
+    private var isCancelled = false
+
+    init(
+        id: Int,
+        intervalSeconds: Double,
+        repeating: Bool,
+        queue: DispatchQueue,
+        fire: @escaping @Sendable (_ sequence: Int, _ intervalMilliseconds: Int) -> Void
+    ) {
+        self.queue = queue
+        self.intervalMilliseconds = max(1, Int((intervalSeconds * 1000).rounded()))
+        self.repeating = repeating
+        self.fire = fire
+    }
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let interval = DispatchTimeInterval.milliseconds(intervalMilliseconds)
+        let leeway = DispatchTimeInterval.milliseconds(min(50, max(1, intervalMilliseconds / 20)))
+        timer.schedule(
+            deadline: .now() + interval,
+            repeating: repeating ? interval : .never,
+            leeway: leeway
+        )
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let sequence: Int
+            lock.lock()
+            guard !isCancelled else {
+                lock.unlock()
+                return
+            }
+            self.sequence += 1
+            sequence = self.sequence
+            lock.unlock()
+
+            fire(sequence, intervalMilliseconds)
+            if !repeating {
+                cancel()
+            }
+        }
+
+        lock.lock()
+        source = timer
+        isCancelled = false
+        sequence = 0
+        lock.unlock()
+        timer.resume()
+    }
+
+    func cancel() {
+        lock.lock()
+        guard !isCancelled else {
+            lock.unlock()
+            return
+        }
+        isCancelled = true
+        let timer = source
+        source = nil
+        lock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
+    }
+}
+
+public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Default graphical prompt template used by BASICStudio.
     public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
     /// Plain text prompt template for hosts without powerline glyph support.
@@ -33,6 +106,13 @@ public final class BASICSession: @unchecked Sendable {
     public var foregroundRunLane: BASICWorkerLane?
     /// Host callback queue for future async completions and Shell/Studio event-loop integration.
     public let eventLoop: BASICEventLoop
+    private let hostEventLock = NSLock()
+    private var pendingHostEvents: [BASICEventSelector: BASICValue] = [:]
+    private var pendingHostEventOrder: [BASICEventSelector] = []
+    private var isHostEventDrainQueued = false
+    private let timerLock = NSLock()
+    private let timerQueue = DispatchQueue(label: "AIBasic.BASICSession.Timers", qos: .utility)
+    private var timerBlocks: [Int: BASICTimerControlBlock] = [:]
 
     /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
@@ -182,10 +262,12 @@ public final class BASICSession: @unchecked Sendable {
 
             switch trimmed.uppercased() {
             case "NEW":
+                stopAllTimers()
                 program.clear()
                 runtime.clearAll()
                 fileState.lastFilePath = nil
             case "CLEAR":
+                stopAllTimers()
                 runtime.clearAll()
             case "HELP":
                 host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PROMPT, FILES, SYSTEM, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
@@ -193,7 +275,7 @@ public final class BASICSession: @unchecked Sendable {
             case "QUIT", "EXIT":
                 return false
             default:
-                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState).run()
+                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
             }
         } catch let error as BASICError {
             host.printLine(error.description)
@@ -323,6 +405,7 @@ public final class BASICSession: @unchecked Sendable {
 
     /// Starts the program from the beginning or an optional numbered line.
     public func runProgram(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
+        stopAllTimers()
         runtime.resetForRun()
         let task = taskScheduler.createTask(name: "Program")
         let interpreter = BASICInterpreter(
@@ -332,24 +415,282 @@ public final class BASICSession: @unchecked Sendable {
             fileState: fileState,
             executionControl: executionControl,
             task: task,
-            taskScheduler: taskScheduler
+            taskScheduler: taskScheduler,
+            timerHost: self,
+            eventLoop: eventLoop
         )
         activeInterpreter = interpreter
         do {
             try interpreter.run(startLine: startLine)
+            stopAllTimers()
             activeInterpreter = nil
         } catch let error as BASICError {
             switch error {
             case .breakRequested, .breakpoint, .stepComplete:
+                pauseRuntimeTimersForDebugger()
                 break
             default:
+                stopAllTimers()
                 activeInterpreter = nil
             }
             throw error
         } catch {
+            stopAllTimers()
             activeInterpreter = nil
             throw error
         }
+    }
+
+    /// Posts a host resize event to the running program, if it registered an `ON RESIZE CALL` handler.
+    public func postResizeEvent(width: Int, height: Int) {
+        postEvent(
+            selector: BASICEventSelector(type: "RESIZE"),
+            fields: [
+                "type": .string(BASICString("RESIZE")),
+                "subtype": .string(BASICString("")),
+                "width": .number(Double(width)),
+                "height": .number(Double(height))
+            ]
+        )
+    }
+
+    /// Posts a host mouse event to the running program, if it registered an `ON MOUSE ... CALL` handler.
+    public func postMouseEvent(
+        subtype: String,
+        x: Double,
+        y: Double,
+        button: Int,
+        buttons: Int,
+        duration: Double
+    ) {
+        let normalizedSubtype = subtype.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "MOUSE", subtype: normalizedSubtype),
+            fields: [
+                "type": .string(BASICString("MOUSE")),
+                "subtype": .string(BASICString(normalizedSubtype)),
+                "x": .number(x),
+                "y": .number(y),
+                "button": .number(Double(button)),
+                "buttons": .number(Double(buttons)),
+                "duration": .number(duration)
+            ]
+        )
+    }
+
+    func startTimer(id: Int, intervalSeconds: Double, repeating: Bool) {
+        let controlBlock = BASICTimerControlBlock(
+            id: id,
+            intervalSeconds: intervalSeconds,
+            repeating: repeating,
+            queue: timerQueue
+        ) { [weak self] sequence, intervalMilliseconds in
+            self?.postTimerEvent(timerID: id, sequence: sequence, intervalMilliseconds: intervalMilliseconds)
+        }
+        timerLock.lock()
+        let oldBlock = timerBlocks.updateValue(controlBlock, forKey: id)
+        timerLock.unlock()
+        logTarget(
+            module: "BASICSession.swift",
+            text: "timer control added id=\(id) interval=\(intervalSeconds)s repeating=\(repeating)"
+        )
+        if oldBlock != nil {
+            logTarget(module: "BASICSession.swift", text: "timer control purged id=\(id) reason=replaced")
+        }
+        oldBlock?.cancel()
+        controlBlock.start()
+    }
+
+    func stopTimer(id: Int) {
+        timerLock.lock()
+        let controlBlock = timerBlocks.removeValue(forKey: id)
+        timerLock.unlock()
+        if controlBlock != nil {
+            logTarget(module: "BASICSession.swift", text: "timer control purged id=\(id) reason=stop")
+        }
+        controlBlock?.cancel()
+    }
+
+    private func stopAllTimers() {
+        timerLock.lock()
+        let controlBlocks = Array(timerBlocks.values)
+        let count = timerBlocks.count
+        timerBlocks.removeAll()
+        timerLock.unlock()
+        if count > 0 {
+            logTarget(module: "BASICSession.swift", text: "timer controls purged count=\(count) reason=stop-all")
+        }
+        controlBlocks.forEach { $0.cancel() }
+    }
+
+    private func pauseRuntimeTimersForDebugger() {
+        timerLock.lock()
+        let controlBlocks = Array(timerBlocks.values)
+        let count = timerBlocks.count
+        timerBlocks.removeAll()
+        timerLock.unlock()
+        if count > 0 {
+            logTarget(module: "BASICSession.swift", text: "timer controls purged count=\(count) reason=debug-pause")
+        }
+        clearPendingHostEvents(reason: "debug-pause")
+        controlBlocks.forEach { $0.cancel() }
+    }
+
+    private func restartRunningTimers() {
+        for timer in runtime.runningSecondsTimers() {
+            startTimer(id: timer.id, intervalSeconds: timer.intervalSeconds, repeating: timer.repeating)
+        }
+    }
+
+    /// Posts due timer events for a BASIC `SecondsTimer` object.
+    private func postTimerEvent(timerID: Int, sequence: Int, intervalMilliseconds: Int) {
+        timerLock.lock()
+        let isTimerActive = timerBlocks[timerID] != nil
+        timerLock.unlock()
+        guard isTimerActive else {
+            logTarget(
+                module: "BASICSession.swift",
+                text: "timer event purged id=\(timerID) sequence=\(sequence) reason=inactive"
+            )
+            return
+        }
+
+        let registrations = runtime.timerHandlerRegistrations(forTimerID: timerID)
+        guard !registrations.isEmpty else {
+            logTarget(
+                module: "BASICSession.swift",
+                text: "timer event purged id=\(timerID) sequence=\(sequence) reason=no-handler"
+            )
+            return
+        }
+        for item in registrations where sequence % item.ticks == 0 {
+            let fields: [String: BASICValue] = [
+                "type": .string(BASICString("TIMER")),
+                "subtype": .string(BASICString(item.registration.selector.subtype ?? "")),
+                "timerID": .number(Double(timerID)),
+                "timerId": .number(Double(timerID)),
+                "sequence": .number(Double(sequence)),
+                "tick": .number(Double(item.ticks)),
+                "ticks": .number(Double(item.ticks)),
+                "interval": .number(Double(intervalMilliseconds)),
+                "baseInterval": .number(Double(intervalMilliseconds)),
+                "elapsed": .number(Double(sequence) * Double(intervalMilliseconds) / 1000.0)
+            ]
+            logTarget(
+                module: "BASICSession.swift",
+                text: "timer event added id=\(timerID) sequence=\(sequence) tick=\(item.ticks) selector=\(item.registration.selector.description)"
+            )
+            postEvent(selector: item.registration.selector, fields: fields)
+        }
+    }
+
+    private func postEvent(selector: BASICEventSelector, fields: [String: BASICValue]) {
+        guard !eventLoop.hasPendingError else {
+            if selector.type == "TIMER" {
+                logTarget(module: "BASICSession.swift", text: "timer event purged selector=\(selector.description) reason=pending-error")
+            }
+            return
+        }
+        let data = BASICValue.dictionary(BASICDictionary(values: fields))
+        hostEventLock.lock()
+        let replacesExisting = pendingHostEvents[selector] != nil
+        if !replacesExisting {
+            pendingHostEventOrder.append(selector)
+        }
+        pendingHostEvents[selector] = data
+        guard !isHostEventDrainQueued else {
+            hostEventLock.unlock()
+            if selector.type == "TIMER", replacesExisting {
+                logTarget(module: "BASICSession.swift", text: "timer event purged selector=\(selector.description) reason=replaced-pending")
+            }
+            return
+        }
+        isHostEventDrainQueued = true
+        hostEventLock.unlock()
+
+        eventLoop.post { [weak self] in
+            self?.drainHostEvents()
+        }
+    }
+
+    private func drainHostEvents() {
+        guard !eventLoop.hasPendingError else { return }
+        hostEventLock.lock()
+        let orderedSelectors = pendingHostEventOrder.sorted { lhs, rhs in
+            eventDeliveryPriority(lhs) < eventDeliveryPriority(rhs)
+        }
+        let events = orderedSelectors.compactMap { selector in
+            pendingHostEvents[selector].map { (selector, $0) }
+        }
+        pendingHostEvents.removeAll()
+        pendingHostEventOrder.removeAll()
+        isHostEventDrainQueued = false
+        hostEventLock.unlock()
+
+        guard let activeInterpreter else { return }
+        for (selector, data) in events {
+            do {
+            if selector.type == "TIMER" {
+                logTarget(
+                    module: "BASICSession.swift",
+                    text: "timer event dispatching selector=\(selector.description) data=\(timerEventLogSummary(data))"
+                )
+            }
+                try activeInterpreter.dispatchEvent(selector: selector, data: data)
+            } catch let error as BASICError where error.isDebugPause {
+                pauseRuntimeTimersForDebugger()
+                eventLoop.reportError(error)
+                return
+            } catch BASICError.breakRequested {
+                pauseRuntimeTimersForDebugger()
+                eventLoop.reportError(BASICError.breakRequested(nil))
+                return
+            } catch {
+                host.printLine("Runtime error: \(error)")
+            }
+        }
+    }
+
+    private func clearPendingHostEvents(reason: String = "clear") {
+        hostEventLock.lock()
+        let timerCount = pendingHostEvents.keys.filter { $0.type == "TIMER" }.count
+        pendingHostEvents.removeAll()
+        pendingHostEventOrder.removeAll()
+        isHostEventDrainQueued = false
+        hostEventLock.unlock()
+        if timerCount > 0 {
+            logTarget(module: "BASICSession.swift", text: "timer events purged count=\(timerCount) reason=\(reason)")
+        }
+    }
+
+    private func eventDeliveryPriority(_ selector: BASICEventSelector) -> Int {
+        switch selector.type {
+        case "RESIZE":
+            return 0
+        case "MOUSE":
+            return 1
+        default:
+            return 2
+        }
+    }
+
+    private func logTarget(module: String, text: String) {
+        guard let loggingHost = host as? BASICLoggingHost,
+              loggingHost.isBASICLoggingEnabled else {
+            return
+        }
+        loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
+    }
+
+    private func timerEventLogSummary(_ data: BASICValue) -> String {
+        guard case .dictionary(let dictionary) = data else {
+            return data.description
+        }
+        func number(_ key: String) -> String {
+            guard let value = dictionary.values[key], let number = value.number else { return "?" }
+            return String(Int(number))
+        }
+        return "id=\(number("timerID")) sequence=\(number("sequence")) tick=\(number("tick")) interval=\(number("interval"))"
     }
 
     /// Runs the program synchronously, using the configured foreground lane when present.
@@ -417,18 +758,23 @@ public final class BASICSession: @unchecked Sendable {
             return
         }
         activeInterpreter.setExecutionControl(executionControl)
+        restartRunningTimers()
         do {
             try activeInterpreter.continueExecution()
+            stopAllTimers()
             self.activeInterpreter = nil
         } catch let error as BASICError {
             switch error {
             case .breakRequested, .breakpoint, .stepComplete:
+                pauseRuntimeTimersForDebugger()
                 break
             default:
+                stopAllTimers()
                 self.activeInterpreter = nil
             }
             throw error
         } catch {
+            stopAllTimers()
             self.activeInterpreter = nil
             throw error
         }

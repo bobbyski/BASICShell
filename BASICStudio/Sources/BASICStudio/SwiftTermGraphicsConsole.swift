@@ -46,14 +46,25 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var inputFieldDisplayCursor = 0
     private var hasInitializedLineInputDefault = false
     private var keyMonitor: Any?
+    private var mouseUpMonitor: Any?
     private var pendingEscapeBytes: [UInt8] = []
     private var pendingEscapeFlushID = 0
+    private var mouseTrackingArea: NSTrackingArea?
+    private var lastMouseEventTimestamp: TimeInterval?
+    private var lastMouseMovePostTimestamp: TimeInterval?
+    private var lastPostedVTGCanvasSize: (width: Int, height: Int)?
 
     deinit {
         MainActor.assumeIsolated {
-            if let keyMonitor {
-                NSEvent.removeMonitor(keyMonitor)
-            }
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
+        if let mouseUpMonitor {
+            NSEvent.removeMonitor(mouseUpMonitor)
+        }
+        if let mouseTrackingArea {
+            removeTrackingArea(mouseTrackingArea)
+        }
         }
     }
 
@@ -76,6 +87,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
         installKeyMonitor()
+        installMouseUpMonitor()
 
         addSubview(terminalView)
     }
@@ -90,6 +102,16 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
+    private func installMouseUpMonitor() {
+        guard mouseUpMonitor == nil else { return }
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            guard event.window === self.window else { return event }
+            self.postMouseEvent(from: event, subtype: "UP")
+            return event
+        }
+    }
+
     private func applyFont(family: String, size: Double) {
         let font = NSFont(name: family, size: CGFloat(size))
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
@@ -101,11 +123,43 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(terminalView)
+        updateMouseTrackingArea()
     }
 
     override func layout() {
         super.layout()
         applyScreenSize(force: false)
+        updateMouseTrackingArea()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        updateMouseTrackingArea()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "MOVE")
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "MOVE")
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "UP")
+        super.mouseUp(with: event)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "UP")
+        super.rightMouseUp(with: event)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "UP")
+        super.otherMouseUp(with: event)
     }
 
     func render(consoleText: String, screenSize: TerminalScreenSize, fontFamily: String, fontSize: Double) {
@@ -153,6 +207,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             terminalView.frame = frame
             let canvas = terminalView.currentVTGCanvas()
             model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
+            postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
             terminalView.needsDisplay = true
             return
         }
@@ -164,6 +219,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.updateLiveTerminalSize(columns: terminal.cols, rows: terminal.rows)
         let canvas = terminalView.currentVTGCanvas()
         model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
+        postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
         terminalView.needsDisplay = true
     }
 
@@ -200,14 +256,96 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         let canvas = terminalView.currentVTGCanvas()
         model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
         terminalView.notifyVTGResizeIfNeeded()
+        postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
     }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     func connectVTG(to model: StudioModel) {
         model.vtgDataSink = { [weak self] data in
-            self?.terminalView.feedVTG(data)
+            self?.feedVTG(data)
         }
+    }
+
+    private func feedVTG(_ data: Data) {
+        terminalView.feedVTG(data)
+        invalidateVTGDisplay()
+    }
+
+    private func invalidateVTGDisplay() {
+        terminalView.vtgOverlayView.needsDisplay = true
+        terminalView.vtgOverlayView.setNeedsDisplay(terminalView.vtgOverlayView.bounds)
+
+        terminalView.needsDisplay = true
+        terminalView.setNeedsDisplay(terminalView.bounds)
+
+        needsDisplay = true
+        setNeedsDisplay(bounds)
+
+        terminalView.vtgOverlayView.displayIfNeeded()
+        terminalView.displayIfNeeded()
+        displayIfNeeded()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.terminalView.vtgOverlayView.needsDisplay = true
+            self.terminalView.vtgOverlayView.setNeedsDisplay(self.terminalView.vtgOverlayView.bounds)
+            self.terminalView.needsDisplay = true
+            self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+        }
+    }
+
+    private func updateMouseTrackingArea() {
+        if let mouseTrackingArea {
+            removeTrackingArea(mouseTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: terminalView.frame,
+            options: [.activeInKeyWindow, .mouseMoved, .enabledDuringMouseDrag, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        mouseTrackingArea = area
+        addTrackingArea(area)
+    }
+
+    private func postResizeEventIfNeeded(width: Int, height: Int) {
+        let normalized = (width: max(1, width), height: max(1, height))
+        guard lastPostedVTGCanvasSize?.width != normalized.width
+            || lastPostedVTGCanvasSize?.height != normalized.height
+        else {
+            return
+        }
+        lastPostedVTGCanvasSize = normalized
+        model?.postVTGResizeEvent(width: normalized.width, height: normalized.height)
+    }
+
+    private func postMouseEvent(from event: NSEvent, subtype: String) {
+        guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
+        if subtype == "MOVE" {
+            let previousMove = lastMouseMovePostTimestamp ?? 0
+            guard event.timestamp - previousMove >= 1.0 / 30.0 else { return }
+            lastMouseMovePostTimestamp = event.timestamp
+        }
+        let pointInSelf = convert(event.locationInWindow, from: nil)
+        guard terminalView.frame.contains(pointInSelf) else { return }
+
+        let point = terminalView.convert(pointInSelf, from: self)
+        let canvas = terminalView.currentVTGCanvas()
+        let canvasWidth = max(1, canvas.width)
+        let canvasHeight = max(1, canvas.height)
+        let x = min(max(Double(point.x / terminalView.bounds.width) * Double(canvasWidth), 0), Double(canvasWidth))
+        let y = min(max(Double((terminalView.bounds.height - point.y) / terminalView.bounds.height) * Double(canvasHeight), 0), Double(canvasHeight))
+        let previousTimestamp = lastMouseEventTimestamp ?? event.timestamp
+        lastMouseEventTimestamp = event.timestamp
+        model?.postVTGMouseEvent(
+            subtype: subtype,
+            x: x,
+            y: y,
+            button: max(0, event.buttonNumber),
+            buttons: Int(NSEvent.pressedMouseButtons),
+            duration: max(0, event.timestamp - previousTimestamp)
+        )
     }
 
     private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {

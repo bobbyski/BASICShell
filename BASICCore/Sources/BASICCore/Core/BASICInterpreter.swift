@@ -11,6 +11,8 @@ public final class BASICInterpreter {
     private var executionControl: BASICExecutionControl?
     private let task: BASICTask?
     private weak var taskScheduler: BASICTaskScheduler?
+    private weak var timerHost: BASICTimerHost?
+    private let eventLoop: BASICEventLoop?
     private var gosubStack: [GosubFrame] = []
     private var forStack: [ForFrame] = []
     private var functionStack: [FunctionFrame] = []
@@ -47,7 +49,7 @@ public final class BASICInterpreter {
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
-        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil, task: nil, taskScheduler: nil)
+        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil, task: nil, taskScheduler: nil, eventLoop: nil)
     }
 
     init(
@@ -57,7 +59,9 @@ public final class BASICInterpreter {
         fileState: BASICFileState = BASICFileState(),
         executionControl: BASICExecutionControl? = nil,
         task: BASICTask? = nil,
-        taskScheduler: BASICTaskScheduler? = nil
+        taskScheduler: BASICTaskScheduler? = nil,
+        timerHost: BASICTimerHost? = nil,
+        eventLoop: BASICEventLoop? = nil
     ) {
         self.program = program
         self.host = host
@@ -66,6 +70,8 @@ public final class BASICInterpreter {
         self.executionControl = executionControl
         self.task = task
         self.taskScheduler = taskScheduler
+        self.timerHost = timerHost
+        self.eventLoop = eventLoop
     }
 
     /// Starts execution, optionally from a numbered line.
@@ -599,6 +605,8 @@ public final class BASICInterpreter {
                 try executionControl?.checkBreak()
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
                 try apply(flow: next, currentPC: pc, parsed: parsedLines)
+                eventLoop?.runPending(limit: 16)
+                try eventLoop?.throwPendingError()
             } catch let error as BASICError {
                 if error.isDebugPause {
                     snapshotPausedDebugState()
@@ -1224,6 +1232,8 @@ public final class BASICInterpreter {
             return .next
         case .yield:
             task?.recordYield()
+            eventLoop?.runPending(limit: 8)
+            try eventLoop?.throwPendingError()
             return .next
         case .randomize(let expression):
             let seed = try expression.map { try numeric(try evaluate($0)) } ?? Date().timeIntervalSince1970
@@ -1255,9 +1265,24 @@ public final class BASICInterpreter {
             return .next
         case .onEventCall(let selector, let handler):
             guard functionDefinitions[handler.normalized] != nil else {
-                throw BASICError.runtime("Function \(handler.name) is not defined")
+                throw BASICError.runtime("Event handler \(handler.name) must be a FUNCTION")
             }
             runtime.setEventHandler(selector: selector, handler: handler)
+            return .next
+        case .onTimerEvent(let timer, let ticksExpression, let handler):
+            guard functionDefinitions[handler.normalized] != nil else {
+                throw BASICError.runtime("Timer handler \(handler.name) must be a FUNCTION")
+            }
+            let timerValue = runtime.value(for: timer)
+            guard case .systemObject(let typeName, let id) = timerValue,
+                  typeName.uppercased() == "SECONDSTIMER" else {
+                throw BASICError.runtime("\(timer.name) is not a SecondsTimer")
+            }
+            let ticks = try ticksExpression.map(integer) ?? 1
+            guard ticks > 0 else {
+                throw BASICError.runtime("Timer ticks must be greater than zero")
+            }
+            try runtime.setTimerEventHandler(id: id, ticks: ticks, handler: handler)
             return .next
         case .error(let expression):
             throw BASICError.numberedRuntime(try integer(expression))
@@ -2334,6 +2359,7 @@ public final class BASICInterpreter {
                 arguments: try arguments.map(evaluate),
                 fileHost: host as? BASICFileHost,
                 vectorTerminalHost: host as? BASICVectorTerminalHost,
+                timerHost: timerHost,
                 jsonDecoder: { [runtime] source in try runtime.valueFromJSONString(source, permissive: true) },
                 jsonEncoder: { [runtime] value, pretty in try runtime.jsonString(for: value, pretty: pretty) }
             )
@@ -2634,6 +2660,8 @@ public final class BASICInterpreter {
                 updateExecutionLocation(parsed[pc])
                 try executionControl?.checkBreak()
                 let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
+                eventLoop?.runPending(limit: 16)
+                try eventLoop?.throwPendingError()
                 switch flow {
                 case .next:
                     pc += 1
@@ -2675,6 +2703,57 @@ public final class BASICInterpreter {
         }
 
         return resultValue()
+    }
+
+    func dispatchEvent(selector: BASICEventSelector, data: BASICValue) throws {
+        let registration = runtime.eventHandler(for: selector)
+            ?? selector.subtype.map { _ in runtime.eventHandler(for: BASICEventSelector(type: selector.type)) }
+            ?? nil
+        guard let registration else {
+            logTarget(
+                module: "BASICInterpreter.swift",
+                text: "event handler missing selector=\(selector.description)"
+            )
+            return
+        }
+        guard let definition = functionDefinitions[registration.normalizedHandlerName] else {
+            logTarget(
+                module: "BASICInterpreter.swift",
+                text: "event handler function missing selector=\(selector.description) handler=\(registration.handlerName)"
+            )
+            return
+        }
+        logTarget(
+            module: "BASICInterpreter.swift",
+            text: "event handler begin selector=\(selector.description) handler=\(definition.displayName)"
+        )
+        do {
+            _ = try callFunctionSynchronously(
+                definition: definition,
+                receiver: nil,
+                receiverClassName: nil,
+                argumentValues: [data],
+                allowVoid: true
+            )
+            logTarget(
+                module: "BASICInterpreter.swift",
+                text: "event handler completed selector=\(selector.description) handler=\(definition.displayName)"
+            )
+        } catch {
+            logTarget(
+                module: "BASICInterpreter.swift",
+                text: "event handler failed selector=\(selector.description) handler=\(definition.displayName) error=\(error)"
+            )
+            throw error
+        }
+    }
+
+    private func logTarget(module: String, text: String) {
+        guard let loggingHost = host as? BASICLoggingHost,
+              loggingHost.isBASICLoggingEnabled else {
+            return
+        }
+        loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
     }
 
     func callClosureBlock(_ closure: BASICCapturedClosure) throws -> BASICValue {
@@ -3670,6 +3749,9 @@ public final class BASICInterpreter {
             if name.normalized == "VECTORTERMINAL" || name.normalized == "VTG" {
                 return try constructVectorTerminal(arguments: arguments)
             }
+            if name.normalized == "SECONDSTIMER" {
+                return try constructSecondsTimer(arguments: arguments)
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -3688,6 +3770,9 @@ public final class BASICInterpreter {
             }
             if className.uppercased() == "VECTORTERMINAL" || className.uppercased() == "VTG" {
                 return try constructVectorTerminal(arguments: arguments)
+            }
+            if className.uppercased() == "SECONDSTIMER" {
+                return try constructSecondsTimer(arguments: arguments)
             }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
@@ -4123,6 +4208,17 @@ public final class BASICInterpreter {
         return runtime.vectorTerminalObject()
     }
 
+    private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {
+        guard arguments.count == 1 else {
+            throw BASICError.runtime("SecondsTimer expects 1 argument")
+        }
+        let intervalSeconds = try numeric(evaluate(arguments[0]))
+        guard intervalSeconds > 0 else {
+            throw BASICError.runtime("SecondsTimer interval must be greater than zero")
+        }
+        return runtime.secondsTimerObject(intervalSeconds: intervalSeconds)
+    }
+
     private func evaluateBinary(_ leftExpression: Expression, _ operation: BinaryOperation, _ rightExpression: Expression) throws -> BASICValue {
         if operation == .add {
             return try evaluateAddChain(leftExpression, rightExpression)
@@ -4433,4 +4529,3 @@ extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
-

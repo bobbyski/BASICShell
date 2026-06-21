@@ -20,9 +20,14 @@ let package = Package(
                 "SwiftTerm",
                 "VectorTerminalSDK"
             ],
+            exclude: [
+                "Resources/AppIcon.iconset"
+            ],
             resources: [
                 .copy("Resources/Demos"),
-                .copy("Resources/Fonts")
+                .copy("Resources/Fonts"),
+                .copy("Resources/Assets"),
+                .process("Resources/Assets.xcassets")
             ]
         )
     ]

@@ -234,6 +234,12 @@ struct BASICDictionary: Equatable, Sendable {
     var values: [String: BASICValue] = [:]
 }
 
+struct BASICSecondsTimer: Equatable, Sendable {
+    var intervalSeconds: Double
+    var repeating = true
+    var isRunning = false
+}
+
 enum BASICFileAccess: String, Equatable {
     case read = "READ"
     case write = "WRITE"
@@ -927,4 +933,3 @@ enum ReadTarget: Equatable {
     case variable(VariableName)
     case reference(VariableReference)
 }
-

@@ -720,6 +720,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     }
 
     private func drainCompletionCallbacks() {
+        guard completionEventLoop?.hasPendingError != true else { return }
         _ = completionEventLoop?.runUntilIdle(limit: 64)
     }
 
@@ -859,6 +860,8 @@ final class BASICWorkerLaneResultBox: @unchecked Sendable {
 public final class BASICEventLoop: @unchecked Sendable {
     private let lock = NSLock()
     private var queue: [@Sendable () -> Void] = []
+    private var pendingError: Error?
+    private var isRunning = false
 
     /// Creates an empty event loop.
     public init() {}
@@ -875,6 +878,13 @@ public final class BASICEventLoop: @unchecked Sendable {
         pendingCount == 0
     }
 
+    /// Whether a callback has reported an error that must be rethrown at the next safe point.
+    public var hasPendingError: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return pendingError != nil
+    }
+
     /// Adds a callback to the tail of the event queue.
     public func post(_ operation: @escaping @Sendable () -> Void) {
         lock.lock()
@@ -882,12 +892,33 @@ public final class BASICEventLoop: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Records an error raised by a callback so the interpreter can rethrow it at
+    /// the safe point that drained the event queue.
+    public func reportError(_ error: Error) {
+        lock.lock()
+        if pendingError == nil {
+            pendingError = error
+        }
+        lock.unlock()
+    }
+
+    /// Throws and clears the first callback error reported during event draining.
+    public func throwPendingError() throws {
+        lock.lock()
+        let error = pendingError
+        pendingError = nil
+        lock.unlock()
+        if let error {
+            throw error
+        }
+    }
+
     /// Runs one pending callback, returning false when the queue is empty.
     @discardableResult
     public func runOne() -> Bool {
         let operation: (@Sendable () -> Void)?
         lock.lock()
-        if queue.isEmpty {
+        if pendingError != nil || queue.isEmpty {
             operation = nil
         } else {
             operation = queue.removeFirst()
@@ -899,9 +930,51 @@ public final class BASICEventLoop: @unchecked Sendable {
         return true
     }
 
+    /// Runs callbacks already queued at the start of this drain pass.
+    ///
+    /// Callbacks posted by callbacks are intentionally left for a later safe point. This avoids
+    /// host-event redraw paths recursively monopolizing the interpreter.
+    @discardableResult
+    public func runPending(limit: Int = .max) -> Int {
+        lock.lock()
+        guard !isRunning else {
+            lock.unlock()
+            return 0
+        }
+        isRunning = true
+        let budget = min(limit, queue.count)
+        lock.unlock()
+
+        defer {
+            lock.lock()
+            isRunning = false
+            lock.unlock()
+        }
+
+        var count = 0
+        while count < budget, runOne() {
+            count += 1
+        }
+        return count
+    }
+
     /// Runs pending callbacks until the queue is empty, including callbacks posted by callbacks.
     @discardableResult
     public func runUntilIdle(limit: Int = .max) -> Int {
+        lock.lock()
+        guard !isRunning else {
+            lock.unlock()
+            return 0
+        }
+        isRunning = true
+        lock.unlock()
+
+        defer {
+            lock.lock()
+            isRunning = false
+            lock.unlock()
+        }
+
         var count = 0
         while count < limit, runOne() {
             count += 1

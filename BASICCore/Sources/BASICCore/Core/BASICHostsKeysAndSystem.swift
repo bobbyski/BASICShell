@@ -337,6 +337,15 @@ public protocol BASICMainActorHost: BASICHost {
     func runOnMainActorSync(_ operation: @MainActor () -> Void)
 }
 
+/// Runtime-owned timer scheduling bridge.
+protocol BASICTimerHost: AnyObject {
+    /// Starts or restarts a BASIC timer object.
+    func startTimer(id: Int, intervalSeconds: Double, repeating: Bool)
+
+    /// Stops a BASIC timer object.
+    func stopTimer(id: Int)
+}
+
 /// Host interface for BASIC and system log collection.
 public protocol BASICLoggingHost: BASICHost {
     /// Whether BASIC LOG statements and interpreter log hooks should be emitted.
@@ -804,4 +813,3 @@ public enum BASICSystemCommand {
         return environment
     }
 }
-

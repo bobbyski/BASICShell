@@ -105,6 +105,7 @@ indirect enum Statement: Equatable {
     case computedGosub([BranchTarget], Expression)
     case onErrorGoto(BranchTarget?)
     case onEventCall(BASICEventSelector, VariableName)
+    case onTimerEvent(timer: VariableName, ticks: Expression?, handler: VariableName)
     case error(Expression)
     case resumeNext
     case gosub(BranchTarget)
@@ -245,4 +246,3 @@ struct LexedToken: Equatable {
     let token: Token
     let column: Int
 }
-

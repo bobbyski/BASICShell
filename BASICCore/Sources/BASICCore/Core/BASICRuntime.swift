@@ -17,17 +17,21 @@ final class BASICRuntime {
     var lastErrorLine = 0
     var lastErrorMessage = ""
     private var fileObjects: [Int: BASICOpenFile] = [:]
+    private var timerObjects: [Int: BASICSecondsTimer] = [:]
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
+    private var nextTimerObjectID = 1
 
     func resetForRun() {
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()
+        timerObjects.removeAll()
         eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
+        nextTimerObjectID = 1
         clearLastError()
     }
 
@@ -269,7 +273,7 @@ final class BASICRuntime {
 
     static func isBuiltInClass(_ name: String) -> Bool {
         switch name.uppercased() {
-        case "FILE", "VECTORTERMINAL", "VTG":
+        case "FILE", "VECTORTERMINAL", "VTG", "SECONDSTIMER":
             return true
         default:
             return false
@@ -287,6 +291,20 @@ final class BASICRuntime {
         let id = nextVectorTerminalObjectID
         nextVectorTerminalObjectID += 1
         return .systemObject("VectorTerminal", id)
+    }
+
+    func secondsTimerObject(intervalSeconds: Double) -> BASICValue {
+        let id = nextTimerObjectID
+        nextTimerObjectID += 1
+        timerObjects[id] = BASICSecondsTimer(intervalSeconds: intervalSeconds)
+        return .systemObject("SecondsTimer", id)
+    }
+
+    func runningSecondsTimers() -> [(id: Int, intervalSeconds: Double, repeating: Bool)] {
+        timerObjects.compactMap { id, timer in
+            guard timer.isRunning else { return nil }
+            return (id: id, intervalSeconds: timer.intervalSeconds, repeating: timer.repeating)
+        }
     }
 
     func value(
@@ -317,7 +335,7 @@ final class BASICRuntime {
                 guard reference.fields.count == 1 else {
                     throw BASICError.runtime("\(typeName) has no field \(field)")
                 }
-                value = try callSystemObjectMethod(typeName: typeName, id: id, method: field, arguments: [])
+                value = try systemObjectProperty(typeName: typeName, id: id, property: field)
                 continue
             }
             guard let composite = value.compositeFields else {
@@ -349,15 +367,127 @@ final class BASICRuntime {
         return value
     }
 
-    func callSystemObjectMethod(typeName: String, id: Int, method: String, arguments: [BASICValue], fileHost: BASICFileHost? = nil, vectorTerminalHost: BASICVectorTerminalHost? = nil, jsonDecoder: ((String) throws -> BASICValue)? = nil, jsonEncoder: ((BASICValue, Bool) throws -> String)? = nil) throws -> BASICValue {
+    func callSystemObjectMethod(
+        typeName: String,
+        id: Int,
+        method: String,
+        arguments: [BASICValue],
+        fileHost: BASICFileHost? = nil,
+        vectorTerminalHost: BASICVectorTerminalHost? = nil,
+        timerHost: BASICTimerHost? = nil,
+        jsonDecoder: ((String) throws -> BASICValue)? = nil,
+        jsonEncoder: ((BASICValue, Bool) throws -> String)? = nil
+    ) throws -> BASICValue {
         switch typeName.uppercased() {
         case "FILE":
             return try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
         case "VECTORTERMINAL", "VTG":
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
+        case "SECONDSTIMER":
+            return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
         default:
             throw BASICError.runtime("\(typeName) has no method \(method)")
         }
+    }
+
+    func timerHandlerRegistrations(forTimerID id: Int) -> [(registration: BASICEventHandlerRegistration, ticks: Int)] {
+        let prefix = "\(id):"
+        return eventHandlerRegistrations.compactMap { registration in
+            guard registration.selector.type == "TIMER",
+                  let subtype = registration.selector.subtype,
+                  subtype.hasPrefix(prefix),
+                  let ticks = Int(subtype.dropFirst(prefix.count)) else {
+                return nil
+            }
+            return (registration, max(1, ticks))
+        }
+    }
+
+    func setTimerEventHandler(id: Int, ticks: Int, handler: VariableName) throws {
+        guard timerObjects[id] != nil else {
+            throw BASICError.runtime("Timer is not defined")
+        }
+        let tickCount = max(1, ticks)
+        setEventHandler(
+            selector: BASICEventSelector(type: "TIMER", subtype: "\(id):\(tickCount)"),
+            handler: handler
+        )
+    }
+
+    private func systemObjectProperty(typeName: String, id: Int, property: String) throws -> BASICValue {
+        switch typeName.uppercased() {
+        case "SECONDSTIMER":
+            guard let timer = timerObjects[id] else {
+                throw BASICError.runtime("Timer is not defined")
+            }
+            switch property.uppercased() {
+            case "INTERVAL", "INTERVALSECONDS":
+                return .number(timer.intervalSeconds)
+            case "REPEATING":
+                return .boolean(timer.repeating)
+            case "RUNNING", "ISRUNNING":
+                return .boolean(timer.isRunning)
+            default:
+                throw BASICError.runtime("\(typeName) has no property \(property)")
+            }
+        default:
+            throw BASICError.runtime("\(typeName) has no property \(property)")
+        }
+    }
+
+    private func assignSystemObjectProperty(typeName: String, id: Int, reference: VariableReference, value: BASICValue?) throws {
+        guard reference.fields.count == 1, reference.indexes.isEmpty else {
+            throw BASICError.runtime("\(typeName) has no writable field \(reference.fields.joined(separator: "."))")
+        }
+        switch typeName.uppercased() {
+        case "SECONDSTIMER":
+            guard var timer = timerObjects[id] else {
+                throw BASICError.runtime("Timer is not defined")
+            }
+            let field = reference.fields[0].uppercased()
+            switch field {
+            case "INTERVAL", "INTERVALSECONDS":
+                timer.intervalSeconds = try doubleValue(value ?? .empty)
+            case "REPEATING":
+                timer.repeating = try boolValue(value ?? .empty)
+            case "RUNNING", "ISRUNNING":
+                timer.isRunning = try boolValue(value ?? .empty)
+            case "HANDLER":
+                throw BASICError.runtime("Timer handler assignment is not implemented; use ON timer GOSUB handler")
+            default:
+                throw BASICError.runtime("\(typeName) has no property \(reference.fields[0])")
+            }
+            timerObjects[id] = timer
+        default:
+            throw BASICError.runtime("\(typeName) has no writable property \(reference.fields[0])")
+        }
+    }
+
+    private func callSecondsTimerMethod(id: Int, method: String, arguments: [BASICValue], host: BASICTimerHost?) throws -> BASICValue {
+        guard var timer = timerObjects[id] else {
+            throw BASICError.runtime("Timer is not defined")
+        }
+        switch method.uppercased() {
+        case "START":
+            try requireArgumentCount(arguments, 0, method: "start")
+            guard let host else {
+                throw BASICError.runtime("Timers are not supported by this host")
+            }
+            guard timer.intervalSeconds > 0 else {
+                throw BASICError.runtime("SecondsTimer interval must be greater than zero")
+            }
+            timer.isRunning = true
+            timerObjects[id] = timer
+            host.startTimer(id: id, intervalSeconds: timer.intervalSeconds, repeating: timer.repeating)
+        case "STOP", "CANCEL":
+            try requireArgumentCount(arguments, 0, method: "stop")
+            timer.isRunning = false
+            timerObjects[id] = timer
+            host?.stopTimer(id: id)
+        default:
+            throw BASICError.runtime("SecondsTimer has no method \(method)")
+        }
+        return .empty
     }
 
     func localSnapshots() -> [BASICVariableSnapshot] {
@@ -511,14 +641,18 @@ final class BASICRuntime {
             }
         }
 
-        binding.value = try assigningField(
-            reference.fields,
-            fieldIndexes: fieldIndexes,
-            in: binding.value,
-            value: value,
-            accessClassName: accessClassName,
-            declaredType: fieldSurfaceType(for: reference)
-        )
+        if case .systemObject(let typeName, let id) = binding.value {
+            try assignSystemObjectProperty(typeName: typeName, id: id, reference: reference, value: value)
+        } else {
+            binding.value = try assigningField(
+                reference.fields,
+                fieldIndexes: fieldIndexes,
+                in: binding.value,
+                value: value,
+                accessClassName: accessClassName,
+                declaredType: fieldSurfaceType(for: reference)
+            )
+        }
         set(binding, in: context, normalized: normalized)
     }
 
@@ -1719,6 +1853,17 @@ final class BASICRuntime {
         return number
     }
 
+    private func boolValue(_ value: BASICValue) throws -> Bool {
+        switch value {
+        case .boolean(let boolean):
+            return boolean
+        case .number(let number):
+            return number != 0
+        default:
+            throw BASICError.runtime("Expected a boolean")
+        }
+    }
+
     private func dataValue(_ value: BASICValue) throws -> Data {
         guard let string = value.string else { throw BASICError.runtime("Expected a string") }
         let raw = string.rawString
@@ -2504,4 +2649,3 @@ final class BASICRuntime {
         return "(\(indexes.map(String.init).joined(separator: ",")))"
     }
 }
-
