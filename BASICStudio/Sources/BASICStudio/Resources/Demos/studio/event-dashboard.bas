@@ -3,7 +3,7 @@
 ' VTG drawing is commented out here so we can re-enable one piece at a time.
 
 on resize call ResizeChanged
-'VTG-OFF: on mouse move call MouseMoved
+on mouse move call MouseMoved
 on mouse up call MouseUp
 
 global canvasWidth as integer = 1200
@@ -50,8 +50,8 @@ DrawDashboard:
     drawRevision = drawRevision + 1
     idSuffix$ = "-" + str$(drawRevision)
     gosub UpdateLayout
-    'VTG-OFF: vtg.rect("screen-bg" + idSuffix$, 0, 0, canvasWidth, canvasHeight, "none", "#050805", 0, 0, -1)
-    'VTG-OFF: vtg.line("top-rule" + idSuffix$, 0, headerY + headerHeight + 14, canvasWidth, headerY + headerHeight + 14, "#16a34a", 2, 3)
+    vtg.rect("screen-bg" + idSuffix$, 0, 0, canvasWidth, canvasHeight, "none", "#050805", 0, 0, -1)
+    vtg.line("top-rule" + idSuffix$, 0, headerY + headerHeight + 14, canvasWidth, headerY + headerHeight + 14, "#16a34a", 2, 3)
     gosub DrawClock
     gosub DrawEventPanels
     vtg.present()
