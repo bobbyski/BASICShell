@@ -31,6 +31,11 @@ struct LogPane: View {
                 HStack {
                     Toggle("User", isOn: $model.showUserLogs)
                     Toggle("BASIC", isOn: $model.showBasicLogs)
+                    Toggle("Trace", isOn: $model.isTraceLoggingEnabled)
+                    Button(model.isTraceLoggingEnabled ? "TROFF" : "TRON") {
+                        model.toggleTraceLogging()
+                    }
+                    .buttonStyle(.bordered)
                     Spacer()
                     Menu("Levels") {
                         if model.availableLogLevels.isEmpty {

@@ -111,6 +111,12 @@ struct Parser {
         if matchIdentifier("MODULE") {
             return .module(try parseExpression())
         }
+        if matchIdentifier("TRON") {
+            return .traceOn
+        }
+        if matchIdentifier("TROFF") {
+            return .traceOff
+        }
         if matchIdentifier("PRINT#") {
             let number = try parseFileNumber(hashAlreadyConsumed: true)
             _ = match(.comma)
@@ -1606,7 +1612,7 @@ struct Parser {
     }
 
     private static let statementKeywords: Set<String> = [
-        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
+        "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"

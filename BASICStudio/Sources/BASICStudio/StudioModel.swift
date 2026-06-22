@@ -77,6 +77,7 @@ final class StudioModel: ObservableObject {
     @Published var debuggerTasks: [BASICTaskSnapshot] = []
     @Published var debuggerSelectedTaskID: Int?
     @Published var isLoggingEnabled = true
+    @Published var isTraceLoggingEnabled = false
     @Published var logEntries: [StudioLogEntry] = []
     @Published var showUserLogs = true
     @Published var showBasicLogs = false
@@ -162,6 +163,7 @@ final class StudioModel: ObservableObject {
 
     var filteredLogEntries: [StudioLogEntry] {
         logEntries.filter { entry in
+            if normalizedLogLevel(entry.level) == "TRACE" && !isTraceLoggingEnabled { return false }
             if entry.issuer == .user && !showUserLogs { return false }
             if entry.issuer == .basic && !showBasicLogs { return false }
             return selectedLogLevels.isEmpty || selectedLogLevels.contains(normalizedLogLevel(entry.level))
@@ -180,6 +182,10 @@ final class StudioModel: ObservableObject {
     func clearLogs() {
         logEntries.removeAll()
         selectedLogLevels.removeAll()
+    }
+
+    func toggleTraceLogging() {
+        isTraceLoggingEnabled.toggle()
     }
 
     func appendLog(level: String, issuer: LogIssuer, module: String? = nil, text: String) {
@@ -1114,6 +1120,10 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, 
 
     nonisolated var isBASICLoggingEnabled: Bool {
         valueOnMainSync { isLoggingEnabled }
+    }
+
+    nonisolated var isBASICTraceEnabled: Bool {
+        valueOnMainSync { isLoggingEnabled && isTraceLoggingEnabled }
     }
 
     nonisolated func log(level: String, issuer: String, module: String, text: String) {

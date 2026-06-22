@@ -79,10 +79,6 @@ DrawClock:
     clockY = headerY + int((headerHeight - headerTextHeight) / 2)
     vtg.rect("clock-box" + idSuffix$, 0, headerY, canvasWidth, headerHeight, "#22c55e", "#071107", 2, 0, 2)
     vtg.vectorPrint("clock-text" + idSuffix$, clockX, clockY, headerTextHeight, clock$, "#86efac", 2, 3)
-    'ANSI-OFF: ansiClockX = int((SCREENWIDTH - len(clock$)) / 2) + 1
-    'ANSI-OFF: if ansiClockX < 1 then ansiClockX = 1
-    'ANSI-OFF: print chr$(27) + "[" + str$(headerY) + ";" + str$(ansiClockX) + "H";
-    'ANSI-OFF: print clock$
     return
 
 DrawEventPanels:
@@ -108,34 +104,18 @@ DrawEventPanels:
     vtg.rect("move-panel" + idSuffix$, moveX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
     vtg.text("move-title" + idSuffix$, moveX + 18, panelY + 18, "LAST MOUSE MOVE", "#86efac", 18, 3)
     vtg.text("move-value" + idSuffix$, moveX + 18, panelY + 46, lastMove$, "#f8fafc", 16, 3)
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY) + ";" + str$(ansiMoveX) + "H";
-    'ANSI-OFF: print "MOVE"
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY + 1) + ";" + str$(ansiMoveX) + "H";
-    'ANSI-OFF: print left$(lastMove$, ansiPanelWidth)
 
     vtg.rect("resize-panel" + idSuffix$, resizeX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
     vtg.text("resize-title" + idSuffix$, resizeX + 18, panelY + 18, "LAST RESIZE", "#86efac", 18, 3)
     vtg.text("resize-value" + idSuffix$, resizeX + 18, panelY + 46, lastResize$, "#f8fafc", 16, 3)
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY) + ";" + str$(ansiResizeX) + "H";
-    'ANSI-OFF: print "RESIZE"
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY + 1) + ";" + str$(ansiResizeX) + "H";
-    'ANSI-OFF: print left$(lastResize$, ansiPanelWidth)
 
     vtg.rect("timer-panel" + idSuffix$, timerX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
     vtg.text("timer-title" + idSuffix$, timerX + 18, panelY + 18, "LAST TIMER", "#86efac", 18, 3)
     vtg.text("timer-value" + idSuffix$, timerX + 18, panelY + 46, lastTimer$, "#f8fafc", 16, 3)
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY) + ";" + str$(ansiTimerX) + "H";
-    'ANSI-OFF: print "TIMER"
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY + 1) + ";" + str$(ansiTimerX) + "H";
-    'ANSI-OFF: print left$(lastTimer$, ansiPanelWidth)
 
     vtg.rect("up-panel" + idSuffix$, upX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
     vtg.text("up-title" + idSuffix$, upX + 18, panelY + 18, "LAST MOUSE UP", "#86efac", 18, 3)
     vtg.text("up-value" + idSuffix$, upX + 18, panelY + 46, lastUp$, "#f8fafc", 16, 3)
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY) + ";" + str$(ansiUpX) + "H";
-    'ANSI-OFF: print "MOUSE UP"
-    'ANSI-OFF: print chr$(27) + "[" + str$(ansiPanelY + 1) + ";" + str$(ansiUpX) + "H";
-    'ANSI-OFF: print left$(lastUp$, ansiPanelWidth)
     return
 
 function ResizeChanged(event as variant)

@@ -42,6 +42,7 @@ public final class BASICInterpreter {
     private var loggedMissingEventSelectors: Set<String> = []
     private var currentSourceFileName: String?
     private var currentLogModuleOverride: String?
+    private var traceOverride: Bool?
     private var lastParseErrorLocation: (fileName: String?, lineNumber: Int)?
     private var currentGraphicsColor = BASICColor.legacy(1)
     private var currentTextForeground = BASICColor.legacy(7)
@@ -605,6 +606,7 @@ public final class BASICInterpreter {
                 }
                 updateExecutionLocation(current)
                 try executionControl?.checkBreak()
+                traceExecution(current)
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
                 try apply(flow: next, currentPC: pc, parsed: parsedLines)
                 eventLoop?.runPending(limit: 16)
@@ -957,6 +959,12 @@ public final class BASICInterpreter {
             return .next
         case .module(let name):
             currentLogModuleOverride = try string(name)
+            return .next
+        case .traceOn:
+            traceOverride = true
+            return .next
+        case .traceOff:
+            traceOverride = false
             return .next
         case .printFile(let number, let parts):
             try printLegacyFile(number: number, parts: parts)
@@ -2750,6 +2758,266 @@ public final class BASICInterpreter {
             return
         }
         loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
+    }
+
+    private func traceExecution(_ line: ParsedLine) {
+        guard let loggingHost = host as? BASICLoggingHost,
+              loggingHost.isBASICLoggingEnabled,
+              traceOverride ?? loggingHost.isBASICTraceEnabled else {
+            return
+        }
+        let basicLine = line.displayLineNumber != line.sourceLineNumber ? "(\(line.displayLineNumber))" : ""
+        let prefix = "\(line.sourceLineNumber)\(basicLine): "
+        loggingHost.log(
+            level: "TRACE",
+            issuer: "B",
+            module: line.fileName.map { URL(fileURLWithPath: $0).lastPathComponent } ?? defaultLogModuleName(),
+            text: prefix + traceText(for: line.statement)
+        )
+    }
+
+    private func traceText(for statement: Statement) -> String {
+        switch statement {
+        case .empty:
+            return ""
+        case .remark:
+            return "rem"
+        case .label(let name):
+            return "\(name):"
+        case .labeled(let name, let statement):
+            return "\(name): \(traceText(for: statement))"
+        case .sequence(let statements):
+            return statements.map(traceText(for:)).joined(separator: ":")
+        case .print(let parts):
+            return "print " + traceText(for: parts)
+        case .printUsing(let format, let values, let trailingSeparator):
+            var text = "print using \(traceText(for: format)); " + values.map(traceText(for:)).joined(separator: ", ")
+            if let trailingSeparator { text += traceText(for: trailingSeparator) }
+            return text
+        case .log(let level, let parts):
+            return "log \(traceText(for: level)), \(traceText(for: parts))"
+        case .module(let name):
+            return "module \(traceText(for: name))"
+        case .traceOn:
+            return "tron"
+        case .traceOff:
+            return "troff"
+        case .screen(let mode):
+            return "screen \(traceText(for: mode))"
+        case .color(let values):
+            return "color " + values.map(traceText(for:)).joined(separator: ", ")
+        case .cls:
+            return "cls"
+        case .locate(let row, let column):
+            return "locate \(traceText(for: row)), \(traceText(for: column))"
+        case .pset(let point, let color):
+            return "pset \(traceText(for: point))" + (color.map { ", \(traceText(for: $0))" } ?? "")
+        case .preset(let point, let color):
+            return "preset \(traceText(for: point))" + (color.map { ", \(traceText(for: $0))" } ?? "")
+        case .line(let start, let end, let color):
+            return "line \(traceText(for: start))-\(traceText(for: end))" + (color.map { ", \(traceText(for: $0))" } ?? "")
+        case .circle(let center, let radius, let color):
+            return "circle \(traceText(for: center)), \(traceText(for: radius))" + (color.map { ", \(traceText(for: $0))" } ?? "")
+        case .paint(let point, let fill, let border):
+            return "paint \(traceText(for: point)), \(traceText(for: fill))" + (border.map { ", \(traceText(for: $0))" } ?? "")
+        case .draw(let expression):
+            return "draw \(traceText(for: expression))"
+        case .assignment(let kind, let name, let type, let value):
+            let keyword = traceText(for: kind)
+            let typed = type.map { " as \(traceText(for: $0))" } ?? ""
+            let assigned = value.map { " = \(traceText(for: $0))" } ?? ""
+            return "\(keyword)\(name.name)\(typed)\(assigned)"
+        case .referenceAssignment(let reference, let value):
+            return "\(traceText(for: reference))" + (value.map { " = \(traceText(for: $0))" } ?? "")
+        case .expression(let expression):
+            return traceText(for: expression)
+        case .dim(let kind, let name, let dimensions, let type):
+            let keyword = kind == .bare ? "dim " : traceText(for: kind)
+            let dimensionText = dimensions.map { $0.map(traceText(for:)) ?? "" }.joined(separator: ", ")
+            let typed = type.map { " as \(traceText(for: $0))" } ?? ""
+            return "\(keyword)\(name.name)(\(dimensionText))\(typed)"
+        case .input(let prompt, let target):
+            return "input " + [prompt.map(traceText(for:)), Optional(traceText(for: target))].compactMap { $0 }.joined(separator: ", ")
+        case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength, let defaultValue):
+            var text = "line input "
+            if let prompt { text += "\(traceText(for: prompt)), " }
+            text += traceText(for: target)
+            if let fieldLength { text += " length \(traceText(for: fieldLength))" }
+            if let maxLength { text += " max \(traceText(for: maxLength))" }
+            if let defaultValue { text += " default \(traceText(for: defaultValue))" }
+            if let exitTarget { text += " exitvar \(traceText(for: exitTarget))" }
+            return text
+        case .goto(let line):
+            return "goto \(line)"
+        case .gotoLabel(let label):
+            return "goto \(label)"
+        case .gosub(let target):
+            return "gosub \(traceText(for: target))"
+        case .returnFromSubroutine:
+            return "return"
+        case .returnValue(let value):
+            return "return \(traceText(for: value))"
+        case .ifThen(let condition, let thenAction, let elseAction):
+            var text = "if \(traceText(for: condition)) then \(traceText(for: thenAction))"
+            if let elseAction { text += " else \(traceText(for: elseAction))" }
+            return text
+        case .forLoop(let variable, let start, let end, let step):
+            var text = "for \(variable.name) = \(traceText(for: start)) to \(traceText(for: end))"
+            if let step { text += " step \(traceText(for: step))" }
+            return text
+        case .nextLoop(let variables):
+            return "next" + (variables.isEmpty ? "" : " " + variables.map(\.name).joined(separator: ", "))
+        case .selectCase(let expression):
+            return "select case \(traceText(for: expression))"
+        case .caseClause(let clauses):
+            return "case " + clauses.map(traceText(for:)).joined(separator: ", ")
+        case .caseElse:
+            return "case else"
+        case .endSelect:
+            return "end select"
+        case .end:
+            return "end"
+        default:
+            return String(describing: statement)
+        }
+    }
+
+    private func traceText(for action: ConditionalAction) -> String {
+        switch action {
+        case .branch(let target): return traceText(for: target)
+        case .statement(let statement): return traceText(for: statement)
+        }
+    }
+
+    private func traceText(for target: BranchTarget) -> String {
+        switch target {
+        case .line(let line): return "\(line)"
+        case .label(let label): return label
+        }
+    }
+
+    private func traceText(for clause: CaseClause) -> String {
+        switch clause {
+        case .equals(let expression): return traceText(for: expression)
+        case .range(let start, let end): return "\(traceText(for: start)) to \(traceText(for: end))"
+        case .comparison(let operation, let expression): return "\(traceText(for: operation)) \(traceText(for: expression))"
+        }
+    }
+
+    private func traceText(for parts: [PrintPart]) -> String {
+        parts.map { part in
+            switch part {
+            case .expression(let expression): return traceText(for: expression)
+            case .separator(let separator): return traceText(for: separator)
+            }
+        }.joined()
+    }
+
+    private func traceText(for separator: PrintSeparator) -> String {
+        switch separator {
+        case .comma: return ", "
+        case .semicolon: return "; "
+        }
+    }
+
+    private func traceText(for point: GraphicsPoint) -> String {
+        "(\(traceText(for: point.x)),\(traceText(for: point.y)))"
+    }
+
+    private func traceText(for target: ReadTarget) -> String {
+        switch target {
+        case .variable(let name): return name.name
+        case .reference(let reference): return traceText(for: reference)
+        }
+    }
+
+    private func traceText(for reference: VariableReference) -> String {
+        var text = reference.base.name
+        if !reference.indexes.isEmpty || reference.hasEmptyIndexList {
+            text += "(" + reference.indexes.map(traceText(for:)).joined(separator: ", ") + ")"
+        }
+        for (index, field) in reference.fields.enumerated() {
+            text += "." + field
+            let indexes = reference.fieldIndexes.indices.contains(index) ? reference.fieldIndexes[index] : []
+            if !indexes.isEmpty {
+                text += "(" + indexes.map(traceText(for:)).joined(separator: ", ") + ")"
+            }
+        }
+        return text
+    }
+
+    private func traceText(for expression: Expression) -> String {
+        switch expression {
+        case .number(let value):
+            return value.rounded() == value ? String(Int(value)) : String(value)
+        case .string(let value):
+            return "\"\(value)\""
+        case .boolean(let value):
+            return value ? "true" : "false"
+        case .null:
+            return "null"
+        case .variable(let name):
+            return name.name
+        case .variableReference(let reference):
+            return traceText(for: reference)
+        case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
+            return "\(name.name)(\(arguments.map(traceText(for:)).joined(separator: ", ")))"
+        case .methodCall(let receiver, let name, let arguments):
+            return "\(traceText(for: receiver)).\(name.name)(\(arguments.map(traceText(for:)).joined(separator: ", ")))"
+        case .newObject(let name, let arguments):
+            return "new \(name)(\(arguments.map(traceText(for:)).joined(separator: ", ")))"
+        case .unaryMinus(let expression):
+            return "-\(traceText(for: expression))"
+        case .binary(let left, let operation, let right):
+            return "\(traceText(for: left)) \(traceText(for: operation)) \(traceText(for: right))"
+        case .await(let expression):
+            return "await \(traceText(for: expression))"
+        case .pointFunction(let point):
+            return "point\(traceText(for: point))"
+        case .chrFunction(let expression):
+            return "chr$(\(traceText(for: expression)))"
+        case .lenFunction(let expression):
+            return "len(\(traceText(for: expression)))"
+        case .systemFunction(let expression):
+            return "system$(\(traceText(for: expression)))"
+        default:
+            return String(describing: expression)
+        }
+    }
+
+    private func traceText(for operation: BinaryOperation) -> String {
+        switch operation {
+        case .add: return "+"
+        case .subtract: return "-"
+        case .multiply: return "*"
+        case .divide: return "/"
+        case .equal: return "="
+        case .notEqual: return "<>"
+        case .less: return "<"
+        case .lessEqual: return "<="
+        case .greater: return ">"
+        case .greaterEqual: return ">="
+        case .and: return "and"
+        case .or: return "or"
+        }
+    }
+
+    private func traceText(for type: BASICType) -> String {
+        switch type {
+        case .scalar(let scalar): return String(describing: scalar).uppercased()
+        case .void: return "VOID"
+        case .record(let name), .classType(let name), .interfaceType(let name), .functionType(let name): return name
+        case .dictionary: return "DICTIONARY"
+        }
+    }
+
+    private func traceText(for kind: AssignmentKind) -> String {
+        switch kind {
+        case .bare: return ""
+        case .letValue: return "let "
+        case .global: return "global "
+        case .local: return "local "
+        }
     }
 
     private func logMissingEventHandler(selector: BASICEventSelector, detail: String?) {

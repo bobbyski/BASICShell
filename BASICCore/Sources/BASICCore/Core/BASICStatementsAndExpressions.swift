@@ -63,6 +63,8 @@ indirect enum Statement: Equatable {
     case printUsing(format: Expression, values: [Expression], trailingSeparator: PrintSeparator?)
     case log(level: Expression, parts: [PrintPart])
     case module(Expression)
+    case traceOn
+    case traceOff
     case screen(Expression)
     case color([Expression])
     case cls

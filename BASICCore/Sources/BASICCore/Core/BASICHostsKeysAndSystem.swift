@@ -350,8 +350,14 @@ protocol BASICTimerHost: AnyObject {
 public protocol BASICLoggingHost: BASICHost {
     /// Whether BASIC LOG statements and interpreter log hooks should be emitted.
     var isBASICLoggingEnabled: Bool { get }
+    /// Whether the interpreter should emit one TRACE log for each executed BASIC statement.
+    var isBASICTraceEnabled: Bool { get }
     /// Appends a log entry.
     func log(level: String, issuer: String, module: String, text: String)
+}
+
+public extension BASICLoggingHost {
+    var isBASICTraceEnabled: Bool { false }
 }
 
 public extension BASICConsoleHost {
