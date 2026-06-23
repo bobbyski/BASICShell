@@ -212,7 +212,7 @@ final class StudioModel: ObservableObject {
         if !trimmed.isEmpty {
             return trimmed
         }
-        return issuer == .user ? "BASICStudio.swift" : "BASIC"
+        return issuer == .user ? "BASIC" : "BASICStudio.swift"
     }
 
     func openDebugger() {
@@ -470,13 +470,13 @@ final class StudioModel: ObservableObject {
             switch operation {
             case .append(let text):
                 if inputCoordinator.shouldCaptureKeyOnly() {
-                    appendLog(level: "INPUT", issuer: .user, text: "queued printable key while program is running")
+                    appendLog(level: "INPUT", issuer: .basic, text: "queued printable key while program is running")
                     inputCoordinator.pushKey(text)
                 } else {
                     consoleText += text
                 }
             case .submit(let command):
-                appendLog(level: "INPUT", issuer: .user, text: "submit \(command.isEmpty ? "<empty>" : command)")
+                appendLog(level: "INPUT", issuer: .basic, text: "submit \(command.isEmpty ? "<empty>" : command)")
                 if inputCoordinator.awaitingLineInput() {
                     if inputCoordinator.activeLineInputOptions().fieldLength == nil {
                         consoleText += "\n"
@@ -484,7 +484,7 @@ final class StudioModel: ObservableObject {
                     inputCoordinator.submitLine(command)
                 } else if inputCoordinator.shouldCaptureKeyOnly() {
                     if command.isEmpty && suppressNextEmptyProgramSubmit {
-                        appendLog(level: "INPUT", issuer: .user, text: "suppressed empty submit after program launch")
+                        appendLog(level: "INPUT", issuer: .basic, text: "suppressed empty submit after program launch")
                         suppressNextEmptyProgramSubmit = false
                     } else {
                         suppressNextEmptyProgramSubmit = false
@@ -498,7 +498,7 @@ final class StudioModel: ObservableObject {
                     }
                 }
             case .lineInputExit(let line, let key):
-                appendLog(level: "INPUT", issuer: .user, text: "line input exit key \(key) with \(line.count) chars")
+                appendLog(level: "INPUT", issuer: .basic, text: "line input exit key \(key) with \(line.count) chars")
                 if inputCoordinator.awaitingLineInput() {
                     if inputCoordinator.activeLineInputOptions().fieldLength == nil {
                         consoleText += "\n"
@@ -509,9 +509,9 @@ final class StudioModel: ObservableObject {
                     inputCoordinator.pushKey(key)
                 }
             case .key(let text):
-                appendLog(level: "INPUT", issuer: .user, text: "key \(debugKeyDescription(text))")
+                appendLog(level: "INPUT", issuer: .basic, text: "key \(debugKeyDescription(text))")
                 if text == "\n" && suppressNextProgramNewlineKey {
-                    appendLog(level: "INPUT", issuer: .user, text: "suppressed newline key after program launch")
+                    appendLog(level: "INPUT", issuer: .basic, text: "suppressed newline key after program launch")
                     suppressNextProgramNewlineKey = false
                 } else {
                     suppressNextProgramNewlineKey = false
@@ -647,7 +647,7 @@ final class StudioModel: ObservableObject {
         inputCoordinator.clearKeys()
         suppressNextEmptyProgramSubmit = false
         suppressNextProgramNewlineKey = command == .run || command == .runStep
-        appendLog(level: "RUN", issuer: .user, text: "starting \(command) \(startLine.map { "at \($0)" } ?? "")")
+        appendLog(level: "RUN", issuer: .basic, text: "starting \(command) \(startLine.map { "at \($0)" } ?? "")")
         let control = BASICExecutionControl()
         control.setBreakpoints(debuggerBreakpoints)
         switch command {
@@ -717,13 +717,14 @@ final class StudioModel: ObservableObject {
         case .failure(let error as BASICError):
             switch error {
             case .breakRequested(let line):
-                debuggerExecutionLine = line.flatMap(sourceLineNumber(forBasicLineNumber:))
+                debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
+                    ?? line.flatMap(sourceLineNumber(forBasicLineNumber:))
                 paused = true
             case .breakpoint(let location):
-                debuggerExecutionLine = location.lineNumber
+                debuggerExecutionLine = debuggerSourceLineNumber(for: location)
                 paused = true
             case .stepComplete(let location):
-                debuggerExecutionLine = location.lineNumber
+                debuggerExecutionLine = debuggerSourceLineNumber(for: location)
                 paused = true
             default:
                 isProgramPaused = false
@@ -757,7 +758,7 @@ final class StudioModel: ObservableObject {
         }
         isProgramRunning = false
         inputCoordinator.setProgramRunning(false)
-        appendLog(level: paused ? "PAUSE" : "RUN", issuer: .user, text: paused ? "program paused" : "program finished")
+        appendLog(level: paused ? "PAUSE" : "RUN", issuer: .basic, text: paused ? "program paused" : "program finished")
 
         let debuggerIsActive = inspectorPane == .debug
         let shouldSuppressConsolePause = paused && debuggerIsActive
@@ -776,6 +777,7 @@ final class StudioModel: ObservableObject {
                 guard self.isProgramRunning else { break }
                 self.debuggerTasks = self.session.debugTasks
                 self.normalizeSelectedDebuggerTask()
+                self.refreshDebuggerExecutionLine()
                 try? await Task.sleep(for: .milliseconds(120))
             }
         }
@@ -828,7 +830,30 @@ final class StudioModel: ObservableObject {
     }
 
     private var debuggerFileName: String? {
-        currentProgramURL?.lastPathComponent
+        currentProgramFileName
+    }
+
+    private func refreshDebuggerExecutionLine() {
+        debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
+    }
+
+    private func debuggerSourceLineNumber(for location: BASICBreakpointLocation) -> Int? {
+        guard location.lineNumber > 0 else { return nil }
+        guard let fileName = location.fileName, !fileName.isEmpty else {
+            return location.lineNumber
+        }
+        guard let currentProgramFileName, !currentProgramFileName.isEmpty else {
+            return location.lineNumber
+        }
+        return sourceFileNamesMatch(fileName, currentProgramFileName) ? location.lineNumber : nil
+    }
+
+    private func sourceFileNamesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        let lhsURL = URL(fileURLWithPath: lhs).standardizedFileURL
+        let rhsURL = URL(fileURLWithPath: rhs).standardizedFileURL
+        if lhsURL.path == rhsURL.path { return true }
+        return lhsURL.lastPathComponent == rhsURL.lastPathComponent && !lhsURL.lastPathComponent.isEmpty
     }
 
     private func sourceLineNumber(forBasicLineNumber lineNumber: Int) -> Int? {
@@ -1458,6 +1483,10 @@ extension StudioModel: BASICVectorTerminalHost {
         useVTGCanvas { $0.delete(id: id) }
     }
 
+    nonisolated func vectorTerminalClearRect(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?) throws {
+        useVTGCanvas { $0.clearRect(id: id, x: x, y: y, width: width, height: height, layer: layer) }
+    }
+
     nonisolated func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws {
         useVTGCanvas { $0.pixel(id: id, x: x, y: y, color: VectorTerminalSDK.VTGColor(color), layer: layer) }
     }
@@ -1504,6 +1533,11 @@ extension StudioModel: BASICVectorTerminalHost {
 
     nonisolated func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws {
         useVTGCanvas { $0.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VectorTerminalSDK.VTGColor(stroke), width: width, layer: layer) }
+    }
+
+    nonisolated func vectorTerminalVectorTextSize(height: Int, value: String) throws -> BASICVectorTerminalCanvasSnapshot {
+        let size = VectorTerminalSDK.VectorTerminalCanvas.vectorTextSize(height: height, value: value)
+        return BASICVectorTerminalCanvasSnapshot(width: size.width, height: size.height, source: "VectorTerminalSDK")
     }
 
     nonisolated func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {

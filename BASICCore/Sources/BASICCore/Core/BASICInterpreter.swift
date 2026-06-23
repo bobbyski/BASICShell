@@ -952,7 +952,7 @@ public final class BASICInterpreter {
             let rendered = try renderPrint(parts, startColumn: 0)
             loggingHost.log(
                 level: try string(level),
-                issuer: "B",
+                issuer: "U",
                 module: currentLogModuleOverride ?? defaultLogModuleName(),
                 text: rendered.text
             )

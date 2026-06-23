@@ -1,6 +1,6 @@
 #!/usr/bin/env BASICShell
-' VTG event dashboard isolation harness.
-' VTG drawing is commented out here so we can re-enable one piece at a time.
+' VTG event dashboard.
+' Incremental redraws replace retained objects by stable IDs.
 
 on resize call ResizeChanged
 on mouse move call MouseMoved
@@ -16,8 +16,6 @@ global lastUp$ as string = "MOUSE UP: waiting"
 global lastResize$ as string = "RESIZE: waiting"
 global lastTimer$ as string = "TIMER: waiting"
 global clock$ as string = date$() + " " + time$()
-global drawRevision as integer = 0
-global idSuffix$ as string = "-0"
 
 let vtg = VectorTerminal()
 let timer = SecondsTimer(1)
@@ -47,11 +45,9 @@ Done:
 DrawDashboard:
     cls
     vtg.clear()
-    drawRevision = drawRevision + 1
-    idSuffix$ = "-" + str$(drawRevision)
     gosub UpdateLayout
-    vtg.rect("screen-bg" + idSuffix$, 0, 0, canvasWidth, canvasHeight, "none", "#050805", 0, 0, -1)
-    vtg.line("top-rule" + idSuffix$, 0, headerY + headerHeight + 14, canvasWidth, headerY + headerHeight + 14, "#16a34a", 2, 3)
+    vtg.rect("screen-bg", 0, 0, canvasWidth, canvasHeight, "none", "#050805", 0, 0, "", "", -1)
+    vtg.line("top-rule", 0, headerY + headerHeight + 14, canvasWidth, headerY + headerHeight + 14, "#16a34a", 2, "", 3)
     gosub DrawClock
     gosub DrawEventPanels
     vtg.present()
@@ -74,11 +70,15 @@ UpdateLayout:
     return
 
 DrawClock:
-    clockWidth = int(len(clock$) * headerTextHeight * 0.62)
+    clockSize = vtg.vectorTextSize(headerTextHeight, clock$)
+    clockWidth = int(clockSize("width"))
+    clockHeight = int(clockSize("height"))
     clockX = int((canvasWidth - clockWidth) / 2)
-    clockY = headerY + int((headerHeight - headerTextHeight) / 2)
-    vtg.rect("clock-box" + idSuffix$, 0, headerY, canvasWidth, headerHeight, "#22c55e", "#071107", 2, 0, 2)
-    vtg.vectorPrint("clock-text" + idSuffix$, clockX, clockY, headerTextHeight, clock$, "#86efac", 2, 3)
+    clockY = headerY + int((headerHeight - clockHeight) / 2)
+    if clockX < 0 then clockX = 0
+    if clockY < headerY then clockY = headerY
+    vtg.rect("clock-box", 0, headerY, canvasWidth, headerHeight, "#22c55e", "#071107", 2, 0, "", "", 2)
+    vtg.vectorPrint("clock-text", clockX, clockY, headerTextHeight, clock$, "#86efac", 2, 3)
     return
 
 DrawEventPanels:
@@ -101,21 +101,21 @@ DrawEventPanels:
     ansiTimerX = ansiResizeX + ansiPanelWidth + ansiPanelGap
     ansiUpX = ansiTimerX + ansiPanelWidth + ansiPanelGap
 
-    vtg.rect("move-panel" + idSuffix$, moveX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
-    vtg.text("move-title" + idSuffix$, moveX + 18, panelY + 18, "LAST MOUSE MOVE", "#86efac", 18, 3)
-    vtg.text("move-value" + idSuffix$, moveX + 18, panelY + 46, lastMove$, "#f8fafc", 16, 3)
+    vtg.rect("move-panel", moveX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, "", "", 2)
+    vtg.text("move-title", moveX + 18, panelY + 18, "LAST MOUSE MOVE", "#86efac", 18, 3)
+    vtg.text("move-value", moveX + 18, panelY + 46, lastMove$, "#f8fafc", 16, 3)
 
-    vtg.rect("resize-panel" + idSuffix$, resizeX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
-    vtg.text("resize-title" + idSuffix$, resizeX + 18, panelY + 18, "LAST RESIZE", "#86efac", 18, 3)
-    vtg.text("resize-value" + idSuffix$, resizeX + 18, panelY + 46, lastResize$, "#f8fafc", 16, 3)
+    vtg.rect("resize-panel", resizeX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, "", "", 2)
+    vtg.text("resize-title", resizeX + 18, panelY + 18, "LAST RESIZE", "#86efac", 18, 3)
+    vtg.text("resize-value", resizeX + 18, panelY + 46, lastResize$, "#f8fafc", 16, 3)
 
-    vtg.rect("timer-panel" + idSuffix$, timerX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
-    vtg.text("timer-title" + idSuffix$, timerX + 18, panelY + 18, "LAST TIMER", "#86efac", 18, 3)
-    vtg.text("timer-value" + idSuffix$, timerX + 18, panelY + 46, lastTimer$, "#f8fafc", 16, 3)
+    vtg.rect("timer-panel", timerX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, "", "", 2)
+    vtg.text("timer-title", timerX + 18, panelY + 18, "LAST TIMER", "#86efac", 18, 3)
+    vtg.text("timer-value", timerX + 18, panelY + 46, lastTimer$, "#f8fafc", 16, 3)
 
-    vtg.rect("up-panel" + idSuffix$, upX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, 2)
-    vtg.text("up-title" + idSuffix$, upX + 18, panelY + 18, "LAST MOUSE UP", "#86efac", 18, 3)
-    vtg.text("up-value" + idSuffix$, upX + 18, panelY + 46, lastUp$, "#f8fafc", 16, 3)
+    vtg.rect("up-panel", upX, panelY, panelWidth, panelHeight, "#22c55e", "#071107cc", 2, 8, "", "", 2)
+    vtg.text("up-title", upX + 18, panelY + 18, "LAST MOUSE UP", "#86efac", 18, 3)
+    vtg.text("up-value", upX + 18, panelY + 46, lastUp$, "#f8fafc", 16, 3)
     return
 
 function ResizeChanged(event as variant)
@@ -146,7 +146,7 @@ end function
 function TimerTick(event as variant)
     clock$ = date$() + " " + time$()
     lastTimer$ = "TIMER " + str$(int(event("sequence"))) + " interval " + str$(int(event("interval")))
-    'VTG-OFF: gosub DrawDashboard
+    gosub UpdateLayout
     gosub DrawClock
     gosub DrawEventPanels
     vtg.present()

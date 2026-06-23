@@ -142,6 +142,8 @@ public protocol BASICVectorTerminalHost: BASICHost {
     func vectorTerminalPresent() throws
     /// Deletes one retained VTG primitive by id.
     func vectorTerminalDelete(id: String) throws
+    /// Clears a retained VTG rectangular region by id.
+    func vectorTerminalClearRect(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?) throws
     /// Draws or replaces one VTG pixel primitive.
     func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws
     /// Draws or replaces one VTG line primitive.
@@ -166,6 +168,8 @@ public protocol BASICVectorTerminalHost: BASICHost {
     func vectorTerminalText(id: String, x: Int, y: Int, value: String, color: String, size: Int, layer: Int?) throws
     /// Draws or replaces vector text.
     func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws
+    /// Measures vector text using the same advance rules as `vectorPrint`.
+    func vectorTerminalVectorTextSize(height: Int, value: String) throws -> BASICVectorTerminalCanvasSnapshot
     /// Draws or replaces a retained PNG image.
     func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws
     /// Draws or replaces a retained JPEG image.

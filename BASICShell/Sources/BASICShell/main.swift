@@ -1007,6 +1007,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.delete(id: id)
     }
 
+    func vectorTerminalClearRect(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearRect(id: id, x: x, y: y, width: width, height: height, layer: layer)
+    }
+
     func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
@@ -1077,6 +1083,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VTGColor(stroke), width: width, layer: layer)
+    }
+
+    func vectorTerminalVectorTextSize(height: Int, value: String) throws -> BASICVectorTerminalCanvasSnapshot {
+        try requireVectorTerminal()
+        let size = vtgCanvas.vectorTextSize(height: height, value: value)
+        return BASICVectorTerminalCanvasSnapshot(width: size.width, height: size.height, source: "VectorTerminalSDK")
     }
 
     func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {

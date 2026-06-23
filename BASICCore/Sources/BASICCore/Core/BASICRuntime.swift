@@ -1322,6 +1322,16 @@ final class BASICRuntime {
         case "DELETE":
             try requireArgumentCount(arguments, 1, method: "delete")
             try host.vectorTerminalDelete(id: try stringValue(arguments[0]))
+        case "CLEARRECT":
+            guard (5...6).contains(arguments.count) else { throw BASICError.runtime("clearRect expects 5 or 6 arguments") }
+            try host.vectorTerminalClearRect(
+                id: try stringValue(arguments[0]),
+                x: try integerValue(arguments[1]),
+                y: try integerValue(arguments[2]),
+                width: try integerValue(arguments[3]),
+                height: try integerValue(arguments[4]),
+                layer: try optionalInteger(arguments, at: 5)
+            )
         case "PIXEL":
             guard (4...5).contains(arguments.count) else { throw BASICError.runtime("pixel expects 4 or 5 arguments") }
             try host.vectorTerminalPixel(
@@ -1484,6 +1494,12 @@ final class BASICRuntime {
                 width: try optionalInteger(arguments, at: 6) ?? 1,
                 layer: try optionalInteger(arguments, at: 7)
             )
+        case "VECTORTEXTSIZE":
+            guard arguments.count == 2 else { throw BASICError.runtime("vectorTextSize expects 2 arguments") }
+            return vtgCanvasValue(try host.vectorTerminalVectorTextSize(
+                height: try integerValue(arguments[0]),
+                value: try stringValue(arguments[1])
+            ))
         case "IMAGEPNG":
             guard (6...8).contains(arguments.count) else { throw BASICError.runtime("imagePng expects 6 to 8 arguments") }
             try host.vectorTerminalImagePNG(
