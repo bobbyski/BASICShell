@@ -1,7 +1,7 @@
 import BASICCore
 import Darwin
 import Foundation
-import VectorTerminalSDK
+@preconcurrency import VectorTerminalSDK
 
 final class ShellLineEditor: @unchecked Sendable {
     static let shared = ShellLineEditor()

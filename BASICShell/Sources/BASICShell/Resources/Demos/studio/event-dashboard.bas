@@ -16,6 +16,9 @@ global lastUp$ as string = "MOUSE UP: waiting"
 global lastResize$ as string = "RESIZE: waiting"
 global lastTimer$ as string = "TIMER: waiting"
 global clock$ as string = date$() + " " + time$()
+global clockDrawn as boolean = false
+global clockColorIndex as integer = 0
+global clockColor$ as string = "#86efac"
 
 let vtg = VectorTerminal()
 let timer = SecondsTimer(1)
@@ -45,6 +48,7 @@ Done:
 DrawDashboard:
     cls
     vtg.clear()
+    clockDrawn = false
     gosub UpdateLayout
     vtg.rect("screen-bg", 0, 0, canvasWidth, canvasHeight, "none", "#050805", 0, 0, "", "", -1)
     vtg.line("top-rule", 0, headerY + headerHeight + 14, canvasWidth, headerY + headerHeight + 14, "#16a34a", 2, "", 3)
@@ -66,7 +70,7 @@ UpdateLayout:
     headerTextHeight = int(canvasWidth / (len(clock$) + 4))
     if headerTextHeight > 50 then headerTextHeight = 50
     if headerTextHeight < 20 then headerTextHeight = 20
-    headerHeight = int(headerTextHeight * 1.2)
+    headerHeight = int(headerTextHeight * 1.7)
     return
 
 DrawClock:
@@ -77,8 +81,28 @@ DrawClock:
     clockY = headerY + int((headerHeight - clockHeight) / 2)
     if clockX < 0 then clockX = 0
     if clockY < headerY then clockY = headerY
+    clockClearMargin = int(headerTextHeight * 1.0)
+    if clockClearMargin < 12 then clockClearMargin = 12
+    clockClearY = headerY - clockClearMargin
+    if clockClearY < 0 then clockClearY = 0
+    clockClearHeight = headerHeight + (clockClearMargin * 2)
     vtg.rect("clock-box", 0, headerY, canvasWidth, headerHeight, "#22c55e", "#071107", 2, 0, "", "", 2)
-    vtg.vectorPrint("clock-text", clockX, clockY, headerTextHeight, clock$, "#86efac", 2, 3)
+    if clockDrawn then vtg.delete("clock-text")
+    vtg.clearRect("clock-text-clear", 0, clockClearY, canvasWidth, clockClearHeight, 3)
+    clockColorIndex = clockColorIndex + 1
+    if clockColorIndex > 10 then clockColorIndex = 1
+    clockColor$ = "#86efac"
+    if clockColorIndex = 2 then clockColor$ = "#f87171"
+    if clockColorIndex = 3 then clockColor$ = "#60a5fa"
+    if clockColorIndex = 4 then clockColor$ = "#facc15"
+    if clockColorIndex = 5 then clockColor$ = "#c084fc"
+    if clockColorIndex = 6 then clockColor$ = "#fb923c"
+    if clockColorIndex = 7 then clockColor$ = "#22d3ee"
+    if clockColorIndex = 8 then clockColor$ = "#f472b6"
+    if clockColorIndex = 9 then clockColor$ = "#a3e635"
+    if clockColorIndex = 10 then clockColor$ = "#ffffff"
+    vtg.vectorPrint("clock-text", clockX, clockY, headerTextHeight, clock$, clockColor$, 2, 3)
+    clockDrawn = true
     return
 
 DrawEventPanels:
