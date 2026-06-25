@@ -68,6 +68,13 @@ final class StudioModel: ObservableObject {
     @Published var graphicsRevision = 0
     @Published var debuggerBreakpoints: [BASICBreakpoint] = []
     @Published var debuggerExecutionLine: Int?
+    @Published var showsLiveExecutionLine = false {
+        didSet {
+            if !showsLiveExecutionLine && isProgramRunning {
+                debuggerExecutionLine = nil
+            }
+        }
+    }
     @Published var isProgramPaused = false
     @Published var debuggerCallStack: [BASICCallStackFrame] = []
     @Published var debuggerSelectedCallStackFrameIndex: Int?
@@ -661,7 +668,11 @@ final class StudioModel: ObservableObject {
             control.setMode(.stepOut(depth: session.debugCallDepth))
         }
         if command.isStepCommand {
-            control.setTargetTaskID(debuggerSelectedTaskID ?? session.currentTaskHandle?.id)
+            let targetTaskID = debuggerTargetTaskID(for: command)
+            control.setTargetTaskID(targetTaskID)
+            if let targetTaskID {
+                debuggerSelectedTaskID = targetTaskID
+            }
         }
         if command == .continueExecution || command == .stepInto || command == .stepOver || command == .stepOut {
             control.ignoreBreakpointOnce(at: activeExecutionControl?.location)
@@ -673,7 +684,7 @@ final class StudioModel: ObservableObject {
         startDebuggerTaskRefresh()
         inputCoordinator.setProgramRunning(true)
         isProgramPaused = false
-        if command == .run || command == .runStep {
+        if !showsLiveExecutionLine || command == .run || command == .runStep {
             debuggerExecutionLine = nil
         }
         let session = session
@@ -777,7 +788,9 @@ final class StudioModel: ObservableObject {
                 guard self.isProgramRunning else { break }
                 self.debuggerTasks = self.session.debugTasks
                 self.normalizeSelectedDebuggerTask()
-                self.refreshDebuggerExecutionLine()
+                if self.showsLiveExecutionLine {
+                    self.refreshDebuggerExecutionLine()
+                }
                 try? await Task.sleep(for: .milliseconds(120))
             }
         }
@@ -791,9 +804,23 @@ final class StudioModel: ObservableObject {
     private func normalizeSelectedDebuggerTask() {
         guard let selectedID = debuggerSelectedTaskID,
               debuggerTasks.contains(where: { $0.id == selectedID }) else {
-            debuggerSelectedTaskID = debuggerTasks.first?.id
+            debuggerSelectedTaskID = debuggerTasks.first(where: { $0.state == .suspended })?.id ?? debuggerTasks.first?.id
             return
         }
+    }
+
+    private func debuggerTargetTaskID(for command: DebugRunCommand) -> Int? {
+        guard command.isStepCommand else { return nil }
+        let tasks = session.debugTasks
+        if let selectedID = debuggerSelectedTaskID,
+           tasks.contains(where: { $0.id == selectedID && $0.state == .suspended }) {
+            return selectedID
+        }
+        if let currentID = session.currentTaskHandle?.id,
+           tasks.contains(where: { $0.id == currentID }) {
+            return currentID
+        }
+        return tasks.first(where: { $0.state == .suspended })?.id ?? tasks.first?.id
     }
 
     private func runStartLine(from command: String) -> Int?? {

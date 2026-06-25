@@ -609,8 +609,7 @@ public final class BASICInterpreter {
                 traceExecution(current)
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
                 try apply(flow: next, currentPC: pc, parsed: parsedLines)
-                eventLoop?.runPending(limit: 16)
-                try eventLoop?.throwPendingError()
+                try drainPendingEventsIfAllowed(limit: 16)
             } catch let error as BASICError {
                 if error.isDebugPause {
                     snapshotPausedDebugState()
@@ -733,8 +732,14 @@ public final class BASICInterpreter {
 
     private func updateExecutionLocation(_ line: ParsedLine) {
         currentSourceFileName = line.fileName
-        executionControl?.update(lineNumber: line.displayLineNumber, location: line.breakpointLocation)
+        executionControl?.update(lineNumber: line.displayLineNumber, location: line.breakpointLocation, taskID: task?.id)
         task?.update(location: line.breakpointLocation)
+    }
+
+    private func drainPendingEventsIfAllowed(limit: Int) throws {
+        guard executionControl?.isStepping != true else { return }
+        eventLoop?.runPending(limit: limit)
+        try eventLoop?.throwPendingError()
     }
 
     private func defaultLogModuleName() -> String {
@@ -1242,8 +1247,7 @@ public final class BASICInterpreter {
             return .next
         case .yield:
             task?.recordYield()
-            eventLoop?.runPending(limit: 8)
-            try eventLoop?.throwPendingError()
+            try drainPendingEventsIfAllowed(limit: 8)
             return .next
         case .randomize(let expression):
             let seed = try expression.map { try numeric(try evaluate($0)) } ?? Date().timeIntervalSince1970
@@ -1265,8 +1269,14 @@ public final class BASICInterpreter {
                 return .next
             }
             let localContextIndex = runtime.pushLocalContext()
-            gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
-            return targets[selected - 1].flow
+            let target = targets[selected - 1]
+            gosubStack.append(GosubFrame(
+                returnIndex: pc + 1,
+                localContextIndex: localContextIndex,
+                functionDepth: functionStack.count,
+                displayName: gosubDisplayName(for: target)
+            ))
+            return target.flow
         case .onErrorGoto(let target):
             errorHandlerTarget = target
             isHandlingError = false
@@ -1309,9 +1319,19 @@ public final class BASICInterpreter {
             return .jump(resumeNextPC)
         case .gosub(let target):
             let localContextIndex = runtime.pushLocalContext()
-            gosubStack.append(GosubFrame(returnIndex: pc + 1, localContextIndex: localContextIndex))
+            gosubStack.append(GosubFrame(
+                returnIndex: pc + 1,
+                localContextIndex: localContextIndex,
+                functionDepth: functionStack.count,
+                displayName: gosubDisplayName(for: target)
+            ))
             return target.flow
         case .returnFromSubroutine:
+            if let frame = gosubStack.last, frame.functionDepth == functionStack.count {
+                _ = gosubStack.popLast()
+                runtime.popLocalContext()
+                return .returnTo(frame.returnIndex)
+            }
             if !functionStack.isEmpty {
                 try setFunctionReturn(nil)
                 return .functionReturn
@@ -2670,8 +2690,7 @@ public final class BASICInterpreter {
                 updateExecutionLocation(parsed[pc])
                 try executionControl?.checkBreak()
                 let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
-                eventLoop?.runPending(limit: 16)
-                try eventLoop?.throwPendingError()
+                try drainPendingEventsIfAllowed(limit: 16)
                 switch flow {
                 case .next:
                     pc += 1
@@ -4006,6 +4025,15 @@ public final class BASICInterpreter {
             if name.normalized == "ERL" {
                 return .number(Double(runtime.lastErrorLine))
             }
+            if name.normalized == "CURRENT_TASK$" {
+                return .string(BASICString(currentTaskName()))
+            }
+            if name.normalized == "CURRENT_FUNCTION$" {
+                return .string(BASICString(currentFunctionName()))
+            }
+            if name.normalized == "CURRENT_THREAD$" {
+                return .string(BASICString(currentThreadName()))
+            }
             if let constant = builtInConstant(named: name.normalized) {
                 return constant
             }
@@ -4579,6 +4607,48 @@ public final class BASICInterpreter {
             throw BASICError.runtime("Expected a string")
         }
         return string.rawString
+    }
+
+    private func currentTaskName() -> String {
+        if let task {
+            return "#\(task.id) \(task.name)"
+        }
+        if let currentTask = taskScheduler?.currentTask {
+            return "#\(currentTask.id) \(currentTask.name)"
+        }
+        return "Program"
+    }
+
+    private func currentFunctionName() -> String {
+        if let frame = gosubStack.last, frame.functionDepth == functionStack.count {
+            return frame.displayName
+        }
+        guard let frame = functionStack.last else {
+            return "[main]"
+        }
+        if let receiverClassName = frame.receiverClassName ?? frame.definition.ownerClassName {
+            return "\(receiverClassName).\(frame.definition.displayName)"
+        }
+        return frame.definition.displayName
+    }
+
+    private func gosubDisplayName(for target: BranchTarget) -> String {
+        switch target {
+        case .line(let line):
+            return "GOSUB \(line)"
+        case .label(let label):
+            return "GOSUB \(label)"
+        }
+    }
+
+    private func currentThreadName() -> String {
+        if Thread.isMainThread {
+            return "main"
+        }
+        if let name = Thread.current.name, !name.isEmpty {
+            return name
+        }
+        return "background"
     }
 
     private func boolean(_ value: BASICValue) throws -> Bool {

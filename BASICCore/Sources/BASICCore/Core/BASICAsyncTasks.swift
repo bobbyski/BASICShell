@@ -86,8 +86,27 @@ public final class BASICExecutionControl: @unchecked Sendable {
         lock.unlock()
     }
 
-    func update(lineNumber: Int?, location: BASICBreakpointLocation) {
+    var isStepping: Bool {
         lock.lock()
+        defer { lock.unlock() }
+        switch mode {
+        case .run:
+            return false
+        case .stepInto, .stepOver, .stepOut:
+            return true
+        }
+    }
+
+    func update(lineNumber: Int?, location: BASICBreakpointLocation) {
+        update(lineNumber: lineNumber, location: location, taskID: nil)
+    }
+
+    func update(lineNumber: Int?, location: BASICBreakpointLocation, taskID: Int?) {
+        lock.lock()
+        if let targetTaskID, targetTaskID != taskID {
+            lock.unlock()
+            return
+        }
         currentLineNumber = lineNumber
         currentLocation = location
         lock.unlock()

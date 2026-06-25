@@ -121,6 +121,10 @@ struct DebugPane: View {
             debugButton("Cancel Task", systemImage: "xmark.circle", isEnabled: canCancelSelectedTask) {
                 model.cancelSelectedDebuggerTask()
             }
+            Toggle("Live Line", isOn: $model.showsLiveExecutionLine)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .help("Show the current execution line while the program is running.")
 
             Spacer(minLength: 0)
         }

@@ -5673,6 +5673,32 @@ struct BASICCoreTests {
         #expect(session.eventLoop.runUntilIdle() == 1)
         #expect(log.snapshot == ["session event"])
     }
+
+    @Test("CURRENT pseudo variables expose execution context")
+    func currentPseudoVariablesExposeExecutionContext() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print CURRENT_TASK$
+        print CURRENT_FUNCTION$
+        print ContextName$()
+        print CURRENT_FUNCTION$
+        function ContextName$() as string
+            print CURRENT_FUNCTION$
+            return CURRENT_THREAD$
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output.count == 5)
+        guard host.output.count == 5 else { return }
+        #expect(host.output[0].contains("Program"))
+        #expect(host.output[1] == "[main]")
+        #expect(host.output[2].uppercased().contains("CONTEXTNAME"))
+        #expect(!host.output[3].isEmpty)
+        #expect(host.output[4] == "[main]")
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {

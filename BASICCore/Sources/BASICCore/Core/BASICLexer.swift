@@ -111,7 +111,7 @@ struct Lexer {
     private mutating func scanIdentifier() -> LexedToken {
         let start = index
         let column = self.column
-        while index < source.endIndex, source[index].isLetter || source[index].isNumber {
+        while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "_" {
             advance()
         }
         if index < source.endIndex, source[index] == "$" || source[index] == "%" || source[index] == "#" {

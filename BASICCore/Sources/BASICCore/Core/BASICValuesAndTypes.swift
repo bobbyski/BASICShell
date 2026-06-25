@@ -887,6 +887,8 @@ struct FunctionFrame {
 struct GosubFrame {
     let returnIndex: Int
     let localContextIndex: Int
+    let functionDepth: Int
+    let displayName: String
 }
 
 struct FunctionCallResult {
