@@ -104,6 +104,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private var activeInterpreter: BASICInterpreter?
     /// Optional lane used by synchronous foreground RUN commands.
     public var foregroundRunLane: BASICWorkerLane?
+    /// Optional execution control used by interactive foreground RUN commands.
+    public var foregroundExecutionControl: BASICExecutionControl?
+    /// When true, Ctrl-C-style break requests end a foreground shell run instead of preserving a paused debugger state.
+    public var stopsForegroundProgramOnBreak = false
     /// Host callback queue for future async completions and Shell/Studio event-loop integration.
     public let eventLoop: BASICEventLoop
     private let hostEventLock = NSLock()
@@ -201,7 +205,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 do {
                     let files = try fileHost.listFiles()
                     if !files.isEmpty {
-                        host.printLine(files.joined(separator: "\n"))
+                        let columns = (host as? BASICConsoleHost)?.screenColumns() ?? 80
+                        host.printLine(BASICFileListFormatter.columns(files, terminalColumns: columns))
                     }
                 } catch let error as BASICError {
                     throw error
@@ -220,7 +225,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                     fileState.lastFilePath = path
                     let diagnostics = self.diagnostics()
                     if diagnostics.isEmpty {
-                        try runProgramInForeground()
+                        try runProgramInForeground(executionControl: foregroundExecutionControl)
                     } else {
                         printDiagnostics()
                     }
@@ -233,7 +238,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             }
 
             if let startLine = try Self.runStartLine(from: trimmed) {
-                try runProgramInForeground(startLine: startLine)
+                try runProgramInForeground(startLine: startLine, executionControl: foregroundExecutionControl)
                 return true
             }
 
@@ -278,8 +283,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
             }
         } catch let error as BASICError {
+            (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine(error.description)
         } catch {
+            (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine("Unexpected error: \(error)")
         }
 
@@ -427,8 +434,12 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         } catch let error as BASICError {
             switch error {
             case .breakRequested, .breakpoint, .stepComplete:
-                pauseRuntimeTimersForDebugger()
-                break
+                if case .breakRequested = error, stopsForegroundProgramOnBreak {
+                    stopAllTimers()
+                    activeInterpreter = nil
+                } else {
+                    pauseRuntimeTimersForDebugger()
+                }
             default:
                 stopAllTimers()
                 activeInterpreter = nil
@@ -637,13 +648,18 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 )
             }
                 try activeInterpreter.dispatchEvent(selector: selector, data: data)
+            } catch BASICError.breakRequested {
+                if stopsForegroundProgramOnBreak {
+                    stopAllTimers()
+                    self.activeInterpreter = nil
+                } else {
+                    pauseRuntimeTimersForDebugger()
+                }
+                eventLoop.reportError(BASICError.breakRequested(nil))
+                return
             } catch let error as BASICError where error.isDebugPause {
                 pauseRuntimeTimersForDebugger()
                 eventLoop.reportError(error)
-                return
-            } catch BASICError.breakRequested {
-                pauseRuntimeTimersForDebugger()
-                eventLoop.reportError(BASICError.breakRequested(nil))
                 return
             } catch {
                 host.printLine("Runtime error: \(error)")
@@ -695,6 +711,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
 
     /// Runs the program synchronously, using the configured foreground lane when present.
     public func runProgramInForeground(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
+        executionControl?.reset()
         guard let foregroundRunLane else {
             try runProgram(startLine: startLine, executionControl: executionControl)
             return

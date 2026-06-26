@@ -1935,7 +1935,21 @@ struct BASICCoreTests {
 
         session.submit("files")
 
-        #expect(host.output == ["alpha.bas\nzeta.bas"])
+        #expect(host.output == ["alpha.bas  zeta.bas"])
+    }
+
+    @Test("FILES formats names in terminal-width columns")
+    func filesFormatsNamesInTerminalWidthColumns() {
+        let host = TestHost()
+        host.columns = 32
+        for name in ["zeta.bas", "gamma.bas", "epsilon.bas", "delta.bas", "beta.bas", "alpha.bas"] {
+            host.files[name] = ""
+        }
+        let session = BASICSession(host: host)
+
+        session.submit("files")
+
+        #expect(host.output == ["alpha.bas    epsilon.bas\nbeta.bas     gamma.bas\ndelta.bas    zeta.bas"])
     }
 
     @Test("SAVE LOAD and FILES can run as program statements")
@@ -1950,7 +1964,7 @@ struct BASICCoreTests {
         session.submit("30 save \"saved.bas\"")
         session.submit("RUN")
 
-        #expect(host.output == ["loadme.bas\nother.bas"])
+        #expect(host.output == ["loadme.bas  other.bas"])
         #expect(host.files["saved.bas"] == "10 print \"loaded\"")
     }
 

@@ -2072,6 +2072,7 @@ public final class BASICInterpreter {
         case "INKEY$":
             try requireArgumentCount(name.name, arguments, 0)
             let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
+            try executionControl?.checkBreak()
             let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
             return .string(BASICString(BASICKeyNormalizer.normalize(rawKey, encoding: encoding)))
         case "INPUT$":
@@ -3271,7 +3272,8 @@ public final class BASICInterpreter {
         do {
             let files = try fileHost.listFiles()
             if !files.isEmpty {
-                host?.printLine(files.joined(separator: "\n"))
+                let columns = (host as? BASICConsoleHost)?.screenColumns() ?? 80
+                host?.printLine(BASICFileListFormatter.columns(files, terminalColumns: columns))
             }
         } catch let error as BASICError {
             throw error

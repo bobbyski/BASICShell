@@ -24,7 +24,7 @@ let vtg = VectorTerminal()
 let timer = SecondsTimer(1)
 timer.repeating = true
 timer.start()
-on timer(5) gosub TimerTick
+on timer gosub TimerTick
 
 vtg.clear()
 vtg.setDefaultLayer(2)

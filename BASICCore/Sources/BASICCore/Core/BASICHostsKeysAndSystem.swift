@@ -3,6 +3,32 @@ import Foundation
 import Darwin
 #endif
 
+enum BASICFileListFormatter {
+    static func columns(_ names: [String], terminalColumns: Int) -> String {
+        guard !names.isEmpty else { return "" }
+
+        let availableColumns = max(1, terminalColumns)
+        let longestNameWidth = names.map(\.count).max() ?? 0
+        let paddedColumnWidth = longestNameWidth + 2
+        let columnCount = max(1, (availableColumns + 2) / max(1, paddedColumnWidth))
+        let rowCount = Int(ceil(Double(names.count) / Double(columnCount)))
+
+        return (0..<rowCount).map { row in
+            var cells: [String] = []
+            for column in 0..<columnCount {
+                let index = column * rowCount + row
+                guard index < names.count else { continue }
+                cells.append(names[index])
+            }
+
+            return cells.enumerated().map { index, name in
+                guard index < cells.count - 1 else { return name }
+                return name.padding(toLength: paddedColumnWidth, withPad: " ", startingAt: 0)
+            }.joined()
+        }.joined(separator: "\n")
+    }
+}
+
 extension BASICType {
     var name: String {
         switch self {
@@ -31,6 +57,11 @@ public protocol BASICHost: AnyObject {
 public protocol BASICListingStyleHost: BASICHost {
     /// True when the host can safely render ANSI syntax coloring for LIST output.
     var usesColoredListing: Bool { get }
+}
+
+/// Optional host capability for restoring any alternate display surface before errors are printed.
+public protocol BASICRunDisplayHost: BASICHost {
+    func prepareToPrintRunResult()
 }
 
 /// Result returned by hosts that can stop LINE INPUT on special keys.
