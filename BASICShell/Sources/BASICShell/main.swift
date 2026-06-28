@@ -1,7 +1,86 @@
 import BASICCore
 import Darwin
 import Foundation
-import VectorTerminalSDK
+@preconcurrency import VectorTerminalSDK
+
+nonisolated(unsafe) private var shellInterruptWriteFD: Int32 = -1
+
+final class ShellEventTrace: @unchecked Sendable {
+    static let shared = ShellEventTrace()
+
+    private let lock = NSLock()
+    private let url: URL?
+
+    private init() {
+        guard let path = ProcessInfo.processInfo.environment["AIBASIC_SHELL_EVENT_LOG"],
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            url = nil
+            return
+        }
+        url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+    }
+
+    func write(_ message: String) {
+        guard let url else { return }
+        let line = "\(Date()) \(message)\n"
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: url.path),
+               let handle = try? FileHandle(forWritingTo: url) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                try handle.close()
+            } else {
+                try line.write(to: url, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // Event tracing is diagnostic-only; never let it disturb the shell.
+        }
+    }
+}
+
+private func handleShellInterruptSignal(_ signal: Int32) {
+    guard shellInterruptWriteFD >= 0 else { return }
+    var byte = UInt8(signal == SIGINT ? 3 : 0)
+    _ = Darwin.write(shellInterruptWriteFD, &byte, 1)
+}
+
+final class ShellInterruptBridge {
+    private var readFD: Int32 = -1
+    private var writeFD: Int32 = -1
+    private var readerThread: Thread?
+
+    func start(executionControl: BASICExecutionControl) {
+        guard readFD < 0, writeFD < 0 else { return }
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return }
+        readFD = fds[0]
+        writeFD = fds[1]
+        shellInterruptWriteFD = writeFD
+
+        let flags = fcntl(writeFD, F_GETFL, 0)
+        if flags >= 0 {
+            _ = fcntl(writeFD, F_SETFL, flags | O_NONBLOCK)
+        }
+
+        signal(SIGINT, handleShellInterruptSignal)
+
+        let thread = Thread { [readFD] in
+            var byte: UInt8 = 0
+            while Darwin.read(readFD, &byte, 1) == 1 {
+                ShellEventTrace.shared.write("interrupt-bridge byte=\(byte)")
+                if byte == 3 {
+                    executionControl.requestBreak()
+                }
+            }
+        }
+        thread.name = "AIBasic.Shell.InterruptBridge"
+        thread.start()
+        readerThread = thread
+    }
+}
 
 final class ShellLineEditor: @unchecked Sendable {
     static let shared = ShellLineEditor()
@@ -11,6 +90,13 @@ final class ShellLineEditor: @unchecked Sendable {
     private var maxLength: Int?
     private var fieldViewStart = 0
     private var fieldDisplayCursor = 0
+    private var commandHistory = ShellLineEditor.loadCommandHistory()
+    private static let maxCommandHistoryEntries = 500
+    private static let commandHistoryURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("AIBasic", isDirectory: true).appendingPathComponent("BASICShellHistory.txt")
+    }()
 
     func readLine(prompt: String) -> String? {
         readLine(prompt: prompt, exitOnSpecialKey: false)?.text
@@ -21,16 +107,28 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 
     func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
+        let usesCommandHistory = !exitOnSpecialKey
+            && options.fieldLength == nil
+            && options.maxLength == nil
+            && options.defaultText == nil
         let fd = STDIN_FILENO
         guard isatty(fd) == 1 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
+            return Swift.readLine().map {
+                let text = limited($0, maxLength: options.maxLength)
+                if usesCommandHistory { appendCommandHistory(text) }
+                return BASICLineInputResult(text: text)
+            }
         }
 
         var originalTermios = termios()
         guard tcgetattr(fd, &originalTermios) == 0 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
+            return Swift.readLine().map {
+                let text = limited($0, maxLength: options.maxLength)
+                if usesCommandHistory { appendCommandHistory(text) }
+                return BASICLineInputResult(text: text)
+            }
         }
 
         var rawTermios = originalTermios
@@ -39,7 +137,11 @@ final class ShellLineEditor: @unchecked Sendable {
         rawTermios.c_cc.17 = 0
         guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else {
             Swift.print(prompt, terminator: "")
-            return Swift.readLine().map { BASICLineInputResult(text: limited($0, maxLength: options.maxLength)) }
+            return Swift.readLine().map {
+                let text = limited($0, maxLength: options.maxLength)
+                if usesCommandHistory { appendCommandHistory(text) }
+                return BASICLineInputResult(text: text)
+            }
         }
         defer {
             var restored = originalTermios
@@ -52,6 +154,8 @@ final class ShellLineEditor: @unchecked Sendable {
         fieldDisplayCursor = 0
         var buffer = limited(options.defaultText ?? "", maxLength: options.maxLength)
         var cursor = buffer.count
+        var historyIndex: Int?
+        var draftBeforeHistory = ""
 
         Swift.print(prompt, terminator: "")
         if let fieldLength {
@@ -72,6 +176,9 @@ final class ShellLineEditor: @unchecked Sendable {
             guard let raw = readRawKey(fd: fd) else { return nil }
             if raw == "\r" || raw == "\n" {
                 Swift.print()
+                if usesCommandHistory {
+                    appendCommandHistory(buffer)
+                }
                 return BASICLineInputResult(text: buffer)
             }
 
@@ -97,6 +204,7 @@ final class ShellLineEditor: @unchecked Sendable {
             }
 
             if raw == "\u{8}" || raw == "\u{7F}" {
+                historyIndex = nil
                 guard cursor > 0 else { continue }
                 cursor -= 1
                 buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
@@ -109,11 +217,19 @@ final class ShellLineEditor: @unchecked Sendable {
                     Swift.print()
                     return BASICLineInputResult(text: buffer, exitKey: BASICKeyNormalizer.normalize(raw))
                 }
-                handleEscape(raw, buffer: &buffer, cursor: &cursor)
+                handleEscape(
+                    raw,
+                    buffer: &buffer,
+                    cursor: &cursor,
+                    usesCommandHistory: usesCommandHistory,
+                    historyIndex: &historyIndex,
+                    draftBeforeHistory: &draftBeforeHistory
+                )
                 continue
             }
 
             if raw.count == 1, let scalar = raw.unicodeScalars.first, scalar.value >= 32 {
+                historyIndex = nil
                 insert(raw, into: &buffer, cursor: &cursor)
             }
         }
@@ -145,6 +261,10 @@ final class ShellLineEditor: @unchecked Sendable {
         if byte == 27 {
             while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
                 bytes.append(next)
+                if bytes.count == 2, next == UInt8(ascii: "_") {
+                    drainVectorTerminalResponseBody(fd: fd)
+                    return readRawKey(fd: fd)
+                }
                 if isCompleteEscapeSequence(bytes) { break }
             }
         }
@@ -166,9 +286,22 @@ final class ShellLineEditor: @unchecked Sendable {
         repaint(buffer: buffer, cursor: cursor, from: oldCursor)
     }
 
-    private func handleEscape(_ raw: String, buffer: inout String, cursor: inout Int) {
+    private func handleEscape(
+        _ raw: String,
+        buffer: inout String,
+        cursor: inout Int,
+        usesCommandHistory: Bool,
+        historyIndex: inout Int?,
+        draftBeforeHistory: inout String
+    ) {
         let key = BASICKeyNormalizer.normalize(raw)
         switch key {
+        case "[H":
+            guard usesCommandHistory else { break }
+            showPreviousCommand(buffer: &buffer, cursor: &cursor, historyIndex: &historyIndex, draftBeforeHistory: &draftBeforeHistory)
+        case "[P":
+            guard usesCommandHistory else { break }
+            showNextCommand(buffer: &buffer, cursor: &cursor, historyIndex: &historyIndex, draftBeforeHistory: draftBeforeHistory)
         case "[K": moveCursor(to: cursor - 1, cursor: &cursor, buffer: buffer)
         case "[M": moveCursor(to: cursor + 1, cursor: &cursor, buffer: buffer)
         case "[G": moveCursor(to: 0, cursor: &cursor, buffer: buffer)
@@ -181,6 +314,78 @@ final class ShellLineEditor: @unchecked Sendable {
             isOverwriteMode.toggle()
         default:
             break
+        }
+    }
+
+    private func showPreviousCommand(
+        buffer: inout String,
+        cursor: inout Int,
+        historyIndex: inout Int?,
+        draftBeforeHistory: inout String
+    ) {
+        guard !commandHistory.isEmpty else { return }
+        if let index = historyIndex {
+            historyIndex = max(0, index - 1)
+        } else {
+            draftBeforeHistory = buffer
+            historyIndex = commandHistory.count - 1
+        }
+        guard let index = historyIndex else { return }
+        replaceLine(with: commandHistory[index], buffer: &buffer, cursor: &cursor)
+    }
+
+    private func showNextCommand(
+        buffer: inout String,
+        cursor: inout Int,
+        historyIndex: inout Int?,
+        draftBeforeHistory: String
+    ) {
+        guard let index = historyIndex else { return }
+        if index < commandHistory.count - 1 {
+            historyIndex = index + 1
+            replaceLine(with: commandHistory[index + 1], buffer: &buffer, cursor: &cursor)
+        } else {
+            historyIndex = nil
+            replaceLine(with: draftBeforeHistory, buffer: &buffer, cursor: &cursor)
+        }
+    }
+
+    private func replaceLine(with text: String, buffer: inout String, cursor: inout Int) {
+        moveCursor(to: 0, cursor: &cursor, buffer: buffer)
+        buffer = text
+        cursor = buffer.count
+        Swift.print("\u{1B}[K" + buffer, terminator: "")
+        fflush(stdout)
+    }
+
+    private func appendCommandHistory(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if commandHistory.last == command { return }
+        commandHistory.append(command)
+        if commandHistory.count > Self.maxCommandHistoryEntries {
+            commandHistory.removeFirst(commandHistory.count - Self.maxCommandHistoryEntries)
+        }
+        saveCommandHistory()
+    }
+
+    private static func loadCommandHistory() -> [String] {
+        guard let contents = try? String(contentsOf: commandHistoryURL, encoding: .utf8) else {
+            return []
+        }
+        return contents
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(maxCommandHistoryEntries)
+            .map(String.init)
+    }
+
+    private func saveCommandHistory() {
+        let directory = Self.commandHistoryURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try commandHistory.joined(separator: "\n").write(to: Self.commandHistoryURL, atomically: true, encoding: .utf8)
+        } catch {
+            // History is a convenience feature; keep the shell usable if persistence fails.
         }
     }
 
@@ -258,6 +463,49 @@ final class ShellLineEditor: @unchecked Sendable {
         return Darwin.read(fd, &byte, 1) == 1 ? byte : nil
     }
 
+    func drainPendingVectorTerminalResponses() {
+        let fd = STDIN_FILENO
+        guard isatty(fd) == 1 else { return }
+
+        var originalTermios = termios()
+        guard tcgetattr(fd, &originalTermios) == 0 else { return }
+        var rawTermios = originalTermios
+        rawTermios.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        rawTermios.c_cc.16 = 0
+        rawTermios.c_cc.17 = 0
+        guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else { return }
+        defer {
+            var restored = originalTermios
+            _ = tcsetattr(fd, TCSANOW, &restored)
+        }
+
+        while let first = readByteIfAvailable(fd: fd, timeoutMicroseconds: 20_000) {
+            guard first == 0x1b else {
+                continue
+            }
+            guard let second = readByteIfAvailable(fd: fd, timeoutMicroseconds: 5_000) else {
+                continue
+            }
+            guard second == UInt8(ascii: "_") else {
+                continue
+            }
+            drainVectorTerminalResponseBody(fd: fd)
+        }
+    }
+
+    private func drainVectorTerminalResponseBody(fd: Int32) {
+        while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 5_000) {
+            if next == 0x07 {
+                break
+            }
+            if next == 0x1b,
+               let terminator = readByteIfAvailable(fd: fd, timeoutMicroseconds: 5_000),
+               terminator == UInt8(ascii: "\\") {
+                break
+            }
+        }
+    }
+
     private func isCompleteEscapeSequence(_ bytes: [UInt8]) -> Bool {
         guard bytes.count >= 2 else { return false }
         if bytes[1] == UInt8(ascii: "O") {
@@ -324,10 +572,12 @@ enum ShellGraphicsPolicy: String {
     case vtg
     case off
 
-    static let environmentName = "AIBASIC_GRAPHICS"
+    static let environmentName = "BASICSHELL_GRAPHICS"
+    static let legacyEnvironmentName = "AIBASIC_GRAPHICS"
 
     static func fromEnvironment(default defaultPolicy: ShellGraphicsPolicy = .auto) -> ShellGraphicsPolicy {
-        guard let raw = ProcessInfo.processInfo.environment[environmentName] else {
+        let environment = ProcessInfo.processInfo.environment
+        guard let raw = environment[environmentName] ?? environment[legacyEnvironmentName] else {
             return defaultPolicy
         }
         return Self(rawValue: raw.lowercased()) ?? defaultPolicy
@@ -366,28 +616,54 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
     var isGraphicsAvailable: Bool { isVectorTerminalAvailable }
     var isVectorTerminalAvailable: Bool { vectorTerminalAvailability }
     var graphicsUnavailableMessage: String { "VectorTerminal graphics are not supported by this terminal" }
     private let graphicsPolicy: ShellGraphicsPolicy
-    private lazy var vectorTerminalAvailability = detectVectorTerminalAvailability()
+    private lazy var vectorTerminalAvailability = vectorTerminalProbe.isAvailable
     private var didUseVectorTerminal = false
     private var graphicsMode = BASICScreenMode(number: 0, width: 0, height: 0, colorCount: 0)
     private var graphicsPixels: [Int] = []
     private var graphicsColor = 1
     private var basicGraphicsOperationID = 0
-    private lazy var vtgCanvas: VectorTerminalCanvas = {
+    private var liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(width: 0, height: 0, source: "BASICShell")
+    private weak var session: BASICSession?
+    private weak var executionControl: BASICExecutionControl?
+    private let eventPollLock = NSLock()
+    private var isVectorTerminalEventPollingEnabled = false
+    private var eventPollOriginalTermios: termios?
+    private var pendingKeyInput: [String] = []
+    private var partialTerminalEscapeBytes: [UInt8] = []
+    private lazy var vtgCanvas: VectorTerminalCanvas = vectorTerminalProbe.canvas
+    private lazy var vectorTerminalProbe: (canvas: VectorTerminalCanvas, isAvailable: Bool) = {
         guard isatty(STDOUT_FILENO) == 1 else {
-            return .noOp()
+            return (.noOp(), false)
         }
-        return (try? VectorTerminalCanvas()) ?? .noOp()
+        if case .off = graphicsPolicy {
+            return (.noOp(), false)
+        }
+        guard let canvas = try? VectorTerminalCanvas(timeoutMilliseconds: 750) else {
+            return (.noOp(), false)
+        }
+        if let snapshot = canvasSnapshot(canvas.queryCurrentCanvas(timeoutMilliseconds: 750)) {
+            liveVTGCanvasSize = snapshot
+        }
+        return (canvas, true)
     }()
 
     init(graphicsPolicy: ShellGraphicsPolicy) {
         self.graphicsPolicy = graphicsPolicy
+    }
+
+    func attachSession(_ session: BASICSession) {
+        self.session = session
+    }
+
+    func attachExecutionControl(_ executionControl: BASICExecutionControl) {
+        self.executionControl = executionControl
     }
 
     private func detectVectorTerminalAvailability() -> Bool {
@@ -396,9 +672,9 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         case .off:
             return false
         case .vtg:
-            return vtgCanvas.queryCapabilityInfo(timeoutMilliseconds: 150) != nil
+            return vectorTerminalProbe.isAvailable
         case .auto:
-            return vtgCanvas.queryCapabilityInfo(timeoutMilliseconds: 150) != nil
+            return vectorTerminalProbe.isAvailable
         }
     }
 
@@ -406,6 +682,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         guard isVectorTerminalAvailable else {
             throw BASICError.runtime("VectorTerminal graphics are not supported by this terminal")
         }
+        startVectorTerminalEventPolling()
     }
 
     func log(level: String, issuer: String, module: String, text: String) {
@@ -449,6 +726,13 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
     }
 
     func readKey() -> String? {
+        pollVectorTerminalEvents()
+        if let buffered = popPendingKeyInput() {
+            return buffered
+        }
+        if hasPartialTerminalEscapeBuffered() {
+            return nil
+        }
         let fd = STDIN_FILENO
         guard isatty(fd) == 1 else { return nil }
 
@@ -470,17 +754,53 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
             _ = tcsetattr(fd, TCSANOW, &restored)
         }
 
-        var byte: UInt8 = 0
-        let count = Darwin.read(fd, &byte, 1)
-        guard count == 1 else { return nil }
-        var bytes = [byte]
-        if byte == 27 {
-            while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
-                bytes.append(next)
-                if isCompleteEscapeSequence(bytes) { break }
+        while true {
+            var byte: UInt8 = 0
+            let count = Darwin.read(fd, &byte, 1)
+            guard count == 1 else { return nil }
+            var bytes = [byte]
+            if byte == 27 {
+                while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: terminalEscapeContinuationTimeoutMicroseconds(for: bytes)) {
+                    bytes.append(next)
+                    if isCompleteTerminalEscape(bytes) || isCompleteKeyboardEscape(bytes) { break }
+                }
+                if isPartialTerminalEscape(bytes) {
+                    bufferPartialTerminalEscape(bytes, source: "read-key")
+                    return nil
+                }
+                if handleTerminalEventBytes(bytes) {
+                    if let buffered = popPendingKeyInput() {
+                        return buffered
+                    }
+                    continue
+                }
             }
+            if byte == 3 {
+                ShellEventTrace.shared.write("read-key-etx-request-break")
+                executionControl?.requestBreak()
+                return nil
+            }
+            return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
         }
-        return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
+    }
+
+    private func popPendingKeyInput() -> String? {
+        eventPollLock.lock()
+        defer { eventPollLock.unlock() }
+        guard !pendingKeyInput.isEmpty else { return nil }
+        return pendingKeyInput.removeFirst()
+    }
+
+    private func hasPartialTerminalEscapeBuffered() -> Bool {
+        eventPollLock.lock()
+        defer { eventPollLock.unlock() }
+        return !partialTerminalEscapeBytes.isEmpty
+    }
+
+    private func pushPendingKeyInput(_ value: String) {
+        eventPollLock.lock()
+        pendingKeyInput.append(value)
+        eventPollLock.unlock()
     }
 
     func readBlockingKey() -> String? {
@@ -641,8 +961,20 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     private func normalizedDemoPath(_ path: String) -> String {
         var normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
-        if normalized.hasPrefix("basicPrograms/demos/") {
-            normalized.removeFirst("basicPrograms/demos/".count)
+        let legacyPrefixes = [
+            "basicPrograms/demos/",
+            "basicPrograms/shell/",
+            "basicPrograms/BASICStudio/",
+            "shell/",
+            "studio/"
+        ]
+        var didStrip = true
+        while didStrip {
+            didStrip = false
+            for prefix in legacyPrefixes where normalized.hasPrefix(prefix) {
+                normalized.removeFirst(prefix.count)
+                didStrip = true
+            }
         }
         return normalized
     }
@@ -700,6 +1032,486 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
             source: canvas.source,
             rawResponse: canvas.rawResponse
         )
+    }
+
+    private func updateLiveVTGCanvasSize(_ canvas: VTGCanvas?) -> BASICVectorTerminalCanvasSnapshot? {
+        guard let snapshot = canvasSnapshot(canvas) else { return nil }
+        liveVTGCanvasSize = snapshot
+        return snapshot
+    }
+
+    private func startVectorTerminalEventPolling() {
+        eventPollLock.lock()
+        defer { eventPollLock.unlock() }
+        guard !isVectorTerminalEventPollingEnabled, isatty(STDIN_FILENO) == 1 else { return }
+        ShellEventTrace.shared.write("vtg-event-polling start")
+
+        var original = termios()
+        if tcgetattr(STDIN_FILENO, &original) == 0 {
+            var raw = original
+            raw.c_lflag &= ~tcflag_t(ICANON | ECHO)
+            raw.c_lflag |= tcflag_t(ISIG)
+            raw.c_cc.16 = 0
+            raw.c_cc.17 = 0
+            if tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 {
+                eventPollOriginalTermios = original
+                ShellEventTrace.shared.write("vtg-event-polling termios noncanonical noecho isig")
+            }
+        }
+
+        vtgCanvas.enableResizeEvents()
+        vtgCanvas.enableMouseReporting(mode: "all")
+        enableANSIMouseMotionReporting()
+        isVectorTerminalEventPollingEnabled = true
+    }
+
+    func stopVectorTerminalEventPolling() {
+        eventPollLock.lock()
+        let wasEnabled = isVectorTerminalEventPollingEnabled
+        isVectorTerminalEventPollingEnabled = false
+        let original = eventPollOriginalTermios
+        eventPollOriginalTermios = nil
+        pendingKeyInput.removeAll()
+        partialTerminalEscapeBytes.removeAll()
+        eventPollLock.unlock()
+
+        if wasEnabled {
+            ShellEventTrace.shared.write("vtg-event-polling stop")
+            vtgCanvas.disableMouseReporting()
+            vtgCanvas.disableResizeEvents()
+        }
+        if var original {
+            tcsetattr(STDIN_FILENO, TCSANOW, &original)
+        }
+    }
+
+    private func pollVectorTerminalEvents() {
+        eventPollLock.lock()
+        let isEnabled = isVectorTerminalEventPollingEnabled
+        eventPollLock.unlock()
+        guard isEnabled else { return }
+
+        while let bytes = readTerminalEventBytes(timeoutMilliseconds: 0) {
+            _ = handleTerminalEventBytes(bytes)
+        }
+    }
+
+    private func enableANSIMouseMotionReporting() {
+        writeRawTerminal("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h")
+    }
+
+    private func writeRawTerminal(_ value: String) {
+        FileHandle.standardOutput.write(Data(value.utf8))
+    }
+
+    private func readTerminalEventBytes(timeoutMilliseconds: Int32) -> [UInt8]? {
+        var byte: UInt8 = 0
+        var bytes: [UInt8]
+        if partialTerminalEscapeBytes.isEmpty {
+            var pollFD = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard poll(&pollFD, 1, timeoutMilliseconds) > 0 else { return nil }
+
+            guard Darwin.read(STDIN_FILENO, &byte, 1) == 1 else { return nil }
+            guard byte == 0x1b else { return [byte] }
+            bytes = [byte]
+        } else {
+            bytes = partialTerminalEscapeBytes
+            partialTerminalEscapeBytes.removeAll()
+        }
+        while !isCompleteTerminalEscape(bytes) {
+            if bytes.count > 8192 { return bytes }
+            var nextPollFD = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard poll(&nextPollFD, 1, terminalEscapeContinuationTimeoutMilliseconds(for: bytes)) > 0 else {
+                bufferPartialTerminalEscape(bytes, source: "poll")
+                return nil
+            }
+            guard Darwin.read(STDIN_FILENO, &byte, 1) == 1 else {
+                bufferPartialTerminalEscape(bytes, source: "poll")
+                return nil
+            }
+            bytes.append(byte)
+        }
+        return bytes
+    }
+
+    private func bufferPartialTerminalEscape(_ bytes: [UInt8], source: String) {
+        guard isPartialTerminalEscape(bytes) else { return }
+        partialTerminalEscapeBytes = bytes
+        ShellEventTrace.shared.write("terminal-partial-buffered source=\(source) bytes=\(debugEscaped(bytes))")
+    }
+
+    private func isPartialTerminalEscape(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
+        guard !isCompleteTerminalEscape(bytes) else { return false }
+        if bytes[1] == UInt8(ascii: "_") {
+            return true
+        }
+        if bytes[1] == UInt8(ascii: "[") {
+            return true
+        }
+        return false
+    }
+
+    private func terminalEscapeContinuationTimeoutMilliseconds(for bytes: [UInt8]) -> Int32 {
+        guard bytes.count >= 2 else { return 25 }
+        if bytes[1] == UInt8(ascii: "_") {
+            return 150
+        }
+        return 25
+    }
+
+    private func terminalEscapeContinuationTimeoutMicroseconds(for bytes: [UInt8]) -> Int32 {
+        terminalEscapeContinuationTimeoutMilliseconds(for: bytes) * 1_000
+    }
+
+    private func isCompleteTerminalEscape(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
+        if bytes[1] == UInt8(ascii: "_") {
+            return bytes.count >= 2 &&
+                bytes[bytes.count - 2] == 0x1b &&
+                bytes[bytes.count - 1] == UInt8(ascii: "\\")
+        }
+        if bytes.count >= 3,
+           bytes[1] == UInt8(ascii: "["),
+           bytes[2] == UInt8(ascii: "M") {
+            return bytes.count >= 6
+        }
+        if bytes[1] == UInt8(ascii: "[") {
+            guard bytes.count >= 3 else { return false }
+            if bytes[2] == UInt8(ascii: "<") {
+                guard let last = bytes.last else { return false }
+                return last == UInt8(ascii: "M") || last == UInt8(ascii: "m")
+            }
+            guard let last = bytes.last else { return false }
+            return last >= 0x40 && last <= 0x7e
+        }
+        if bytes[1] == UInt8(ascii: "O"),
+           let last = bytes.last {
+            return bytes.count >= 3 && last >= 0x40 && last <= 0x7e
+        }
+        return bytes.count > 1
+    }
+
+    private func isCompleteKeyboardEscape(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2 else { return false }
+        if bytes[1] == UInt8(ascii: "_") {
+            return false
+        }
+        return isCompleteEscapeSequence(bytes)
+    }
+
+    private func handleTerminalEventBytes(_ bytes: [UInt8]) -> Bool {
+        traceTerminalBytes(bytes)
+        guard bytes.first == 0x1b else {
+            guard let byte = bytes.first else { return false }
+            if byte == 3 {
+                ShellEventTrace.shared.write("plain-etx-request-break")
+                executionControl?.requestBreak()
+                return true
+            } else {
+                return false
+            }
+        }
+
+        if handleANSIX10Mouse(bytes) { return true }
+
+        if let response = String(bytes: bytes, encoding: .utf8) {
+            if handleVTGKeyResponse(response) { return true }
+            if handleVTGTerminalResponse(response) { return true }
+            if handleANSISGRMouse(response) { return true }
+        }
+        return false
+    }
+
+    private func handleVTGKeyResponse(_ response: String) -> Bool {
+        guard response.contains("_VTG;key") else { return false }
+        let fields = vtgFields(from: response)
+        ShellEventTrace.shared.write("vtg-key fields=\(fields)")
+        let key = fields["key"] ?? fields["char"] ?? fields["value"] ?? ""
+        let modifiers = (fields["mods"] ?? fields["modifiers"] ?? "").lowercased()
+        let code = fields["code"].flatMap(Int.init)
+            ?? fields["ascii"].flatMap(Int.init)
+            ?? fields["byte"].flatMap(Int.init)
+
+        if code == 3 || (key.caseInsensitiveCompare("c") == .orderedSame && modifiers.contains("control")) {
+            ShellEventTrace.shared.write("vtg-key-request-break key=\(key) code=\(code.map(String.init) ?? "nil") modifiers=\(modifiers)")
+            executionControl?.requestBreak()
+        } else if !key.isEmpty, key.count == 1 {
+            pushPendingKeyInput(key)
+        }
+        return true
+    }
+
+    private func handleVTGTerminalResponse(_ response: String) -> Bool {
+        if response.contains("_VTG;resize") || response.contains("_VTG;canvas") || response.contains("_VTG;size") {
+            let fields = vtgFields(from: response)
+            guard let width = fields["width"].flatMap(Int.init),
+                  let height = fields["height"].flatMap(Int.init) else {
+                return true
+            }
+            let previous = liveVTGCanvasSize
+            liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(
+                width: width,
+                height: height,
+                source: response.contains("_VTG;resize") ? "resize" : "canvas",
+                rawResponse: response
+            )
+            if width != previous.width || height != previous.height {
+                session?.postResizeEvent(width: max(1, width), height: max(1, height))
+            }
+            return true
+        }
+
+        guard response.contains("_VTG;mouse") else { return false }
+        let fields = vtgFields(from: response)
+        ShellEventTrace.shared.write("vtg-mouse fields=\(fields)")
+        guard let x = fields["virtualX"].flatMap(Int.init) ?? fields["x"].flatMap(Int.init),
+              let y = fields["virtualY"].flatMap(Int.init) ?? fields["y"].flatMap(Int.init) else {
+            return true
+        }
+        let subtype = normalizedMouseSubtype(fields["type"] ?? "down")
+        let button = normalizedVTGMouseButton(fields["button"])
+        postMouseEvent(
+            subtype: subtype,
+            x: x,
+            y: y,
+            button: button,
+            deltaX: normalizedMouseDelta(fields["deltaX"] ?? fields["scrollX"]),
+            deltaY: normalizedMouseDelta(fields["deltaY"] ?? fields["scrollY"]),
+            hitID: fields["hit"] ?? fields["hitID"] ?? "",
+            target: fields["target"] ?? fields["targetID"] ?? ""
+        )
+        return true
+    }
+
+    private func handleANSISGRMouse(_ response: String) -> Bool {
+        guard response.hasPrefix("\u{1B}[<"),
+              response.hasSuffix("M") || response.hasSuffix("m") else {
+            return false
+        }
+        let body = response.dropFirst(3).dropLast().split(separator: ";")
+        guard body.count == 3,
+              let rawButton = Int(body[0]),
+              let x = Int(body[1]),
+              let y = Int(body[2]) else {
+            ShellEventTrace.shared.write("ansi-sgr-mouse malformed response=\(debugEscaped(response))")
+            return true
+        }
+
+        let isRelease = response.hasSuffix("m")
+        let isMotion = (rawButton & 32) != 0
+        let isScroll = (rawButton & 64) != 0
+        let baseButton = rawButton & 3
+        let button = normalizedMouseButton(rawButton)
+        let subtype: String
+        let scrollDelta = normalizedScrollDelta(rawButton)
+        if isScroll {
+            subtype = "scroll"
+        } else if isMotion {
+            subtype = baseButton == 3 ? "move" : "drag"
+        } else if isRelease {
+            subtype = "up"
+        } else {
+            subtype = "down"
+        }
+        ShellEventTrace.shared.write("ansi-sgr-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) scroll=\(isScroll) subtype=\(subtype) button=\(button) x=\(x) y=\(y) deltaX=\(scrollDelta.x) deltaY=\(scrollDelta.y)")
+        postMouseEvent(subtype: subtype, x: x, y: y, button: button, deltaX: scrollDelta.x, deltaY: scrollDelta.y)
+        return true
+    }
+
+    private func handleANSIX10Mouse(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 6,
+              bytes[0] == 0x1b,
+              bytes[1] == UInt8(ascii: "["),
+              bytes[2] == UInt8(ascii: "M") else {
+            return false
+        }
+
+        let rawButton = Int(bytes[3]) - 32
+        let x = Int(bytes[4]) - 32
+        let y = Int(bytes[5]) - 32
+        let isRelease = rawButton & 3 == 3
+        let isMotion = (rawButton & 32) != 0
+        let isScroll = (rawButton & 64) != 0
+        let baseButton = rawButton & 3
+        let button = normalizedMouseButton(rawButton)
+        let subtype: String
+        let scrollDelta = normalizedScrollDelta(rawButton)
+        if isScroll {
+            subtype = "scroll"
+        } else if isMotion {
+            subtype = baseButton == 3 ? "move" : "drag"
+        } else if isRelease {
+            subtype = "up"
+        } else {
+            subtype = "down"
+        }
+        ShellEventTrace.shared.write("ansi-x10-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) scroll=\(isScroll) subtype=\(subtype) button=\(button) x=\(x) y=\(y) deltaX=\(scrollDelta.x) deltaY=\(scrollDelta.y)")
+        postMouseEvent(subtype: subtype, x: x, y: y, button: button, deltaX: scrollDelta.x, deltaY: scrollDelta.y)
+        return true
+    }
+
+    private func postMouseEvent(
+        subtype: String,
+        x: Int,
+        y: Int,
+        button: Int,
+        deltaX: Double = 0,
+        deltaY: Double = 0,
+        hitID: String = "",
+        target: String = ""
+    ) {
+        let normalizedSubtype = normalizedMouseSubtype(subtype)
+        let pressedButtons = normalizedSubtype == "down" || normalizedSubtype == "drag" || normalizedSubtype == "click" ? button : 0
+        ShellEventTrace.shared.write("post-mouse subtype=\(normalizedSubtype) x=\(x) y=\(y) button=\(button) buttons=\(pressedButtons) deltaX=\(deltaX) deltaY=\(deltaY) hit=\(hitID) target=\(target)")
+        session?.postMouseEvent(
+            subtype: normalizedSubtype,
+            x: Double(x),
+            y: Double(y),
+            button: button,
+            buttons: pressedButtons,
+            duration: 0,
+            deltaX: deltaX,
+            deltaY: deltaY,
+            hitID: hitID,
+            target: target
+        )
+    }
+
+    private func normalizedMouseDelta(_ value: String?) -> Double {
+        guard let value else { return 0 }
+        return Double(value) ?? 0
+    }
+
+    private func normalizedScrollDelta(_ rawButton: Int) -> (x: Double, y: Double) {
+        guard (rawButton & 64) != 0 else { return (0, 0) }
+        switch rawButton & 3 {
+        case 0:
+            return (0, 1)
+        case 1:
+            return (0, -1)
+        case 2:
+            return (-1, 0)
+        case 3:
+            return (1, 0)
+        default:
+            return (0, 0)
+        }
+    }
+
+    private func normalizedMouseButton(_ rawButton: Int) -> Int {
+        let base = rawButton & 3
+        if base == 3 { return 0 }
+        return base
+    }
+
+    private func normalizedVTGMouseButton(_ value: String?) -> Int {
+        guard let value else { return 0 }
+        switch value.lowercased() {
+        case "left", "primary", "main":
+            return 0
+        case "middle", "center":
+            return 1
+        case "right", "secondary":
+            return 2
+        default:
+            return Int(value) ?? 0
+        }
+    }
+
+    private func traceTerminalBytes(_ bytes: [UInt8]) {
+        ShellEventTrace.shared.write("terminal-bytes \(debugEscaped(bytes))")
+        if let response = String(bytes: bytes, encoding: .utf8), bytes.first == 0x1b {
+            ShellEventTrace.shared.write("terminal-string \(debugEscaped(response))")
+        }
+    }
+
+    private func debugEscaped(_ bytes: [UInt8]) -> String {
+        bytes.map { byte in
+            switch byte {
+            case 0x1b: return "ESC"
+            case 0x20...0x7e: return String(UnicodeScalar(byte))
+            default: return String(format: "0x%02X", byte)
+            }
+        }.joined(separator: " ")
+    }
+
+    private func debugEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\u{1B}", with: "ESC")
+            .replacingOccurrences(of: "\u{07}", with: "BEL")
+    }
+
+    private func normalizedMouseSubtype(_ subtype: String) -> String {
+        let lowered = subtype.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowered == "up" || lowered.hasSuffix("up") || lowered.contains("release") {
+            return "up"
+        }
+        if lowered == "move" || lowered.hasSuffix("move") || lowered == "motion" {
+            return "move"
+        }
+        if lowered == "drag" || lowered.hasSuffix("drag") {
+            return "drag"
+        }
+        if lowered == "click" || lowered.hasSuffix("click") {
+            return "click"
+        }
+        if lowered == "scroll" || lowered.hasSuffix("scroll") {
+            return "scroll"
+        }
+        return lowered.isEmpty ? "down" : lowered
+    }
+
+    private func vtgFields(from response: String) -> [String: String] {
+        var payload = response
+        if let start = payload.range(of: "_VTG;") {
+            payload = String(payload[start.upperBound...])
+        }
+        payload = payload
+            .replacingOccurrences(of: "\u{1B}\\", with: "")
+            .replacingOccurrences(of: "\u{07}", with: "")
+        var fields: [String: String] = [:]
+        for part in payload.split(separator: ",") {
+            guard let equals = part.firstIndex(of: "=") else { continue }
+            let key = String(part[..<equals])
+            let value = String(part[part.index(after: equals)...])
+            fields[key] = value
+        }
+        return fields
+    }
+
+    private func handleVectorTerminalEvent(_ event: VectorTerminalEvent) {
+        switch event {
+        case .key(let byte):
+            if byte == 3 {
+                executionControl?.requestBreak()
+            } else {
+                pushPendingKeyInput(String(UnicodeScalar(byte)))
+            }
+        case .specialKey:
+            break
+        case .mouse(let mouse):
+            session?.postMouseEvent(
+                subtype: mouse.type,
+                x: Double(mouse.virtualX ?? mouse.x),
+                y: Double(mouse.virtualY ?? mouse.y),
+                button: mouse.button,
+                buttons: mouse.isPress ? mouse.button : 0,
+                duration: 0,
+                deltaX: Double(mouse.scrollX ?? 0),
+                deltaY: Double(mouse.scrollY ?? 0),
+                hitID: mouse.hitID ?? "",
+                target: mouse.targetID ?? ""
+            )
+        case .resize(let canvas), .canvas(let canvas):
+            let previous = liveVTGCanvasSize
+            if let snapshot = updateLiveVTGCanvasSize(canvas),
+               snapshot.width != previous.width || snapshot.height != previous.height {
+                session?.postResizeEvent(width: max(1, snapshot.width), height: max(1, snapshot.height))
+            }
+        case .frame:
+            break
+        }
     }
 
     private func capabilityJSON(_ capabilities: VTGCapabilities?) -> String? {
@@ -814,6 +1626,26 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         }
     }
 
+    private func drawFramebufferEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        let rx = max(0, radiusX)
+        let ry = max(0, radiusY)
+        guard rx > 0 || ry > 0 else {
+            setFramebufferPixel(x: cx, y: cy, color: color)
+            return
+        }
+
+        let steps = max(24, Int(Double(max(rx, ry)) * 8))
+        var plotted = Set<Int>()
+        for step in 0...steps {
+            let angle = (Double(step) / Double(steps)) * Double.pi * 2
+            let x = cx + Int((Double(rx) * cos(angle)).rounded())
+            let y = cy + Int((Double(ry) * sin(angle)).rounded())
+            let key = (y << 16) ^ x
+            guard plotted.insert(key).inserted else { continue }
+            setFramebufferPixel(x: x, y: y, color: color)
+        }
+    }
+
     private func setFramebufferCirclePoints(cx: Int, cy: Int, x: Int, y: Int, color: Int) {
         setFramebufferPixel(x: cx + x, y: cy + y, color: color)
         setFramebufferPixel(x: cx + y, y: cy + x, color: color)
@@ -864,10 +1696,20 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         return changed
     }
 
-    func clearVectorTerminalOnExit() {
+    func finishVectorTerminalForegroundRun() {
+        stopVectorTerminalEventPolling()
         guard didUseVectorTerminal, isVectorTerminalAvailable else { return }
         vtgCanvas.clear()
         vtgCanvas.present()
+        didUseVectorTerminal = false
+    }
+
+    func clearVectorTerminalOnExit() {
+        finishVectorTerminalForegroundRun()
+    }
+
+    func prepareToPrintRunResult() {
+        finishVectorTerminalForegroundRun()
     }
 
     func clearEverything() {
@@ -969,6 +1811,22 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.present()
     }
 
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        guard isVectorTerminalAvailable else { return }
+        drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color)
+        didUseVectorTerminal = true
+        vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+        vtgCanvas.present()
+    }
+
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
+        guard isVectorTerminalAvailable else { return }
+        drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color.legacyIndex ?? 1)
+        didUseVectorTerminal = true
+        vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+        vtgCanvas.present()
+    }
+
     func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) {
         guard isVectorTerminalAvailable else { return }
         let changed = paintFramebufferFill(x: x, y: y, color: color, borderColor: borderColor)
@@ -1005,6 +1863,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.delete(id: id)
+    }
+
+    func vectorTerminalClearRect(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?) throws {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        vtgCanvas.clearRect(id: id, x: x, y: y, width: width, height: height, layer: layer)
     }
 
     func vectorTerminalPixel(id: String, x: Int, y: Int, color: String, layer: Int?) throws {
@@ -1077,6 +1941,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.vectorPrint(id: id, x: x, y: y, height: height, value: value, stroke: VTGColor(stroke), width: width, layer: layer)
+    }
+
+    func vectorTerminalVectorTextSize(height: Int, value: String) throws -> BASICVectorTerminalCanvasSnapshot {
+        try requireVectorTerminal()
+        let size = vtgCanvas.vectorTextSize(height: height, value: value)
+        return BASICVectorTerminalCanvasSnapshot(width: size.width, height: size.height, source: "VectorTerminalSDK")
     }
 
     func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
@@ -1243,27 +2113,32 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func vectorTerminalQueryCapabilities(timeoutMilliseconds: Int) throws -> String? {
         try requireVectorTerminal()
+        guard timeoutMilliseconds > 0 else { return nil }
         return vtgCanvas.queryCapabilities(timeoutMilliseconds: timeoutMilliseconds)
     }
 
     func vectorTerminalQueryCapabilityInfo(timeoutMilliseconds: Int) throws -> String? {
         try requireVectorTerminal()
+        guard timeoutMilliseconds > 0 else { return nil }
         return capabilityJSON(vtgCanvas.queryCapabilityInfo(timeoutMilliseconds: timeoutMilliseconds))
     }
 
     func vectorTerminalQueryCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
         try requireVectorTerminal()
-        return canvasSnapshot(vtgCanvas.queryCanvas(timeoutMilliseconds: timeoutMilliseconds))
+        guard timeoutMilliseconds > 0 else { return liveVTGCanvasSize }
+        return updateLiveVTGCanvasSize(vtgCanvas.queryCanvas(timeoutMilliseconds: timeoutMilliseconds)) ?? liveVTGCanvasSize
     }
 
     func vectorTerminalQuerySize(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
         try requireVectorTerminal()
-        return canvasSnapshot(vtgCanvas.querySize(timeoutMilliseconds: timeoutMilliseconds))
+        guard timeoutMilliseconds > 0 else { return liveVTGCanvasSize }
+        return updateLiveVTGCanvasSize(vtgCanvas.querySize(timeoutMilliseconds: timeoutMilliseconds)) ?? liveVTGCanvasSize
     }
 
     func vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: Int) throws -> BASICVectorTerminalCanvasSnapshot? {
         try requireVectorTerminal()
-        return canvasSnapshot(vtgCanvas.queryCurrentCanvas(timeoutMilliseconds: timeoutMilliseconds))
+        guard timeoutMilliseconds > 0 else { return liveVTGCanvasSize }
+        return updateLiveVTGCanvasSize(vtgCanvas.queryCurrentCanvas(timeoutMilliseconds: timeoutMilliseconds)) ?? liveVTGCanvasSize
     }
 
     func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot? {
@@ -1290,6 +2165,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         } else {
             vtgCanvas.enableMouseReporting()
         }
+        enableANSIMouseMotionReporting()
     }
 
     func vectorTerminalDisableMouseReporting() throws {
@@ -1501,11 +2377,19 @@ defer {
     host.clearVectorTerminalOnExit()
 }
 let shellExecutionLane = BASICWorkerLane(label: "AIBasic.Shell.Execution")
+let shellExecutionControl = BASICExecutionControl()
+let shellInterruptBridge = ShellInterruptBridge()
 let session = BASICSession(
     host: host,
     promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
 )
+host.attachSession(session)
+host.attachExecutionControl(shellExecutionControl)
 session.foregroundRunLane = shellExecutionLane
+session.foregroundExecutionControl = shellExecutionControl
+session.stopsForegroundProgramOnBreak = true
+
+shellInterruptBridge.start(executionControl: shellExecutionControl)
 
 @MainActor
 func finish(_ code: Int32) -> Never {
@@ -1513,12 +2397,11 @@ func finish(_ code: Int32) -> Never {
     exit(code)
 }
 
+@MainActor
 func drainSessionEventLoop() {
     _ = session.eventLoop.runUntilIdle()
-}
-
-func demoFileName(for name: String) -> String {
-    name.hasSuffix(".bas") ? name : "\(name).bas"
+    host.finishVectorTerminalForegroundRun()
+    ShellLineEditor.shared.drainPendingVectorTerminalResponses()
 }
 
 @MainActor
@@ -1616,56 +2499,6 @@ enum SelfPackage {
     }
 }
 
-enum BundledDemos {
-    static func names() -> [String] {
-        guard let root = Bundle.module.resourceURL?.appendingPathComponent("Demos"),
-              let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
-            return []
-        }
-
-        return enumerator
-            .compactMap { $0 as? URL }
-            .filter { $0.pathExtension.lowercased() == "bas" }
-            .compactMap { url -> String? in
-                guard let relative = pathRelativeToDemos(url) else { return nil }
-                return String(relative.dropLast(4))
-            }
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    static func source(named name: String) -> String? {
-        let normalized = name.hasSuffix(".bas") ? String(name.dropLast(4)) : name
-        for candidate in [
-            normalized,
-            "shell/\(normalized)",
-            "studio/\(normalized)"
-        ] {
-            guard let url = Bundle.module.url(forResource: URL(fileURLWithPath: candidate).lastPathComponent, withExtension: "bas", subdirectory: demoSubdirectory(for: candidate)),
-                  let source = try? String(contentsOf: url, encoding: .utf8) else {
-                continue
-            }
-            return source
-        }
-        return nil
-    }
-
-    private static func demoSubdirectory(for candidate: String) -> String {
-        let url = URL(fileURLWithPath: candidate)
-        let directory = url.deletingLastPathComponent().relativePath
-        if directory == "." || directory.isEmpty { return "Demos" }
-        return "Demos/\(directory)"
-    }
-
-    private static func pathRelativeToDemos(_ url: URL) -> String? {
-        guard let root = Bundle.module.resourceURL?.appendingPathComponent("Demos").standardizedFileURL.path else {
-            return nil
-        }
-        let path = url.standardizedFileURL.path
-        guard path.hasPrefix(root + "/") else { return nil }
-        return String(path.dropFirst(root.count + 1))
-    }
-}
-
 func isRunCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let uppercased = trimmed.uppercased()
@@ -1710,56 +2543,21 @@ if arguments.first == "--cls" {
     finish(0)
 }
 
-if arguments.first == "--list-demos" {
-    for name in BundledDemos.names() {
-        host.printLine(name)
-    }
-    finish(0)
-}
-
-if arguments.first == "--demo" {
-    guard arguments.count >= 2 else {
-        host.printLine("Usage: BASICShell --demo <name>")
-        finish(1)
-    }
-    guard let source = BundledDemos.source(named: arguments[1]) else {
-        host.printLine("Unknown demo: \(arguments[1])")
-        host.printLine("Available demos:")
-        for name in BundledDemos.names() {
-            host.printLine("  \(name)")
-        }
-        finish(1)
-    }
-    do {
-        session.program.loadSource(source, fileName: demoFileName(for: arguments[1]))
-        if printDiagnosticsIfNeeded() {
-            finish(1)
-        }
-        try session.runProgramInForeground()
-        drainSessionEventLoop()
-        finish(0)
-    } catch let error as BASICError {
-        host.printLine(error.description)
-        finish(1)
-    } catch {
-        host.printLine("Error: \(error.localizedDescription)")
-        finish(1)
-    }
-}
-
 if let scriptPath = arguments.first {
     do {
         session.program.loadSource(try host.loadTextFile(path: scriptPath), fileName: scriptPath)
         if printDiagnosticsIfNeeded() {
             finish(1)
         }
-        try session.runProgramInForeground()
+        try session.runProgramInForeground(executionControl: shellExecutionControl)
         drainSessionEventLoop()
         finish(0)
     } catch let error as BASICError {
+        host.prepareToPrintRunResult()
         host.printLine(error.description)
         finish(1)
     } catch {
+        host.prepareToPrintRunResult()
         host.printLine("Error: \(error.localizedDescription)")
         finish(1)
     }

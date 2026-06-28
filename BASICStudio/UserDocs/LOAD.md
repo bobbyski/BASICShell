@@ -5,7 +5,7 @@
 Loads a BASIC source file into the current program. Quoted paths are supported. It can be used directly at the prompt or as a program statement.
 
 ```basic
-load "basicPrograms/shell/test-suite.bas"
+load "basicPrograms/demos/test-suite.bas"
 run
 ```
 

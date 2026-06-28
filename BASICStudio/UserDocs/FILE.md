@@ -2,7 +2,7 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen)
 
-Creates and works with host-backed files. `File` is AIBasic's first built-in system class.
+Creates and works with host-backed files. `File` is BASICShell's first built-in system class.
 
 Open a file directly with the constructor, or create a closed file object and open it later.
 

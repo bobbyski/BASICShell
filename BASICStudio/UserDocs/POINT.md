@@ -4,7 +4,7 @@
 
 Returns the legacy palette color at a graphics pixel.
 
-`POINT()` reads AIBasic's semantic framebuffer, so it returns the same palette-style value in BASICStudio and VTG-capable shell sessions. Full RGBA readback is not defined yet; full-color drawing currently stores its legacy palette fallback for `POINT()`.
+`POINT()` reads BASICShell's semantic framebuffer, so it returns the same palette-style value in BASICStudio and VTG-capable shell sessions. Full RGBA readback is not defined yet; full-color drawing currently stores its legacy palette fallback for `POINT()`.
 
 ```basic
 screen 1

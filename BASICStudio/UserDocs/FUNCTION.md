@@ -20,7 +20,7 @@ print Title$()
 end
 
 function Title$() as string
-    Title$ = "AIBASIC"
+    Title$ = "BASICSHELL"
 end function
 ```
 

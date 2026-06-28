@@ -9,10 +9,10 @@ packages:
     path: ../BASICCore
   SwiftTerm:
     url: https://github.com/bobbyski/SwiftTerm.git
-    from: 1.1.0
+    from: 1.5.4
   VectorTerminalSDK:
     url: https://github.com/bobbyski/VectorTerminalSDK.git
-    from: 1.1.0
+    from: 1.5.4
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.1
@@ -28,9 +28,17 @@ targets:
       - path: Sources/BASICStudio
         excludes:
           - Resources
-    resources:
       - path: Sources/BASICStudio/Resources/Demos
+        buildPhase: resources
+        type: folder
       - path: Sources/BASICStudio/Resources/Fonts
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Assets
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Assets.xcassets
+        buildPhase: resources
     dependencies:
       - package: BASICCore
         product: BASICCore
@@ -45,7 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.aibasic.BASICStudio
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: false
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: AIBasic Studio
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools

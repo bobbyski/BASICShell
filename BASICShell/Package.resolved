@@ -1,5 +1,5 @@
 {
-  "originHash" : "f9d9f84431dcf08650c89a538644b3540e51cc2c07f7fe5afae2f6f5af026733",
+  "originHash" : "8e61865b1e1d7dfda139ad9e72cb3cfaceaaa2fe6de0cfc2f2877072cea504a6",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bobbyski/VectorTerminalSDK.git",
       "state" : {
-        "revision" : "e698257c4263f4fe8127f40bc09bac17f784ab31",
-        "version" : "1.1.0"
+        "revision" : "39f89f4e62a9d2c0941319648f8818135c220d81",
+        "version" : "1.5.4"
       }
     }
   ],

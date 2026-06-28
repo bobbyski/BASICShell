@@ -10,6 +10,6 @@ print "BACK"
 end
 
 LABEL "Banner"
-print "AIBASIC"
+print "BASICSHELL"
 return
 ```

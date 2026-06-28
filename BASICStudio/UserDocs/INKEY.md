@@ -4,7 +4,7 @@
 
 Returns one pending key without blocking. If no key is waiting, returns an empty string.
 
-In the default `OPTION AIBASIC-KEYS` mode, printable keys return themselves. Special keys return readable bracket-prefixed strings, such as `"[K"` for Left Arrow, `"[H"` for Up Arrow, and `"[F1"` for F1. Shift, Command, and Option/Alt are encoded after the bracket when the host reports them; Control status is ignored for special keys.
+In the default `OPTION BASICSHELL-KEYS` mode, printable keys return themselves. Special keys return readable bracket-prefixed strings, such as `"[K"` for Left Arrow, `"[H"` for Up Arrow, and `"[F1"` for F1. Shift, Command, and Option/Alt are encoded after the bracket when the host reports them; Control status is ignored for special keys.
 
 In BASICStudio, connected gamepad button and digital direction presses are also reported through `INKEY$` as strings beginning with `"[GP:"`, such as `"[GP:A"` or `"[GP:DPAD_LEFT"`.
 

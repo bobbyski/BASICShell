@@ -36,6 +36,22 @@ private final class ThreadSafeValueBox<Value>: @unchecked Sendable {
     }
 }
 
+private func repositoryRootURL() -> URL {
+    URL(fileURLWithPath: String(#filePath))
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}
+
+private func sharedDemoSource(named name: String) throws -> String {
+    let url = repositoryRootURL()
+        .appendingPathComponent("basicPrograms/demos")
+        .appendingPathComponent(name)
+    return try String(contentsOf: url, encoding: .utf8)
+}
+
 @Suite("BASICCore")
 struct BASICCoreTests {
     @Test("Runs arithmetic and looping programs")
@@ -586,6 +602,365 @@ struct BASICCoreTests {
         session.submit("RUN")
 
         #expect(host.output == ["Runtime error: Function MissingHandler is not defined"])
+    }
+
+    @Test("Host resize and mouse events dispatch through shared event loop")
+    func hostResizeAndMouseEventsDispatchThroughSharedEventLoop() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on resize call ResizeChanged
+        on mouse up call MouseUp
+        print "ready"
+        yield
+        print "done"
+
+        function ResizeChanged(event as variant)
+            print "resize=" + str$(int(event("width"))) + "x" + str$(int(event("height")))
+        end function
+
+        function MouseUp(event as variant)
+            print "mouse=" + str$(int(event("button"))) + "," + str$(int(event("x"))) + "," + str$(int(event("y"))) + "," + str$(int(event("buttons"))) + "," + event("hitId") + "," + event("target")
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postResizeEvent(width: 80, height: 24)
+        session.postMouseEvent(subtype: "up", x: 12, y: 34, button: 1, buttons: 0, duration: 0.25, hitID: "ok-button", target: "submit")
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "resize= 80x 24",
+            "mouse= 1, 12, 34, 0,ok-button,submit",
+            "done"
+        ])
+    }
+
+    @Test("Mouse type-only handler receives subtype events")
+    func mouseTypeOnlyHandlerReceivesSubtypeEvents() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 3, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on mouse call AnyMouse
+        print "ready"
+        yield
+        print "done"
+
+        function AnyMouse(event as variant)
+            print event("type") + ":" + event("subtype") + ":" + str$(int(event("button")))
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postMouseEvent(subtype: "move", x: 5, y: 6, button: 0, buttons: 0, duration: 0)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "MOUSE:MOVE: 0",
+            "done"
+        ])
+    }
+
+    @Test("Host events can dispatch typed BASIC event objects")
+    func hostEventsCanDispatchTypedBASICEventObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on resize call ResizeChanged
+        on mouse up call MouseUp
+        print "ready"
+        yield
+        print "done"
+
+        function ResizeChanged(event as BASICResizeEvent)
+            print event.Type + ":" + str$(event.Width) + "x" + str$(event.Height)
+        end function
+
+        function MouseUp(event as BASICMouseEvent)
+            print event.Type + ":" + event.Subtype + ":" + str$(event.Button) + "," + str$(event.X) + "," + str$(event.Y) + "," + str$(event.Buttons) + "," + event.HitId + "," + event.Target
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postResizeEvent(width: 1024, height: 768)
+        session.postMouseEvent(subtype: "up", x: 22, y: 33, button: 2, buttons: 0, duration: 0.5, hitID: "menu-file", target: "FileMenu")
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "RESIZE: 1024x 768",
+            "MOUSE:UP: 2, 22, 33, 0,menu-file,FileMenu",
+            "done"
+        ])
+    }
+
+    @Test("Gamepad events can dispatch typed BASIC gamepad objects")
+    func gamepadEventsCanDispatchTypedBASICGamepadObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 3, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on gamepad button call GamepadButton
+        print "ready"
+        yield
+        print "done"
+
+        function GamepadButton(event as BASICGamepadEvent)
+            print event.Type + ":" + event.Subtype + ":" + str$(event.Controller) + ":" + event.Control + ":" + str$(event.Value)
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postGamepadEvent(subtype: "button", controller: 2, control: "A", value: 1)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "GAMEPAD:BUTTON: 2:A: 1",
+            "done"
+        ])
+    }
+
+    @Test("Event base class handlers receive typed subtype objects")
+    func eventBaseClassHandlersReceiveTypedSubtypeObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on resize call AnyEvent
+        on mouse up call AnyEvent
+        on gamepad button call AnyEvent
+        print "ready"
+        yield
+        print "done"
+
+        function AnyEvent(event as BASICEvent)
+            print event.Type + ":" + event.Subtype
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postResizeEvent(width: 640, height: 480)
+        session.postMouseEvent(subtype: "up", x: 4, y: 5, button: 1, buttons: 0, duration: 0)
+        session.postGamepadEvent(subtype: "button", controller: 1, control: "B", value: 1)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "RESIZE:",
+            "MOUSE:UP",
+            "GAMEPAD:BUTTON",
+            "done"
+        ])
+    }
+
+    @Test("Typed event handlers reject incompatible event objects")
+    func typedEventHandlersRejectIncompatibleEventObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 3, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on resize call MouseOnly
+        print "ready"
+        yield
+        print "done"
+
+        function MouseOnly(event as BASICMouseEvent)
+            print event.X
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postResizeEvent(width: 640, height: 480)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "Runtime error: Type Mismatch",
+            "done"
+        ])
+    }
+
+    @Test("Typed event demo starts and exits under mock host")
+    func typedEventDemoStartsAndExitsUnderMockHost() throws {
+        let host = TestHost()
+        host.keys = ["Q"]
+        let session = BASICSession(host: host)
+        session.program.loadSource(
+            try sharedDemoSource(named: "typed-events.bas"),
+            fileName: "basicPrograms/demos/typed-events.bas"
+        )
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "TYPED EVENT TEST",
+            "Resize, mouse down/up, or scroll to print typed event payloads.",
+            "Press Q to exit.",
+            "Typed event test done."
+        ])
+    }
+
+    @Test("Event dashboard demo parses with gamepad handlers")
+    func eventDashboardDemoParsesWithGamepadHandlers() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource(
+            try sharedDemoSource(named: "event-dashboard.bas"),
+            fileName: "basicPrograms/demos/event-dashboard.bas"
+        )
+
+        #expect(session.diagnostics().isEmpty)
+    }
+
+    @Test("Mouse scroll events expose variant and typed delta fields")
+    func mouseScrollEventsExposeVariantAndTypedDeltaFields() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on mouse scroll call MouseScroll
+        on mouse down call MouseDown
+        print "ready"
+        yield
+        print "done"
+
+        function MouseScroll(event as BASICMouseEvent)
+            print event.Type + ":" + event.Subtype + ":" + str$(event.DeltaX) + "," + str$(event.DeltaY)
+        end function
+
+        function MouseDown(event as variant)
+            print event("subtype") + ":" + str$(int(event("deltaX"))) + "," + str$(int(event("deltaY")))
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postMouseEvent(subtype: "scroll", x: 40, y: 41, button: 0, buttons: 0, duration: 0, deltaX: 2, deltaY: -3)
+        session.postMouseEvent(subtype: "down", x: 10, y: 11, button: 1, buttons: 1, duration: 0)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "MOUSE:SCROLL: 2,-3",
+            "DOWN: 0, 0",
+            "done"
+        ])
+    }
+
+    @Test("SecondsTimer handlers can receive typed timer events")
+    func secondsTimerHandlersCanReceiveTypedTimerEvents() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        global done as boolean = false
+        let timer = SecondsTimer(0.01)
+        timer.repeating = false
+        on timer gosub TimerTick
+        timer.start()
+        MainLoop:
+            if done then Finished
+            yield
+            goto MainLoop
+
+        function TimerTick(event as BASICTimerEvent)
+            print event.Type + ":" + str$(event.TimerID) + ":" + str$(event.Sequence) + ":" + str$(event.Interval)
+            done = true
+        end function
+
+        Finished:
+            print "done"
+            end
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == [
+            "TIMER: 1: 1: 10",
+            "done"
+        ])
     }
 
     @Test("DATE$ and TIME$ return BASIC clock strings")
@@ -1681,6 +2056,42 @@ struct BASICCoreTests {
         #expect(drawHost.output == ["Unsupported feature: you must run this program in BASICStudio"])
     }
 
+    @Test("Shared graphics demos run against mock Studio graphics host")
+    func sharedGraphicsDemosRunAgainstMockStudioGraphicsHost() throws {
+        let demoNames = [
+            "simple-graphics.bas",
+            "graphics-box.bas",
+            "diagonal-lines.bas",
+            "basic-graphics-command-test.bas"
+        ]
+
+        for demoName in demoNames {
+            let host = TestHost()
+            host.columns = 120
+            host.rows = 40
+            host.keys = ["x"]
+            let session = BASICSession(host: host)
+            session.program.loadSource(
+                try sharedDemoSource(named: demoName),
+                fileName: "basicPrograms/demos/\(demoName)"
+            )
+
+            try session.runProgram()
+
+            let graphicsOperationCount = host.lines.count
+                + host.circles.count
+                + host.fills.count
+                + host.pixels.count
+                + host.fullLines.count
+                + host.fullCircles.count
+                + host.fullFills.count
+                + host.fullPixels.count
+            #expect(host.screenMode?.number == 1, "Expected \(demoName) to select graphics mode")
+            #expect(graphicsOperationCount > 0, "Expected \(demoName) to emit graphics operations")
+            #expect(!host.output.contains { $0.hasPrefix("Runtime error:") }, "Expected \(demoName) to run without runtime errors")
+        }
+    }
+
     @Test("Stores and lists numbered lines")
     func listing() {
         let host = TestHost()
@@ -1935,7 +2346,21 @@ struct BASICCoreTests {
 
         session.submit("files")
 
-        #expect(host.output == ["alpha.bas\nzeta.bas"])
+        #expect(host.output == ["alpha.bas  zeta.bas"])
+    }
+
+    @Test("FILES formats names in terminal-width columns")
+    func filesFormatsNamesInTerminalWidthColumns() {
+        let host = TestHost()
+        host.columns = 32
+        for name in ["zeta.bas", "gamma.bas", "epsilon.bas", "delta.bas", "beta.bas", "alpha.bas"] {
+            host.files[name] = ""
+        }
+        let session = BASICSession(host: host)
+
+        session.submit("files")
+
+        #expect(host.output == ["alpha.bas    epsilon.bas\nbeta.bas     gamma.bas\ndelta.bas    zeta.bas"])
     }
 
     @Test("SAVE LOAD and FILES can run as program statements")
@@ -1950,7 +2375,7 @@ struct BASICCoreTests {
         session.submit("30 save \"saved.bas\"")
         session.submit("RUN")
 
-        #expect(host.output == ["loadme.bas\nother.bas"])
+        #expect(host.output == ["loadme.bas  other.bas"])
         #expect(host.files["saved.bas"] == "10 print \"loaded\"")
     }
 
@@ -4359,6 +4784,46 @@ struct BASICCoreTests {
         #expect(host.fills.first?.3 == 3)
     }
 
+    @Test("CIRCLE aspect draws VTG ellipse primitive")
+    func circleAspectDrawsEllipsePrimitive() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        circle (30,31), 10, 6, 0.5
+        circle (40,41), 10, 7, 2
+        """)
+        session.submit("run")
+
+        #expect(host.circles.isEmpty)
+        #expect(host.ellipses.count == 2)
+        #expect(host.ellipses[0].0 == 30)
+        #expect(host.ellipses[0].1 == 31)
+        #expect(host.ellipses[0].2 == 10)
+        #expect(host.ellipses[0].3 == 5)
+        #expect(host.ellipses[0].4 == 6)
+        #expect(host.ellipses[1].0 == 40)
+        #expect(host.ellipses[1].1 == 41)
+        #expect(host.ellipses[1].2 == 5)
+        #expect(host.ellipses[1].3 == 10)
+        #expect(host.ellipses[1].4 == 7)
+    }
+
+    @Test("CIRCLE aspect must be positive")
+    func circleAspectMustBePositive() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        circle (30,31), 10, 6, 0
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: CIRCLE aspect must be greater than zero"])
+    }
+
     @Test("COLOR supplies default graphics foreground")
     func colorSuppliesDefaultGraphicsForeground() {
         let host = TestHost()
@@ -5673,6 +6138,32 @@ struct BASICCoreTests {
         #expect(session.eventLoop.runUntilIdle() == 1)
         #expect(log.snapshot == ["session event"])
     }
+
+    @Test("CURRENT pseudo variables expose execution context")
+    func currentPseudoVariablesExposeExecutionContext() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        print CURRENT_TASK$
+        print CURRENT_FUNCTION$
+        print ContextName$()
+        print CURRENT_FUNCTION$
+        function ContextName$() as string
+            print CURRENT_FUNCTION$
+            return CURRENT_THREAD$
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output.count == 5)
+        guard host.output.count == 5 else { return }
+        #expect(host.output[0].contains("Program"))
+        #expect(host.output[1] == "[main]")
+        #expect(host.output[2].uppercased().contains("CONTEXTNAME"))
+        #expect(!host.output[3].isEmpty)
+        #expect(host.output[4] == "[main]")
+    }
 }
 
 private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
@@ -5699,11 +6190,13 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
     var circles: [(Int, Int, Int, Int)] = []
+    var ellipses: [(Int, Int, Int, Int, Int)] = []
     var fills: [(Int, Int, Int, Int?)] = []
     var graphicsColor: Int?
     var fullPixels: [String: BASICColor] = [:]
     var fullLines: [(Int, Int, Int, Int, BASICColor)] = []
     var fullCircles: [(Int, Int, Int, BASICColor)] = []
+    var fullEllipses: [(Int, Int, Int, Int, BASICColor)] = []
     var fullFills: [(Int, Int, BASICColor, BASICColor?)] = []
     var fullGraphicsColor: BASICColor?
 
@@ -5878,6 +6371,15 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor) {
         fullCircles.append((cx, cy, radius, color))
         circles.append((cx, cy, radius, color.legacyIndex ?? 1))
+    }
+
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        ellipses.append((cx, cy, radiusX, radiusY, color))
+    }
+
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
+        fullEllipses.append((cx, cy, radiusX, radiusY, color))
+        ellipses.append((cx, cy, radiusX, radiusY, color.legacyIndex ?? 1))
     }
 
     func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) {
