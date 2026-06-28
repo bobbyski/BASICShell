@@ -454,7 +454,7 @@
 			repositoryURL = "https://github.com/bobbyski/SwiftTerm.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.5.2;
+				minimumVersion = 1.5.4;
 			};
 		};
 		C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
@@ -470,7 +470,7 @@
 			repositoryURL = "https://github.com/bobbyski/VectorTerminalSDK.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.5.2;
+				minimumVersion = 1.5.4;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

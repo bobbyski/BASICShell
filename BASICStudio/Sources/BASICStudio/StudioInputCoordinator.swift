@@ -215,6 +215,7 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
     private let condition = NSCondition()
     private var keyBuffer: [String] = []
     private var configuredControllerIDs: Set<ObjectIdentifier> = []
+    var eventHandler: (@Sendable (_ subtype: String, _ controller: Int, _ control: String, _ value: Double) -> Void)?
 
     override init() {
         super.init()
@@ -247,6 +248,17 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
         return key
     }
 
+    func emitConnectedControllers() {
+        GCController.controllers().forEach { controller in
+            configure(controller)
+            eventHandler?("CONNECTED", controllerIndex(for: controller), "CONNECTED", 1)
+        }
+    }
+
+    func connectedControllerCount() -> Int {
+        GCController.controllers().count
+    }
+
     @objc private func controllerDidConnect(_ notification: Notification) {
         guard let controller = notification.object as? GCController else { return }
         configure(controller)
@@ -254,6 +266,7 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
 
     @objc private func controllerDidDisconnect(_ notification: Notification) {
         guard let controller = notification.object as? GCController else { return }
+        eventHandler?("DISCONNECTED", controllerIndex(for: controller), "DISCONNECTED", 0)
         condition.lock()
         configuredControllerIDs.remove(ObjectIdentifier(controller))
         condition.unlock()
@@ -267,43 +280,52 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
         guard inserted else { return }
 
         push("[GP:CONNECTED")
+        eventHandler?("CONNECTED", controllerIndex(for: controller), "CONNECTED", 1)
 
         if let gamepad = controller.extendedGamepad {
-            bind(gamepad.buttonA, "A")
-            bind(gamepad.buttonB, "B")
-            bind(gamepad.buttonX, "X")
-            bind(gamepad.buttonY, "Y")
-            bind(gamepad.leftShoulder, "LEFT_SHOULDER")
-            bind(gamepad.rightShoulder, "RIGHT_SHOULDER")
-            bind(gamepad.leftTrigger, "LEFT_TRIGGER")
-            bind(gamepad.rightTrigger, "RIGHT_TRIGGER")
-            bind(gamepad.dpad.up, "DPAD_UP")
-            bind(gamepad.dpad.down, "DPAD_DOWN")
-            bind(gamepad.dpad.left, "DPAD_LEFT")
-            bind(gamepad.dpad.right, "DPAD_RIGHT")
-            bind(gamepad.leftThumbstick.up, "LEFT_STICK_UP")
-            bind(gamepad.leftThumbstick.down, "LEFT_STICK_DOWN")
-            bind(gamepad.leftThumbstick.left, "LEFT_STICK_LEFT")
-            bind(gamepad.leftThumbstick.right, "LEFT_STICK_RIGHT")
-            bind(gamepad.rightThumbstick.up, "RIGHT_STICK_UP")
-            bind(gamepad.rightThumbstick.down, "RIGHT_STICK_DOWN")
-            bind(gamepad.rightThumbstick.left, "RIGHT_STICK_LEFT")
-            bind(gamepad.rightThumbstick.right, "RIGHT_STICK_RIGHT")
+            bind(gamepad.buttonA, "A", controller: controller)
+            bind(gamepad.buttonB, "B", controller: controller)
+            bind(gamepad.buttonX, "X", controller: controller)
+            bind(gamepad.buttonY, "Y", controller: controller)
+            bind(gamepad.leftShoulder, "LEFT_SHOULDER", controller: controller)
+            bind(gamepad.rightShoulder, "RIGHT_SHOULDER", controller: controller)
+            bind(gamepad.leftTrigger, "LEFT_TRIGGER", controller: controller)
+            bind(gamepad.rightTrigger, "RIGHT_TRIGGER", controller: controller)
+            bind(gamepad.dpad.up, "DPAD_UP", controller: controller)
+            bind(gamepad.dpad.down, "DPAD_DOWN", controller: controller)
+            bind(gamepad.dpad.left, "DPAD_LEFT", controller: controller)
+            bind(gamepad.dpad.right, "DPAD_RIGHT", controller: controller)
+            bind(gamepad.leftThumbstick.up, "LEFT_STICK_UP", controller: controller)
+            bind(gamepad.leftThumbstick.down, "LEFT_STICK_DOWN", controller: controller)
+            bind(gamepad.leftThumbstick.left, "LEFT_STICK_LEFT", controller: controller)
+            bind(gamepad.leftThumbstick.right, "LEFT_STICK_RIGHT", controller: controller)
+            bind(gamepad.rightThumbstick.up, "RIGHT_STICK_UP", controller: controller)
+            bind(gamepad.rightThumbstick.down, "RIGHT_STICK_DOWN", controller: controller)
+            bind(gamepad.rightThumbstick.left, "RIGHT_STICK_LEFT", controller: controller)
+            bind(gamepad.rightThumbstick.right, "RIGHT_STICK_RIGHT", controller: controller)
         } else if let gamepad = controller.microGamepad {
-            bind(gamepad.buttonA, "A")
-            bind(gamepad.buttonX, "X")
-            bind(gamepad.dpad.up, "DPAD_UP")
-            bind(gamepad.dpad.down, "DPAD_DOWN")
-            bind(gamepad.dpad.left, "DPAD_LEFT")
-            bind(gamepad.dpad.right, "DPAD_RIGHT")
+            bind(gamepad.buttonA, "A", controller: controller)
+            bind(gamepad.buttonX, "X", controller: controller)
+            bind(gamepad.dpad.up, "DPAD_UP", controller: controller)
+            bind(gamepad.dpad.down, "DPAD_DOWN", controller: controller)
+            bind(gamepad.dpad.left, "DPAD_LEFT", controller: controller)
+            bind(gamepad.dpad.right, "DPAD_RIGHT", controller: controller)
         }
     }
 
-    private func bind(_ button: GCControllerButtonInput, _ descriptor: String) {
-        button.pressedChangedHandler = { [weak self] _, _, pressed in
-            guard pressed else { return }
-            self?.push("[GP:\(descriptor)")
+    private func bind(_ button: GCControllerButtonInput, _ descriptor: String, controller: GCController) {
+        button.pressedChangedHandler = { [weak self, weak controller] _, value, pressed in
+            guard let self else { return }
+            if pressed {
+                self.push("[GP:\(descriptor)")
+            }
+            self.eventHandler?("BUTTON", controller.map(self.controllerIndex(for:)) ?? 0, descriptor, Double(value))
         }
+    }
+
+    private func controllerIndex(for controller: GCController) -> Int {
+        let controllers = GCController.controllers()
+        return controllers.firstIndex(where: { $0 === controller }) ?? 0
     }
 
     private func push(_ key: String) {
@@ -312,4 +334,3 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
         condition.unlock()
     }
 }
-

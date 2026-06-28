@@ -23,6 +23,6 @@ log target, "entered main menu"
 log target, "selection="; choice, "rows="; rows
 ```
 
-`MODULE` changes the module name shown in later log entries. If no module is set, AIBasic uses the current BASIC source file name when it is available.
+`MODULE` changes the module name shown in later log entries. If no module is set, BASICShell uses the current BASIC source file name when it is available.
 
 BASICShell currently accepts `LOG`, but the shell logging viewer is stubbed and does not display persistent log entries yet.

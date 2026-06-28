@@ -9,7 +9,7 @@ When `LET` includes a type but no initializer, it creates the default value for 
 ```basic
 let x as integer = 42
 y = x + 8
-name$ = "AIBASIC"
+name$ = "BASICSHELL"
 done as boolean = true
 print y, name$
 ```

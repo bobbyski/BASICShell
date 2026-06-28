@@ -26,7 +26,8 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
             consoleText: model.consoleText,
             screenSize: model.terminalScreenSize,
             fontFamily: model.fontFamily,
-            fontSize: model.fontSize
+            fontSize: model.fontSize,
+            graphicsLayersVisible: model.areGraphicsLayersVisible
         )
     }
 }
@@ -40,11 +41,15 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var renderedScreenSize: TerminalScreenSize?
     private var renderedFontFamily: String?
     private var renderedFontSize: Double?
+    private var renderedGraphicsLayersVisible: Bool?
     private var inputBuffer = ""
     private var inputCursor = 0
     private var inputFieldViewStart = 0
     private var inputFieldDisplayCursor = 0
     private var hasInitializedLineInputDefault = false
+    private var commandHistory = AIBasicTerminalContainerView.loadCommandHistory()
+    private var commandHistoryIndex: Int?
+    private var draftBeforeCommandHistory = ""
     private var keyMonitor: Any?
     private var mouseUpMonitor: Any?
     private var pendingEscapeBytes: [UInt8] = []
@@ -147,6 +152,21 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         super.mouseDragged(with: event)
     }
 
+    override func mouseDown(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "DOWN")
+        super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "DOWN")
+        super.rightMouseDown(with: event)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        postMouseEvent(from: event, subtype: "DOWN")
+        super.otherMouseDown(with: event)
+    }
+
     override func mouseUp(with event: NSEvent) {
         postMouseEvent(from: event, subtype: "UP")
         super.mouseUp(with: event)
@@ -162,11 +182,33 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         super.otherMouseUp(with: event)
     }
 
-    func render(consoleText: String, screenSize: TerminalScreenSize, fontFamily: String, fontSize: Double) {
+    override func scrollWheel(with event: NSEvent) {
+        postMouseEvent(
+            from: event,
+            subtype: "SCROLL",
+            deltaX: Double(event.scrollingDeltaX),
+            deltaY: Double(event.scrollingDeltaY)
+        )
+        super.scrollWheel(with: event)
+    }
+
+    func render(
+        consoleText: String,
+        screenSize: TerminalScreenSize,
+        fontFamily: String,
+        fontSize: Double,
+        graphicsLayersVisible: Bool
+    ) {
         if renderedFontFamily != fontFamily || renderedFontSize != fontSize {
             applyFont(family: fontFamily, size: fontSize)
             renderedFontFamily = fontFamily
             renderedFontSize = fontSize
+        }
+
+        if renderedGraphicsLayersVisible != graphicsLayersVisible {
+            terminalView.setGraphicsLayersVisible(graphicsLayersVisible)
+            renderedGraphicsLayersVisible = graphicsLayersVisible
+            invalidateVTGDisplay()
         }
 
         if renderedScreenSize != screenSize {
@@ -320,7 +362,12 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.postVTGResizeEvent(width: normalized.width, height: normalized.height)
     }
 
-    private func postMouseEvent(from event: NSEvent, subtype: String) {
+    private func postMouseEvent(
+        from event: NSEvent,
+        subtype: String,
+        deltaX: Double = 0,
+        deltaY: Double = 0
+    ) {
         guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
         if subtype == "MOVE" {
             let previousMove = lastMouseMovePostTimestamp ?? 0
@@ -338,17 +385,29 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         let y = min(max(Double((terminalView.bounds.height - point.y) / terminalView.bounds.height) * Double(canvasHeight), 0), Double(canvasHeight))
         let previousTimestamp = lastMouseEventTimestamp ?? event.timestamp
         lastMouseEventTimestamp = event.timestamp
+        let hit = model?.hitRegion(atX: x, y: y)
         model?.postVTGMouseEvent(
             subtype: subtype,
             x: x,
             y: y,
             button: max(0, event.buttonNumber),
             buttons: Int(NSEvent.pressedMouseButtons),
-            duration: max(0, event.timestamp - previousTimestamp)
+            duration: max(0, event.timestamp - previousTimestamp),
+            deltaX: deltaX,
+            deltaY: deltaY,
+            hitID: hit?.id ?? "",
+            target: hit?.target ?? ""
         )
     }
 
     private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
+           event.charactersIgnoringModifiers?.lowercased() == "c",
+           model?.shouldProgramStopOnTerminalInterrupt() == true {
+            model?.stopProgram()
+            return true
+        }
+
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
            event.charactersIgnoringModifiers?.lowercased() == "i",
            model?.shouldCaptureTerminalKeyOnly() != true {
@@ -513,8 +572,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 } else {
                     ensureLineInputDefaultInitialized()
                     let command = inputBuffer
+                    if usesCommandHistory {
+                        appendCommandHistory(command)
+                    }
                     inputBuffer = ""
                     inputCursor = 0
+                    commandHistoryIndex = nil
+                    draftBeforeCommandHistory = ""
                     resetInputFieldState()
                     hasInitializedLineInputDefault = false
                     operations.append(.submit(command))
@@ -532,16 +596,23 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                     backspace(in: &operations)
                 }
             case 1...31:
-                if model?.shouldCaptureTerminalKeyOnly() == true {
+                if byte == 3, model?.shouldProgramStopOnTerminalInterrupt() == true {
+                    model?.stopProgram()
+                } else if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key(String(UnicodeScalar(byte))))
                 }
             case 32...126:
-                let scalar = UnicodeScalar(byte)
-                let character = String(Character(scalar))
-                if model?.shouldCaptureTerminalKeyOnly() == true {
-                    operations.append(.key(character))
+                if byte == UInt8(ascii: "["),
+                   let compactRead = readCompactBracketSequence(from: &iterator) {
+                    if let compactSequence = compactRead.sequence {
+                        handleEditingEscape("\u{1B}" + compactSequence, operations: &operations)
+                    } else {
+                        for fallbackByte in compactRead.fallback {
+                            appendPrintableByte(fallbackByte, operations: &operations)
+                        }
+                    }
                 } else {
-                    appendText(character, to: &operations)
+                    appendPrintableByte(byte, operations: &operations)
                 }
             case 27:
                 var bytes = [byte]
@@ -563,6 +634,27 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         guard !operations.isEmpty else { return }
         Task { @MainActor [weak model] in
             model?.handleTerminalInput(operations)
+        }
+    }
+
+    private func appendPrintableByte(_ byte: UInt8, operations: inout [TerminalInputOperation]) {
+        let scalar = UnicodeScalar(byte)
+        let character = String(Character(scalar))
+        if model?.shouldCaptureTerminalKeyOnly() == true {
+            operations.append(.key(character))
+        } else {
+            appendText(character, to: &operations)
+        }
+    }
+
+    private func readCompactBracketSequence(from iterator: inout Array<UInt8>.Iterator) -> (sequence: String?, fallback: [UInt8])? {
+        guard let next = iterator.next() else { return nil }
+        switch next {
+        case UInt8(ascii: "A"), UInt8(ascii: "B"), UInt8(ascii: "C"), UInt8(ascii: "D"),
+             UInt8(ascii: "F"), UInt8(ascii: "H"), UInt8(ascii: "Z"):
+            return ("[" + String(Character(UnicodeScalar(next))), [])
+        default:
+            return (nil, [UInt8(ascii: "["), next])
         }
     }
 
@@ -615,6 +707,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func appendText(_ text: String, to operations: inout [TerminalInputOperation]) {
         guard !text.isEmpty else { return }
         ensureLineInputDefaultInitialized()
+        commandHistoryIndex = nil
         let textCount = text.count
         let options = model?.activeLineInputOptions() ?? BASICLineInputOptions()
         let replacedCount = model?.isConsoleOverwriteMode == true && inputCursor < inputBuffer.count ? min(textCount, inputBuffer.count - inputCursor) : 0
@@ -632,6 +725,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     private func backspace(in operations: inout [TerminalInputOperation]) {
         ensureLineInputDefaultInitialized()
+        commandHistoryIndex = nil
         guard inputCursor > 0 else { return }
         inputCursor -= 1
         inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
@@ -644,6 +738,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     private func deleteForward(in operations: inout [TerminalInputOperation]) {
         ensureLineInputDefaultInitialized()
+        commandHistoryIndex = nil
         guard inputCursor < inputBuffer.count else { return }
         inputBuffer.removeSubrange(range(offset: inputCursor, length: 1))
         operations.append(.append(redrawInputFromCursor(targetCursor: inputCursor)))
@@ -670,6 +765,12 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func handleEditingEscape(_ raw: String, operations: inout [TerminalInputOperation]) {
         let key = BASICKeyNormalizer.normalize(raw)
         switch key {
+        case "[H":
+            guard usesCommandHistory else { break }
+            showPreviousCommand(operations: &operations)
+        case "[P":
+            guard usesCommandHistory else { break }
+            showNextCommand(operations: &operations)
         case "[K": moveInputCursor(to: inputCursor - 1, operations: &operations)
         case "[M": moveInputCursor(to: inputCursor + 1, operations: &operations)
         case "[G": moveInputCursor(to: 0, operations: &operations)
@@ -677,6 +778,82 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         case "[S": deleteForward(in: &operations)
         case "[R": _ = model?.toggleConsoleOverwriteModeFromTerminal()
         default: break
+        }
+    }
+
+    private var usesCommandHistory: Bool {
+        guard model?.shouldUseTerminalCommandHistory() == true else { return false }
+        let options = model?.activeLineInputOptions() ?? BASICLineInputOptions()
+        return options.fieldLength == nil
+            && options.maxLength == nil
+            && options.defaultText == nil
+    }
+
+    private func showPreviousCommand(operations: inout [TerminalInputOperation]) {
+        guard !commandHistory.isEmpty else { return }
+        if let index = commandHistoryIndex {
+            commandHistoryIndex = max(0, index - 1)
+        } else {
+            draftBeforeCommandHistory = inputBuffer
+            commandHistoryIndex = commandHistory.count - 1
+        }
+        guard let index = commandHistoryIndex else { return }
+        replaceInputLine(with: commandHistory[index], operations: &operations)
+    }
+
+    private func showNextCommand(operations: inout [TerminalInputOperation]) {
+        guard let index = commandHistoryIndex else { return }
+        if index < commandHistory.count - 1 {
+            commandHistoryIndex = index + 1
+            replaceInputLine(with: commandHistory[index + 1], operations: &operations)
+        } else {
+            commandHistoryIndex = nil
+            replaceInputLine(with: draftBeforeCommandHistory, operations: &operations)
+        }
+    }
+
+    private func replaceInputLine(with text: String, operations: inout [TerminalInputOperation]) {
+        let moveToStart = String(repeating: "\u{1B}[D", count: inputCursor)
+        inputBuffer = text
+        inputCursor = inputBuffer.count
+        operations.append(.append(moveToStart + "\u{1B}[K" + inputBuffer))
+    }
+
+    private func appendCommandHistory(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if commandHistory.last == command { return }
+        commandHistory.append(command)
+        if commandHistory.count > Self.maxCommandHistoryEntries {
+            commandHistory.removeFirst(commandHistory.count - Self.maxCommandHistoryEntries)
+        }
+        saveCommandHistory()
+    }
+
+    private static let maxCommandHistoryEntries = 500
+    private static let commandHistoryURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("AIBasic", isDirectory: true).appendingPathComponent("BASICShellHistory.txt")
+    }()
+
+    private static func loadCommandHistory() -> [String] {
+        guard let contents = try? String(contentsOf: commandHistoryURL, encoding: .utf8) else {
+            return []
+        }
+        return contents
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(maxCommandHistoryEntries)
+            .map(String.init)
+    }
+
+    private func saveCommandHistory() {
+        let directory = Self.commandHistoryURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try commandHistory.joined(separator: "\n").write(to: Self.commandHistoryURL, atomically: true, encoding: .utf8)
+        } catch {
+            // History is a convenience feature; keep Studio input usable if persistence fails.
         }
     }
 

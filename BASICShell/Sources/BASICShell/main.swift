@@ -572,10 +572,12 @@ enum ShellGraphicsPolicy: String {
     case vtg
     case off
 
-    static let environmentName = "AIBASIC_GRAPHICS"
+    static let environmentName = "BASICSHELL_GRAPHICS"
+    static let legacyEnvironmentName = "AIBASIC_GRAPHICS"
 
     static func fromEnvironment(default defaultPolicy: ShellGraphicsPolicy = .auto) -> ShellGraphicsPolicy {
-        guard let raw = ProcessInfo.processInfo.environment[environmentName] else {
+        let environment = ProcessInfo.processInfo.environment
+        guard let raw = environment[environmentName] ?? environment[legacyEnvironmentName] else {
             return defaultPolicy
         }
         return Self(rawValue: raw.lowercased()) ?? defaultPolicy
@@ -728,6 +730,9 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         if let buffered = popPendingKeyInput() {
             return buffered
         }
+        if hasPartialTerminalEscapeBuffered() {
+            return nil
+        }
         let fd = STDIN_FILENO
         guard isatty(fd) == 1 else { return nil }
 
@@ -784,6 +789,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         defer { eventPollLock.unlock() }
         guard !pendingKeyInput.isEmpty else { return nil }
         return pendingKeyInput.removeFirst()
+    }
+
+    private func hasPartialTerminalEscapeBuffered() -> Bool {
+        eventPollLock.lock()
+        defer { eventPollLock.unlock() }
+        return !partialTerminalEscapeBytes.isEmpty
     }
 
     private func pushPendingKeyInput(_ value: String) {
@@ -950,8 +961,20 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     private func normalizedDemoPath(_ path: String) -> String {
         var normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
-        if normalized.hasPrefix("basicPrograms/demos/") {
-            normalized.removeFirst("basicPrograms/demos/".count)
+        let legacyPrefixes = [
+            "basicPrograms/demos/",
+            "basicPrograms/shell/",
+            "basicPrograms/BASICStudio/",
+            "shell/",
+            "studio/"
+        ]
+        var didStrip = true
+        while didStrip {
+            didStrip = false
+            for prefix in legacyPrefixes where normalized.hasPrefix(prefix) {
+                normalized.removeFirst(prefix.count)
+                didStrip = true
+            }
         }
         return normalized
     }
@@ -1248,7 +1271,16 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         }
         let subtype = normalizedMouseSubtype(fields["type"] ?? "down")
         let button = normalizedVTGMouseButton(fields["button"])
-        postMouseEvent(subtype: subtype, x: x, y: y, button: button)
+        postMouseEvent(
+            subtype: subtype,
+            x: x,
+            y: y,
+            button: button,
+            deltaX: normalizedMouseDelta(fields["deltaX"] ?? fields["scrollX"]),
+            deltaY: normalizedMouseDelta(fields["deltaY"] ?? fields["scrollY"]),
+            hitID: fields["hit"] ?? fields["hitID"] ?? "",
+            target: fields["target"] ?? fields["targetID"] ?? ""
+        )
         return true
     }
 
@@ -1268,22 +1300,22 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
         let isRelease = response.hasSuffix("m")
         let isMotion = (rawButton & 32) != 0
+        let isScroll = (rawButton & 64) != 0
         let baseButton = rawButton & 3
         let button = normalizedMouseButton(rawButton)
-        if isRelease && isMotion {
-            ShellEventTrace.shared.write("ansi-sgr-mouse ignored release-motion rawButton=\(rawButton) base=\(baseButton) button=\(button) x=\(x) y=\(y)")
-            return true
-        }
         let subtype: String
-        if isRelease {
-            subtype = "up"
+        let scrollDelta = normalizedScrollDelta(rawButton)
+        if isScroll {
+            subtype = "scroll"
         } else if isMotion {
             subtype = baseButton == 3 ? "move" : "drag"
+        } else if isRelease {
+            subtype = "up"
         } else {
             subtype = "down"
         }
-        ShellEventTrace.shared.write("ansi-sgr-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) subtype=\(subtype) button=\(button) x=\(x) y=\(y)")
-        postMouseEvent(subtype: subtype, x: x, y: y, button: button)
+        ShellEventTrace.shared.write("ansi-sgr-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) scroll=\(isScroll) subtype=\(subtype) button=\(button) x=\(x) y=\(y) deltaX=\(scrollDelta.x) deltaY=\(scrollDelta.y)")
+        postMouseEvent(subtype: subtype, x: x, y: y, button: button, deltaX: scrollDelta.x, deltaY: scrollDelta.y)
         return true
     }
 
@@ -1300,37 +1332,71 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         let y = Int(bytes[5]) - 32
         let isRelease = rawButton & 3 == 3
         let isMotion = (rawButton & 32) != 0
+        let isScroll = (rawButton & 64) != 0
         let baseButton = rawButton & 3
         let button = normalizedMouseButton(rawButton)
-        if isRelease && isMotion {
-            ShellEventTrace.shared.write("ansi-x10-mouse ignored release-motion rawButton=\(rawButton) base=\(baseButton) button=\(button) x=\(x) y=\(y)")
-            return true
-        }
         let subtype: String
-        if isRelease {
-            subtype = "up"
+        let scrollDelta = normalizedScrollDelta(rawButton)
+        if isScroll {
+            subtype = "scroll"
         } else if isMotion {
             subtype = baseButton == 3 ? "move" : "drag"
+        } else if isRelease {
+            subtype = "up"
         } else {
             subtype = "down"
         }
-        ShellEventTrace.shared.write("ansi-x10-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) subtype=\(subtype) button=\(button) x=\(x) y=\(y)")
-        postMouseEvent(subtype: subtype, x: x, y: y, button: button)
+        ShellEventTrace.shared.write("ansi-x10-mouse rawButton=\(rawButton) base=\(baseButton) release=\(isRelease) motion=\(isMotion) scroll=\(isScroll) subtype=\(subtype) button=\(button) x=\(x) y=\(y) deltaX=\(scrollDelta.x) deltaY=\(scrollDelta.y)")
+        postMouseEvent(subtype: subtype, x: x, y: y, button: button, deltaX: scrollDelta.x, deltaY: scrollDelta.y)
         return true
     }
 
-    private func postMouseEvent(subtype: String, x: Int, y: Int, button: Int) {
+    private func postMouseEvent(
+        subtype: String,
+        x: Int,
+        y: Int,
+        button: Int,
+        deltaX: Double = 0,
+        deltaY: Double = 0,
+        hitID: String = "",
+        target: String = ""
+    ) {
         let normalizedSubtype = normalizedMouseSubtype(subtype)
         let pressedButtons = normalizedSubtype == "down" || normalizedSubtype == "drag" || normalizedSubtype == "click" ? button : 0
-        ShellEventTrace.shared.write("post-mouse subtype=\(normalizedSubtype) x=\(x) y=\(y) button=\(button) buttons=\(pressedButtons)")
+        ShellEventTrace.shared.write("post-mouse subtype=\(normalizedSubtype) x=\(x) y=\(y) button=\(button) buttons=\(pressedButtons) deltaX=\(deltaX) deltaY=\(deltaY) hit=\(hitID) target=\(target)")
         session?.postMouseEvent(
             subtype: normalizedSubtype,
             x: Double(x),
             y: Double(y),
             button: button,
             buttons: pressedButtons,
-            duration: 0
+            duration: 0,
+            deltaX: deltaX,
+            deltaY: deltaY,
+            hitID: hitID,
+            target: target
         )
+    }
+
+    private func normalizedMouseDelta(_ value: String?) -> Double {
+        guard let value else { return 0 }
+        return Double(value) ?? 0
+    }
+
+    private func normalizedScrollDelta(_ rawButton: Int) -> (x: Double, y: Double) {
+        guard (rawButton & 64) != 0 else { return (0, 0) }
+        switch rawButton & 3 {
+        case 0:
+            return (0, 1)
+        case 1:
+            return (0, -1)
+        case 2:
+            return (-1, 0)
+        case 3:
+            return (1, 0)
+        default:
+            return (0, 0)
+        }
     }
 
     private func normalizedMouseButton(_ rawButton: Int) -> Int {
@@ -1431,7 +1497,11 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
                 y: Double(mouse.virtualY ?? mouse.y),
                 button: mouse.button,
                 buttons: mouse.isPress ? mouse.button : 0,
-                duration: 0
+                duration: 0,
+                deltaX: Double(mouse.scrollX ?? 0),
+                deltaY: Double(mouse.scrollY ?? 0),
+                hitID: mouse.hitID ?? "",
+                target: mouse.targetID ?? ""
             )
         case .resize(let canvas), .canvas(let canvas):
             let previous = liveVTGCanvasSize
@@ -1553,6 +1623,26 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
                 x -= 1
                 error += 2 * (y - x) + 1
             }
+        }
+    }
+
+    private func drawFramebufferEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        let rx = max(0, radiusX)
+        let ry = max(0, radiusY)
+        guard rx > 0 || ry > 0 else {
+            setFramebufferPixel(x: cx, y: cy, color: color)
+            return
+        }
+
+        let steps = max(24, Int(Double(max(rx, ry)) * 8))
+        var plotted = Set<Int>()
+        for step in 0...steps {
+            let angle = (Double(step) / Double(steps)) * Double.pi * 2
+            let x = cx + Int((Double(rx) * cos(angle)).rounded())
+            let y = cy + Int((Double(ry) * sin(angle)).rounded())
+            let key = (y << 16) ^ x
+            guard plotted.insert(key).inserted else { continue }
+            setFramebufferPixel(x: x, y: y, color: color)
         }
     }
 
@@ -1718,6 +1808,22 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         drawFramebufferCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
         didUseVectorTerminal = true
         vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+        vtgCanvas.present()
+    }
+
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        guard isVectorTerminalAvailable else { return }
+        drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color)
+        didUseVectorTerminal = true
+        vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+        vtgCanvas.present()
+    }
+
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
+        guard isVectorTerminalAvailable else { return }
+        drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color.legacyIndex ?? 1)
+        didUseVectorTerminal = true
+        vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
         vtgCanvas.present()
     }
 

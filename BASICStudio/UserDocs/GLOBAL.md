@@ -8,7 +8,7 @@ Creates or updates a variable in the global context. `GLOBAL` can include `AS <t
 
 ```basic
 global total as integer = 0
-global name$ as string = "AIBASIC"
+global name$ as string = "BASICSHELL"
 global done as boolean = true
 global sharedScores(2) as integer
 ```

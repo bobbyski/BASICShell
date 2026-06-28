@@ -125,6 +125,14 @@ struct StudioView: View {
                 .help("Command Bar")
 
                 Button {
+                    model.toggleGraphicsLayersVisible()
+                } label: {
+                    Image(systemName: model.areGraphicsLayersVisible ? "eye.fill" : "eye.slash.fill")
+                        .foregroundStyle(model.areGraphicsLayersVisible ? Color.green : Color.red)
+                }
+                .help(model.areGraphicsLayersVisible ? "Graphics Visible" : "Graphics Hidden")
+
+                Button {
                     model.isEditorGutterVisible.toggle()
                 } label: {
                     Image(systemName: "list.number")

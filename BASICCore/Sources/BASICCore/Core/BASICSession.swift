@@ -472,7 +472,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         y: Double,
         button: Int,
         buttons: Int,
-        duration: Double
+        duration: Double,
+        deltaX: Double = 0,
+        deltaY: Double = 0,
+        hitID: String = "",
+        target: String = ""
     ) {
         let normalizedSubtype = subtype.uppercased()
         postEvent(
@@ -484,7 +488,31 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 "y": .number(y),
                 "button": .number(Double(button)),
                 "buttons": .number(Double(buttons)),
-                "duration": .number(duration)
+                "duration": .number(duration),
+                "deltaX": .number(deltaX),
+                "deltaY": .number(deltaY),
+                "hitId": .string(BASICString(hitID)),
+                "target": .string(BASICString(target))
+            ]
+        )
+    }
+
+    /// Posts a host gamepad event to the running program, if it registered an `ON GAMEPAD ... CALL` handler.
+    public func postGamepadEvent(
+        subtype: String,
+        controller: Int,
+        control: String,
+        value: Double
+    ) {
+        let normalizedSubtype = subtype.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "GAMEPAD", subtype: normalizedSubtype),
+            fields: [
+                "type": .string(BASICString("GAMEPAD")),
+                "subtype": .string(BASICString(normalizedSubtype)),
+                "controller": .number(Double(controller)),
+                "control": .string(BASICString(control)),
+                "value": .number(value)
             ]
         )
     }
@@ -501,12 +529,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         timerLock.lock()
         let oldBlock = timerBlocks.updateValue(controlBlock, forKey: id)
         timerLock.unlock()
-        logTarget(
-            module: "BASICSession.swift",
-            text: "timer control added id=\(id) interval=\(intervalSeconds)s repeating=\(repeating)"
-        )
+        logTimerTarget("timer control added id=\(id) interval=\(intervalSeconds)s repeating=\(repeating)")
         if oldBlock != nil {
-            logTarget(module: "BASICSession.swift", text: "timer control purged id=\(id) reason=replaced")
+            logTimerTarget("timer control purged id=\(id) reason=replaced")
         }
         oldBlock?.cancel()
         controlBlock.start()
@@ -517,7 +542,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let controlBlock = timerBlocks.removeValue(forKey: id)
         timerLock.unlock()
         if controlBlock != nil {
-            logTarget(module: "BASICSession.swift", text: "timer control purged id=\(id) reason=stop")
+            logTimerTarget("timer control purged id=\(id) reason=stop")
         }
         controlBlock?.cancel()
     }
@@ -529,7 +554,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         timerBlocks.removeAll()
         timerLock.unlock()
         if count > 0 {
-            logTarget(module: "BASICSession.swift", text: "timer controls purged count=\(count) reason=stop-all")
+            logTimerTarget("timer controls purged count=\(count) reason=stop-all")
         }
         controlBlocks.forEach { $0.cancel() }
     }
@@ -541,7 +566,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         timerBlocks.removeAll()
         timerLock.unlock()
         if count > 0 {
-            logTarget(module: "BASICSession.swift", text: "timer controls purged count=\(count) reason=debug-pause")
+            logTimerTarget("timer controls purged count=\(count) reason=debug-pause")
         }
         clearPendingHostEvents(reason: "debug-pause")
         controlBlocks.forEach { $0.cancel() }
@@ -559,19 +584,13 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let isTimerActive = timerBlocks[timerID] != nil
         timerLock.unlock()
         guard isTimerActive else {
-            logTarget(
-                module: "BASICSession.swift",
-                text: "timer event purged id=\(timerID) sequence=\(sequence) reason=inactive"
-            )
+            logTimerTarget("timer event purged id=\(timerID) sequence=\(sequence) reason=inactive")
             return
         }
 
         let registrations = runtime.timerHandlerRegistrations(forTimerID: timerID)
         guard !registrations.isEmpty else {
-            logTarget(
-                module: "BASICSession.swift",
-                text: "timer event purged id=\(timerID) sequence=\(sequence) reason=no-handler"
-            )
+            logTimerTarget("timer event purged id=\(timerID) sequence=\(sequence) reason=no-handler")
             return
         }
         for item in registrations where sequence % item.ticks == 0 {
@@ -587,10 +606,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 "baseInterval": .number(Double(intervalMilliseconds)),
                 "elapsed": .number(Double(sequence) * Double(intervalMilliseconds) / 1000.0)
             ]
-            logTarget(
-                module: "BASICSession.swift",
-                text: "timer event added id=\(timerID) sequence=\(sequence) tick=\(item.ticks) selector=\(item.registration.selector.description)"
-            )
+            logTimerTarget("timer event added id=\(timerID) sequence=\(sequence) tick=\(item.ticks) selector=\(item.registration.selector.description)")
             postEvent(selector: item.registration.selector, fields: fields)
         }
     }
@@ -598,7 +614,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private func postEvent(selector: BASICEventSelector, fields: [String: BASICValue]) {
         guard !eventLoop.hasPendingError else {
             if selector.type == "TIMER" {
-                logTarget(module: "BASICSession.swift", text: "timer event purged selector=\(selector.description) reason=pending-error")
+                logTimerTarget("timer event purged selector=\(selector.description) reason=pending-error")
             }
             return
         }
@@ -612,7 +628,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard !isHostEventDrainQueued else {
             hostEventLock.unlock()
             if selector.type == "TIMER", replacesExisting {
-                logTarget(module: "BASICSession.swift", text: "timer event purged selector=\(selector.description) reason=replaced-pending")
+                logTimerTarget("timer event purged selector=\(selector.description) reason=replaced-pending")
             }
             return
         }
@@ -641,12 +657,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard let activeInterpreter else { return }
         for (selector, data) in events {
             do {
-            if selector.type == "TIMER" {
-                logTarget(
-                    module: "BASICSession.swift",
-                    text: "timer event dispatching selector=\(selector.description) data=\(timerEventLogSummary(data))"
-                )
-            }
+                if selector.type == "TIMER" {
+                    logTimerTarget("timer event dispatching selector=\(selector.description) data=\(timerEventLogSummary(data))")
+                }
                 try activeInterpreter.dispatchEvent(selector: selector, data: data)
             } catch BASICError.breakRequested {
                 if stopsForegroundProgramOnBreak {
@@ -661,6 +674,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 pauseRuntimeTimersForDebugger()
                 eventLoop.reportError(error)
                 return
+            } catch let error as BASICError {
+                host.printLine("Runtime error: \(error.eventHandlerMessage)")
             } catch {
                 host.printLine("Runtime error: \(error)")
             }
@@ -675,7 +690,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         isHostEventDrainQueued = false
         hostEventLock.unlock()
         if timerCount > 0 {
-            logTarget(module: "BASICSession.swift", text: "timer events purged count=\(timerCount) reason=\(reason)")
+            logTimerTarget("timer events purged count=\(timerCount) reason=\(reason)")
         }
     }
 
@@ -696,6 +711,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             return
         }
         loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
+    }
+
+    private func logTimerTarget(_ text: String) {
+        // Temporarily disabled while debugging gamepad event detection.
+        // logTarget(module: "BASICSession.swift", text: text)
     }
 
     private func timerEventLogSummary(_ data: BASICValue) -> String {

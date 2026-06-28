@@ -9,6 +9,16 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
+private struct StudioVTGHitRegion: Equatable {
+    var id: String
+    var x: Int
+    var y: Int
+    var width: Int
+    var height: Int
+    var layer: Int?
+    var target: String
+}
+
 @MainActor
 final class StudioModel: ObservableObject {
     @Published var selectedPane: StudioPane = .console
@@ -26,12 +36,14 @@ final class StudioModel: ObservableObject {
     @Published var editorReplaceRequest = 0
     @Published var isProgramRunning = false
     @Published var isConsoleOverwriteMode = false
+    @Published var areGraphicsLayersVisible = true
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
     private var liveTerminalColumns = 80
     private var liveTerminalRows = 25
     private var liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(width: 0, height: 0, source: "VectorTerminalView")
+    private var vtgHitRegions: [StudioVTGHitRegion] = []
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
@@ -120,6 +132,17 @@ final class StudioModel: ObservableObject {
     }
 
     init() {
+        gamepadInputCoordinator.eventHandler = { [weak self] subtype, controller, control, value in
+            Task { @MainActor [weak self] in
+                self?.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
+            }
+        }
+        appendLog(
+            level: "GAMEPAD",
+            issuer: .basic,
+            text: "discovery active controllers=\(gamepadInputCoordinator.connectedControllerCount())"
+        )
+        gamepadInputCoordinator.emitConnectedControllers()
         let settings = StudioSettingsStore.load()
         editorTheme = settings.editorTheme
         isEditorGutterVisible = settings.isEditorGutterVisible
@@ -136,12 +159,7 @@ final class StudioModel: ObservableObject {
         consoleText = session.prompt
 
         let arguments = Array(CommandLine.arguments.dropFirst())
-        if arguments.first == "--demo", arguments.count >= 2 {
-            if let source = Self.bundledDemoSource(named: arguments[1]) {
-                programText = source
-                currentProgramFileName = Self.demoFileName(for: arguments[1])
-            }
-        } else if let path = arguments.first,
+        if let path = arguments.first,
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
             currentProgramURL = URL(fileURLWithPath: expandedPath(path))
@@ -278,15 +296,54 @@ final class StudioModel: ObservableObject {
         session.postResizeEvent(width: max(1, width), height: max(1, height))
     }
 
-    func postVTGMouseEvent(subtype: String, x: Double, y: Double, button: Int, buttons: Int, duration: Double) {
+    func postVTGMouseEvent(
+        subtype: String,
+        x: Double,
+        y: Double,
+        button: Int,
+        buttons: Int,
+        duration: Double,
+        deltaX: Double = 0,
+        deltaY: Double = 0,
+        hitID: String = "",
+        target: String = ""
+    ) {
         session.postMouseEvent(
             subtype: subtype,
             x: x,
             y: y,
             button: button,
             buttons: buttons,
-            duration: duration
+            duration: duration,
+            deltaX: deltaX,
+            deltaY: deltaY,
+            hitID: hitID,
+            target: target
         )
+    }
+
+    func hitRegion(atX x: Double, y: Double) -> (id: String, target: String)? {
+        let px = Int(x.rounded(.down))
+        let py = Int(y.rounded(.down))
+        for region in vtgHitRegions.reversed() {
+            guard px >= region.x,
+                  py >= region.y,
+                  px < region.x + region.width,
+                  py < region.y + region.height else {
+                continue
+            }
+            return (region.id, region.target)
+        }
+        return nil
+    }
+
+    func postGamepadEvent(subtype: String, controller: Int, control: String, value: Double) {
+        appendLog(
+            level: "GAMEPAD",
+            issuer: .basic,
+            text: "event subtype=\(subtype) controller=\(controller) control=\(control) value=\(value)"
+        )
+        session.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
     }
 
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
@@ -442,6 +499,14 @@ final class StudioModel: ObservableObject {
         return value
     }
 
+    func setGraphicsLayersVisible(_ isVisible: Bool) {
+        areGraphicsLayersVisible = isVisible
+    }
+
+    func toggleGraphicsLayersVisible() {
+        areGraphicsLayersVisible.toggle()
+    }
+
     func stopProgram() {
         activeExecutionControl?.requestBreak()
         inputCoordinator.cancelLineInput()
@@ -541,8 +606,19 @@ final class StudioModel: ObservableObject {
         inputCoordinator.shouldCaptureKeyOnly()
     }
 
+    nonisolated func shouldProgramStopOnTerminalInterrupt() -> Bool {
+        inputCoordinator.shouldCaptureKeyOnly()
+            || inputCoordinator.awaitingLineInput()
+            || inputCoordinator.rawKeyInputActive()
+    }
+
     nonisolated func shouldExitLineInputOnSpecialKey() -> Bool {
         inputCoordinator.shouldExitLineInputOnSpecialKey()
+    }
+
+    nonisolated func shouldUseTerminalCommandHistory() -> Bool {
+        !inputCoordinator.awaitingLineInput()
+            && !inputCoordinator.shouldCaptureKeyOnly()
     }
 
     nonisolated func activeLineInputOptions() -> BASICLineInputOptions {
@@ -996,17 +1072,16 @@ final class StudioModel: ObservableObject {
 
     private static func defaultProgramSource() -> String {
         let fileManager = FileManager.default
-        if let source = bundledDemoSource(named: "studio/test-suite") {
+        if let source = bundledDemoSource(named: "test-suite") {
             return source
         }
 
-        let relativePath = "basicPrograms/demos/studio/test-suite.bas"
+        let relativePath = "basicPrograms/demos/test-suite.bas"
         let sourcePath = String(#filePath)
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let candidates = [
             fileManager.currentDirectoryPath + "/" + relativePath,
             fileManager.currentDirectoryPath + "/../../" + relativePath,
-            fileManager.currentDirectoryPath + "/basicPrograms/BASICStudio/test-suite.bas",
             sourceURL
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
@@ -1038,19 +1113,13 @@ final class StudioModel: ObservableObject {
     }
 
     private static func bundledDemoSource(named name: String) -> String? {
-        let normalized = name.hasSuffix(".bas") ? String(name.dropLast(4)) : name
-        for candidate in [
-            normalized,
-            "studio/\(normalized)",
-            "shell/\(normalized)"
-        ] {
-            let url = URL(fileURLWithPath: candidate)
-            let directory = url.deletingLastPathComponent().relativePath
-            let subdirectory = directory == "." || directory.isEmpty ? "Demos" : "Demos/\(directory)"
-            for resource in demoResourceCandidates(named: url.lastPathComponent, subdirectory: subdirectory) {
-                if let source = try? String(contentsOf: resource, encoding: .utf8) {
-                    return source
-                }
+        let normalized = normalizedBundledDemoPath(name)
+        let url = URL(fileURLWithPath: normalized.hasSuffix(".bas") ? String(normalized.dropLast(4)) : normalized)
+        let directory = url.deletingLastPathComponent().relativePath
+        let subdirectory = directory == "." || directory.isEmpty ? "Demos" : "Demos/\(directory)"
+        for resource in demoResourceCandidates(named: url.lastPathComponent, subdirectory: subdirectory) {
+            if let source = try? String(contentsOf: resource, encoding: .utf8) {
+                return source
             }
         }
         return nil
@@ -1394,12 +1463,28 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
         .filter { fileManager.fileExists(atPath: $0.path) }
     }
 
-    nonisolated private func normalizedDemoPath(_ path: String) -> String {
+    nonisolated private static func normalizedBundledDemoPath(_ path: String) -> String {
         var normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
-        if normalized.hasPrefix("basicPrograms/demos/") {
-            normalized.removeFirst("basicPrograms/demos/".count)
+        let legacyPrefixes = [
+            "basicPrograms/demos/",
+            "basicPrograms/shell/",
+            "basicPrograms/BASICStudio/",
+            "shell/",
+            "studio/"
+        ]
+        var didStrip = true
+        while didStrip {
+            didStrip = false
+            for prefix in legacyPrefixes where normalized.hasPrefix(prefix) {
+                normalized.removeFirst(prefix.count)
+                didStrip = true
+            }
         }
         return normalized
+    }
+
+    nonisolated private func normalizedDemoPath(_ path: String) -> String {
+        Self.normalizedBundledDemoPath(path)
     }
 
     nonisolated func runSystemCommand(_ command: String) throws -> String {
@@ -1657,11 +1742,30 @@ extension StudioModel: BASICVectorTerminalHost {
     }
 
     nonisolated func vectorTerminalHitRegion(id: String, x: Int, y: Int, width: Int, height: Int, layer: Int?, target: String?) throws {
-        useVTGCanvas { $0.hitRegion(id: id, x: x, y: y, width: width, height: height, layer: layer, target: target) }
+        useVTGCanvas { canvas in
+            canvas.hitRegion(id: id, x: x, y: y, width: width, height: height, layer: layer, target: target)
+            vtgHitRegions.removeAll { $0.id == id && $0.layer == layer }
+            vtgHitRegions.append(StudioVTGHitRegion(
+                id: id,
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                layer: layer,
+                target: target ?? ""
+            ))
+        }
     }
 
     nonisolated func vectorTerminalClearHitRegions(id: String?, layer: Int?) throws {
-        useVTGCanvas { $0.clearHitRegions(id: id, layer: layer) }
+        useVTGCanvas { canvas in
+            canvas.clearHitRegions(id: id, layer: layer)
+            vtgHitRegions.removeAll { region in
+                let idMatches = id == nil || region.id == id
+                let layerMatches = layer == nil || region.layer == layer
+                return idMatches && layerMatches
+            }
+        }
     }
 
     nonisolated func vectorTerminalStartFrame(id: String, timeoutMilliseconds: Int) throws {
@@ -2002,6 +2106,24 @@ extension StudioModel: BASICGraphicsHost {
             graphics.drawCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
             graphicsRevision += 1
             vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        runOnMainActorSync {
+            graphics.drawEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color)
+            graphicsRevision += 1
+            vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
+        runOnMainActorSync {
+            graphics.drawEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color.legacyIndex ?? 1)
+            graphicsRevision += 1
+            vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
             vtgCanvas.present()
         }
     }

@@ -79,6 +79,26 @@ final class GraphicsFramebuffer {
         }
     }
 
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
+        let rx = max(0, radiusX)
+        let ry = max(0, radiusY)
+        guard rx > 0 || ry > 0 else {
+            setPixel(x: cx, y: cy, color: color)
+            return
+        }
+
+        let steps = max(24, Int(Double(max(rx, ry)) * 8))
+        var plotted = Set<Int>()
+        for step in 0...steps {
+            let angle = (Double(step) / Double(steps)) * Double.pi * 2
+            let x = cx + Int((Double(rx) * cos(angle)).rounded())
+            let y = cy + Int((Double(ry) * sin(angle)).rounded())
+            let key = (y << 16) ^ x
+            guard plotted.insert(key).inserted else { continue }
+            setPixel(x: x, y: y, color: color)
+        }
+    }
+
     private func setCirclePoints(cx: Int, cy: Int, x: Int, y: Int, color: Int) {
         setPixel(x: cx + x, y: cy + y, color: color)
         setPixel(x: cx + y, y: cy + x, color: color)

@@ -9,7 +9,7 @@ print "HELLO"
 print "TOTAL =", 10 + 5
 print "TOTAL ="; 10 + 5
 print "LEFT", "NEXT ZONE"
-name$ = "AIBASIC"
+name$ = "BASICSHELL"
 print name$
 ```
 

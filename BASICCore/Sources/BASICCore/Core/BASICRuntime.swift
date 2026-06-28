@@ -273,7 +273,8 @@ final class BASICRuntime {
 
     static func isBuiltInClass(_ name: String) -> Bool {
         switch name.uppercased() {
-        case "FILE", "VECTORTERMINAL", "VTG", "SECONDSTIMER":
+        case "FILE", "VECTORTERMINAL", "VTG", "SECONDSTIMER",
+            "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
             return true
         default:
             return false
@@ -929,11 +930,11 @@ final class BASICRuntime {
                 return .empty
             }
             guard let definition = functionTypeDefinitions[name.uppercased()] else {
-                throw BASICError.runtime("Type Mismatch")
+                throw BASICError.type(message: "Type Mismatch")
             }
             guard case .closure(let closure) = value,
                   closure.matchesSignature(of: definition) else {
-                throw BASICError.runtime("Type Mismatch")
+                throw BASICError.type(message: "Type Mismatch")
             }
             return value
         }
@@ -953,6 +954,19 @@ final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
         }
         if case .classType(let name) = type {
+            if let expected = Self.builtInEventClassName(name) {
+                if case .null = value {
+                    return .null
+                }
+                if case .empty = value {
+                    return defaultValue(for: type)
+                }
+                if case .object(let valueName, _) = value,
+                   valueName.uppercased() == expected || Self.isBuiltInEventClass(valueName, subclassOf: expected) {
+                    return value
+                }
+                throw BASICError.type(message: "Type Mismatch")
+            }
             if Self.isBuiltInClass(name), case .systemObject(let valueName, _) = value, valueName.uppercased() == name.uppercased() {
                 return value
             }
@@ -2032,6 +2046,10 @@ final class BASICRuntime {
                 switch name.uppercased() {
                 case "VECTORTERMINAL", "VTG":
                     return vectorTerminalObject()
+                case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+                    return Self.builtInEventObject(typeName: name, fields: [:])
+                case "SECONDSTIMER":
+                    return secondsTimerObject(intervalSeconds: 0)
                 default:
                     return fileObject()
                 }
@@ -2522,6 +2540,9 @@ final class BASICRuntime {
     }
 
     private func compositeFieldDefinitions(for typeName: String) -> [BASICClassField] {
+        if let fields = Self.builtInEventFields(for: typeName) {
+            return fields
+        }
         if let classDefinition = classDefinitions[typeName.uppercased()] {
             return inheritedFields(for: classDefinition)
         }
@@ -2605,6 +2626,9 @@ final class BASICRuntime {
     }
 
     private func isClass(_ className: String, subclassOf baseName: String) -> Bool {
+        if Self.isBuiltInEventClass(className, subclassOf: baseName) {
+            return true
+        }
         var current = classDefinitions[className.uppercased()]?.baseClassName
         while let currentName = current {
             if currentName.uppercased() == baseName.uppercased() {
@@ -2613,6 +2637,149 @@ final class BASICRuntime {
             current = classDefinitions[currentName.uppercased()]?.baseClassName
         }
         return false
+    }
+
+    static func builtInEventObject(typeName: String, fields: [String: BASICValue]) -> BASICValue {
+        let normalizedTypeName = builtInEventClassName(typeName) ?? typeName.uppercased()
+        let displayName = builtInEventDisplayName(normalizedTypeName)
+        let defaults = Dictionary(uniqueKeysWithValues: (builtInEventFields(for: normalizedTypeName) ?? []).map {
+            ($0.normalizedName, eventDefaultValue(for: $0))
+        })
+        return .object(displayName, defaults.merging(fields) { _, new in new })
+    }
+
+    static func builtInEventClassName(_ name: String) -> String? {
+        switch name.uppercased() {
+        case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+            return name.uppercased()
+        default:
+            return nil
+        }
+    }
+
+    static func isBuiltInEventClass(_ className: String, subclassOf baseName: String) -> Bool {
+        var current = builtInEventClassName(className)
+        let expected = baseName.uppercased()
+        while let currentName = current {
+            if currentName == expected {
+                return true
+            }
+            current = builtInEventBaseClassName(currentName)
+        }
+        return false
+    }
+
+    private static func builtInEventFields(for typeName: String) -> [BASICClassField]? {
+        guard let normalized = builtInEventClassName(typeName) else { return nil }
+        let baseFields = builtInEventBaseClassName(normalized).flatMap { builtInEventFields(for: $0) } ?? []
+        let ownFields: [BASICClassField]
+        switch normalized {
+        case "BASICEVENT":
+            ownFields = [
+                eventField("Type", .scalar(.string), declaringClassName: normalized),
+                eventField("Subtype", .scalar(.string), declaringClassName: normalized),
+                eventField("Timestamp", .scalar(.double), declaringClassName: normalized),
+                eventField("Target", .scalar(.string), declaringClassName: normalized),
+                eventField("Handled", .scalar(.boolean), declaringClassName: normalized)
+            ]
+        case "BASICRESIZEEVENT":
+            ownFields = [
+                eventField("Width", .scalar(.integer), declaringClassName: normalized),
+                eventField("Height", .scalar(.integer), declaringClassName: normalized)
+            ]
+        case "BASICMOUSEEVENT":
+            ownFields = [
+                eventField("X", .scalar(.integer), declaringClassName: normalized),
+                eventField("Y", .scalar(.integer), declaringClassName: normalized),
+                eventField("Button", .scalar(.integer), declaringClassName: normalized),
+                eventField("Buttons", .scalar(.integer), declaringClassName: normalized),
+                eventField("ButtonFlags", .scalar(.integer), declaringClassName: normalized),
+                eventField("Duration", .scalar(.double), declaringClassName: normalized),
+                eventField("DeltaX", .scalar(.double), declaringClassName: normalized),
+                eventField("DeltaY", .scalar(.double), declaringClassName: normalized),
+                eventField("HitId", .scalar(.string), declaringClassName: normalized)
+            ]
+        case "BASICTIMEREVENT":
+            ownFields = [
+                eventField("TimerID", .scalar(.integer), declaringClassName: normalized),
+                eventField("Sequence", .scalar(.integer), declaringClassName: normalized),
+                eventField("Tick", .scalar(.integer), declaringClassName: normalized),
+                eventField("Ticks", .scalar(.integer), declaringClassName: normalized),
+                eventField("Interval", .scalar(.integer), declaringClassName: normalized),
+                eventField("BaseInterval", .scalar(.integer), declaringClassName: normalized),
+                eventField("Elapsed", .scalar(.double), declaringClassName: normalized)
+            ]
+        case "BASICGAMEPADEVENT":
+            ownFields = [
+                eventField("Controller", .scalar(.integer), declaringClassName: normalized),
+                eventField("Control", .scalar(.string), declaringClassName: normalized),
+                eventField("Value", .scalar(.double), declaringClassName: normalized)
+            ]
+        default:
+            ownFields = []
+        }
+        return baseFields + ownFields
+    }
+
+    private static func builtInEventBaseClassName(_ normalizedName: String) -> String? {
+        switch normalizedName {
+        case "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+            return "BASICEVENT"
+        default:
+            return nil
+        }
+    }
+
+    private static func builtInEventDisplayName(_ normalizedName: String) -> String {
+        switch normalizedName {
+        case "BASICEVENT": return "BASICEvent"
+        case "BASICRESIZEEVENT": return "BASICResizeEvent"
+        case "BASICMOUSEEVENT": return "BASICMouseEvent"
+        case "BASICTIMEREVENT": return "BASICTimerEvent"
+        case "BASICGAMEPADEVENT": return "BASICGamepadEvent"
+        default: return normalizedName
+        }
+    }
+
+    private static func eventField(
+        _ name: String,
+        _ type: BASICType,
+        declaringClassName: String
+    ) -> BASICClassField {
+        BASICClassField(
+            displayName: name,
+            normalizedName: name.uppercased(),
+            type: type,
+            arrayDimensions: [],
+            visibility: .public,
+            declaringClassName: declaringClassName,
+            json: nil,
+            metadata: [:],
+            defaultValue: nil
+        )
+    }
+
+    private static func eventDefaultValue(for field: BASICClassField) -> BASICValue {
+        switch field.type {
+        case .scalar(.string):
+            return .string(BASICString(""))
+        case .scalar(.boolean):
+            return .boolean(false)
+        case .scalar(.variant):
+            return .empty
+        case .scalar:
+            return .number(0)
+        case .void:
+            return .empty
+        case .record(let name):
+            return .record(name, [:])
+        case .classType(let name):
+            return builtInEventObject(typeName: name, fields: [:])
+        case .interfaceType, .functionType:
+            return .empty
+        case .dictionary:
+            return .dictionary(BASICDictionary())
+        }
     }
 
     private func classConforms(_ className: String, toInterface interfaceName: String) -> Bool {

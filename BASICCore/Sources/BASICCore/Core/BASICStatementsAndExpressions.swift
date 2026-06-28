@@ -72,7 +72,7 @@ indirect enum Statement: Equatable {
     case pset(GraphicsPoint, Expression?)
     case preset(GraphicsPoint, Expression?)
     case line(GraphicsPoint, GraphicsPoint, Expression?)
-    case circle(GraphicsPoint, Expression, Expression?)
+    case circle(GraphicsPoint, Expression, Expression?, Expression?)
     case paint(GraphicsPoint, Expression, Expression?)
     case draw(Expression)
     case assignment(AssignmentKind, VariableName, BASICType?, Expression?)

@@ -80,6 +80,12 @@ struct BASICStudioApp: App {
                     set: { model.setConsoleOverwriteMode($0) }
                 ))
                 .keyboardShortcut("i", modifiers: [.control])
+
+                Toggle("Show Graphics", isOn: Binding(
+                    get: { model.areGraphicsLayersVisible },
+                    set: { model.setGraphicsLayersVisible($0) }
+                ))
+                .keyboardShortcut("g", modifiers: [.command, .shift])
             }
 
             CommandMenu("Debug") {

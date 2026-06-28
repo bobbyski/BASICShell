@@ -9,10 +9,10 @@ packages:
     path: ../BASICCore
   SwiftTerm:
     url: https://github.com/bobbyski/SwiftTerm.git
-    from: 1.5.2
+    from: 1.5.4
   VectorTerminalSDK:
     url: https://github.com/bobbyski/VectorTerminalSDK.git
-    from: 1.5.2
+    from: 1.5.4
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.1

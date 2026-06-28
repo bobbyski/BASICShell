@@ -59,6 +59,19 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
         case .halted: return "Program halted"
         }
     }
+
+    var eventHandlerMessage: String {
+        switch self {
+        case .runtime(let message):
+            return message
+        case .numberedRuntime(let number):
+            return "Error \(number)"
+        case .type(let message):
+            return message
+        default:
+            return description
+        }
+    }
 }
 
 /// Severity for diagnostics reported before running a BASIC program.

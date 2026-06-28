@@ -221,6 +221,10 @@ public protocol BASICGraphicsHost: BASICHost {
     func drawCircle(cx: Int, cy: Int, radius: Int, color: Int)
     /// Draws one circle outline using the full-color model.
     func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor)
+    /// Draws one ellipse outline.
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int)
+    /// Draws one ellipse outline using the full-color model.
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor)
     /// Flood-fills a bounded graphics region.
     func paintFill(x: Int, y: Int, color: Int, borderColor: Int?)
     /// Flood-fills a bounded graphics region using the full-color model.
@@ -254,6 +258,11 @@ public extension BASICGraphicsHost {
         drawCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
     }
 
+    /// Draws one ellipse outline using the full-color model.
+    func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
+        drawEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color.legacyIndex ?? 1)
+    }
+
     /// Flood-fills a bounded graphics region using the full-color model.
     func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
         paintFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
@@ -267,4 +276,3 @@ public extension BASICHost {
         printLine(text + terminator.trimmingCharacters(in: .newlines))
     }
 }
-

@@ -1059,7 +1059,7 @@ public final class BASICInterpreter {
             )
             currentGraphicsPoint = resolvedEnd
             return .next
-        case .circle(let center, let radius, let color):
+        case .circle(let center, let radius, let color, let aspect):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
             }
@@ -1069,12 +1069,23 @@ public final class BASICInterpreter {
             let resolvedCenter = try resolve(point: center)
             let resolvedRadius = try integer(radius)
             let resolvedColor = try color.map(resolveColor) ?? currentGraphicsColor
-            graphicsHost.drawCircle(
-                cx: resolvedCenter.x,
-                cy: resolvedCenter.y,
-                radius: resolvedRadius,
-                color: resolvedColor
-            )
+            if let aspect {
+                let radii = try ellipseRadii(radius: resolvedRadius, aspect: aspect)
+                graphicsHost.drawEllipse(
+                    cx: resolvedCenter.x,
+                    cy: resolvedCenter.y,
+                    radiusX: radii.x,
+                    radiusY: radii.y,
+                    color: resolvedColor
+                )
+            } else {
+                graphicsHost.drawCircle(
+                    cx: resolvedCenter.x,
+                    cy: resolvedCenter.y,
+                    radius: resolvedRadius,
+                    color: resolvedColor
+                )
+            }
             currentGraphicsPoint = resolvedCenter
             return .next
         case .paint(let point, let color, let borderColor):
@@ -2747,6 +2758,7 @@ public final class BASICInterpreter {
             logMissingEventHandler(selector: selector, detail: " handler=\(registration.handlerName)")
             return
         }
+        let payload = try eventPayload(for: selector, data: data, handler: definition)
         logTarget(
             module: "BASICInterpreter.swift",
             text: "event handler begin selector=\(selector.description) handler=\(definition.displayName)"
@@ -2756,7 +2768,7 @@ public final class BASICInterpreter {
                 definition: definition,
                 receiver: nil,
                 receiverClassName: nil,
-                argumentValues: [data],
+                argumentValues: [payload],
                 allowVoid: true
             )
             logTarget(
@@ -2770,6 +2782,96 @@ public final class BASICInterpreter {
             )
             throw error
         }
+    }
+
+    private func eventPayload(
+        for selector: BASICEventSelector,
+        data: BASICValue,
+        handler definition: FunctionDefinition
+    ) throws -> BASICValue {
+        guard definition.parameters.count == 1 else {
+            return data
+        }
+        let parameterType = resolvedDeclaredType(definition.parameters[0].type)
+        guard case .classType(let typeName) = parameterType,
+              BASICRuntime.builtInEventClassName(typeName) != nil else {
+            return data
+        }
+        return try typedEventObject(for: selector, data: data)
+    }
+
+    private func typedEventObject(for selector: BASICEventSelector, data: BASICValue) throws -> BASICValue {
+        guard case .dictionary(let dictionary) = data else {
+            return data
+        }
+        let typeName: String
+        switch selector.type {
+        case "RESIZE":
+            typeName = "BASICResizeEvent"
+        case "MOUSE":
+            typeName = "BASICMouseEvent"
+        case "TIMER":
+            typeName = "BASICTimerEvent"
+        case "GAMEPAD":
+            typeName = "BASICGamepadEvent"
+        default:
+            typeName = "BASICEvent"
+        }
+
+        var fields: [String: BASICValue] = [
+            "TYPE": fieldValue("type", from: dictionary) ?? .string(BASICString(selector.type)),
+            "SUBTYPE": fieldValue("subtype", from: dictionary) ?? .string(BASICString(selector.subtype ?? "")),
+            "TIMESTAMP": fieldValue("timestamp", from: dictionary) ?? .number(Date().timeIntervalSince1970),
+            "TARGET": fieldValue("target", from: dictionary) ?? .string(BASICString("")),
+            "HANDLED": fieldValue("handled", from: dictionary) ?? .boolean(false)
+        ]
+
+        switch selector.type {
+        case "RESIZE":
+            fields["WIDTH"] = fieldValue("width", from: dictionary) ?? .number(0)
+            fields["HEIGHT"] = fieldValue("height", from: dictionary) ?? .number(0)
+        case "MOUSE":
+            fields["X"] = fieldValue("x", from: dictionary) ?? .number(0)
+            fields["Y"] = fieldValue("y", from: dictionary) ?? .number(0)
+            fields["BUTTON"] = fieldValue("button", from: dictionary) ?? .number(0)
+            fields["BUTTONS"] = fieldValue("buttons", from: dictionary) ?? .number(0)
+            fields["BUTTONFLAGS"] = fieldValue("buttonFlags", from: dictionary)
+                ?? fieldValue("buttons", from: dictionary)
+                ?? .number(0)
+            fields["DURATION"] = fieldValue("duration", from: dictionary) ?? .number(0)
+            fields["DELTAX"] = fieldValue("deltaX", from: dictionary) ?? .number(0)
+            fields["DELTAY"] = fieldValue("deltaY", from: dictionary) ?? .number(0)
+            fields["HITID"] = fieldValue("hitId", from: dictionary)
+                ?? fieldValue("hitID", from: dictionary)
+                ?? fieldValue("hit", from: dictionary)
+                ?? .string(BASICString(""))
+        case "TIMER":
+            fields["TIMERID"] = fieldValue("timerID", from: dictionary)
+                ?? fieldValue("timerId", from: dictionary)
+                ?? .number(0)
+            fields["SEQUENCE"] = fieldValue("sequence", from: dictionary) ?? .number(0)
+            fields["TICK"] = fieldValue("tick", from: dictionary) ?? .number(0)
+            fields["TICKS"] = fieldValue("ticks", from: dictionary)
+                ?? fieldValue("tick", from: dictionary)
+                ?? .number(0)
+            fields["INTERVAL"] = fieldValue("interval", from: dictionary) ?? .number(0)
+            fields["BASEINTERVAL"] = fieldValue("baseInterval", from: dictionary)
+                ?? fieldValue("interval", from: dictionary)
+                ?? .number(0)
+            fields["ELAPSED"] = fieldValue("elapsed", from: dictionary) ?? .number(0)
+        case "GAMEPAD":
+            fields["CONTROLLER"] = fieldValue("controller", from: dictionary) ?? .number(0)
+            fields["CONTROL"] = fieldValue("control", from: dictionary) ?? .string(BASICString(""))
+            fields["VALUE"] = fieldValue("value", from: dictionary) ?? .number(0)
+        default:
+            break
+        }
+
+        return BASICRuntime.builtInEventObject(typeName: typeName, fields: fields)
+    }
+
+    private func fieldValue(_ key: String, from dictionary: BASICDictionary) -> BASICValue? {
+        dictionary.values[key] ?? dictionary.values[key.uppercased()]
     }
 
     private func logTarget(module: String, text: String) {
@@ -2836,8 +2938,10 @@ public final class BASICInterpreter {
             return "preset \(traceText(for: point))" + (color.map { ", \(traceText(for: $0))" } ?? "")
         case .line(let start, let end, let color):
             return "line \(traceText(for: start))-\(traceText(for: end))" + (color.map { ", \(traceText(for: $0))" } ?? "")
-        case .circle(let center, let radius, let color):
-            return "circle \(traceText(for: center)), \(traceText(for: radius))" + (color.map { ", \(traceText(for: $0))" } ?? "")
+        case .circle(let center, let radius, let color, let aspect):
+            return "circle \(traceText(for: center)), \(traceText(for: radius))"
+                + (color.map { ", \(traceText(for: $0))" } ?? "")
+                + (aspect.map { ", \(traceText(for: $0))" } ?? "")
         case .paint(let point, let fill, let border):
             return "paint \(traceText(for: point)), \(traceText(for: fill))" + (border.map { ", \(traceText(for: $0))" } ?? "")
         case .draw(let expression):
@@ -4393,10 +4497,11 @@ public final class BASICInterpreter {
                 visit(start)
                 visit(end)
                 color.map(visit)
-            case .circle(let center, let radius, let color):
+            case .circle(let center, let radius, let color, let aspect):
                 visit(center)
                 visit(radius)
                 color.map(visit)
+                aspect.map(visit)
             case .paint(let point, let color, let borderColor):
                 visit(point)
                 visit(color)
@@ -4668,6 +4773,18 @@ public final class BASICInterpreter {
 
     private func resolve(point: GraphicsPoint) throws -> (x: Int, y: Int) {
         (try integer(point.x), try integer(point.y))
+    }
+
+    private func ellipseRadii(radius: Int, aspect expression: Expression) throws -> (x: Int, y: Int) {
+        let aspect = try numeric(try evaluate(expression))
+        guard aspect > 0 else {
+            throw BASICError.runtime("CIRCLE aspect must be greater than zero")
+        }
+        let safeRadius = max(0, radius)
+        if aspect < 1 {
+            return (safeRadius, max(0, Int((Double(safeRadius) * aspect).rounded())))
+        }
+        return (max(0, Int((Double(safeRadius) / aspect).rounded())), safeRadius)
     }
 
     private func drawGraphicsPath(_ source: String, graphicsHost: BASICGraphicsHost) throws {

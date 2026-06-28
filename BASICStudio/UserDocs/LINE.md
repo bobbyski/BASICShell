@@ -4,7 +4,7 @@
 
 Draws a line between two graphics points. If no color is provided, the current graphics color from `COLOR` is used.
 
-Numeric colors use the legacy AIBasic palette. Quoted full-color values may use hex, named colors, or RGBA bytes.
+Numeric colors use the legacy BASICShell palette. Quoted full-color values may use hex, named colors, or RGBA bytes.
 
 BASICShell supports `LINE` only when VTG graphics are available.
 

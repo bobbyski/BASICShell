@@ -284,7 +284,8 @@ struct Parser {
             guard match(.comma) else { throw syntax("Expected , after CIRCLE center") }
             let radius = try parseExpression()
             let color = match(.comma) ? try parseExpression() : nil
-            return .circle(center, radius, color)
+            let aspect = match(.comma) ? try parseExpression() : nil
+            return .circle(center, radius, color, aspect)
         }
         if matchIdentifier("PAINT") {
             let point = try parsePoint()

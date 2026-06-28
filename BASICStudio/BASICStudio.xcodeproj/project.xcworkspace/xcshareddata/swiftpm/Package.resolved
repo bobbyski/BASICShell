@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bobbyski/SwiftTerm.git",
       "state" : {
-        "revision" : "6c48bf64668d9f93aff095ff84516d98a0e23ecd",
-        "version" : "1.5.2"
+        "revision" : "0bd1e82954a96819373928cc0a23e2c97bbd1037",
+        "version" : "1.5.4"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bobbyski/VectorTerminalSDK.git",
       "state" : {
-        "revision" : "9beb81487b49f92b4567a5a6dd8b7efc48d07754",
-        "version" : "1.5.2"
+        "revision" : "39f89f4e62a9d2c0941319648f8818135c220d81",
+        "version" : "1.5.4"
       }
     }
   ],
