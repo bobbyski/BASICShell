@@ -13,16 +13,13 @@ struct UserDocumentationPane: View {
     @State private var docs = UserDoc.loadAll()
     @State private var selectedDocID: UserDoc.ID?
 
-    private var selectedDocBinding: Binding<UserDoc.ID> {
-        Binding(
-            get: { selectedDocID ?? docs.first?.id ?? "" },
-            set: { selectedDocID = $0 }
-        )
-    }
-
     private var selectedDoc: UserDoc? {
         let id = selectedDocID ?? docs.first?.id
         return docs.first { $0.id == id }
+    }
+
+    private func docs(in category: UserDocCategory) -> [UserDoc] {
+        docs.filter { $0.category == category }
     }
 
     var body: some View {
@@ -32,14 +29,37 @@ struct UserDocumentationPane: View {
                     .font(.headline)
                 Spacer()
                 if !docs.isEmpty {
-                    Picker("Topic", selection: selectedDocBinding) {
-                        ForEach(docs) { doc in
-                            Text(doc.title).tag(doc.id)
+                    Menu {
+                        ForEach(UserDocCategory.allCases) { category in
+                            let sectionDocs = docs(in: category)
+                            if !sectionDocs.isEmpty {
+                                Menu(category.title) {
+                                    ForEach(sectionDocs) { doc in
+                                        Button {
+                                            selectedDocID = doc.id
+                                        } label: {
+                                            HStack {
+                                                Text(doc.title)
+                                                if selectedDocID == doc.id || (selectedDocID == nil && docs.first?.id == doc.id) {
+                                                    Image(systemName: "checkmark")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "book")
+                            Text(selectedDoc?.title ?? "Documentation Menu")
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 260)
+                    .menuStyle(.button)
+                    .frame(maxWidth: 280, alignment: .trailing)
                 }
             }
             .padding(.horizontal, 12)
@@ -68,9 +88,26 @@ struct UserDocumentationPane: View {
     }
 }
 
+enum UserDocCategory: String, CaseIterable, Identifiable {
+    case tutorials
+    case reference
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .tutorials:
+            "Tutorials"
+        case .reference:
+            "Reference"
+        }
+    }
+}
+
 struct UserDoc: Identifiable, Hashable {
     let id: String
     let title: String
+    let category: UserDocCategory
     let content: String
 
     static func loadAll() -> [UserDoc] {
@@ -84,11 +121,19 @@ struct UserDoc: Identifiable, Hashable {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
                 .compactMap { url -> UserDoc? in
                     guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+                    let fileName = url.deletingPathExtension().lastPathComponent
                     return UserDoc(
                         id: url.lastPathComponent,
-                        title: title(from: content, fallback: url.deletingPathExtension().lastPathComponent),
+                        title: title(from: content, fallback: fileName),
+                        category: category(from: fileName),
                         content: content
                     )
+                }
+                .sorted { left, right in
+                    if left.category != right.category {
+                        return UserDocCategory.allCases.firstIndex(of: left.category)! < UserDocCategory.allCases.firstIndex(of: right.category)!
+                    }
+                    return left.title.localizedStandardCompare(right.title) == .orderedAscending
                 }
 
             if !docs.isEmpty {
@@ -111,6 +156,13 @@ struct UserDoc: Identifiable, Hashable {
                 .deletingLastPathComponent()
                 .appendingPathComponent("UserDocs")
         ]
+    }
+
+    private static func category(from fileName: String) -> UserDocCategory {
+        if fileName.uppercased().hasPrefix("TUTORIAL_") {
+            return .tutorials
+        }
+        return .reference
     }
 
     private static func title(from content: String, fallback: String) -> String {
