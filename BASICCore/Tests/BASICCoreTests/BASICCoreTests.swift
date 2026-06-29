@@ -5219,6 +5219,26 @@ struct BASICCoreTests {
         #expect(host.fills.first?.2 == 2)
     }
 
+    @Test("Graphics batcher groups points into horizontal runs")
+    func graphicsBatcherGroupsPointsIntoHorizontalRuns() {
+        let runs = BASICGraphicsBatcher.horizontalRuns(from: [
+            BASICGraphicsPoint(x: 3, y: 2),
+            BASICGraphicsPoint(x: 1, y: 1),
+            BASICGraphicsPoint(x: 2, y: 1),
+            BASICGraphicsPoint(x: 2, y: 1),
+            BASICGraphicsPoint(x: 5, y: 1),
+            BASICGraphicsPoint(x: 4, y: 1),
+            BASICGraphicsPoint(x: 1, y: 3)
+        ])
+
+        #expect(runs == [
+            BASICGraphicsHorizontalRun(x1: 1, x2: 2, y: 1),
+            BASICGraphicsHorizontalRun(x1: 4, x2: 5, y: 1),
+            BASICGraphicsHorizontalRun(x1: 3, x2: 3, y: 2),
+            BASICGraphicsHorizontalRun(x1: 1, x2: 1, y: 3)
+        ])
+    }
+
     @Test("DRAW supports motion strings and inline palette color changes")
     func drawSupportsMotionStringsAndInlineColorChanges() {
         let host = TestHost()

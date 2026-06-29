@@ -1909,8 +1909,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         ensureNativeSemanticGraphicsMode()
         let changed = paintFramebufferFill(x: x, y: y, color: color, borderColor: borderColor)
         didUseVectorTerminal = true
-        for point in changed {
-            vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: point.x, y: point.y, color: basicGraphicsColor(color), layer: nil)
+        for run in BASICGraphicsBatcher.horizontalRuns(from: changed.map { BASICGraphicsPoint(x: $0.x, y: $0.y) }) {
+            if run.x1 == run.x2 {
+                vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: run.x1, y: run.y, color: basicGraphicsColor(color), layer: nil)
+            } else {
+                vtgCanvas.line(id: nextBasicGraphicsID("paint"), x1: run.x1, y1: run.y, x2: run.x2, y2: run.y, stroke: basicGraphicsColor(color), width: 1, layer: nil)
+            }
         }
         vtgCanvas.present()
     }
@@ -1920,8 +1924,12 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         ensureNativeSemanticGraphicsMode()
         let changed = paintFramebufferFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
         didUseVectorTerminal = true
-        for point in changed {
-            vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: point.x, y: point.y, color: basicGraphicsColor(color), layer: nil)
+        for run in BASICGraphicsBatcher.horizontalRuns(from: changed.map { BASICGraphicsPoint(x: $0.x, y: $0.y) }) {
+            if run.x1 == run.x2 {
+                vtgCanvas.pixel(id: nextBasicGraphicsID("paint"), x: run.x1, y: run.y, color: basicGraphicsColor(color), layer: nil)
+            } else {
+                vtgCanvas.line(id: nextBasicGraphicsID("paint"), x1: run.x1, y1: run.y, x2: run.x2, y2: run.y, stroke: basicGraphicsColor(color), width: 1, layer: nil)
+            }
         }
         vtgCanvas.present()
     }

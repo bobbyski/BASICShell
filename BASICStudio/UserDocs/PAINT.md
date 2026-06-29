@@ -6,7 +6,7 @@ Flood-fills the contiguous graphics region at a point. The fill starts at the po
 
 Numeric colors use the legacy BASICShell palette. Quoted full-color values may use hex, named colors, or RGBA bytes.
 
-BASICShell supports `PAINT` only when VTG graphics are available. Large fills can create many retained VTG pixels, so this is currently best for modest regions.
+BASICShell supports `PAINT` only when VTG graphics are available. Studio and Shell batch changed fill pixels into horizontal VTG runs while preserving semantic framebuffer behavior for compatibility.
 
 ```basic
 screen 1

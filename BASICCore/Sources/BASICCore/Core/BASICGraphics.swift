@@ -80,6 +80,56 @@ public struct BASICGraphicsPoint: Equatable, Sendable {
     }
 }
 
+/// A contiguous horizontal run of graphics points.
+public struct BASICGraphicsHorizontalRun: Equatable, Sendable {
+    /// First horizontal coordinate in the run.
+    public let x1: Int
+    /// Last horizontal coordinate in the run.
+    public let x2: Int
+    /// Vertical coordinate shared by the run.
+    public let y: Int
+
+    /// Creates a horizontal graphics run.
+    public init(x1: Int, x2: Int, y: Int) {
+        self.x1 = min(x1, x2)
+        self.x2 = max(x1, x2)
+        self.y = y
+    }
+}
+
+/// Shared helpers for graphics hosts.
+public enum BASICGraphicsBatcher {
+    /// Groups arbitrary points into sorted contiguous horizontal runs.
+    public static func horizontalRuns(from points: [BASICGraphicsPoint]) -> [BASICGraphicsHorizontalRun] {
+        guard !points.isEmpty else { return [] }
+
+        let sorted = points.sorted {
+            if $0.y == $1.y { return $0.x < $1.x }
+            return $0.y < $1.y
+        }
+
+        var runs: [BASICGraphicsHorizontalRun] = []
+        var currentY = sorted[0].y
+        var startX = sorted[0].x
+        var endX = sorted[0].x
+
+        for point in sorted.dropFirst() {
+            if point.y == currentY, point.x <= endX + 1 {
+                endX = max(endX, point.x)
+                continue
+            }
+
+            runs.append(BASICGraphicsHorizontalRun(x1: startX, x2: endX, y: currentY))
+            currentY = point.y
+            startX = point.x
+            endX = point.x
+        }
+
+        runs.append(BASICGraphicsHorizontalRun(x1: startX, x2: endX, y: currentY))
+        return runs
+    }
+}
+
 /// A resolved BASIC color, supporting legacy palette indexes and full RGBA colors.
 public struct BASICColor: Equatable, Sendable {
     /// Red byte.
