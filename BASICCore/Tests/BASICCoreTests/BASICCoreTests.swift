@@ -604,6 +604,41 @@ struct BASICCoreTests {
         #expect(host.output == ["Runtime error: Function MissingHandler is not defined"])
     }
 
+    @Test("ON event CALL rejects async handlers for the MVP policy")
+    func onEventCallRejectsAsyncHandlersForMVPPolicy() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        on resize call ResizeChanged
+        end
+
+        async function ResizeChanged(event as BASICResizeEvent)
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: Event handler ResizeChanged must be synchronous"])
+    }
+
+    @Test("ON timer event rejects async handlers for the MVP policy")
+    func onTimerEventRejectsAsyncHandlersForMVPPolicy() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let timer = SecondsTimer(1)
+        on timer call TimerTick
+        end
+
+        async function TimerTick(event as BASICTimerEvent)
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: Event handler TimerTick must be synchronous"])
+    }
+
     @Test("Host resize and mouse events dispatch through shared event loop")
     func hostResizeAndMouseEventsDispatchThroughSharedEventLoop() throws {
         let host = TestHost()
@@ -770,8 +805,8 @@ struct BASICCoreTests {
         ])
     }
 
-    @Test("Event base class handlers receive typed subtype objects")
-    func eventBaseClassHandlersReceiveTypedSubtypeObjects() throws {
+    @Test("OPTION MOUSE OFF suppresses host mouse events")
+    func optionMouseOffSuppressesHostMouseEvents() throws {
         let host = TestHost()
         let session = BASICSession(host: host)
         let control = BASICExecutionControl()
@@ -779,9 +814,236 @@ struct BASICCoreTests {
         control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
 
         session.program.loadSource("""
+        option mouse off
+        on mouse up call MouseUp
+        print "ready"
+        yield
+        print "done"
+
+        function MouseUp(event as BASICMouseEvent)
+            print "MOUSE:" + event.Subtype
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        #expect(session.acceptsHostInputEvent(type: "MOUSE", subtype: "UP") == false)
+        session.postMouseEvent(subtype: "up", x: 1, y: 2, button: 0, buttons: 0, duration: 0)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "done"
+        ])
+    }
+
+    @Test("OPTION MOUSE AUTO re-enables registered host mouse events")
+    func optionMouseAutoReenablesRegisteredHostMouseEvents() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 5, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        option mouse off
+        option mouse auto
+        on mouse up call MouseUp
+        print "ready"
+        yield
+        print "done"
+
+        function MouseUp(event as BASICMouseEvent)
+            print "MOUSE:" + event.Subtype + ":" + str$(event.X)
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        #expect(session.acceptsHostInputEvent(type: "MOUSE", subtype: "UP") == true)
+        session.postMouseEvent(subtype: "up", x: 7, y: 8, button: 0, buttons: 0, duration: 0)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "MOUSE:UP: 7",
+            "done"
+        ])
+    }
+
+    @Test("OPTION GAMEPAD OFF suppresses host gamepad events")
+    func optionGamepadOffSuppressesHostGamepadEvents() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        option gamepad off
+        on gamepad button call GamepadButton
+        print "ready"
+        yield
+        print "done"
+
+        function GamepadButton(event as BASICGamepadEvent)
+            print "GAMEPAD:" + event.Control
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        #expect(session.acceptsHostInputEvent(type: "GAMEPAD", subtype: "BUTTON") == false)
+        session.postGamepadEvent(subtype: "button", controller: 1, control: "A", value: 1)
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "done"
+        ])
+    }
+
+    @Test("Frame events can dispatch variant and typed BASIC frame objects")
+    func frameEventsCanDispatchVariantAndTypedBASICFrameObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on frame started call FrameStarted
+        on frame rejected call FrameRejected
+        print "ready"
+        yield
+        print "done"
+
+        function FrameStarted(event as BASICFrameEvent)
+            print event.Type + ":" + event.Subtype + ":" + event.FrameID + ":" + event.FrameType + ":" + str$(event.Timeout) + ":" + event.Target
+        end function
+
+        function FrameRejected(event as variant)
+            print event("type") + ":" + event("subtype") + ":" + event("frameID") + ":" + event("reason")
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postFrameEvent(subtype: "started", frameID: "frame-a", frameType: "frameStarted", timeoutMilliseconds: 250, rawResponse: "raw-start")
+        session.postFrameEvent(subtype: "rejected", frameID: "frame-b", frameType: "frameRejected", reason: "busy", rawResponse: "raw-reject")
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "FRAME:STARTED:frame-a:frameStarted: 250:frame-a",
+            "FRAME:REJECTED:frame-b:busy",
+            "done"
+        ])
+    }
+
+    @Test("Route and network events can dispatch typed BASIC objects")
+    func routeAndNetworkEventsCanDispatchTypedBASICObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
+        on route request call RouteRequest
+        on network completed call NetworkCompleted
+        print "ready"
+        yield
+        print "done"
+
+        function RouteRequest(event as BASICRouteEvent)
+            print event.Type + ":" + event.Subtype + ":" + event.Method + ":" + event.Path + ":" + event.Route + ":" + event.Target + ":" + str$(event.Status)
+        end function
+
+        function NetworkCompleted(event as BASICNetworkEvent)
+            print event.Type + ":" + event.Subtype + ":" + event.Operation + ":" + event.Url + ":" + str$(event.Status) + ":" + str$(event.Bytes) + ":" + event.RequestID
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint before event drain")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == pauseAtYield)
+        }
+
+        session.postRouteEvent(
+            subtype: "request",
+            requestID: "req-1",
+            method: "get",
+            path: "/parts/42",
+            route: "/parts/:id",
+            query: "verbose=true",
+            status: 200
+        )
+        session.postNetworkEvent(
+            subtype: "completed",
+            operation: "GET",
+            url: "https://example.test/parts/42",
+            status: 200,
+            bytes: 512,
+            requestID: "req-1"
+        )
+
+        control.ignoreBreakpointOnce(at: pauseAtYield)
+        try session.continueProgram(executionControl: control)
+
+        #expect(host.output == [
+            "ready",
+            "ROUTE:REQUEST:GET:/parts/42:/parts/:id:/parts/:id: 200",
+            "NETWORK:COMPLETED:GET:https://example.test/parts/42: 200: 512:req-1",
+            "done"
+        ])
+    }
+
+    @Test("Event base class handlers receive typed subtype objects")
+    func eventBaseClassHandlersReceiveTypedSubtypeObjects() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let pauseAtYield = BASICBreakpointLocation(lineNumber: 8, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: pauseAtYield)])
+
+        session.program.loadSource("""
         on resize call AnyEvent
         on mouse up call AnyEvent
         on gamepad button call AnyEvent
+        on frame committed call AnyEvent
+        on route request call AnyEvent
+        on network failed call AnyEvent
         print "ready"
         yield
         print "done"
@@ -801,6 +1063,9 @@ struct BASICCoreTests {
         session.postResizeEvent(width: 640, height: 480)
         session.postMouseEvent(subtype: "up", x: 4, y: 5, button: 1, buttons: 0, duration: 0)
         session.postGamepadEvent(subtype: "button", controller: 1, control: "B", value: 1)
+        session.postFrameEvent(subtype: "committed", frameID: "frame-c", frameType: "frameCommitted")
+        session.postRouteEvent(subtype: "request", requestID: "req-2", method: "POST", path: "/jobs", route: "/jobs")
+        session.postNetworkEvent(subtype: "failed", operation: "POST", url: "https://example.test/jobs", error: "timeout", requestID: "req-2")
 
         control.ignoreBreakpointOnce(at: pauseAtYield)
         try session.continueProgram(executionControl: control)
@@ -810,6 +1075,9 @@ struct BASICCoreTests {
             "RESIZE:",
             "MOUSE:UP",
             "GAMEPAD:BUTTON",
+            "FRAME:COMMITTED",
+            "ROUTE:REQUEST",
+            "NETWORK:FAILED",
             "done"
         ])
     }
@@ -866,7 +1134,7 @@ struct BASICCoreTests {
 
         #expect(host.output == [
             "TYPED EVENT TEST",
-            "Resize, mouse down/up, or scroll to print typed event payloads.",
+            "Resize, mouse down/up, scroll, or press F to print typed event payloads.",
             "Press Q to exit.",
             "Typed event test done."
         ])
@@ -1448,7 +1716,7 @@ struct BASICCoreTests {
 
         #expect(host.logs.count == 1)
         #expect(host.logs.first?.level == "INFO")
-        #expect(host.logs.first?.issuer == "B")
+        #expect(host.logs.first?.issuer == "U")
         #expect(host.logs.first?.module == "Immediate")
         #expect(host.logs.first?.text == "x=5           done")
         #expect(host.output.isEmpty)
@@ -2062,7 +2330,8 @@ struct BASICCoreTests {
             "simple-graphics.bas",
             "graphics-box.bas",
             "diagonal-lines.bas",
-            "basic-graphics-command-test.bas"
+            "basic-graphics-command-test.bas",
+            "graphics-primitives.bas"
         ]
 
         for demoName in demoNames {
@@ -2236,6 +2505,85 @@ struct BASICCoreTests {
         #expect(host.output[2].contains("Syntax error: Expected ="))
         #expect(host.output[3] == "20 skdjfhs fhkdsfhsdfk")
         #expect(host.output[4].contains("^"))
+    }
+
+    @Test("DELETE removes line ranges")
+    func deleteRemovesLineRanges() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print 1")
+        session.submit("20 print 2")
+        session.submit("30 print 3")
+        session.submit("40 print 4")
+        session.submit("DELETE 20-30")
+        session.submit("LIST")
+        session.submit("DEL 10")
+        session.submit("LIST")
+
+        #expect(host.output == [
+            "10 print 1\n40 print 4",
+            "40 print 4"
+        ])
+    }
+
+    @Test("RENUM renumbers lines and common references")
+    func renumRenumbersLinesAndReferences() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print \"goto 30\"")
+        session.submit("20 if X then 40 else 50")
+        session.submit("30 goto 60")
+        session.submit("40 gosub 70")
+        session.submit("50 rem goto 10")
+        session.submit("60 print \"done\"")
+        session.submit("70 return")
+        session.submit("RENUM 100,10,5")
+        session.submit("LIST")
+
+        #expect(host.output == ["""
+        100 print "goto 30"
+        105 if X then 115 else 120
+        110 goto 125
+        115 gosub 130
+        120 rem goto 10
+        125 print "done"
+        130 return
+        """])
+    }
+
+    @Test("RENUM detects collisions with unrenumbered lines")
+    func renumDetectsCollisions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("10 print 1")
+        session.submit("20 print 2")
+        session.submit("RENUM 10,20,10")
+
+        #expect(host.output == ["Runtime error: RENUM would collide with existing line 10"])
+    }
+
+    @Test("AUTO reads numbered program lines until blank")
+    func autoReadsNumberedProgramLines() {
+        let host = TestHost()
+        host.input = [
+            "print \"A\"",
+            "35 print \"explicit\"",
+            "print \"B\"",
+            ""
+        ]
+        let session = BASICSession(host: host)
+
+        session.submit("AUTO 10,10")
+        session.submit("LIST")
+
+        #expect(host.output == ["""
+        10 print "A"
+        35 print "explicit"
+        45 print "B"
+        """])
     }
 
     @Test("LOAD supports line-number-free source")
@@ -3578,7 +3926,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: Type Mismatch"])
+        #expect(host.output == ["Type error: Type Mismatch"])
     }
 
     @Test("FUNCTION TYPE declarations can type callback parameters")
@@ -4757,6 +5105,8 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.screenMode?.number == 1)
+        #expect(host.screenMode?.width == 0)
+        #expect(host.screenMode?.height == 0)
         #expect(host.output == ["2", "0"])
         #expect(host.lines.count == 5)
         #expect(host.lines.first?.0 == 0)
@@ -4782,6 +5132,26 @@ struct BASICCoreTests {
         #expect(host.fills.first?.1 == 1)
         #expect(host.fills.first?.2 == 5)
         #expect(host.fills.first?.3 == 3)
+    }
+
+    @Test("SCREEN is native-canvas compatibility input")
+    func screenIsNativeCanvasCompatibilityInput() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        pset (2,3), 4
+        screen 2
+        print point(2,3)
+        """)
+        session.submit("run")
+
+        #expect(host.screenMode?.number == 2)
+        #expect(host.screenMode?.width == 0)
+        #expect(host.screenMode?.height == 0)
+        #expect(host.screenMode?.colorCount == 0)
+        #expect(host.output == ["4"])
     }
 
     @Test("CIRCLE aspect draws VTG ellipse primitive")
@@ -4886,6 +5256,66 @@ struct BASICCoreTests {
         #expect(host.lines[5].2 == 25)
         #expect(host.lines[5].3 == 20)
         #expect(host.graphicsColor == 3)
+    }
+
+    @Test("DRAW supports scale and quarter-turn angle commands")
+    func drawSupportsScaleAndQuarterTurnAngleCommands() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        screen 1
+        pset (10,10), 1
+        draw "S8R2A1R2A2R2A3R2A0S2D4"
+        """)
+        session.submit("run")
+
+        #expect(host.lines.count == 5)
+        #expect(host.lines[0].0 == 10)
+        #expect(host.lines[0].1 == 10)
+        #expect(host.lines[0].2 == 14)
+        #expect(host.lines[0].3 == 10)
+        #expect(host.lines[1].0 == 14)
+        #expect(host.lines[1].1 == 10)
+        #expect(host.lines[1].2 == 14)
+        #expect(host.lines[1].3 == 6)
+        #expect(host.lines[2].0 == 14)
+        #expect(host.lines[2].1 == 6)
+        #expect(host.lines[2].2 == 10)
+        #expect(host.lines[2].3 == 6)
+        #expect(host.lines[3].0 == 10)
+        #expect(host.lines[3].1 == 6)
+        #expect(host.lines[3].2 == 10)
+        #expect(host.lines[3].3 == 10)
+        #expect(host.lines[4].0 == 10)
+        #expect(host.lines[4].1 == 10)
+        #expect(host.lines[4].2 == 10)
+        #expect(host.lines[4].3 == 12)
+    }
+
+    @Test("DRAW validates scale and angle commands")
+    func drawValidatesScaleAndAngleCommands() {
+        let zeroScaleHost = TestHost()
+        let zeroScaleSession = BASICSession(host: zeroScaleHost)
+
+        zeroScaleSession.program.loadSource("""
+        screen 1
+        draw "S0R1"
+        """)
+        zeroScaleSession.submit("run")
+
+        #expect(zeroScaleHost.output == ["Runtime error: DRAW scale must be greater than zero"])
+
+        let badAngleHost = TestHost()
+        let badAngleSession = BASICSession(host: badAngleHost)
+
+        badAngleSession.program.loadSource("""
+        screen 1
+        draw "A4R1"
+        """)
+        badAngleSession.submit("run")
+
+        #expect(badAngleHost.output == ["Runtime error: DRAW angle must be 0, 1, 2, or 3"])
     }
 
     @Test("COLOR accepts text background")
@@ -6326,7 +6756,6 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
 
     func setScreenMode(_ mode: BASICScreenMode) {
         screenMode = mode
-        pixels.removeAll()
     }
 
     func setGraphicsColor(_ color: Int) {

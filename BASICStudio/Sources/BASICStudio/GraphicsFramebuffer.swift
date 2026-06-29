@@ -19,6 +19,24 @@ final class GraphicsFramebuffer {
     }
 
     func setMode(_ mode: BASICScreenMode) {
+        let resolvedMode = mode.width > 0 && mode.height > 0
+            ? mode
+            : BASICScreenMode(number: mode.number, width: 1024, height: 768, colorCount: 16)
+        self.mode = resolvedMode
+        pixels = Array(repeating: 0, count: max(0, resolvedMode.width * resolvedMode.height))
+    }
+
+    func ensureNativeMode() {
+        guard !isEnabled else { return }
+        setMode(BASICScreenMode(number: 0, width: 0, height: 0, colorCount: 0))
+    }
+
+    func setScreenModeIfNeeded(_ mode: BASICScreenMode) {
+        guard !isEnabled else { return }
+        setMode(mode)
+    }
+
+    func resetMode(_ mode: BASICScreenMode) {
         self.mode = mode
         pixels = Array(repeating: 0, count: max(0, mode.width * mode.height))
     }
@@ -29,6 +47,7 @@ final class GraphicsFramebuffer {
     }
 
     func setPixel(x: Int, y: Int, color: Int) {
+        ensureNativeMode()
         guard isEnabled, x >= 0, y >= 0, x < mode.width, y < mode.height else { return }
         pixels[y * mode.width + x] = normalized(color)
     }

@@ -338,6 +338,7 @@ final class StudioModel: ObservableObject {
     }
 
     func postGamepadEvent(subtype: String, controller: Int, control: String, value: Double) {
+        guard session.acceptsHostInputEvent(type: "GAMEPAD", subtype: subtype) else { return }
         appendLog(
             level: "GAMEPAD",
             issuer: .basic,
@@ -2020,11 +2021,8 @@ extension StudioModel: BASICGraphicsHost {
 
     nonisolated func setScreenMode(_ mode: BASICScreenMode) {
         runOnMainActorSync {
-            graphics.setMode(mode)
+            graphics.setScreenModeIfNeeded(mode)
             graphicsRevision += 1
-            basicGraphicsOperationID = 0
-            vtgCanvas.clear()
-            vtgCanvas.present()
         }
     }
 

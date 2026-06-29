@@ -434,7 +434,7 @@ struct Parser {
                 return try parseAssignment(kind: .bare, requiresEquals: true)
             }
             if hasTopLevelDotBeforeStatementEnd() {
-                return .expression(try parseExpression())
+                return .expression(standaloneDottedExpression(try parseExpression()))
             }
             return try parseAssignment(kind: .bare, requiresEquals: true)
         }
@@ -442,6 +442,17 @@ struct Parser {
             throw syntax("Unexpected character #")
         }
         throw syntax("Unknown statement")
+    }
+
+    private func standaloneDottedExpression(_ expression: Expression) -> Expression {
+        guard case .variableReference(var reference) = expression,
+              let methodName = reference.fields.last,
+              reference.fieldIndexes.last?.isEmpty ?? true else {
+            return expression
+        }
+        reference.fields.removeLast()
+        reference.fieldIndexes.removeLast()
+        return .methodCall(reference, VariableName(name: methodName, column: reference.base.column), [])
     }
 
     private func hasTopLevelDotBeforeStatementEnd() -> Bool {
@@ -834,8 +845,10 @@ struct Parser {
         let checkpoint = current
         guard case .identifier = peek else { return nil }
         let timer = try consumeVariableName("Expected timer variable after ON")
+        var hasExplicitTickSelector = false
         let ticks: Expression?
         if match(.leftParen) {
+            hasExplicitTickSelector = true
             ticks = try parseExpression()
             guard match(.rightParen) else {
                 current = checkpoint
@@ -845,6 +858,10 @@ struct Parser {
             ticks = nil
         }
         guard matchIdentifier("GOSUB") || matchIdentifier("CALL") else {
+            current = checkpoint
+            return nil
+        }
+        guard hasExplicitTickSelector || timer.normalized == "TIMER" else {
             current = checkpoint
             return nil
         }
@@ -1101,7 +1118,20 @@ struct Parser {
             guard match(.minus), matchIdentifier("KEYS") else { throw syntax("Expected AIBASIC-KEYS") }
             return .optionKeyMode(.aibasic)
         }
-        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, or AIBASIC-KEYS")
+        if matchIdentifier("MOUSE") {
+            return .optionEventInput(type: "MOUSE", mode: try parseEventInputMode(optionName: "MOUSE"))
+        }
+        if matchIdentifier("GAMEPAD") {
+            return .optionEventInput(type: "GAMEPAD", mode: try parseEventInputMode(optionName: "GAMEPAD"))
+        }
+        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, or GAMEPAD")
+    }
+
+    private mutating func parseEventInputMode(optionName: String) throws -> BASICEventInputMode {
+        if matchIdentifier("ON") { return .on }
+        if matchIdentifier("OFF") { return .off }
+        if matchIdentifier("AUTO") { return .auto }
+        throw syntax("Expected ON, OFF, or AUTO after OPTION \(optionName)")
     }
 
     private mutating func parseLetMode() throws -> LetMode {

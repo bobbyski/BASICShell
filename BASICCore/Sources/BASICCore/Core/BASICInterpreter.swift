@@ -985,7 +985,7 @@ public final class BASICInterpreter {
             guard graphicsHost.isGraphicsAvailable else {
                 throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
             }
-            graphicsHost.setScreenMode(screenMode(for: modeNumber))
+            graphicsHost.setScreenMode(nativeScreenMode(for: modeNumber))
             return .next
         case .color(let expressions):
             let (color, background) = try resolveColorStatement(expressions)
@@ -1172,6 +1172,17 @@ public final class BASICInterpreter {
         case .optionKeyMode(let mode):
             runtime.keyMode = mode
             return .next
+        case .optionEventInput(let type, let mode):
+            switch type.uppercased() {
+            case "MOUSE":
+                runtime.mouseEventMode = mode
+            case "GAMEPAD":
+                runtime.gamepadEventMode = mode
+            default:
+                break
+            }
+            synchronizeHostInput(for: type)
+            return .next
         case .input(let prompt, let target):
             let promptText = try prompt.map(string) ?? "\(inputTargetName(target))? "
             let raw = host?.readLine(prompt: promptText) ?? ""
@@ -1295,14 +1306,21 @@ public final class BASICInterpreter {
             errorResumeNextPC = nil
             return .next
         case .onEventCall(let selector, let handler):
-            guard functionDefinitions[handler.normalized] != nil else {
-                throw BASICError.runtime("Event handler \(handler.name) must be a FUNCTION")
+            guard let definition = functionDefinitions[handler.normalized] else {
+                throw BASICError.runtime("Function \(handler.name) is not defined")
+            }
+            guard !definition.isAsync else {
+                throw BASICError.runtime("Event handler \(handler.name) must be synchronous")
             }
             runtime.setEventHandler(selector: selector, handler: handler)
+            synchronizeHostInput(for: selector.type)
             return .next
         case .onTimerEvent(let timer, let ticksExpression, let handler):
-            guard functionDefinitions[handler.normalized] != nil else {
+            guard let definition = functionDefinitions[handler.normalized] else {
                 throw BASICError.runtime("Timer handler \(handler.name) must be a FUNCTION")
+            }
+            guard !definition.isAsync else {
+                throw BASICError.runtime("Timer handler \(handler.name) must be synchronous")
             }
             let timerValue = runtime.value(for: timer)
             guard case .systemObject(let typeName, let id) = timerValue,
@@ -2758,6 +2776,9 @@ public final class BASICInterpreter {
             logMissingEventHandler(selector: selector, detail: " handler=\(registration.handlerName)")
             return
         }
+        guard !definition.isAsync else {
+            throw BASICError.runtime("Event handler \(definition.displayName) must be synchronous")
+        }
         let payload = try eventPayload(for: selector, data: data, handler: definition)
         logTarget(
             module: "BASICInterpreter.swift",
@@ -2814,6 +2835,12 @@ public final class BASICInterpreter {
             typeName = "BASICTimerEvent"
         case "GAMEPAD":
             typeName = "BASICGamepadEvent"
+        case "FRAME":
+            typeName = "BASICFrameEvent"
+        case "ROUTE":
+            typeName = "BASICRouteEvent"
+        case "NETWORK":
+            typeName = "BASICNetworkEvent"
         default:
             typeName = "BASICEvent"
         }
@@ -2863,6 +2890,39 @@ public final class BASICInterpreter {
             fields["CONTROLLER"] = fieldValue("controller", from: dictionary) ?? .number(0)
             fields["CONTROL"] = fieldValue("control", from: dictionary) ?? .string(BASICString(""))
             fields["VALUE"] = fieldValue("value", from: dictionary) ?? .number(0)
+        case "FRAME":
+            fields["FRAMEID"] = fieldValue("frameID", from: dictionary)
+                ?? fieldValue("id", from: dictionary)
+                ?? .string(BASICString(""))
+            fields["FRAMETYPE"] = fieldValue("frameType", from: dictionary)
+                ?? fieldValue("subtype", from: dictionary)
+                ?? .string(BASICString(""))
+            fields["REASON"] = fieldValue("reason", from: dictionary) ?? .string(BASICString(""))
+            fields["TIMEOUT"] = fieldValue("timeout", from: dictionary)
+                ?? fieldValue("timeoutMilliseconds", from: dictionary)
+                ?? .number(0)
+            fields["RAW"] = fieldValue("raw", from: dictionary)
+                ?? fieldValue("rawResponse", from: dictionary)
+                ?? .string(BASICString(""))
+        case "ROUTE":
+            fields["REQUESTID"] = fieldValue("requestID", from: dictionary)
+                ?? fieldValue("requestId", from: dictionary)
+                ?? .string(BASICString(""))
+            fields["METHOD"] = fieldValue("method", from: dictionary) ?? .string(BASICString(""))
+            fields["PATH"] = fieldValue("path", from: dictionary) ?? .string(BASICString(""))
+            fields["ROUTE"] = fieldValue("route", from: dictionary) ?? .string(BASICString(""))
+            fields["QUERY"] = fieldValue("query", from: dictionary) ?? .string(BASICString(""))
+            fields["BODY"] = fieldValue("body", from: dictionary) ?? .string(BASICString(""))
+            fields["STATUS"] = fieldValue("status", from: dictionary) ?? .number(0)
+        case "NETWORK":
+            fields["OPERATION"] = fieldValue("operation", from: dictionary) ?? .string(BASICString(""))
+            fields["URL"] = fieldValue("url", from: dictionary) ?? .string(BASICString(""))
+            fields["STATUS"] = fieldValue("status", from: dictionary) ?? .number(0)
+            fields["BYTES"] = fieldValue("bytes", from: dictionary) ?? .number(0)
+            fields["ERROR"] = fieldValue("error", from: dictionary) ?? .string(BASICString(""))
+            fields["REQUESTID"] = fieldValue("requestID", from: dictionary)
+                ?? fieldValue("requestId", from: dictionary)
+                ?? .string(BASICString(""))
         default:
             break
         }
@@ -2872,6 +2932,26 @@ public final class BASICInterpreter {
 
     private func fieldValue(_ key: String, from dictionary: BASICDictionary) -> BASICValue? {
         dictionary.values[key] ?? dictionary.values[key.uppercased()]
+    }
+
+    private func synchronizeHostInput(for type: String) {
+        guard type.uppercased() == "MOUSE",
+              let vectorHost = host as? BASICVectorTerminalHost,
+              vectorHost.isVectorTerminalAvailable else {
+            return
+        }
+        do {
+            if runtime.isHostInputEnabled(for: BASICEventSelector(type: "MOUSE")) {
+                try vectorHost.vectorTerminalEnableMouseReporting(mode: "all")
+            } else {
+                try vectorHost.vectorTerminalDisableMouseReporting()
+            }
+        } catch {
+            logTarget(
+                module: "BASICInterpreter.swift",
+                text: "mouse input sync failed error=\(error)"
+            )
+        }
     }
 
     private func logTarget(module: String, text: String) {
@@ -4793,6 +4873,8 @@ public final class BASICInterpreter {
         var drawColor = currentGraphicsColor
         var blankNext = false
         var noUpdateNext = false
+        var scale = 4
+        var angle = 0
 
         func skipSeparators() {
             while index < characters.count {
@@ -4836,8 +4918,28 @@ public final class BASICInterpreter {
             noUpdateNext = false
         }
 
+        func scaled(_ value: Int) -> Int {
+            Int((Double(value) * Double(scale) / 4.0).rounded())
+        }
+
+        func rotated(dx: Int, dy: Int) -> (dx: Int, dy: Int) {
+            let scaledDX = scaled(dx)
+            let scaledDY = scaled(dy)
+            switch ((angle % 4) + 4) % 4 {
+            case 1:
+                return (scaledDY, -scaledDX)
+            case 2:
+                return (-scaledDX, -scaledDY)
+            case 3:
+                return (-scaledDY, scaledDX)
+            default:
+                return (scaledDX, scaledDY)
+            }
+        }
+
         func drawRelative(dx: Int, dy: Int) {
-            drawTo(currentGraphicsPoint.x + dx, currentGraphicsPoint.y + dy)
+            let transformed = rotated(dx: dx, dy: dy)
+            drawTo(currentGraphicsPoint.x + transformed.dx, currentGraphicsPoint.y + transformed.dy)
         }
 
         while index < characters.count {
@@ -4856,6 +4958,18 @@ public final class BASICInterpreter {
                 drawColor = .legacy(color)
                 currentGraphicsColor = drawColor
                 graphicsHost.setGraphicsColor(drawColor)
+            case "S":
+                let newScale = try readSignedNumber()
+                guard newScale > 0 else {
+                    throw BASICError.runtime("DRAW scale must be greater than zero")
+                }
+                scale = newScale
+            case "A":
+                let newAngle = try readSignedNumber()
+                guard (0...3).contains(newAngle) else {
+                    throw BASICError.runtime("DRAW angle must be 0, 1, 2, or 3")
+                }
+                angle = newAngle
             case "U":
                 let amount = try readSignedNumber(default: 1)
                 drawRelative(dx: 0, dy: -amount)
@@ -4921,19 +5035,8 @@ public final class BASICInterpreter {
         return (foreground, background)
     }
 
-    private func screenMode(for number: Int) -> BASICScreenMode {
-        switch number {
-        case 0:
-            return BASICScreenMode(number: 0, width: 0, height: 0, colorCount: 0)
-        case 1:
-            return BASICScreenMode(number: 1, width: 320, height: 200, colorCount: 4)
-        case 2:
-            return BASICScreenMode(number: 2, width: 640, height: 200, colorCount: 2)
-        case 3:
-            return BASICScreenMode(number: 3, width: 256, height: 192, colorCount: 4)
-        default:
-            return BASICScreenMode(number: number, width: 320, height: 200, colorCount: 16)
-        }
+    private func nativeScreenMode(for number: Int) -> BASICScreenMode {
+        BASICScreenMode(number: number, width: 0, height: 0, colorCount: 0)
     }
 
     private func ansiColorSequence(foreground: BASICColor, background: BASICColor?) -> String {

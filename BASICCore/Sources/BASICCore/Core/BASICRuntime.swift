@@ -12,6 +12,8 @@ final class BASICRuntime {
     var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
     var letMode: LetMode = .global
     var keyMode: BASICKeyMode = .aibasic
+    var mouseEventMode: BASICEventInputMode = .auto
+    var gamepadEventMode: BASICEventInputMode = .auto
     var randomGenerator = BASICRandomGenerator()
     var lastErrorNumber = 0
     var lastErrorLine = 0
@@ -39,6 +41,8 @@ final class BASICRuntime {
         resetForRun()
         letMode = .global
         keyMode = .aibasic
+        mouseEventMode = .auto
+        gamepadEventMode = .auto
     }
 
     func clearLastError() {
@@ -81,6 +85,31 @@ final class BASICRuntime {
 
     func eventHandler(for selector: BASICEventSelector) -> BASICEventHandlerRegistration? {
         eventHandlers[selector]
+    }
+
+    func isHostInputEnabled(for selector: BASICEventSelector) -> Bool {
+        let mode: BASICEventInputMode
+        switch selector.type {
+        case "MOUSE":
+            mode = mouseEventMode
+        case "GAMEPAD":
+            mode = gamepadEventMode
+        default:
+            return true
+        }
+
+        switch mode {
+        case .on:
+            return true
+        case .off:
+            return false
+        case .auto:
+            if selector.subtype != nil {
+                return eventHandler(for: selector) != nil
+                    || eventHandler(for: BASICEventSelector(type: selector.type)) != nil
+            }
+            return eventHandlers.keys.contains { $0.type == selector.type }
+        }
     }
 
     func pushLocalContext() -> Int {
@@ -274,7 +303,7 @@ final class BASICRuntime {
     static func isBuiltInClass(_ name: String) -> Bool {
         switch name.uppercased() {
         case "FILE", "VECTORTERMINAL", "VTG", "SECONDSTIMER",
-            "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+            "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
             return true
         default:
             return false
@@ -2046,7 +2075,7 @@ final class BASICRuntime {
                 switch name.uppercased() {
                 case "VECTORTERMINAL", "VTG":
                     return vectorTerminalObject()
-                case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+                case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
                     return Self.builtInEventObject(typeName: name, fields: [:])
                 case "SECONDSTIMER":
                     return secondsTimerObject(intervalSeconds: 0)
@@ -2650,7 +2679,7 @@ final class BASICRuntime {
 
     static func builtInEventClassName(_ name: String) -> String? {
         switch name.uppercased() {
-        case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+        case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
             return name.uppercased()
         default:
             return nil
@@ -2715,6 +2744,33 @@ final class BASICRuntime {
                 eventField("Control", .scalar(.string), declaringClassName: normalized),
                 eventField("Value", .scalar(.double), declaringClassName: normalized)
             ]
+        case "BASICFRAMEEVENT":
+            ownFields = [
+                eventField("FrameID", .scalar(.string), declaringClassName: normalized),
+                eventField("FrameType", .scalar(.string), declaringClassName: normalized),
+                eventField("Reason", .scalar(.string), declaringClassName: normalized),
+                eventField("Timeout", .scalar(.integer), declaringClassName: normalized),
+                eventField("Raw", .scalar(.string), declaringClassName: normalized)
+            ]
+        case "BASICROUTEEVENT":
+            ownFields = [
+                eventField("RequestID", .scalar(.string), declaringClassName: normalized),
+                eventField("Method", .scalar(.string), declaringClassName: normalized),
+                eventField("Path", .scalar(.string), declaringClassName: normalized),
+                eventField("Route", .scalar(.string), declaringClassName: normalized),
+                eventField("Query", .scalar(.string), declaringClassName: normalized),
+                eventField("Body", .scalar(.string), declaringClassName: normalized),
+                eventField("Status", .scalar(.integer), declaringClassName: normalized)
+            ]
+        case "BASICNETWORKEVENT":
+            ownFields = [
+                eventField("Operation", .scalar(.string), declaringClassName: normalized),
+                eventField("Url", .scalar(.string), declaringClassName: normalized),
+                eventField("Status", .scalar(.integer), declaringClassName: normalized),
+                eventField("Bytes", .scalar(.integer), declaringClassName: normalized),
+                eventField("Error", .scalar(.string), declaringClassName: normalized),
+                eventField("RequestID", .scalar(.string), declaringClassName: normalized)
+            ]
         default:
             ownFields = []
         }
@@ -2723,7 +2779,7 @@ final class BASICRuntime {
 
     private static func builtInEventBaseClassName(_ normalizedName: String) -> String? {
         switch normalizedName {
-        case "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT":
+        case "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
             return "BASICEVENT"
         default:
             return nil
@@ -2737,6 +2793,9 @@ final class BASICRuntime {
         case "BASICMOUSEEVENT": return "BASICMouseEvent"
         case "BASICTIMEREVENT": return "BASICTimerEvent"
         case "BASICGAMEPADEVENT": return "BASICGamepadEvent"
+        case "BASICFRAMEEVENT": return "BASICFrameEvent"
+        case "BASICROUTEEVENT": return "BASICRouteEvent"
+        case "BASICNETWORKEVENT": return "BASICNetworkEvent"
         default: return normalizedName
         }
     }

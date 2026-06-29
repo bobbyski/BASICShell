@@ -10,7 +10,7 @@ final class BasicEditorHost: View {
 
     init(sessionPath: String) {
         self.sessionPath = sessionPath
-        self.window = Window("AIBasic EDIT", internalPadding: 0)
+        self.window = Window("BASICShell EDIT", internalPadding: 0)
         self.textView = TextView()
         super.init()
 

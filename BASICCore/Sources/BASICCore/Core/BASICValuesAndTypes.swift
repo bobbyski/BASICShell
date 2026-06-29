@@ -459,6 +459,12 @@ enum BASICKeyMode: Equatable {
     case ibm
 }
 
+enum BASICEventInputMode: Equatable {
+    case auto
+    case on
+    case off
+}
+
 /// BASIC-visible event selector registered with `ON <type> [subtype] CALL`.
 public struct BASICEventSelector: Hashable, Sendable, CustomStringConvertible {
     /// Primary event type, normalized to uppercase.

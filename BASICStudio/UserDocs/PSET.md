@@ -8,6 +8,8 @@ Numeric colors use the legacy BASICShell palette. Quoted full-color values may u
 
 BASICShell supports `PSET` only when VTG graphics are available.
 
+`PSET` remains supported for compatibility, but it can be expensive for graphics-heavy programs because each visible pixel may become retained VTG drawing state. Prefer vector primitives such as `LINE`, `CIRCLE`, `PAINT`, and `DRAW` when possible.
+
 ```basic
 screen 1
 color "orange"

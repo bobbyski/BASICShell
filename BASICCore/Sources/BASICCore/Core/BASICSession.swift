@@ -132,6 +132,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         runtime.eventHandlerRegistrations
     }
 
+    /// Returns true when the current event options and registrations want this host input family.
+    public func acceptsHostInputEvent(type: String, subtype: String? = nil) -> Bool {
+        runtime.isHostInputEnabled(for: BASICEventSelector(type: type, subtype: subtype))
+    }
+
     /// Submits one console line, returning false when the caller should exit.
     @discardableResult
     public func submit(_ input: String) -> Bool {
@@ -252,6 +257,25 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 return true
             }
 
+            if let deleteCommand = try Self.deleteCommand(from: trimmed) {
+                program.deleteLines(begin: deleteCommand.begin, end: deleteCommand.end)
+                return true
+            }
+
+            if let renumberCommand = try Self.renumberCommand(from: trimmed) {
+                try program.renumber(
+                    start: renumberCommand.start,
+                    oldStart: renumberCommand.oldStart,
+                    step: renumberCommand.step
+                )
+                return true
+            }
+
+            if let autoCommand = try Self.autoCommand(from: trimmed) {
+                readAutoLines(start: autoCommand.start, step: autoCommand.step)
+                return true
+            }
+
             let upper = trimmed.uppercased()
             if upper == "TASKS" || upper == "TASKS DETAIL" {
                 printTaskStatus(detail: upper == "TASKS DETAIL")
@@ -291,6 +315,22 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
 
         return true
+    }
+
+    private func readAutoLines(start: Int, step: Int) {
+        var lineNumber = start
+        while true {
+            guard let source = host.readLine(prompt: "\(lineNumber) ") else { return }
+            let trimmed = source.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return }
+            if let explicitLine = Self.splitNumberedLine(source) {
+                program.setLine(number: explicitLine.number, source: explicitLine.source)
+                lineNumber = explicitLine.number + step
+            } else {
+                program.setLine(number: lineNumber, source: source)
+                lineNumber += step
+            }
+        }
     }
 
     private func printTaskStatus(detail: Bool) {
@@ -479,8 +519,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         target: String = ""
     ) {
         let normalizedSubtype = subtype.uppercased()
+        let selector = BASICEventSelector(type: "MOUSE", subtype: normalizedSubtype)
+        guard runtime.isHostInputEnabled(for: selector) else { return }
         postEvent(
-            selector: BASICEventSelector(type: "MOUSE", subtype: normalizedSubtype),
+            selector: selector,
             fields: [
                 "type": .string(BASICString("MOUSE")),
                 "subtype": .string(BASICString(normalizedSubtype)),
@@ -505,14 +547,99 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         value: Double
     ) {
         let normalizedSubtype = subtype.uppercased()
+        let selector = BASICEventSelector(type: "GAMEPAD", subtype: normalizedSubtype)
+        guard runtime.isHostInputEnabled(for: selector) else { return }
         postEvent(
-            selector: BASICEventSelector(type: "GAMEPAD", subtype: normalizedSubtype),
+            selector: selector,
             fields: [
                 "type": .string(BASICString("GAMEPAD")),
                 "subtype": .string(BASICString(normalizedSubtype)),
                 "controller": .number(Double(controller)),
                 "control": .string(BASICString(control)),
                 "value": .number(value)
+            ]
+        )
+    }
+
+    /// Posts a VTG offscreen-frame lifecycle event to the running program.
+    public func postFrameEvent(
+        subtype: String,
+        frameID: String,
+        frameType: String,
+        reason: String = "",
+        timeoutMilliseconds: Int = 0,
+        rawResponse: String = ""
+    ) {
+        let normalizedSubtype = subtype.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "FRAME", subtype: normalizedSubtype),
+            fields: [
+                "type": .string(BASICString("FRAME")),
+                "subtype": .string(BASICString(normalizedSubtype)),
+                "target": .string(BASICString(frameID)),
+                "frameID": .string(BASICString(frameID)),
+                "frameType": .string(BASICString(frameType)),
+                "reason": .string(BASICString(reason)),
+                "timeout": .number(Double(timeoutMilliseconds)),
+                "raw": .string(BASICString(rawResponse))
+            ]
+        )
+    }
+
+    /// Posts a route/lifecycle event for future HTTP and service hosts.
+    public func postRouteEvent(
+        subtype: String,
+        requestID: String,
+        method: String,
+        path: String,
+        route: String = "",
+        query: String = "",
+        body: String = "",
+        status: Int = 0,
+        target: String = ""
+    ) {
+        let normalizedSubtype = subtype.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "ROUTE", subtype: normalizedSubtype),
+            fields: [
+                "type": .string(BASICString("ROUTE")),
+                "subtype": .string(BASICString(normalizedSubtype)),
+                "target": .string(BASICString(target.isEmpty ? route : target)),
+                "requestID": .string(BASICString(requestID)),
+                "method": .string(BASICString(method.uppercased())),
+                "path": .string(BASICString(path)),
+                "route": .string(BASICString(route)),
+                "query": .string(BASICString(query)),
+                "body": .string(BASICString(body)),
+                "status": .number(Double(status))
+            ]
+        )
+    }
+
+    /// Posts a network event for future HTTP/socket hosts.
+    public func postNetworkEvent(
+        subtype: String,
+        operation: String,
+        url: String,
+        status: Int = 0,
+        bytes: Int = 0,
+        error: String = "",
+        requestID: String = "",
+        target: String = ""
+    ) {
+        let normalizedSubtype = subtype.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "NETWORK", subtype: normalizedSubtype),
+            fields: [
+                "type": .string(BASICString("NETWORK")),
+                "subtype": .string(BASICString(normalizedSubtype)),
+                "target": .string(BASICString(target.isEmpty ? url : target)),
+                "operation": .string(BASICString(operation)),
+                "url": .string(BASICString(url)),
+                "status": .number(Double(status)),
+                "bytes": .number(Double(bytes)),
+                "error": .string(BASICString(error)),
+                "requestID": .string(BASICString(requestID))
             ]
         )
     }
@@ -1074,6 +1201,17 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         var check = false
     }
 
+    private struct RenumberCommand {
+        var start = 10
+        var oldStart: Int?
+        var step = 10
+    }
+
+    private struct AutoCommand {
+        var start = 10
+        var step = 10
+    }
+
     private static func listCommand(from source: String) throws -> ListCommand? {
         guard keywordPrefix("LIST", matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: 4)
@@ -1107,6 +1245,97 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard let line = Int(rest) else { throw BASICError.syntax("Expected line range after LIST") }
         command.begin = line
         command.end = line
+        return command
+    }
+
+    private static func deleteCommand(from source: String) throws -> ListCommand? {
+        let keyword: String
+        if keywordPrefix("DELETE", matches: source) {
+            keyword = "DELETE"
+        } else if keywordPrefix("DEL", matches: source) {
+            keyword = "DEL"
+        } else {
+            return nil
+        }
+
+        let start = source.index(source.startIndex, offsetBy: keyword.count)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { throw BASICError.syntax("Expected line range after \(keyword)") }
+
+        var command = ListCommand()
+        if let dash = rest.firstIndex(of: "-") {
+            let lower = rest[..<dash].trimmingCharacters(in: .whitespaces)
+            let upper = rest[rest.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+            if !lower.isEmpty {
+                guard let begin = Int(lower) else { throw BASICError.syntax("Expected beginning line number in \(keyword)") }
+                command.begin = begin
+            }
+            if !upper.isEmpty {
+                guard let end = Int(upper) else { throw BASICError.syntax("Expected ending line number in \(keyword)") }
+                command.end = end
+            }
+            return command
+        }
+
+        guard let line = Int(rest) else { throw BASICError.syntax("Expected line range after \(keyword)") }
+        command.begin = line
+        command.end = line
+        return command
+    }
+
+    private static func renumberCommand(from source: String) throws -> RenumberCommand? {
+        guard keywordPrefix("RENUM", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 5)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return RenumberCommand() }
+        let parts = rest.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count <= 3 else { throw BASICError.syntax("Expected RENUM [new][,[old][,step]]") }
+
+        var command = RenumberCommand()
+        if !parts[0].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let start = Int(parts[0].trimmingCharacters(in: .whitespaces)) else {
+                throw BASICError.syntax("Expected starting line number in RENUM")
+            }
+            command.start = start
+        }
+        if parts.count > 1, !parts[1].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let oldStart = Int(parts[1].trimmingCharacters(in: .whitespaces)) else {
+                throw BASICError.syntax("Expected old starting line number in RENUM")
+            }
+            command.oldStart = oldStart
+        }
+        if parts.count > 2, !parts[2].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let step = Int(parts[2].trimmingCharacters(in: .whitespaces)) else {
+                throw BASICError.syntax("Expected increment in RENUM")
+            }
+            command.step = step
+        }
+        return command
+    }
+
+    private static func autoCommand(from source: String) throws -> AutoCommand? {
+        guard keywordPrefix("AUTO", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 4)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return AutoCommand() }
+        let parts = rest.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count <= 2 else { throw BASICError.syntax("Expected AUTO [start][,step]") }
+
+        var command = AutoCommand()
+        if !parts[0].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let start = Int(parts[0].trimmingCharacters(in: .whitespaces)) else {
+                throw BASICError.syntax("Expected starting line number in AUTO")
+            }
+            command.start = start
+        }
+        if parts.count > 1, !parts[1].trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let step = Int(parts[1].trimmingCharacters(in: .whitespaces)) else {
+                throw BASICError.syntax("Expected increment in AUTO")
+            }
+            command.step = step
+        }
+        guard command.start > 0 else { throw BASICError.runtime("AUTO start line must be positive") }
+        guard command.step > 0 else { throw BASICError.runtime("AUTO increment must be positive") }
         return command
     }
 

@@ -569,7 +569,6 @@ final class ShellLineEditor: @unchecked Sendable {
 
 enum ShellGraphicsPolicy: String {
     case auto
-    case vtg
     case off
 
     static let environmentName = "BASICSHELL_GRAPHICS"
@@ -580,7 +579,7 @@ enum ShellGraphicsPolicy: String {
         guard let raw = environment[environmentName] ?? environment[legacyEnvironmentName] else {
             return defaultPolicy
         }
-        return Self(rawValue: raw.lowercased()) ?? defaultPolicy
+        return raw.lowercased() == "off" ? .off : defaultPolicy
     }
 
     static func parse(arguments: inout [String]) throws -> ShellGraphicsPolicy {
@@ -591,20 +590,20 @@ enum ShellGraphicsPolicy: String {
             let argument = arguments[index]
             if argument.hasPrefix("--graphics=") {
                 let rawValue = String(argument.dropFirst("--graphics=".count)).lowercased()
-                guard let parsed = Self(rawValue: rawValue) else {
-                    throw BASICError.runtime("Unknown graphics mode: \(rawValue)")
+                guard rawValue == "off" else {
+                    throw BASICError.runtime("Unknown graphics mode: \(rawValue). Supported mode: off")
                 }
-                policy = parsed
+                policy = .off
             } else if argument == "--graphics" {
                 let valueIndex = index + 1
                 guard valueIndex < arguments.count else {
                     throw BASICError.runtime("Missing value for --graphics")
                 }
                 let rawValue = arguments[valueIndex].lowercased()
-                guard let parsed = Self(rawValue: rawValue) else {
-                    throw BASICError.runtime("Unknown graphics mode: \(rawValue)")
+                guard rawValue == "off" else {
+                    throw BASICError.runtime("Unknown graphics mode: \(rawValue). Supported mode: off")
                 }
-                policy = parsed
+                policy = .off
                 index += 1
             } else {
                 remaining.append(argument)
@@ -671,8 +670,6 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         switch graphicsPolicy {
         case .off:
             return false
-        case .vtg:
-            return vectorTerminalProbe.isAvailable
         case .auto:
             return vectorTerminalProbe.isAvailable
         }
@@ -1060,8 +1057,10 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         }
 
         vtgCanvas.enableResizeEvents()
-        vtgCanvas.enableMouseReporting(mode: "all")
-        enableANSIMouseMotionReporting()
+        if session?.acceptsHostInputEvent(type: "MOUSE") == true {
+            vtgCanvas.enableMouseReporting(mode: "all")
+            enableANSIMouseMotionReporting()
+        }
         isVectorTerminalEventPollingEnabled = true
     }
 
@@ -1078,6 +1077,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         if wasEnabled {
             ShellEventTrace.shared.write("vtg-event-polling stop")
             vtgCanvas.disableMouseReporting()
+            disableANSIMouseMotionReporting()
             vtgCanvas.disableResizeEvents()
         }
         if var original {
@@ -1098,6 +1098,10 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     private func enableANSIMouseMotionReporting() {
         writeRawTerminal("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h")
+    }
+
+    private func disableANSIMouseMotionReporting() {
+        writeRawTerminal("\u{1B}[?1003l\u{1B}[?1002l\u{1B}[?1000l\u{1B}[?1006l")
     }
 
     private func writeRawTerminal(_ value: String) {
@@ -1308,7 +1312,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         if isScroll {
             subtype = "scroll"
         } else if isMotion {
-            subtype = baseButton == 3 ? "move" : "drag"
+            subtype = "move"
         } else if isRelease {
             subtype = "up"
         } else {
@@ -1340,7 +1344,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         if isScroll {
             subtype = "scroll"
         } else if isMotion {
-            subtype = baseButton == 3 ? "move" : "drag"
+            subtype = "move"
         } else if isRelease {
             subtype = "up"
         } else {
@@ -1362,7 +1366,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         target: String = ""
     ) {
         let normalizedSubtype = normalizedMouseSubtype(subtype)
-        let pressedButtons = normalizedSubtype == "down" || normalizedSubtype == "drag" || normalizedSubtype == "click" ? button : 0
+        let pressedButtons = normalizedSubtype == "down" || normalizedSubtype == "click" || (normalizedSubtype == "move" && button > 0) ? button : 0
         ShellEventTrace.shared.write("post-mouse subtype=\(normalizedSubtype) x=\(x) y=\(y) button=\(button) buttons=\(pressedButtons) deltaX=\(deltaX) deltaY=\(deltaY) hit=\(hitID) target=\(target)")
         session?.postMouseEvent(
             subtype: normalizedSubtype,
@@ -1447,11 +1451,9 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         if lowered == "up" || lowered.hasSuffix("up") || lowered.contains("release") {
             return "up"
         }
-        if lowered == "move" || lowered.hasSuffix("move") || lowered == "motion" {
+        if lowered == "move" || lowered.hasSuffix("move") || lowered == "motion" ||
+            lowered == "drag" || lowered.hasSuffix("drag") {
             return "move"
-        }
-        if lowered == "drag" || lowered.hasSuffix("drag") {
-            return "drag"
         }
         if lowered == "click" || lowered.hasSuffix("click") {
             return "click"
@@ -1491,13 +1493,11 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         case .specialKey:
             break
         case .mouse(let mouse):
-            session?.postMouseEvent(
+            postMouseEvent(
                 subtype: mouse.type,
-                x: Double(mouse.virtualX ?? mouse.x),
-                y: Double(mouse.virtualY ?? mouse.y),
+                x: mouse.virtualX ?? mouse.x,
+                y: mouse.virtualY ?? mouse.y,
                 button: mouse.button,
-                buttons: mouse.isPress ? mouse.button : 0,
-                duration: 0,
                 deltaX: Double(mouse.scrollX ?? 0),
                 deltaY: Double(mouse.scrollY ?? 0),
                 hitID: mouse.hitID ?? "",
@@ -1509,9 +1509,33 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
                snapshot.width != previous.width || snapshot.height != previous.height {
                 session?.postResizeEvent(width: max(1, snapshot.width), height: max(1, snapshot.height))
             }
-        case .frame:
-            break
+        case .frame(let frame):
+            postFrameEvent(frame)
         }
+    }
+
+    private func postFrameEvent(_ frame: VTGFrameEvent) {
+        let subtype = normalizedFrameSubtype(frame.type)
+        ShellEventTrace.shared.write("post-frame subtype=\(subtype) id=\(frame.id) frameType=\(frame.type) reason=\(frame.reason ?? "") timeout=\(frame.timeoutMilliseconds ?? 0)")
+        session?.postFrameEvent(
+            subtype: subtype,
+            frameID: frame.id,
+            frameType: frame.type,
+            reason: frame.reason ?? "",
+            timeoutMilliseconds: frame.timeoutMilliseconds ?? 0,
+            rawResponse: frame.rawResponse
+        )
+    }
+
+    private func normalizedFrameSubtype(_ type: String) -> String {
+        let lowercased = type.lowercased()
+        if lowercased.hasPrefix("frame") {
+            let suffix = String(type.dropFirst("frame".count))
+            if !suffix.isEmpty {
+                return suffix.uppercased()
+            }
+        }
+        return type.uppercased()
     }
 
     private func capabilityJSON(_ capabilities: VTGCapabilities?) -> String? {
@@ -1568,6 +1592,18 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
     private func normalizedGraphicsColor(_ color: Int) -> Int {
         guard graphicsMode.colorCount > 0 else { return max(0, color) }
         return max(0, color) % graphicsMode.colorCount
+    }
+
+    private func nativeSemanticGraphicsMode(number: Int = 0) -> BASICScreenMode {
+        let width = liveVTGCanvasSize.width > 0 ? liveVTGCanvasSize.width : 1024
+        let height = liveVTGCanvasSize.height > 0 ? liveVTGCanvasSize.height : 768
+        return BASICScreenMode(number: number, width: width, height: height, colorCount: 16)
+    }
+
+    private func ensureNativeSemanticGraphicsMode(number: Int = 0) {
+        guard graphicsMode.width <= 0 || graphicsMode.height <= 0 else { return }
+        graphicsMode = nativeSemanticGraphicsMode(number: number)
+        graphicsPixels = Array(repeating: 0, count: max(0, graphicsMode.width * graphicsMode.height))
     }
 
     private func nextBasicGraphicsID(_ prefix: String) -> String {
@@ -1722,12 +1758,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func setScreenMode(_ mode: BASICScreenMode) {
         guard isVectorTerminalAvailable else { return }
-        graphicsMode = mode
-        graphicsPixels = Array(repeating: 0, count: max(0, mode.width * mode.height))
-        basicGraphicsOperationID = 0
-        didUseVectorTerminal = true
-        vtgCanvas.clear()
-        vtgCanvas.present()
+        ensureNativeSemanticGraphicsMode(number: mode.number)
     }
 
     func setGraphicsColor(_ color: Int) {
@@ -1755,6 +1786,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func setPixel(x: Int, y: Int, color: Int) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         setFramebufferPixel(x: x, y: y, color: color)
         didUseVectorTerminal = true
         vtgCanvas.pixel(id: nextBasicGraphicsID("pixel"), x: x, y: y, color: basicGraphicsColor(color), layer: nil)
@@ -1763,6 +1795,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func setPixel(x: Int, y: Int, color: BASICColor) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         setFramebufferPixel(x: x, y: y, color: color.legacyIndex ?? 1)
         didUseVectorTerminal = true
         vtgCanvas.pixel(id: nextBasicGraphicsID("pixel"), x: x, y: y, color: basicGraphicsColor(color), layer: nil)
@@ -1781,6 +1814,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color)
         didUseVectorTerminal = true
         vtgCanvas.line(id: nextBasicGraphicsID("line"), x1: x1, y1: y1, x2: x2, y2: y2, stroke: basicGraphicsColor(color), width: 2, layer: nil)
@@ -1789,6 +1823,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color.legacyIndex ?? 1)
         didUseVectorTerminal = true
         vtgCanvas.line(id: nextBasicGraphicsID("line"), x1: x1, y1: y1, x2: x2, y2: y2, stroke: basicGraphicsColor(color), width: 2, layer: nil)
@@ -1797,6 +1832,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferCircle(cx: cx, cy: cy, radius: radius, color: color)
         didUseVectorTerminal = true
         vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
@@ -1805,6 +1841,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawCircle(cx: Int, cy: Int, radius: Int, color: BASICColor) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferCircle(cx: cx, cy: cy, radius: radius, color: color.legacyIndex ?? 1)
         didUseVectorTerminal = true
         vtgCanvas.circle(id: nextBasicGraphicsID("circle"), cx: cx, cy: cy, radius: radius, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
@@ -1813,6 +1850,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: Int) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color)
         didUseVectorTerminal = true
         vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
@@ -1821,6 +1859,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func drawEllipse(cx: Int, cy: Int, radiusX: Int, radiusY: Int, color: BASICColor) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         drawFramebufferEllipse(cx: cx, cy: cy, radiusX: radiusX, radiusY: radiusY, color: color.legacyIndex ?? 1)
         didUseVectorTerminal = true
         vtgCanvas.ellipse(id: nextBasicGraphicsID("ellipse"), cx: cx, cy: cy, rx: radiusX, ry: radiusY, stroke: basicGraphicsColor(color), fill: nil, lineWidth: 2, layer: nil)
@@ -1829,6 +1868,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func paintFill(x: Int, y: Int, color: Int, borderColor: Int?) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         let changed = paintFramebufferFill(x: x, y: y, color: color, borderColor: borderColor)
         didUseVectorTerminal = true
         for point in changed {
@@ -1839,6 +1879,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
 
     func paintFill(x: Int, y: Int, color: BASICColor, borderColor: BASICColor?) {
         guard isVectorTerminalAvailable else { return }
+        ensureNativeSemanticGraphicsMode()
         let changed = paintFramebufferFill(x: x, y: y, color: color.legacyIndex ?? 1, borderColor: borderColor?.legacyIndex)
         didUseVectorTerminal = true
         for point in changed {
@@ -2172,6 +2213,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         try requireVectorTerminal()
         didUseVectorTerminal = true
         vtgCanvas.disableMouseReporting()
+        disableANSIMouseMotionReporting()
     }
 
     func vectorTerminalReadEvent(timeoutMilliseconds: Int) throws -> String? {
@@ -2563,7 +2605,7 @@ if let scriptPath = arguments.first {
     }
 }
 
-print("AIBasic Shell")
+print("BASICShell")
 print("Type HELP for commands. Type QUIT to exit.")
 
 while true {

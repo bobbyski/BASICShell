@@ -54,6 +54,63 @@ public final class BASICProgram: @unchecked Sendable {
         }.joined(separator: "\n")
     }
 
+    /// Deletes numbered program lines in the optional inclusive range.
+    public func deleteLines(begin: Int? = nil, end: Int? = nil) {
+        lines.removeAll { line in
+            guard let number = line.number, !line.isImported else { return false }
+            if let begin, number < begin { return false }
+            if let end, number > end { return false }
+            return true
+        }
+    }
+
+    /// Renumbers numbered program lines and updates common line-number references.
+    public func renumber(start: Int = 10, oldStart: Int? = nil, step: Int = 10) throws {
+        guard start > 0 else { throw BASICError.runtime("RENUM start line must be positive") }
+        guard step > 0 else { throw BASICError.runtime("RENUM increment must be positive") }
+
+        let targets = lines
+            .compactMap { line -> Int? in
+                guard let number = line.number, !line.isImported else { return nil }
+                if let oldStart, number < oldStart { return nil }
+                return number
+            }
+            .sorted()
+        guard !targets.isEmpty else { return }
+
+        var next = start
+        var mapping: [Int: Int] = [:]
+        for oldNumber in targets {
+            guard mapping[oldNumber] == nil else { continue }
+            mapping[oldNumber] = next
+            next += step
+        }
+
+        let unchangedNumbers = Set(lines.compactMap { line -> Int? in
+            guard let number = line.number, !mapping.keys.contains(number) else { return nil }
+            return number
+        })
+        let newNumbers = Set(mapping.values)
+        if let collision = newNumbers.intersection(unchangedNumbers).sorted().first {
+            throw BASICError.runtime("RENUM would collide with existing line \(collision)")
+        }
+
+        for index in lines.indices {
+            if let number = lines[index].number, let newNumber = mapping[number] {
+                lines[index] = ProgramLine(
+                    number: newNumber,
+                    source: Self.renumberedReferences(in: lines[index].source, mapping: mapping),
+                    fileName: lines[index].fileName,
+                    sourceLineNumber: lines[index].sourceLineNumber,
+                    isImported: lines[index].isImported
+                )
+            } else {
+                lines[index].source = Self.renumberedReferences(in: lines[index].source, mapping: mapping)
+            }
+        }
+        lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
+    }
+
     /// Program lines in execution order with source metadata.
     public var orderedLines: [(number: Int?, source: String, fileName: String?, sourceLineNumber: Int?, isImported: Bool)] {
         lines.map { ($0.number, $0.source, $0.fileName, $0.sourceLineNumber, $0.isImported) }
@@ -159,6 +216,108 @@ public final class BASICProgram: @unchecked Sendable {
         "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
         "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
     ]
+
+    private static let lineReferenceKeywords: Set<String> = [
+        "GOTO", "GOSUB", "THEN", "ELSE", "RESTORE", "RESUME", "RETURN", "RUN", "ERL"
+    ]
+
+    private static func renumberedReferences(in source: String, mapping: [Int: Int]) -> String {
+        var output = ""
+        var index = source.startIndex
+        var previousWord: String?
+        var rewriteCommaSeparatedReferences = false
+
+        func appendComment(from commentStart: String.Index) {
+            output += source[commentStart...]
+            index = source.endIndex
+        }
+
+        while index < source.endIndex {
+            let character = source[index]
+
+            if character == "\"" {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex {
+                    let current = source[index]
+                    index = source.index(after: index)
+                    if current == "\"" { break }
+                }
+                output += source[start..<index]
+                previousWord = nil
+                continue
+            }
+
+            if character == "'" {
+                appendComment(from: index)
+                break
+            }
+            if character == "#", output.trimmingCharacters(in: .whitespaces).isEmpty {
+                appendComment(from: index)
+                break
+            }
+            if character == "/", source.index(after: index) < source.endIndex, source[source.index(after: index)] == "/" {
+                appendComment(from: index)
+                break
+            }
+
+            if character.isLetter {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex, source[index].isLetter || source[index].isNumber || source[index] == "$" || source[index] == "_" {
+                    index = source.index(after: index)
+                }
+                let word = String(source[start..<index])
+                previousWord = word.uppercased()
+                if previousWord == "REM" {
+                    output += source[start...]
+                    index = source.endIndex
+                    break
+                }
+                if previousWord != "GOTO" && previousWord != "GOSUB" {
+                    rewriteCommaSeparatedReferences = false
+                }
+                output += word
+                continue
+            }
+
+            if character.isNumber {
+                let start = index
+                index = source.index(after: index)
+                while index < source.endIndex, source[index].isNumber {
+                    index = source.index(after: index)
+                }
+                let text = String(source[start..<index])
+                if let number = Int(text),
+                   let replacement = mapping[number],
+                   (previousWord.map(lineReferenceKeywords.contains) == true || rewriteCommaSeparatedReferences) {
+                    output += String(replacement)
+                } else {
+                    output += text
+                }
+                if previousWord == "GOTO" || previousWord == "GOSUB" || rewriteCommaSeparatedReferences {
+                    rewriteCommaSeparatedReferences = true
+                }
+                previousWord = nil
+                continue
+            }
+
+            if character == "," {
+                output.append(character)
+                previousWord = nil
+                index = source.index(after: index)
+                continue
+            }
+
+            if !character.isWhitespace {
+                rewriteCommaSeparatedReferences = false
+            }
+            output.append(character)
+            index = source.index(after: index)
+        }
+
+        return output
+    }
 
     private static func colorizedListingLine(_ source: String) -> String {
         var output = ""

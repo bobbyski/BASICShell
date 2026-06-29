@@ -82,6 +82,7 @@ indirect enum Statement: Equatable {
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case optionKeyMode(BASICKeyMode)
+    case optionEventInput(type: String, mode: BASICEventInputMode)
     case input(prompt: Expression?, target: ReadTarget)
     case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?, defaultValue: Expression?)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
