@@ -18,9 +18,10 @@ struct BASICStudioApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("AIBasic Studio") {
+        WindowGroup("BASICStudio") {
             StudioView(model: model)
                 .frame(minWidth: 760, minHeight: 520)
+                .navigationTitle(model.windowTitle)
         }
         .commands {
             CommandGroup(after: .newItem) {

@@ -5256,6 +5256,22 @@ struct BASICCoreTests {
         #expect(host.lines[5].2 == 25)
         #expect(host.lines[5].3 == 20)
         #expect(host.graphicsColor == 3)
+        #expect(host.paths.count == 3)
+        #expect(host.paths[0].points == [
+            BASICGraphicsPoint(x: 10, y: 10),
+            BASICGraphicsPoint(x: 14, y: 10),
+            BASICGraphicsPoint(x: 14, y: 12)
+        ])
+        #expect(host.paths[1].points == [
+            BASICGraphicsPoint(x: 12, y: 12),
+            BASICGraphicsPoint(x: 12, y: 11)
+        ])
+        #expect(host.paths[2].points == [
+            BASICGraphicsPoint(x: 12, y: 12),
+            BASICGraphicsPoint(x: 11, y: 12),
+            BASICGraphicsPoint(x: 20, y: 20),
+            BASICGraphicsPoint(x: 25, y: 20)
+        ])
     }
 
     @Test("DRAW supports scale and quarter-turn angle commands")
@@ -6619,12 +6635,14 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var locations: [(Int, Int)] = []
     var pixels: [String: Int] = [:]
     var lines: [(Int, Int, Int, Int, Int)] = []
+    var paths: [(points: [BASICGraphicsPoint], color: Int)] = []
     var circles: [(Int, Int, Int, Int)] = []
     var ellipses: [(Int, Int, Int, Int, Int)] = []
     var fills: [(Int, Int, Int, Int?)] = []
     var graphicsColor: Int?
     var fullPixels: [String: BASICColor] = [:]
     var fullLines: [(Int, Int, Int, Int, BASICColor)] = []
+    var fullPaths: [(points: [BASICGraphicsPoint], color: BASICColor)] = []
     var fullCircles: [(Int, Int, Int, BASICColor)] = []
     var fullEllipses: [(Int, Int, Int, Int, BASICColor)] = []
     var fullFills: [(Int, Int, BASICColor, BASICColor?)] = []
@@ -6791,6 +6809,27 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
         fullLines.append((x1, y1, x2, y2, color))
         lines.append((x1, y1, x2, y2, color.legacyIndex ?? 1))
+    }
+
+    func drawPath(points: [BASICGraphicsPoint], color: Int) {
+        paths.append((points, color))
+        guard points.count >= 2 else { return }
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+        }
+    }
+
+    func drawPath(points: [BASICGraphicsPoint], color: BASICColor) {
+        fullPaths.append((points, color))
+        paths.append((points, color.legacyIndex ?? 1))
+        guard points.count >= 2 else { return }
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+        }
     }
 
     func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {

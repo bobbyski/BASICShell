@@ -8,6 +8,8 @@ Supported commands are `U`, `D`, `L`, `R`, diagonals `E`, `F`, `G`, `H`, `M x,y`
 
 BASICShell supports `DRAW` only when VTG graphics are available.
 
+Contiguous `DRAW` motion segments are batched as VTG polylines by Studio and Shell. Blank moves, no-update moves, and color changes still preserve classic `DRAW` cursor behavior.
+
 ```basic
 screen 1
 color 2

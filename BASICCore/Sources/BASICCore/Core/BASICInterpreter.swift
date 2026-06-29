@@ -4875,6 +4875,8 @@ public final class BASICInterpreter {
         var noUpdateNext = false
         var scale = 4
         var angle = 0
+        var pendingPath: [BASICGraphicsPoint] = []
+        var pendingPathColor: BASICColor?
 
         func skipSeparators() {
             while index < characters.count {
@@ -4906,13 +4908,40 @@ public final class BASICInterpreter {
             return value
         }
 
+        func flushPendingPath() {
+            guard pendingPath.count >= 2, let color = pendingPathColor else {
+                pendingPath.removeAll()
+                pendingPathColor = nil
+                return
+            }
+            graphicsHost.drawPath(points: pendingPath, color: color)
+            pendingPath.removeAll()
+            pendingPathColor = nil
+        }
+
+        func queueSegment(from start: (x: Int, y: Int), to end: (x: Int, y: Int), color: BASICColor) {
+            let startPoint = BASICGraphicsPoint(x: start.x, y: start.y)
+            let endPoint = BASICGraphicsPoint(x: end.x, y: end.y)
+            if pendingPathColor == color, pendingPath.last == startPoint {
+                pendingPath.append(endPoint)
+            } else {
+                flushPendingPath()
+                pendingPathColor = color
+                pendingPath = [startPoint, endPoint]
+            }
+        }
+
         func drawTo(_ x: Int, _ y: Int) {
             let old = currentGraphicsPoint
             if !blankNext {
-                graphicsHost.drawLine(x1: old.x, y1: old.y, x2: x, y2: y, color: drawColor)
+                queueSegment(from: old, to: (x, y), color: drawColor)
+            } else {
+                flushPendingPath()
             }
             if !noUpdateNext {
                 currentGraphicsPoint = (x, y)
+            } else {
+                flushPendingPath()
             }
             blankNext = false
             noUpdateNext = false
@@ -4954,6 +4983,7 @@ public final class BASICInterpreter {
             case "N":
                 noUpdateNext = true
             case "C":
+                flushPendingPath()
                 let color = try readSignedNumber()
                 drawColor = .legacy(color)
                 currentGraphicsColor = drawColor
@@ -5013,6 +5043,7 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("DRAW unknown command \(command)")
             }
         }
+        flushPendingPath()
     }
 
     private func resolveColor(_ expression: Expression) throws -> BASICColor {

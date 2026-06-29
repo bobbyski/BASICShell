@@ -1830,6 +1830,44 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         vtgCanvas.present()
     }
 
+    func drawPath(points: [BASICGraphicsPoint], color: Int) {
+        guard isVectorTerminalAvailable, points.count >= 2 else { return }
+        ensureNativeSemanticGraphicsMode()
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawFramebufferLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+        }
+        didUseVectorTerminal = true
+        vtgCanvas.draw(
+            id: nextBasicGraphicsID("draw"),
+            points: points.map { VTGPoint(x: $0.x, y: $0.y) },
+            stroke: basicGraphicsColor(color),
+            width: 2,
+            layer: nil
+        )
+        vtgCanvas.present()
+    }
+
+    func drawPath(points: [BASICGraphicsPoint], color: BASICColor) {
+        guard isVectorTerminalAvailable, points.count >= 2 else { return }
+        ensureNativeSemanticGraphicsMode()
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawFramebufferLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color.legacyIndex ?? 1)
+        }
+        didUseVectorTerminal = true
+        vtgCanvas.draw(
+            id: nextBasicGraphicsID("draw"),
+            points: points.map { VTGPoint(x: $0.x, y: $0.y) },
+            stroke: basicGraphicsColor(color),
+            width: 2,
+            layer: nil
+        )
+        vtgCanvas.present()
+    }
+
     func drawCircle(cx: Int, cy: Int, radius: Int, color: Int) {
         guard isVectorTerminalAvailable else { return }
         ensureNativeSemanticGraphicsMode()

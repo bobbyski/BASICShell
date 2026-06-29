@@ -66,6 +66,20 @@ public struct BASICScreenMode: Equatable, Sendable {
     }
 }
 
+/// A resolved graphics point in native host coordinates.
+public struct BASICGraphicsPoint: Equatable, Sendable {
+    /// Horizontal coordinate.
+    public let x: Int
+    /// Vertical coordinate.
+    public let y: Int
+
+    /// Creates a resolved graphics point.
+    public init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+}
+
 /// A resolved BASIC color, supporting legacy palette indexes and full RGBA colors.
 public struct BASICColor: Equatable, Sendable {
     /// Red byte.
@@ -217,6 +231,10 @@ public protocol BASICGraphicsHost: BASICHost {
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: Int)
     /// Draws one line segment using the full-color model.
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor)
+    /// Draws connected line segments.
+    func drawPath(points: [BASICGraphicsPoint], color: Int)
+    /// Draws connected line segments using the full-color model.
+    func drawPath(points: [BASICGraphicsPoint], color: BASICColor)
     /// Draws one circle outline.
     func drawCircle(cx: Int, cy: Int, radius: Int, color: Int)
     /// Draws one circle outline using the full-color model.
@@ -251,6 +269,26 @@ public extension BASICGraphicsHost {
     /// Draws one line segment using the full-color model.
     func drawLine(x1: Int, y1: Int, x2: Int, y2: Int, color: BASICColor) {
         drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color.legacyIndex ?? 1)
+    }
+
+    /// Draws connected line segments.
+    func drawPath(points: [BASICGraphicsPoint], color: Int) {
+        guard points.count >= 2 else { return }
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+        }
+    }
+
+    /// Draws connected line segments using the full-color model.
+    func drawPath(points: [BASICGraphicsPoint], color: BASICColor) {
+        guard points.count >= 2 else { return }
+        for index in points.indices.dropLast() {
+            let start = points[index]
+            let end = points[points.index(after: index)]
+            drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+        }
     }
 
     /// Draws one circle outline using the full-color model.

@@ -58,6 +58,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var lastMouseEventTimestamp: TimeInterval?
     private var lastMouseMovePostTimestamp: TimeInterval?
     private var lastPostedVTGCanvasSize: (width: Int, height: Int)?
+    private var isVTGDisplayInvalidationScheduled = false
 
     deinit {
         MainActor.assumeIsolated {
@@ -305,7 +306,9 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     func connectVTG(to model: StudioModel) {
         model.vtgDataSink = { [weak self] data in
-            self?.feedVTG(data)
+            Task { @MainActor [weak self] in
+                self?.feedVTG(data)
+            }
         }
     }
 
@@ -315,25 +318,21 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func invalidateVTGDisplay() {
-        terminalView.vtgOverlayView.needsDisplay = true
-        terminalView.vtgOverlayView.setNeedsDisplay(terminalView.vtgOverlayView.bounds)
+        guard !isVTGDisplayInvalidationScheduled else { return }
+        isVTGDisplayInvalidationScheduled = true
 
-        terminalView.needsDisplay = true
-        terminalView.setNeedsDisplay(terminalView.bounds)
-
-        needsDisplay = true
-        setNeedsDisplay(bounds)
-
-        terminalView.vtgOverlayView.displayIfNeeded()
-        terminalView.displayIfNeeded()
-        displayIfNeeded()
-
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             guard let self else { return }
+            self.isVTGDisplayInvalidationScheduled = false
+
             self.terminalView.vtgOverlayView.needsDisplay = true
             self.terminalView.vtgOverlayView.setNeedsDisplay(self.terminalView.vtgOverlayView.bounds)
+
             self.terminalView.needsDisplay = true
             self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+
+            self.needsDisplay = true
+            self.setNeedsDisplay(self.bounds)
         }
     }
 

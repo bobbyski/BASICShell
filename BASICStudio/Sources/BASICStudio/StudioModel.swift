@@ -101,12 +101,13 @@ final class StudioModel: ObservableObject {
     @Published var showUserLogs = true
     @Published var showBasicLogs = false
     @Published var selectedLogLevels: Set<String> = []
+    @Published private(set) var windowTitle = "BASICStudio"
     let bundledExamples = StudioModel.availableBundledExamples()
 
     let graphics = GraphicsFramebuffer()
     var vtgDataSink: ((Data) -> Void)?
     private lazy var vtgOutput = ClosureVTGOutput { [weak self] data in
-        self?.runOnMainActorSync {
+        Task { @MainActor [weak self] in
             self?.vtgDataSink?(data)
         }
     }
@@ -166,6 +167,7 @@ final class StudioModel: ObservableObject {
             currentProgramFileName = currentProgramURL?.path
             workingDirectoryURL = currentProgramURL?.deletingLastPathComponent().standardizedFileURL ?? workingDirectoryURL
             shouldRunStartupProgram = true
+            updateWindowTitle()
         }
 
         saveSettings()
@@ -387,6 +389,7 @@ final class StudioModel: ObservableObject {
             currentProgramURL = url
             currentProgramFileName = url.path
             workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
+            updateWindowTitle()
             editorErrorLine = nil
             rebuildProgramFromEditor()
             selectedPane = .editor
@@ -408,6 +411,7 @@ final class StudioModel: ObservableObject {
         programText = source
         currentProgramURL = nil
         currentProgramFileName = Self.demoFileName(for: example.path)
+        updateWindowTitle()
         editorErrorLine = nil
         debuggerExecutionLine = nil
         debuggerBreakpoints = []
@@ -466,6 +470,7 @@ final class StudioModel: ObservableObject {
         programText = ""
         currentProgramURL = nil
         currentProgramFileName = nil
+        updateWindowTitle()
         consoleText = prompt
         graphics.clear(color: nil)
         graphicsRevision += 1
@@ -643,10 +648,26 @@ final class StudioModel: ObservableObject {
             currentProgramURL = url
             currentProgramFileName = url.path
             workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
+            updateWindowTitle()
             rebuildProgramFromEditor()
         } catch {
             presentFileError("Unable to save \(url.lastPathComponent).", error: error)
         }
+    }
+
+    private func updateWindowTitle() {
+        if let currentProgramURL {
+            windowTitle = "BASICStudio - \(currentProgramURL.lastPathComponent)"
+            return
+        }
+
+        if let currentProgramFileName, !currentProgramFileName.isEmpty {
+            let displayName = URL(fileURLWithPath: currentProgramFileName).lastPathComponent
+            windowTitle = "BASICStudio - \(displayName)"
+            return
+        }
+
+        windowTitle = "BASICStudio"
     }
 
     private func presentFileError(_ message: String, error: Error) {
@@ -698,6 +719,7 @@ final class StudioModel: ObservableObject {
             }
             if shouldSyncEditorAfterCommand(trimmed) {
                 syncEditorFromSession()
+                syncProgramIdentityAfterConsoleCommand(trimmed)
             }
             if !shouldContinue {
                 appendConsoleOutput("BYE")
@@ -931,6 +953,51 @@ final class StudioModel: ObservableObject {
 
     private func syncEditorFromSession() {
         programText = session.program.listing()
+    }
+
+    private func syncProgramIdentityAfterConsoleCommand(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let uppercased = trimmed.uppercased()
+
+        if uppercased == "NEW" {
+            currentProgramURL = nil
+            currentProgramFileName = nil
+            updateWindowTitle()
+            return
+        }
+
+        if let path = pathArgument(for: "LOAD", in: trimmed)
+            ?? pathArgument(for: "RUN", in: trimmed)
+            ?? pathArgument(for: "SAVE", in: trimmed) {
+            let expanded = expandedPath(path)
+            currentProgramURL = URL(fileURLWithPath: expanded)
+            currentProgramFileName = expanded
+            updateWindowTitle()
+        }
+    }
+
+    private func pathArgument(for keyword: String, in command: String) -> String? {
+        guard matchesCommandKeyword(keyword, in: command.uppercased()) else { return nil }
+
+        let keywordEnd = command.index(command.startIndex, offsetBy: keyword.count)
+        let argument = command[keywordEnd...].trimmingCharacters(in: .whitespaces)
+        guard !argument.isEmpty else { return nil }
+
+        if argument.first == "\"" {
+            var result = ""
+            var index = argument.index(after: argument.startIndex)
+            while index < argument.endIndex {
+                let character = argument[index]
+                if character == "\"" {
+                    return result
+                }
+                result.append(character)
+                index = argument.index(after: index)
+            }
+            return nil
+        }
+
+        return argument.split(whereSeparator: \.isWhitespace).first.map(String.init)
     }
 
     private var debuggerFileName: String? {
@@ -2086,6 +2153,50 @@ extension StudioModel: BASICGraphicsHost {
             graphics.drawLine(x1: x1, y1: y1, x2: x2, y2: y2, color: color.legacyIndex ?? 1)
             graphicsRevision += 1
             vtgCanvas.line(id: nextBasicGraphicsID("line"), x1: x1, y1: y1, x2: x2, y2: y2, stroke: basicGraphicsColor(color), width: 2, layer: nil)
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawPath(points: [BASICGraphicsPoint], color: Int) {
+        guard points.count >= 2 else { return }
+        runOnMainActorSync {
+            for index in points.indices.dropLast() {
+                let start = points[index]
+                let end = points[points.index(after: index)]
+                graphics.drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color)
+            }
+            graphicsRevision += 1
+            vtgCanvas.draw(
+                id: nextBasicGraphicsID("draw"),
+                points: points.map { VTGPoint(x: $0.x, y: $0.y) },
+                stroke: basicGraphicsColor(color),
+                width: 2,
+                lineCap: nil,
+                lineJoin: nil,
+                layer: nil
+            )
+            vtgCanvas.present()
+        }
+    }
+
+    nonisolated func drawPath(points: [BASICGraphicsPoint], color: BASICColor) {
+        guard points.count >= 2 else { return }
+        runOnMainActorSync {
+            for index in points.indices.dropLast() {
+                let start = points[index]
+                let end = points[points.index(after: index)]
+                graphics.drawLine(x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: color.legacyIndex ?? 1)
+            }
+            graphicsRevision += 1
+            vtgCanvas.draw(
+                id: nextBasicGraphicsID("draw"),
+                points: points.map { VTGPoint(x: $0.x, y: $0.y) },
+                stroke: basicGraphicsColor(color),
+                width: 2,
+                lineCap: nil,
+                lineJoin: nil,
+                layer: nil
+            )
             vtgCanvas.present()
         }
     }

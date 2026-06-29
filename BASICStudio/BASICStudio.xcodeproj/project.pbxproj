@@ -383,7 +383,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "AIBasic Studio";
+				INFOPLIST_KEY_CFBundleDisplayName = BASICStudio;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -405,7 +405,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "AIBasic Studio";
+				INFOPLIST_KEY_CFBundleDisplayName = BASICStudio;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026";
 				LD_RUNPATH_SEARCH_PATHS = (
