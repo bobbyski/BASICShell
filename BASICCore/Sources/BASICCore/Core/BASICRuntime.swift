@@ -1543,6 +1543,18 @@ final class BASICRuntime {
                 height: try integerValue(arguments[0]),
                 value: try stringValue(arguments[1])
             ))
+        case "PILLBUTTON":
+            guard (2...8).contains(arguments.count) else { throw BASICError.runtime("pillButton expects 2 to 8 arguments") }
+            return vtgLayoutValue(try host.vectorTerminalPillButton(
+                id: try stringValue(arguments[0]),
+                text: try stringValue(arguments[1]),
+                fill: try optionalString(arguments, at: 2) ?? "#0f766eFF",
+                stroke: try optionalString(arguments, at: 3),
+                lineWidth: try optionalInteger(arguments, at: 4) ?? 1,
+                layer: try optionalInteger(arguments, at: 5),
+                target: try optionalString(arguments, at: 6),
+                timeoutMilliseconds: try optionalInteger(arguments, at: 7) ?? 750
+            ))
         case "IMAGEPNG":
             guard (6...8).contains(arguments.count) else { throw BASICError.runtime("imagePng expects 6 to 8 arguments") }
             try host.vectorTerminalImagePNG(
@@ -1727,6 +1739,9 @@ final class BASICRuntime {
             return .number(Double(try host.vectorTerminalQueryCurrentCanvas(timeoutMilliseconds: try optionalInteger(arguments, at: 0) ?? 750)?.height ?? 0))
         case "QUERYTERMINALCELLSIZE":
             try requireArgumentCount(arguments, 0, method: "queryTerminalCellSize")
+            return vtgCellValue(try host.vectorTerminalQueryTerminalCellSize())
+        case "QUERYTERMINALWSIZE":
+            try requireArgumentCount(arguments, 0, method: "queryTerminalWSize")
             return vtgCellValue(try host.vectorTerminalQueryTerminalCellSize())
         case "ENABLERESIZEEVENTS":
             try requireArgumentCount(arguments, 0, method: "enableResizeEvents")
@@ -2049,10 +2064,34 @@ final class BASICRuntime {
 
     private func vtgCellValue(_ cell: BASICVectorTerminalCellSnapshot?) -> BASICValue {
         guard let cell else { return .empty }
-        return .dictionary(BASICDictionary(values: [
+        var values: [String: BASICValue] = [
             "columns": .number(Double(cell.columns)),
             "rows": .number(Double(cell.rows))
-        ]))
+        ]
+        if let width = cell.width {
+            values["width"] = .number(width)
+        }
+        if let height = cell.height {
+            values["height"] = .number(height)
+        }
+        return .dictionary(BASICDictionary(values: values))
+    }
+
+    private func vtgLayoutValue(_ layout: BASICVectorTerminalLayoutSnapshot?) -> BASICValue {
+        guard let layout else { return .empty }
+        var values: [String: BASICValue] = [
+            "x": .number(Double(layout.x)),
+            "y": .number(Double(layout.y)),
+            "width": .number(Double(layout.width)),
+            "height": .number(Double(layout.height))
+        ]
+        if let row = layout.row {
+            values["row"] = .number(Double(row))
+        }
+        if let column = layout.column {
+            values["column"] = .number(Double(column))
+        }
+        return .dictionary(BASICDictionary(values: values))
     }
 
     func defaultValue(for type: BASICType) -> BASICValue {

@@ -43,6 +43,7 @@ final class StudioModel: ObservableObject {
     private var liveTerminalColumns = 80
     private var liveTerminalRows = 25
     private var liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(width: 0, height: 0, source: "VectorTerminalView")
+    private var liveVTGCellSize: (width: Double, height: Double)?
     private var vtgHitRegions: [StudioVTGHitRegion] = []
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
@@ -292,6 +293,11 @@ final class StudioModel: ObservableObject {
             height: max(1, height),
             source: "VectorTerminalView"
         )
+    }
+
+    func updateLiveVTGCellSize(width: Double, height: Double) {
+        guard width > 0, height > 0 else { return }
+        liveVTGCellSize = (width: max(1, width), height: max(1, height))
     }
 
     func postVTGResizeEvent(width: Int, height: Int) {
@@ -1720,6 +1726,31 @@ extension StudioModel: BASICVectorTerminalHost {
         return BASICVectorTerminalCanvasSnapshot(width: size.width, height: size.height, source: "VectorTerminalSDK")
     }
 
+    nonisolated func vectorTerminalPillButton(id: String, text: String, fill: String, stroke: String?, lineWidth: Int, layer: Int?, target: String?, timeoutMilliseconds: Int) throws -> BASICVectorTerminalLayoutSnapshot? {
+        var result: BASICVectorTerminalLayoutSnapshot?
+        useVTGCanvas {
+            guard let layout = $0.pillButton(
+                id: id,
+                text: text,
+                fill: VectorTerminalSDK.VTGColor(fill),
+                stroke: vtgColor(stroke),
+                lineWidth: lineWidth,
+                layer: layer,
+                target: target,
+                timeoutMilliseconds: timeoutMilliseconds
+            ) else { return }
+            result = BASICVectorTerminalLayoutSnapshot(
+                x: layout.x,
+                y: layout.y,
+                width: layout.width,
+                height: layout.height,
+                row: layout.row,
+                column: layout.column
+            )
+        }
+        return result
+    }
+
     nonisolated func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
         useVTGCanvas { $0.image(id: id, x: x, y: y, width: width, height: height, pngData: data, filter: vtgSpriteFilter(filter), layer: layer) }
     }
@@ -1897,7 +1928,14 @@ extension StudioModel: BASICVectorTerminalHost {
     }
 
     nonisolated func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot? {
-        BASICVectorTerminalCellSnapshot(columns: screenColumns(), rows: screenRows())
+        valueOnMainSync {
+            BASICVectorTerminalCellSnapshot(
+                columns: screenColumns(),
+                rows: screenRows(),
+                width: liveVTGCellSize?.width,
+                height: liveVTGCellSize?.height
+            )
+        }
     }
 
     nonisolated func vectorTerminalEnableResizeEvents() throws {

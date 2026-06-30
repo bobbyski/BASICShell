@@ -250,6 +250,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             terminalView.frame = frame
             let canvas = terminalView.currentVTGCanvas()
             model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
+            updateLiveVTGCellSize()
             postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
             terminalView.needsDisplay = true
             return
@@ -262,6 +263,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.updateLiveTerminalSize(columns: terminal.cols, rows: terminal.rows)
         let canvas = terminalView.currentVTGCanvas()
         model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
+        updateLiveVTGCellSize()
         postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
         terminalView.needsDisplay = true
     }
@@ -298,6 +300,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.updateLiveTerminalSize(columns: newCols, rows: newRows)
         let canvas = terminalView.currentVTGCanvas()
         model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
+        updateLiveVTGCellSize()
         terminalView.notifyVTGResizeIfNeeded()
         postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
     }
@@ -314,6 +317,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     private func feedVTG(_ data: Data) {
         terminalView.feedVTG(data)
+        updateLiveVTGCellSize()
         invalidateVTGDisplay()
     }
 
@@ -334,6 +338,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             self.needsDisplay = true
             self.setNeedsDisplay(self.bounds)
         }
+    }
+
+    private func updateLiveVTGCellSize() {
+        guard let cellSize = terminalView.currentVTGCellSize() else { return }
+        model?.updateLiveVTGCellSize(width: cellSize.width, height: cellSize.height)
     }
 
     private func updateMouseTrackingArea() {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "1f6a4b5f5ba067ab3ebe5996f294a93faa9eb47ac5f0b7e5de9a1e5b6ccd3c6f",
+  "originHash" : "687112755c41d72ead545ac587bf200e39bfa9e5845b955e6bf0c7eebab4b808",
   "pins" : [
     {
       "identity" : "networkimage",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bobbyski/SwiftTerm.git",
       "state" : {
-        "revision" : "0bd1e82954a96819373928cc0a23e2c97bbd1037",
-        "version" : "1.5.4"
+        "revision" : "e9f20ed0353e7c986face04edde2c0741d3d7a89",
+        "version" : "1.5.5"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bobbyski/VectorTerminalSDK.git",
       "state" : {
-        "revision" : "39f89f4e62a9d2c0941319648f8818135c220d81",
-        "version" : "1.5.4"
+        "revision" : "27ee2487ca467ffb19fd515eb889dcb26998088f",
+        "version" : "1.5.5"
       }
     }
   ],

@@ -156,10 +156,41 @@ public struct BASICVectorTerminalCellSnapshot: Sendable {
     public let columns: Int
     /// Visible terminal rows.
     public let rows: Int
+    /// Pixel width of one normal-width terminal glyph cell, when known.
+    public let width: Double?
+    /// Pixel height of one normal-width terminal glyph cell, when known.
+    public let height: Double?
 
-    public init(columns: Int, rows: Int) {
+    public init(columns: Int, rows: Int, width: Double? = nil, height: Double? = nil) {
         self.columns = columns
         self.rows = rows
+        self.width = width
+        self.height = height
+    }
+}
+
+/// Public retained UI layout returned by VectorTerminal host adapters.
+public struct BASICVectorTerminalLayoutSnapshot: Sendable {
+    /// Left edge in VTG pixel space.
+    public let x: Int
+    /// Top edge in VTG pixel space.
+    public let y: Int
+    /// Width in VTG pixels.
+    public let width: Int
+    /// Height in VTG pixels.
+    public let height: Int
+    /// Terminal row used to anchor the layout.
+    public let row: Int?
+    /// Terminal column used to anchor the layout.
+    public let column: Int?
+
+    public init(x: Int, y: Int, width: Int, height: Int, row: Int? = nil, column: Int? = nil) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.row = row
+        self.column = column
     }
 }
 
@@ -201,6 +232,8 @@ public protocol BASICVectorTerminalHost: BASICHost {
     func vectorTerminalVectorPrint(id: String, x: Int, y: Int, height: Int, value: String, stroke: String, width: Int, layer: Int?) throws
     /// Measures vector text using the same advance rules as `vectorPrint`.
     func vectorTerminalVectorTextSize(height: Int, value: String) throws -> BASICVectorTerminalCanvasSnapshot
+    /// Draws a terminal-cell-aligned pill behind normal terminal text.
+    func vectorTerminalPillButton(id: String, text: String, fill: String, stroke: String?, lineWidth: Int, layer: Int?, target: String?, timeoutMilliseconds: Int) throws -> BASICVectorTerminalLayoutSnapshot?
     /// Draws or replaces a retained PNG image.
     func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws
     /// Draws or replaces a retained JPEG image.

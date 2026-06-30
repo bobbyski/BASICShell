@@ -56,11 +56,17 @@ let vtg = VectorTerminal()
 vtg.clear()
 vtg.setDefaultLayer(2)
 
+cell = vtg.queryTerminalWSize()
+cellWidth = int(cell("width"))
+cellHeight = int(cell("height"))
+if cellWidth <= 0 then cellWidth = 10
+if cellHeight <= 0 then cellHeight = 18
+
 vtg.rect("display", 40, 40, 320, 70, "#22c55e", "#071107", 2, 8, "", "", 2)
-vtg.vectorPrint("display-text", 60, 78, 28, "0", "#f8fafc", 2, 3)
+vtg.text("display-text", 40 + 320 - cellWidth - 18, 40 + int((70 - cellHeight) / 2), "0", "#f8fafc", cellHeight, 3)
 
 vtg.rect("key-7", 40, 130, 70, 52, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-vtg.vectorPrint("label-7", 68, 149, 22, "7", "#f8fafc", 2, 3)
+vtg.text("label-7", 40 + int((70 - cellWidth) / 2), 130 + int((52 - cellHeight) / 2), "7", "#f8fafc", cellHeight, 3)
 
 vtg.present()
 
@@ -87,8 +93,14 @@ let vtg = VectorTerminal()
 vtg.clear()
 vtg.clearHitRegions()
 
+cell = vtg.queryTerminalWSize()
+cellWidth = int(cell("width"))
+cellHeight = int(cell("height"))
+if cellWidth <= 0 then cellWidth = 10
+if cellHeight <= 0 then cellHeight = 18
+
 vtg.rect("key-7", 40, 130, 70, 52, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-vtg.vectorPrint("label-7", 68, 149, 22, "7", "#f8fafc", 2, 3)
+vtg.text("label-7", 40 + int((70 - cellWidth) / 2), 130 + int((52 - cellHeight) / 2), "7", "#f8fafc", cellHeight, 3)
 vtg.hitRegion("hit-7", 40, 130, 70, 52, 2, "key:7")
 vtg.present()
 
@@ -113,6 +125,8 @@ Done:
 
 The `yield` statement lets queued timer, mouse, resize, and other host events run while your main loop is waiting.
 
+`vtg.pillButton(id$, text$)` is available for terminal-cell UI that should sit behind normal terminal text at the current cursor. It returns a layout dictionary with `x`, `y`, `width`, `height`, `row`, and `column` when the terminal can report the cursor and normal `W` cell size.
+
 ## Complete Calculator Example
 
 This is a small four-function calculator UI. It is intentionally simple: it keeps one pending operator, one stored value, and one display string.
@@ -131,6 +145,12 @@ global resetDisplay as boolean = false
 let vtg = VectorTerminal()
 vtg.clear()
 vtg.setDefaultLayer(2)
+
+cell = vtg.queryTerminalWSize()
+cellWidth = int(cell("width"))
+cellHeight = int(cell("height"))
+if cellWidth <= 0 then cellWidth = 10
+if cellHeight <= 0 then cellHeight = 18
 
 gosub DrawCalculator
 
@@ -173,24 +193,23 @@ DrawCalculator:
     return
 
 DrawDisplay:
+    vtg.clearRect("display-clear", 52, 57, 286, 56, 3)
     vtg.rect("display", 50, 55, 290, 60, "#22c55e", "#071107", 2, 8, "", "", 2)
-    displaySize = vtg.vectorTextSize(26, display$)
-    displayTextWidth = int(displaySize("width"))
-    displayTextHeight = int(displaySize("height"))
+    displayTextWidth = cellWidth * len(display$)
+    displayTextHeight = cellHeight
     displayTextX = 50 + 290 - displayTextWidth - 16
     if displayTextX < 64 then displayTextX = 64
     displayTextY = 55 + int((60 - displayTextHeight) / 2)
-    vtg.vectorPrint("display-text", displayTextX, displayTextY, 26, display$, "#f8fafc", 2, 3)
+    vtg.text("display-text", displayTextX, displayTextY, display$, "#f8fafc", cellHeight, 3)
     return
 
 DrawButton:
     vtg.rect("button-" + buttonID$, buttonX, buttonY, 58, 48, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-    labelSize = vtg.vectorTextSize(20, buttonText$)
-    labelWidth = int(labelSize("width"))
-    labelHeight = int(labelSize("height"))
+    labelWidth = cellWidth * len(buttonText$)
+    labelHeight = cellHeight
     labelX = buttonX + int((58 - labelWidth) / 2)
     labelY = buttonY + int((48 - labelHeight) / 2)
-    vtg.vectorPrint("label-" + buttonID$, labelX, labelY, 20, buttonText$, "#f8fafc", 2, 3)
+    vtg.text("label-" + buttonID$, labelX, labelY, buttonText$, "#f8fafc", cellHeight, 3)
     vtg.hitRegion("hit-" + buttonID$, buttonX, buttonY, 58, 48, 2, "key:" + buttonID$)
     return
 

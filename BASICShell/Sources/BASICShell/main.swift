@@ -2036,6 +2036,29 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
         return BASICVectorTerminalCanvasSnapshot(width: size.width, height: size.height, source: "VectorTerminalSDK")
     }
 
+    func vectorTerminalPillButton(id: String, text: String, fill: String, stroke: String?, lineWidth: Int, layer: Int?, target: String?, timeoutMilliseconds: Int) throws -> BASICVectorTerminalLayoutSnapshot? {
+        try requireVectorTerminal()
+        didUseVectorTerminal = true
+        guard let layout = vtgCanvas.pillButton(
+            id: id,
+            text: text,
+            fill: VTGColor(fill),
+            stroke: vtgColor(stroke),
+            lineWidth: lineWidth,
+            layer: layer,
+            target: target,
+            timeoutMilliseconds: timeoutMilliseconds
+        ) else { return nil }
+        return BASICVectorTerminalLayoutSnapshot(
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+            row: layout.row,
+            column: layout.column
+        )
+    }
+
     func vectorTerminalImagePNG(id: String, x: Int, y: Int, width: Int, height: Int, data: Data, filter: String, layer: Int?) throws {
         try requireVectorTerminal()
         didUseVectorTerminal = true
@@ -2229,7 +2252,14 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
     }
 
     func vectorTerminalQueryTerminalCellSize() throws -> BASICVectorTerminalCellSnapshot? {
-        BASICVectorTerminalCellSnapshot(columns: screenColumns(), rows: screenRows())
+        try requireVectorTerminal()
+        let cellSize = vtgCanvas.queryTerminalWSize(timeoutMilliseconds: 750)
+        return BASICVectorTerminalCellSnapshot(
+            columns: screenColumns(),
+            rows: screenRows(),
+            width: cellSize?.width,
+            height: cellSize?.height
+        )
     }
 
     func vectorTerminalEnableResizeEvents() throws {
