@@ -412,7 +412,19 @@ struct Parser {
             while match(.comma) {
                 arguments.append(try parseExpression())
             }
-            return .exec(command: command, arguments: arguments)
+            var stdout: ReadTarget?
+            var stderr: ReadTarget?
+            while !isStatementEnd {
+                if matchIdentifier("TO") {
+                    stdout = .reference(try parseVariableReference(message: "Expected variable after TO"))
+                } else if matchIdentifier("ERR") || matchIdentifier("ERROR") || matchIdentifier("ERRORS") {
+                    guard matchIdentifier("TO") else { throw syntax("Expected TO after ERRORS") }
+                    stderr = .reference(try parseVariableReference(message: "Expected variable after ERRORS TO"))
+                } else {
+                    throw syntax("Unexpected input after EXEC")
+                }
+            }
+            return .exec(command: command, arguments: arguments, stdout: stdout, stderr: stderr)
         }
         if matchIdentifier("JOIN") {
             return .join(try parseExpression())

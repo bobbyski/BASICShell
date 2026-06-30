@@ -1301,13 +1301,24 @@ public final class BASICInterpreter {
                 updateOutputColumn(text: output, terminator: "")
             }
             return .next
-        case .exec(let command, let arguments):
-            let result = try runStructuredProcess(command: command, arguments: arguments)
-            if !result.stdout.isEmpty {
+        case .exec(let command, let arguments, let stdout, let stderr):
+            let result = try runStructuredProcess(
+                command: command,
+                arguments: arguments,
+                stdout: stdout,
+                stderr: stderr
+            )
+            if let stdout {
+                try assignReadValue(.string(BASICString(result.stdout)), to: stdout)
+            }
+            if let stderr {
+                try assignReadValue(.string(BASICString(result.stderr)), to: stderr)
+            }
+            if stdout == nil && !result.stdout.isEmpty {
                 host?.print(result.stdout, terminator: "")
                 updateOutputColumn(text: result.stdout, terminator: "")
             }
-            if !result.stderr.isEmpty {
+            if stderr == nil && !result.stderr.isEmpty {
                 host?.print(result.stderr, terminator: "")
                 updateOutputColumn(text: result.stderr, terminator: "")
             }
@@ -3899,15 +3910,30 @@ public final class BASICInterpreter {
         return result.output
     }
 
-    private func runStructuredProcess(command: Expression, arguments: [Expression]) throws -> BASICProcessResult {
+    private func runStructuredProcess(
+        command: Expression,
+        arguments: [Expression],
+        stdout: ReadTarget?,
+        stderr: ReadTarget?
+    ) throws -> BASICProcessResult {
         guard let processHost = host as? BASICProcessHost else {
             throw BASICError.runtime("EXEC is not supported by this host")
         }
         let fileHost = host as? BASICFileHost
         let consoleHost = host as? BASICConsoleHost
+        let commandText = try string(command)
+        let executable: String
+        let processArguments: [String]
+        if arguments.isEmpty {
+            executable = "/bin/sh"
+            processArguments = ["-lc", commandText]
+        } else {
+            executable = commandText
+            processArguments = try arguments.map(string)
+        }
         let request = BASICProcessRequest(
-            executable: try string(command),
-            arguments: try arguments.map(string),
+            executable: executable,
+            arguments: processArguments,
             workingDirectory: try fileHost?.currentDirectoryPath(),
             columns: consoleHost?.screenColumns(),
             rows: consoleHost?.screenRows(),

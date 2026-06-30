@@ -4812,6 +4812,55 @@ struct BASICCoreTests {
         #expect(host.processRequests[0].environment.values["TOKEN"] == "abc")
     }
 
+    @Test("EXEC captures stdout and stderr into BASIC variables")
+    func execCapturesStdoutAndStderrIntoBasicVariables() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.processResults["tool"] = BASICProcessResult(
+            stdout: "out\n",
+            stderr: "err\n",
+            exitCode: 3
+        )
+
+        session.submit("EXEC \"tool\", \"arg\" TO out$ ERRORS TO err$")
+        session.submit("PRINT out$; err$; STATUS")
+
+        #expect(host.output == ["out\nerr\n3"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "tool")
+        #expect(host.processRequests[0].arguments == ["arg"])
+    }
+
+    @Test("EXEC command string runs through the shell and captures streams")
+    func execCommandStringRunsThroughTheShellAndCapturesStreams() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.processResults["/bin/sh"] = BASICProcessResult(
+            stdout: "out\n",
+            stderr: "err\n",
+            exitCode: 7
+        )
+
+        session.submit("EXEC \"printf out; printf err >&2\" TO out$ ERRORS TO err$")
+        session.submit("PRINT out$; err$; STATUS")
+
+        #expect(host.output == ["out\nerr\n7"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "/bin/sh")
+        #expect(host.processRequests[0].arguments == ["-lc", "printf out; printf err >&2"])
+    }
+
+    @Test("EXEC rejects file-path style TO targets")
+    func execRejectsFilePathStyleToTargets() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("EXEC \"tool\" TO \"stdout.txt\"")
+
+        #expect(host.processRequests.isEmpty)
+        #expect(host.output.first?.contains("Syntax error") == true)
+    }
+
     @Test("EXIT and QUIT direct commands can request process status")
     func exitAndQuitDirectCommandsCanRequestProcessStatus() {
         let host = TestHost()

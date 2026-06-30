@@ -110,7 +110,7 @@ indirect enum Statement: Equatable {
     case popDirectory
     case directoryStack
     case system(Expression)
-    case exec(command: Expression, arguments: [Expression])
+    case exec(command: Expression, arguments: [Expression], stdout: ReadTarget?, stderr: ReadTarget?)
     case join(Expression)
     case yield
     case randomize(Expression?)

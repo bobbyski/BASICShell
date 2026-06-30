@@ -960,8 +960,9 @@ public enum BASICSystemCommand {
         let stderr = Pipe()
         process.executableURL = executableURL(for: request.executable)
         process.arguments = executableArguments(for: request.executable, arguments: request.arguments)
-        if let workingDirectory = request.workingDirectory {
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+        let workingDirectory = request.workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let workingDirectory {
+            process.currentDirectoryURL = workingDirectory
         }
         process.environment = terminalEnvironment(
             columns: request.columns,
