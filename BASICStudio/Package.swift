@@ -8,8 +8,8 @@ let package = Package(
     dependencies: [
         .package(path: "../BASICCore"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
-        .package(url: "https://github.com/bobbyski/SwiftTerm.git", from: "1.5.5"),
-        .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.5")
+        .package(url: "https://github.com/bobbyski/SwiftTerm.git", from: "1.5.6"),
+        .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6")
     ],
     targets: [
         .executableTarget(
