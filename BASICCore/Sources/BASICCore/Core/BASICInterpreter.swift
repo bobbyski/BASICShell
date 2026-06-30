@@ -1161,7 +1161,7 @@ public final class BASICInterpreter {
             )
             return .next
         case .expression(let expression):
-            _ = try evaluate(expression)
+            _ = try evaluateStandaloneExpression(expression)
             return .next
         case .dim(let kind, let variable, let dimensions, let declaredType):
             try runtime.dim(kind: kind, variable: variable, dimensions: try dimensions.map { try $0.map(integer) }, declaredType: declaredType)
@@ -2247,14 +2247,14 @@ public final class BASICInterpreter {
         }
     }
 
-    private func callFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
+    private func callFunction(name: VariableName, arguments: [Expression], allowVoid: Bool = false) throws -> BASICValue {
         if Self.intrinsicFunctionNames.contains(name.normalized) {
             return try callIntrinsicFunction(name: name, arguments: arguments)
         }
         guard let definition = functionDefinitions[name.normalized] else {
             throw BASICError.runtime("Unknown function \(name.name)")
         }
-        return try callFunction(definition: definition, receiver: nil, receiverClassName: nil, arguments: arguments, allowVoid: false).value
+        return try callFunction(definition: definition, receiver: nil, receiverClassName: nil, arguments: arguments, allowVoid: allowVoid).value
     }
 
     private func singleNumericArgument(name: String, arguments: [Expression]) throws -> Double {
@@ -2403,7 +2403,7 @@ public final class BASICInterpreter {
         return Double(trimmed[..<index])
     }
 
-    private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression]) throws -> BASICValue {
+    private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression], allowVoid: Bool = false) throws -> BASICValue {
         let receiverDeclaredType = runtime.declaredType(for: receiver)
         let receiverValue = try runtime.value(
             for: receiver,
@@ -2436,7 +2436,7 @@ public final class BASICInterpreter {
                     receiver: receiverValue,
                     receiverClassName: classDefinition.displayName,
                     arguments: arguments,
-                    allowVoid: false
+                    allowVoid: allowVoid
                 )
                 if let updatedReceiver = result.receiver {
                     try runtime.assign(
@@ -4315,6 +4315,22 @@ public final class BASICInterpreter {
             return .number(Double(string.characterCount))
         case .systemFunction(let expression):
             return .string(BASICString(try runSystemCommand(expression)))
+        }
+    }
+
+    private func evaluateStandaloneExpression(_ expression: Expression) throws -> BASICValue {
+        switch expression {
+        case .callOrArray(let name, let arguments):
+            if functionDefinitions[name.normalized] != nil {
+                return try callFunction(name: name, arguments: arguments, allowVoid: true)
+            }
+            return try evaluate(expression)
+        case .functionCall(let name, let arguments):
+            return try callFunction(name: name, arguments: arguments, allowVoid: true)
+        case .methodCall(let receiver, let method, let arguments):
+            return try callMethod(receiver: receiver, method: method, arguments: arguments, allowVoid: true)
+        default:
+            return try evaluate(expression)
         }
     }
 

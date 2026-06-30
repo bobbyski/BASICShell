@@ -436,6 +436,9 @@ struct Parser {
             if hasTopLevelDotBeforeStatementEnd() {
                 return .expression(standaloneDottedExpression(try parseExpression()))
             }
+            if hasTopLevelCallBeforeStatementEnd() {
+                return .expression(try parseExpression())
+            }
             return try parseAssignment(kind: .bare, requiresEquals: true)
         }
         if case .hash = peek {
@@ -476,6 +479,11 @@ struct Parser {
             index += 1
         }
         return false
+    }
+
+    private func hasTopLevelCallBeforeStatementEnd() -> Bool {
+        guard case .identifier = peek else { return false }
+        return tokens[safe: current + 1]?.token == .leftParen
     }
 
     private func isKeywordStatement(_ keyword: String) -> Bool {

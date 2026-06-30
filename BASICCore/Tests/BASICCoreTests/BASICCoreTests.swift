@@ -1497,6 +1497,31 @@ struct BASICCoreTests {
         #expect(host.output == ["before", "after"])
     }
 
+    @Test("Standalone function calls execute and discard return values")
+    func standaloneFunctionCallsExecuteAndDiscardReturnValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        SayIt("hello")
+        Add(2, 3)
+        print "done"
+        end
+
+        function SayIt(message as string)
+            print message
+        end function
+
+        function Add(a as integer, b as integer) as integer
+            print a + b
+            return a + b
+        end function
+        """)
+        session.submit("RUN")
+
+        #expect(host.output == ["hello", "5", "done"])
+    }
+
     @Test("Recursive functions work")
     func recursiveFunctions() {
         let host = TestHost()

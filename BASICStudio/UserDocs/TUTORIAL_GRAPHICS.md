@@ -57,10 +57,10 @@ vtg.clear()
 vtg.setDefaultLayer(2)
 
 vtg.rect("display", 40, 40, 320, 70, "#22c55e", "#071107", 2, 8, "", "", 2)
-vtg.text("display-text", 60, 84, "0", "#f8fafc", 28, 3)
+vtg.vectorPrint("display-text", 60, 78, 28, "0", "#f8fafc", 2, 3)
 
 vtg.rect("key-7", 40, 130, 70, 52, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-vtg.text("label-7", 68, 164, "7", "#f8fafc", 22, 3)
+vtg.vectorPrint("label-7", 68, 149, 22, "7", "#f8fafc", 2, 3)
 
 vtg.present()
 
@@ -88,7 +88,7 @@ vtg.clear()
 vtg.clearHitRegions()
 
 vtg.rect("key-7", 40, 130, 70, 52, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-vtg.text("label-7", 68, 164, "7", "#f8fafc", 22, 3)
+vtg.vectorPrint("label-7", 68, 149, 22, "7", "#f8fafc", 2, 3)
 vtg.hitRegion("hit-7", 40, 130, 70, 52, 2, "key:7")
 vtg.present()
 
@@ -174,12 +174,23 @@ DrawCalculator:
 
 DrawDisplay:
     vtg.rect("display", 50, 55, 290, 60, "#22c55e", "#071107", 2, 8, "", "", 2)
-    vtg.text("display-text", 64, 94, display$, "#f8fafc", 26, 3)
+    displaySize = vtg.vectorTextSize(26, display$)
+    displayTextWidth = int(displaySize("width"))
+    displayTextHeight = int(displaySize("height"))
+    displayTextX = 50 + 290 - displayTextWidth - 16
+    if displayTextX < 64 then displayTextX = 64
+    displayTextY = 55 + int((60 - displayTextHeight) / 2)
+    vtg.vectorPrint("display-text", displayTextX, displayTextY, 26, display$, "#f8fafc", 2, 3)
     return
 
 DrawButton:
     vtg.rect("button-" + buttonID$, buttonX, buttonY, 58, 48, "#22c55e", "#0f172a", 2, 8, "", "", 2)
-    vtg.text("label-" + buttonID$, buttonX + 22, buttonY + 31, buttonText$, "#f8fafc", 20, 3)
+    labelSize = vtg.vectorTextSize(20, buttonText$)
+    labelWidth = int(labelSize("width"))
+    labelHeight = int(labelSize("height"))
+    labelX = buttonX + int((58 - labelWidth) / 2)
+    labelY = buttonY + int((48 - labelHeight) / 2)
+    vtg.vectorPrint("label-" + buttonID$, labelX, labelY, 20, buttonText$, "#f8fafc", 2, 3)
     vtg.hitRegion("hit-" + buttonID$, buttonX, buttonY, 58, 48, 2, "key:" + buttonID$)
     return
 
@@ -194,54 +205,48 @@ function MouseUp(event as variant)
         pendingOp$ = ""
         resetDisplay = false
     else
-        if button$ >= "0" then
-            if button$ <= "9" then
-                if resetDisplay then
-                    display$ = button$
-                    resetDisplay = false
-                else
-                    if display$ = "0" then
-                        display$ = button$
-                    else
-                        display$ = display$ + button$
-                    end if
-                end if
-            end if
-        end if
-
-        if button$ = "+" then
-            nextOp$ = button$
-            gosub OperatorClicked
-        end if
-        if button$ = "-" then
-            nextOp$ = button$
-            gosub OperatorClicked
-        end if
-        if button$ = "*" then
-            nextOp$ = button$
-            gosub OperatorClicked
-        end if
-        if button$ = "/" then
-            nextOp$ = button$
-            gosub OperatorClicked
-        end if
-        if button$ = "=" then
-            gosub EqualsClicked
-        end if
+        if button$ = "+" then OperatorClicked(button$)
+        if button$ = "-" then OperatorClicked(button$)
+        if button$ = "*" then OperatorClicked(button$)
+        if button$ = "/" then OperatorClicked(button$)
+        if button$ = "=" then EqualsClicked()
+        if button$ = "0" then DigitClicked(button$)
+        if button$ = "1" then DigitClicked(button$)
+        if button$ = "2" then DigitClicked(button$)
+        if button$ = "3" then DigitClicked(button$)
+        if button$ = "4" then DigitClicked(button$)
+        if button$ = "5" then DigitClicked(button$)
+        if button$ = "6" then DigitClicked(button$)
+        if button$ = "7" then DigitClicked(button$)
+        if button$ = "8" then DigitClicked(button$)
+        if button$ = "9" then DigitClicked(button$)
     end if
 
     gosub DrawDisplay
     vtg.present()
 end function
 
-OperatorClicked:
-    if pendingOp$ <> "" then gosub EqualsClicked
-    storedValue = val(display$)
-    pendingOp$ = nextOp$
-    resetDisplay = true
-    return
+function DigitClicked(digit$ as string)
+    if resetDisplay then
+        display$ = digit$
+        resetDisplay = false
+    else
+        if display$ = "0" then
+            display$ = digit$
+        else
+            display$ = display$ + digit$
+        end if
+    end if
+end function
 
-EqualsClicked:
+function OperatorClicked(op$ as string)
+    if pendingOp$ <> "" then EqualsClicked()
+    storedValue = val(display$)
+    pendingOp$ = op$
+    resetDisplay = true
+end function
+
+function EqualsClicked()
     rightValue = val(display$)
     if pendingOp$ = "+" then storedValue = storedValue + rightValue
     if pendingOp$ = "-" then storedValue = storedValue - rightValue
@@ -252,7 +257,7 @@ EqualsClicked:
     display$ = str$(storedValue)
     pendingOp$ = ""
     resetDisplay = true
-    return
+end function
 
 Done:
     cls
