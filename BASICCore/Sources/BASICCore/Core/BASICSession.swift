@@ -120,6 +120,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public var foregroundExecutionControl: BASICExecutionControl?
     /// When true, Ctrl-C-style break requests end a foreground shell run instead of preserving a paused debugger state.
     public var stopsForegroundProgramOnBreak = false
+    /// Exit status requested by the most recent successful `QUIT` or `EXIT` direct command.
+    public private(set) var requestedExitStatus = 0
     /// Host callback queue for future async completions and Shell/Studio event-loop integration.
     public let eventLoop: BASICEventLoop
     private let hostEventLock = NSLock()
@@ -233,6 +235,42 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 return true
             }
 
+            if let exportCommand = try Self.exportCommand(from: trimmed) {
+                let value: BASICValue
+                if let explicitValue = exportCommand.value {
+                    value = .string(BASICString(explicitValue))
+                } else {
+                    value = runtime.value(for: VariableName(name: exportCommand.variableName, column: 0))
+                }
+                try runtime.exportEnvironmentValue(name: Self.environmentName(forExport: exportCommand.variableName), value: value)
+                return true
+            }
+
+            if let command = Self.whichCommand(from: trimmed) {
+                try printExecutablePath(command: command)
+                return true
+            }
+
+            if let command = Self.typeCommand(from: trimmed) {
+                try printCommandType(command: command)
+                return true
+            }
+
+            if let path = try Self.pushDirectoryPath(from: trimmed) {
+                try pushDirectory(path: path)
+                return true
+            }
+
+            if trimmed.uppercased() == "POPD" {
+                try popDirectory()
+                return true
+            }
+
+            if trimmed.uppercased() == "DIRS" {
+                try printDirectoryStack()
+                return true
+            }
+
             if let path = try Self.runPath(from: trimmed) {
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("RUN from file is not supported by this host")
@@ -300,6 +338,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 printTaskDetail(id: taskID)
                 return true
             }
+            if let exitCommand = try Self.exitCommand(from: trimmed, lastStatus: runtime.lastSystemStatus) {
+                requestedExitStatus = exitCommand.status
+                return false
+            }
 
             switch trimmed.uppercased() {
             case "NEW":
@@ -311,10 +353,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 stopAllTimers()
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PROMPT, FILES, SYSTEM, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
-                host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
-            case "QUIT", "EXIT":
-                return false
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, EXPORT, SYSTEM, EXEC, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             default:
                 do {
                     try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
@@ -337,7 +377,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard runtime.shellModeEnabled else { return false }
         guard let systemHost = host as? BASICSystemHost else { return false }
         do {
-            let output = try systemHost.runSystemCommand(command)
+            let result = try systemHost.runSystemCommandResult(command, environment: runtime.environmentPatch)
+            runtime.lastSystemStatus = result.exitCode
+            let output = result.output
             if !output.isEmpty {
                 if output.hasSuffix("\n") {
                     host.print(String(output.dropLast()), terminator: "\n")
@@ -355,6 +397,85 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             host.printLine("Unexpected error: \(error)")
             return true
         }
+    }
+
+    private func pushDirectory(path: String?) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("PUSHD is not supported by this host")
+        }
+        let current = try fileHost.currentDirectoryPath()
+        let destination = path ?? runtime.environmentValue(name: "HOME")
+        guard !destination.isEmpty else {
+            throw BASICError.runtime("PUSHD requires a directory")
+        }
+        do {
+            try fileHost.changeDirectory(path: destination)
+            runtime.directoryStack.append(current)
+            try printDirectoryStack()
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not change directory to \(destination): \(error.localizedDescription)")
+        }
+    }
+
+    private func popDirectory() throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("POPD is not supported by this host")
+        }
+        guard let destination = runtime.directoryStack.popLast() else {
+            throw BASICError.runtime("Directory stack is empty")
+        }
+        do {
+            try fileHost.changeDirectory(path: destination)
+            try printDirectoryStack()
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not change directory to \(destination): \(error.localizedDescription)")
+        }
+    }
+
+    private func printDirectoryStack() throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("DIRS is not supported by this host")
+        }
+        let paths = [try fileHost.currentDirectoryPath()] + runtime.directoryStack.reversed()
+        host.printLine(paths.joined(separator: " "))
+    }
+
+    private func printExecutablePath(command: String) throws {
+        guard !command.isEmpty else { throw BASICError.syntax("Expected command name") }
+        guard let resolver = host as? BASICExecutableResolverHost else {
+            throw BASICError.runtime("WHICH is not supported by this host")
+        }
+        guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
+            runtime.lastSystemStatus = 1
+            host.printLine("\(command) not found")
+            return
+        }
+        runtime.lastSystemStatus = 0
+        host.printLine(path)
+    }
+
+    private func printCommandType(command: String) throws {
+        guard !command.isEmpty else { throw BASICError.syntax("Expected command name") }
+        let upper = command.uppercased()
+        if Self.basicBuiltinCommands.contains(upper) {
+            runtime.lastSystemStatus = 0
+            host.printLine("\(command) is a BASICShell builtin")
+            return
+        }
+        guard let resolver = host as? BASICExecutableResolverHost else {
+            throw BASICError.runtime("TYPE is not supported by this host")
+        }
+        guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
+            runtime.lastSystemStatus = 1
+            host.printLine("\(command) not found")
+            return
+        }
+        runtime.lastSystemStatus = 0
+        host.printLine("\(command) is \(path)")
     }
 
     private func readAutoLines(start: Int, step: Int) {
@@ -1252,6 +1373,15 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         var step = 10
     }
 
+    private struct ExitCommand {
+        var status: Int
+    }
+
+    private struct ExportCommand {
+        var variableName: String
+        var value: String?
+    }
+
     private static func listCommand(from source: String) throws -> ListCommand? {
         guard keywordPrefix("LIST", matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: 4)
@@ -1400,6 +1530,45 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return rest
     }
 
+    private static func exportCommand(from source: String) throws -> ExportCommand? {
+        guard keywordPrefix("EXPORT", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 6)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { throw BASICError.syntax("Expected variable name after EXPORT") }
+
+        if let equals = rest.firstIndex(of: "=") {
+            let name = rest[..<equals].trimmingCharacters(in: .whitespaces)
+            let value = rest[rest.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { throw BASICError.syntax("Expected variable name after EXPORT") }
+            return ExportCommand(variableName: String(name), value: String(value))
+        }
+
+        let parts = rest.split(whereSeparator: { $0.isWhitespace })
+        guard parts.count == 1 else { throw BASICError.syntax("Expected EXPORT name or EXPORT name=value") }
+        return ExportCommand(variableName: String(parts[0]), value: nil)
+    }
+
+    private static func whichCommand(from source: String) -> String? {
+        shellWordCommand(keyword: "WHICH", from: source)
+    }
+
+    private static func typeCommand(from source: String) -> String? {
+        shellWordCommand(keyword: "TYPE", from: source)
+    }
+
+    private static func shellWordCommand(keyword: String, from source: String) -> String? {
+        guard keywordPrefix(keyword, matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: keyword.count)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return "" }
+        return String(rest.split(whereSeparator: { $0.isWhitespace }).first ?? "")
+    }
+
+    private static func pushDirectoryPath(from source: String) throws -> String?? {
+        guard keywordPrefix("PUSHD", matches: source) else { return nil }
+        return try commandPath(keyword: "PUSHD", from: source, requiresPath: false)
+    }
+
     private static func isFilesCommand(_ source: String) -> Bool {
         source.uppercased() == "FILES"
     }
@@ -1412,6 +1581,48 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard let line = Int(rest) else { throw BASICError.syntax("Expected line number after RUN") }
         return .some(line)
     }
+
+    private static func exitCommand(from source: String, lastStatus: Int) throws -> ExitCommand? {
+        let keyword: String
+        if keywordPrefix("EXIT", matches: source) {
+            keyword = "EXIT"
+        } else if keywordPrefix("QUIT", matches: source) {
+            keyword = "QUIT"
+        } else {
+            return nil
+        }
+
+        let start = source.index(source.startIndex, offsetBy: keyword.count)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return ExitCommand(status: 0) }
+
+        let upper = rest.uppercased()
+        if upper == "STATUS" || upper == "ERRORLEVEL" {
+            return ExitCommand(status: normalizedExitStatus(lastStatus))
+        }
+        guard let status = Int(rest) else {
+            return nil
+        }
+        guard (0...255).contains(status) else {
+            throw BASICError.runtime("Exit status must be between 0 and 255")
+        }
+        return ExitCommand(status: status)
+    }
+
+    private static func normalizedExitStatus(_ status: Int) -> Int {
+        min(255, max(0, status))
+    }
+
+    private static func environmentName(forExport name: String) -> String {
+        guard let last = name.last, "$%#".contains(last) else { return name }
+        return String(name.dropLast())
+    }
+
+    private static let basicBuiltinCommands: Set<String> = [
+        "CD", "DIRS", "EDIT", "EXPORT", "FILES", "HELP", "LIST", "LOAD", "NEW", "POPD",
+        "PROMPT", "PUSHD", "PWD", "QUIT", "RUN", "SAVE", "SETENV", "STATUS", "SYSTEM",
+        "TASK", "TASKS", "TYPE", "UNSETENV", "WHICH"
+    ]
 
     private static func keywordPrefix(_ keyword: String, matches source: String) -> Bool {
         guard source.count >= keyword.count else { return false }

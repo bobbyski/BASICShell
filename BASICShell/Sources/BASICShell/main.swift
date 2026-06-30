@@ -615,7 +615,7 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
     var isGraphicsAvailable: Bool { isVectorTerminalAvailable }
@@ -924,6 +924,27 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICBlockingKeyboardHo
             return []
         }
         return bundledFiles
+    }
+
+    func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {
+        let expandedCommand = expandedPath(command)
+        if expandedCommand.contains("/") {
+            return FileManager.default.isExecutableFile(atPath: expandedCommand) ? expandedCommand : nil
+        }
+
+        let patchedEnvironment = environment.applying(to: ProcessInfo.processInfo.environment)
+        let pathValue = patchedEnvironment["PATH"] ?? patchedEnvironment["Path"] ?? patchedEnvironment["path"] ?? ""
+        for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
+            let base = directory.isEmpty ? "." : String(directory)
+            let candidate = URL(fileURLWithPath: expandedPath(base), isDirectory: true)
+                .appendingPathComponent(command)
+                .standardizedFileURL
+                .path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private func recursiveFiles(at root: URL) throws -> [String]? {
@@ -2686,6 +2707,7 @@ if let scriptPath = arguments.first {
 print("BASICShell")
 print("Type HELP for commands. Type QUIT to exit.")
 
+var shellExitCode: Int32 = 0
 while true {
     guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
@@ -2702,5 +2724,10 @@ while true {
         BASICPromptTemplateStore.save(session.promptTemplate)
     }
     drainSessionEventLoop()
-    if !shouldContinue { break }
+    if !shouldContinue {
+        shellExitCode = Int32(session.requestedExitStatus)
+        break
+    }
 }
+
+finish(shellExitCode)

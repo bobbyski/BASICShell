@@ -16,6 +16,10 @@ final class BASICRuntime {
     var gamepadEventMode: BASICEventInputMode = .auto
     var shellModeEnabled = false
     var stringSubstitutionEnabled = false
+    var environmentValues: [String: String] = [:]
+    var unsetEnvironmentNames: Set<String> = []
+    var directoryStack: [String] = []
+    var lastSystemStatus = 0
     var randomGenerator = BASICRandomGenerator()
     var lastErrorNumber = 0
     var lastErrorLine = 0
@@ -45,6 +49,65 @@ final class BASICRuntime {
         keyMode = .aibasic
         mouseEventMode = .auto
         gamepadEventMode = .auto
+        environmentValues.removeAll()
+        unsetEnvironmentNames.removeAll()
+        directoryStack.removeAll()
+        lastSystemStatus = 0
+    }
+
+    func setEnvironmentValue(name: String, value: String) {
+        let normalized = name.uppercased()
+        environmentValues[normalized] = value
+        unsetEnvironmentNames.remove(normalized)
+    }
+
+    func unsetEnvironmentValue(name: String) {
+        let normalized = name.uppercased()
+        environmentValues.removeValue(forKey: normalized)
+        unsetEnvironmentNames.insert(normalized)
+    }
+
+    func exportEnvironmentValue(name: String, value: BASICValue) throws {
+        try setEnvironmentValue(name: name, value: environmentCString(from: value))
+    }
+
+    func environmentValue(name: String) -> String {
+        let normalized = name.uppercased()
+        if let value = environmentValues[normalized] {
+            return value
+        }
+        if unsetEnvironmentNames.contains(normalized) {
+            return ""
+        }
+        return ProcessInfo.processInfo.environment[name]
+            ?? ProcessInfo.processInfo.environment[normalized]
+            ?? ""
+    }
+
+    var environmentPatch: BASICEnvironmentPatch {
+        BASICEnvironmentPatch(values: environmentValues, removals: unsetEnvironmentNames)
+    }
+
+    private func environmentCString(from value: BASICValue) throws -> String {
+        switch value {
+        case .empty, .null:
+            return ""
+        case .string(let string):
+            return string.description
+        case .number(let number):
+            guard number.isFinite else { throw BASICError.runtime("Cannot export non-finite number") }
+            if number.rounded() == number {
+                guard number >= Double(Int64.min), number <= Double(Int64.max) else {
+                    return String(number)
+                }
+                return String(Int64(number))
+            }
+            return String(number)
+        case .boolean(let value):
+            return value ? "TRUE" : "FALSE"
+        case .record, .object, .systemObject, .closure, .array, .dictionary:
+            throw BASICError.runtime("EXPORT requires a scalar value")
+        }
     }
 
     func clearLastError() {

@@ -99,8 +99,18 @@ indirect enum Statement: Equatable {
     case load(Expression)
     case save(Expression?)
     case cd(Expression?)
+    case pwd
     case files
+    case setEnvironment(name: Expression, value: Expression)
+    case unsetEnvironment(Expression)
+    case exportEnvironment(name: String, value: Expression?)
+    case which(Expression)
+    case typeCommand(Expression)
+    case pushDirectory(Expression?)
+    case popDirectory
+    case directoryStack
     case system(Expression)
+    case exec(command: Expression, arguments: [Expression])
     case join(Expression)
     case yield
     case randomize(Expression?)
@@ -207,6 +217,8 @@ indirect enum Expression: Equatable {
     case pointFunction(GraphicsPoint)
     case chrFunction(Expression)
     case lenFunction(Expression)
+    case environmentFunction(Expression)
+    case pwdFunction
     case systemFunction(Expression)
 }
 

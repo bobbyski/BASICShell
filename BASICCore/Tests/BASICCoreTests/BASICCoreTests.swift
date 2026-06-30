@@ -4631,6 +4631,7 @@ struct BASICCoreTests {
         let host = TestHost()
         let session = BASICSession(host: host)
         host.systemOutputs["git status"] = "On branch feature/shell\n"
+        host.systemStatuses["git status"] = 3
 
         session.submit("git status")
         #expect(host.systemCommands == [])
@@ -4642,6 +4643,8 @@ struct BASICCoreTests {
 
         #expect(host.systemCommands == ["git status"])
         #expect(host.output == ["On branch feature/shell"])
+        session.submit("PRINT STATUS")
+        #expect(host.output == ["On branch feature/shell", "3"])
 
         session.submit("OPTION SHELLMODE OFF")
         host.output.removeAll()
@@ -4649,6 +4652,193 @@ struct BASICCoreTests {
 
         #expect(host.systemCommands == ["git status"])
         #expect(host.output == ["git status\n    ^\nSyntax error: Expected ="])
+    }
+
+    @Test("PWD exposes current directory as command and expression")
+    func pwdExposesCurrentDirectoryAsCommandAndExpression() {
+        let host = TestHost()
+        host.currentDirectory = "work"
+        let session = BASICSession(host: host)
+
+        session.submit("PWD")
+        session.submit("PRINT PWD$")
+
+        #expect(host.output == ["work", "work"])
+    }
+
+    @Test("Environment options affect ENVIRON and child commands")
+    func environmentOptionsAffectEnvironAndChildCommands() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.systemOutputs["env-check"] = "ok\n"
+
+        session.submit("SETENV \"BASICSHELL_TEST\", \"alpha\"")
+        session.submit("PRINT ENVIRON$(\"BASICSHELL_TEST\")")
+        session.submit("SYSTEM \"env-check\"")
+
+        #expect(host.output == ["alpha", "ok\n"])
+        #expect(host.systemEnvironmentPatches.last?.values["BASICSHELL_TEST"] == "alpha")
+        #expect(host.systemEnvironmentPatches.last?.removals.contains("BASICSHELL_TEST") == false)
+
+        session.submit("UNSETENV \"BASICSHELL_TEST\"")
+        session.submit("PRINT \"[\" + ENVIRON$(\"BASICSHELL_TEST\") + \"]\"")
+        session.submit("SYSTEM \"env-check\"")
+
+        #expect(host.output == ["alpha", "ok\n[]", "ok\n"])
+        #expect(host.systemEnvironmentPatches.last?.values["BASICSHELL_TEST"] == nil)
+        #expect(host.systemEnvironmentPatches.last?.removals.contains("BASICSHELL_TEST") == true)
+    }
+
+    @Test("EXPORT publishes BASIC scalar values as child environment strings")
+    func exportPublishesBASICScalarValuesAsChildEnvironmentStrings() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.systemOutputs["env-check"] = "ok\n"
+
+        session.submit("LET TITLE$ = \"BASICShell\"")
+        session.submit("LET COUNT% = 42")
+        session.submit("EXPORT TITLE$")
+        session.submit("EXPORT COUNT%")
+        session.submit("EXPORT DIRECT=plain")
+        session.submit("SYSTEM \"env-check\"")
+
+        let patch = host.systemEnvironmentPatches.last
+        #expect(patch?.values["TITLE"] == "BASICShell")
+        #expect(patch?.values["COUNT"] == "42")
+        #expect(patch?.values["DIRECT"] == "plain")
+    }
+
+    @Test("WHICH and TYPE resolve commands and update STATUS")
+    func whichAndTypeResolveCommandsAndUpdateStatus() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.executablePaths["swift"] = "/usr/bin/swift"
+
+        session.submit("which swift")
+        session.submit("PRINT STATUS")
+        session.submit("type cd")
+        session.submit("type missing")
+        session.submit("PRINT ERRORLEVEL")
+
+        #expect(host.output == [
+            "/usr/bin/swift",
+            "0",
+            "cd is a BASICShell builtin",
+            "missing not found",
+            "1"
+        ])
+    }
+
+    @Test("EXPORT and WHICH can run inside BASIC programs")
+    func exportAndWhichCanRunInsideBASICPrograms() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.executablePaths["swift"] = "/usr/bin/swift"
+        host.systemOutputs["env-check"] = "ok\n"
+
+        session.program.loadSource("""
+        let title$ = "Program"
+        export title$
+        which "swift"
+        system "env-check"
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["/usr/bin/swift", "ok\n"])
+        #expect(host.systemEnvironmentPatches.last?.values["TITLE"] == "Program")
+    }
+
+    @Test("PUSHD POPD and DIRS maintain a session directory stack")
+    func pushdPopdAndDirsMaintainSessionDirectoryStack() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.currentDirectory = "/tmp/home"
+
+        session.submit("pushd /tmp/work")
+        session.submit("pushd /tmp/project")
+        session.submit("dirs")
+        session.submit("popd")
+        session.submit("popd")
+
+        #expect(host.currentDirectory == "/tmp/home")
+        #expect(host.output == [
+            "/tmp/work /tmp/home",
+            "/tmp/project /tmp/work /tmp/home",
+            "/tmp/project /tmp/work /tmp/home",
+            "/tmp/work /tmp/home",
+            "/tmp/home"
+        ])
+    }
+
+    @Test("SYSTEM records status and errorlevel")
+    func systemRecordsStatusAndErrorlevel() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.systemStatuses["fail-ish"] = 17
+
+        session.submit("SYSTEM \"fail-ish\"")
+        session.submit("PRINT STATUS")
+        session.submit("PRINT ERRORLEVEL")
+
+        #expect(host.systemCommands == ["fail-ish"])
+        #expect(host.output == ["17", "17"])
+    }
+
+    @Test("EXEC runs structured argv processes and records output status")
+    func execRunsStructuredArgvProcessesAndRecordsOutputStatus() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.currentDirectory = "/tmp/project"
+        host.columns = 120
+        host.rows = 40
+        host.processResults["tool"] = BASICProcessResult(
+            stdout: "out\n",
+            stderr: "err\n",
+            exitCode: 9
+        )
+
+        session.submit("LET TOKEN$ = \"abc\"")
+        session.submit("EXPORT TOKEN$")
+        session.submit("EXEC \"tool\", \"one two\", \"three\"")
+        session.submit("PRINT STATUS")
+
+        #expect(host.output == ["out\nerr\n9"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "tool")
+        #expect(host.processRequests[0].arguments == ["one two", "three"])
+        #expect(host.processRequests[0].workingDirectory == "/tmp/project")
+        #expect(host.processRequests[0].columns == 120)
+        #expect(host.processRequests[0].rows == 40)
+        #expect(host.processRequests[0].environment.values["TOKEN"] == "abc")
+    }
+
+    @Test("EXIT and QUIT direct commands can request process status")
+    func exitAndQuitDirectCommandsCanRequestProcessStatus() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        #expect(session.submit("EXIT") == false)
+        #expect(session.requestedExitStatus == 0)
+
+        #expect(session.submit("QUIT 7") == false)
+        #expect(session.requestedExitStatus == 7)
+
+        host.systemStatuses["fail-ish"] = 23
+        session.submit("SYSTEM \"fail-ish\"")
+        #expect(session.submit("EXIT STATUS") == false)
+        #expect(session.requestedExitStatus == 23)
+
+        #expect(session.submit("QUIT ERRORLEVEL") == false)
+        #expect(session.requestedExitStatus == 23)
+    }
+
+    @Test("EXIT status validates shell exit code range")
+    func exitStatusValidatesShellExitCodeRange() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        #expect(session.submit("EXIT 999") == true)
+        #expect(host.output == ["Runtime error: Exit status must be between 0 and 255"])
     }
 
     @Test("Debugger snapshots group inherited CLASS fields")
@@ -6703,7 +6893,7 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
@@ -6717,6 +6907,11 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var currentDirectory = "."
     var systemCommands: [String] = []
     var systemOutputs: [String: String] = [:]
+    var systemStatuses: [String: Int] = [:]
+    var systemEnvironmentPatches: [BASICEnvironmentPatch] = []
+    var executablePaths: [String: String] = [:]
+    var processRequests: [BASICProcessRequest] = []
+    var processResults: [String: BASICProcessResult] = [:]
     var breakAfterOutputCount: Int?
     var breakOnBlockingKeyRead = false
     weak var executionControl: BASICExecutionControl?
@@ -6859,8 +7054,25 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     }
 
     func runSystemCommand(_ command: String) throws -> String {
+        try runSystemCommandResult(command, environment: .empty).output
+    }
+
+    func runSystemCommandResult(_ command: String, environment: BASICEnvironmentPatch) throws -> BASICSystemCommandResult {
         systemCommands.append(command)
-        return systemOutputs[command] ?? ""
+        systemEnvironmentPatches.append(environment)
+        return BASICSystemCommandResult(
+            output: systemOutputs[command] ?? "",
+            exitCode: systemStatuses[command] ?? 0
+        )
+    }
+
+    func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {
+        executablePaths[command]
+    }
+
+    func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        processRequests.append(request)
+        return processResults[request.executable] ?? BASICProcessResult(stdout: "", stderr: "", exitCode: 0)
     }
 
     func setScreenMode(_ mode: BASICScreenMode) {

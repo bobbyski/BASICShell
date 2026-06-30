@@ -129,6 +129,20 @@ public protocol BASICFileHost: BASICHost {
 public protocol BASICSystemHost: BASICHost {
     /// Runs a shell command and returns combined output.
     func runSystemCommand(_ command: String) throws -> String
+    /// Runs a shell command and returns combined output plus process status.
+    func runSystemCommandResult(_ command: String, environment: BASICEnvironmentPatch) throws -> BASICSystemCommandResult
+}
+
+/// Host interface for structured foreground process execution.
+public protocol BASICProcessHost: BASICHost {
+    /// Runs an executable directly with argv-style arguments.
+    func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult
+}
+
+/// Optional host capability for resolving executables against a shell-like environment.
+public protocol BASICExecutableResolverHost: BASICHost {
+    /// Resolves a command name or path to an executable path.
+    func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String?
 }
 
 /// Public canvas snapshot returned by VectorTerminal host adapters.
@@ -762,12 +776,114 @@ public extension BASICFileHost {
 public extension BASICSystemHost {
     /// Default SYSTEM implementation using `/bin/sh -lc`.
     func runSystemCommand(_ command: String) throws -> String {
+        try runSystemCommandResult(command, environment: .empty).output
+    }
+
+    /// Default SYSTEM result implementation using `/bin/sh -lc`.
+    func runSystemCommandResult(_ command: String, environment: BASICEnvironmentPatch = .empty) throws -> BASICSystemCommandResult {
         let dimensions = self as? BASICConsoleHost
-        return try BASICSystemCommand.run(
+        return try BASICSystemCommand.runResult(
             command,
             columns: dimensions?.screenColumns(),
-            rows: dimensions?.screenRows()
+            rows: dimensions?.screenRows(),
+            environment: environment
         )
+    }
+}
+
+public struct BASICEnvironmentPatch: Equatable, Sendable {
+    public static let empty = BASICEnvironmentPatch(values: [:], removals: [])
+
+    public let values: [String: String]
+    public let removals: Set<String>
+
+    public init(values: [String: String], removals: Set<String>) {
+        self.values = values
+        self.removals = removals
+    }
+
+    public func applying(to environment: [String: String]) -> [String: String] {
+        var updated = environment
+        for name in removals {
+            updated.removeValue(forKey: name)
+        }
+        for (name, value) in values {
+            updated[name] = value
+        }
+        return updated
+    }
+}
+
+public struct BASICSystemCommandResult: Equatable, Sendable {
+    public let output: String
+    public let exitCode: Int
+
+    public init(output: String, exitCode: Int) {
+        self.output = output
+        self.exitCode = exitCode
+    }
+}
+
+/// Structured argv-style process request.
+public struct BASICProcessRequest: Equatable, Sendable {
+    public let executable: String
+    public let arguments: [String]
+    public let workingDirectory: String?
+    public let columns: Int?
+    public let rows: Int?
+    public let environment: BASICEnvironmentPatch
+
+    public init(
+        executable: String,
+        arguments: [String] = [],
+        workingDirectory: String? = nil,
+        columns: Int? = nil,
+        rows: Int? = nil,
+        environment: BASICEnvironmentPatch = .empty
+    ) {
+        self.executable = executable
+        self.arguments = arguments
+        self.workingDirectory = workingDirectory
+        self.columns = columns
+        self.rows = rows
+        self.environment = environment
+    }
+}
+
+/// Structured process result with stdout and stderr kept separate.
+public struct BASICProcessResult: Equatable, Sendable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int
+
+    public init(stdout: String, stderr: String, exitCode: Int) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
+private final class BASICProcessOutputBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func set(_ newData: Data) {
+        lock.lock()
+        data = newData
+        lock.unlock()
+    }
+
+    func value() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
+public extension BASICProcessHost {
+    /// Default structured process implementation.
+    func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        try BASICSystemCommand.runProcess(request)
     }
 }
 
@@ -780,13 +896,24 @@ public enum BASICSystemCommand {
         columns: Int? = nil,
         rows: Int? = nil
     ) throws -> String {
+        try runResult(command, workingDirectory: workingDirectory, columns: columns, rows: rows).output
+    }
+
+    public static func runResult(
+        _ command: String,
+        workingDirectory: URL? = nil,
+        columns: Int? = nil,
+        rows: Int? = nil,
+        environment: BASICEnvironmentPatch = .empty
+    ) throws -> BASICSystemCommandResult {
         #if canImport(Darwin)
         if columns != nil || rows != nil {
             return try runWithPseudoTerminal(
                 command,
                 workingDirectory: workingDirectory,
                 columns: columns,
-                rows: rows
+                rows: rows,
+                environment: environment
             )
         }
         #endif
@@ -795,7 +922,8 @@ public enum BASICSystemCommand {
             command,
             workingDirectory: workingDirectory,
             columns: columns,
-            rows: rows
+            rows: rows,
+            environment: environment
         )
     }
 
@@ -803,14 +931,15 @@ public enum BASICSystemCommand {
         _ command: String,
         workingDirectory: URL?,
         columns: Int?,
-        rows: Int?
-    ) throws -> String {
+        rows: Int?,
+        environment: BASICEnvironmentPatch
+    ) throws -> BASICSystemCommandResult {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-lc", command]
         process.currentDirectoryURL = workingDirectory
-        process.environment = terminalEnvironment(columns: columns, rows: rows)
+        process.environment = terminalEnvironment(columns: columns, rows: rows, patch: environment)
         process.standardOutput = pipe
         process.standardError = pipe
 
@@ -822,7 +951,66 @@ public enum BASICSystemCommand {
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
+        return BASICSystemCommandResult(output: String(decoding: data, as: UTF8.self), exitCode: Int(process.terminationStatus))
+    }
+
+    public static func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        let process = Process()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.executableURL = executableURL(for: request.executable)
+        process.arguments = executableArguments(for: request.executable, arguments: request.arguments)
+        if let workingDirectory = request.workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+        }
+        process.environment = terminalEnvironment(
+            columns: request.columns,
+            rows: request.rows,
+            patch: request.environment
+        )
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            throw BASICError.runtime("Could not execute process: \(error.localizedDescription)")
+        }
+
+        let stdoutData = BASICProcessOutputBox()
+        let stderrData = BASICProcessOutputBox()
+        let outputGroup = DispatchGroup()
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stdoutData.set(stdout.fileHandleForReading.readDataToEndOfFile())
+            outputGroup.leave()
+        }
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stderrData.set(stderr.fileHandleForReading.readDataToEndOfFile())
+            outputGroup.leave()
+        }
+        process.waitUntilExit()
+        outputGroup.wait()
+        return BASICProcessResult(
+            stdout: String(decoding: stdoutData.value(), as: UTF8.self),
+            stderr: String(decoding: stderrData.value(), as: UTF8.self),
+            exitCode: Int(process.terminationStatus)
+        )
+    }
+
+    private static func executableURL(for executable: String) -> URL {
+        if executable.contains("/") {
+            return URL(fileURLWithPath: executable)
+        }
+        return URL(fileURLWithPath: "/usr/bin/env")
+    }
+
+    private static func executableArguments(for executable: String, arguments: [String]) -> [String] {
+        if executable.contains("/") {
+            return arguments
+        }
+        return [executable] + arguments
     }
 
     #if canImport(Darwin)
@@ -830,8 +1018,9 @@ public enum BASICSystemCommand {
         _ command: String,
         workingDirectory: URL?,
         columns: Int?,
-        rows: Int?
-    ) throws -> String {
+        rows: Int?,
+        environment: BASICEnvironmentPatch
+    ) throws -> BASICSystemCommandResult {
         var master: Int32 = -1
         var slave: Int32 = -1
         var windowSize = winsize(
@@ -853,7 +1042,7 @@ public enum BASICSystemCommand {
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-lc", command]
         process.currentDirectoryURL = workingDirectory
-        process.environment = terminalEnvironment(columns: columns, rows: rows)
+        process.environment = terminalEnvironment(columns: columns, rows: rows, patch: environment)
         process.standardInput = inputHandle
         process.standardOutput = outputHandle
         process.standardError = errorHandle
@@ -872,11 +1061,11 @@ public enum BASICSystemCommand {
         inputHandle.closeFile()
         let data = masterHandle.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
+        return BASICSystemCommandResult(output: String(decoding: data, as: UTF8.self), exitCode: Int(process.terminationStatus))
     }
     #endif
 
-    private static func terminalEnvironment(columns: Int?, rows: Int?) -> [String: String] {
+    private static func terminalEnvironment(columns: Int?, rows: Int?, patch: BASICEnvironmentPatch) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         if let columns {
             environment["COLUMNS"] = String(max(1, columns))
@@ -884,6 +1073,6 @@ public enum BASICSystemCommand {
         if let rows {
             environment["LINES"] = String(max(1, rows))
         }
-        return environment
+        return patch.applying(to: environment)
     }
 }

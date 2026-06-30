@@ -369,11 +369,50 @@ struct Parser {
         if matchIdentifier("CD") {
             return .cd(isStatementEnd ? nil : try parseExpression())
         }
+        if matchIdentifier("PWD") {
+            return .pwd
+        }
         if matchIdentifier("FILES") {
             return .files
         }
+        if matchIdentifier("SETENV") {
+            let name = try parseExpression()
+            guard match(.comma) else { throw syntax("Expected , after SETENV name") }
+            return .setEnvironment(name: name, value: try parseExpression())
+        }
+        if matchIdentifier("UNSETENV") {
+            return .unsetEnvironment(try parseExpression())
+        }
+        if matchIdentifier("EXPORT") {
+            guard case .identifier(let name) = advance() else { throw syntax("Expected variable name after EXPORT") }
+            let value = match(.equals) ? try parseExpression() : nil
+            return .exportEnvironment(name: name, value: value)
+        }
+        if matchIdentifier("WHICH") {
+            return .which(try parseExpression())
+        }
+        if matchIdentifier("TYPE") {
+            return .typeCommand(try parseExpression())
+        }
+        if matchIdentifier("PUSHD") {
+            return .pushDirectory(isStatementEnd ? nil : try parseExpression())
+        }
+        if matchIdentifier("POPD") {
+            return .popDirectory
+        }
+        if matchIdentifier("DIRS") {
+            return .directoryStack
+        }
         if matchIdentifier("SYSTEM") {
             return .system(try parseExpression())
+        }
+        if matchIdentifier("EXEC") {
+            let command = try parseExpression()
+            var arguments: [Expression] = []
+            while match(.comma) {
+                arguments.append(try parseExpression())
+            }
+            return .exec(command: command, arguments: arguments)
         }
         if matchIdentifier("JOIN") {
             return .join(try parseExpression())
@@ -1322,6 +1361,12 @@ struct Parser {
             if uppercased == "LEN", peek == .leftParen {
                 return .lenFunction(try parseSingleArgumentFunction())
             }
+            if uppercased == "ENVIRON$", peek == .leftParen {
+                return .environmentFunction(try parseSingleArgumentFunction())
+            }
+            if uppercased == "PWD$", peek != .leftParen {
+                return .pwdFunction
+            }
             if uppercased == "SYSTEM$", peek == .leftParen {
                 return .systemFunction(try parseSingleArgumentFunction())
             }
@@ -1672,7 +1717,7 @@ struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SYSTEM", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]

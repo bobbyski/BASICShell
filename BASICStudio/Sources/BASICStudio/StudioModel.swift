@@ -1427,7 +1427,7 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, 
     }
 }
 
-extension StudioModel: BASICFileHost, BASICSystemHost {
+extension StudioModel: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost {
     nonisolated func loadTextFile(path: String) throws -> String {
         do {
             return try String(contentsOfFile: expandedPath(path), encoding: .utf8)
@@ -1481,6 +1481,27 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
             }
         }
         return []
+    }
+
+    nonisolated func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {
+        let expandedCommand = expandedPath(command)
+        if expandedCommand.contains("/") {
+            return FileManager.default.isExecutableFile(atPath: expandedCommand) ? expandedCommand : nil
+        }
+
+        let patchedEnvironment = environment.applying(to: ProcessInfo.processInfo.environment)
+        let pathValue = patchedEnvironment["PATH"] ?? patchedEnvironment["Path"] ?? patchedEnvironment["path"] ?? ""
+        for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
+            let base = directory.isEmpty ? "." : String(directory)
+            let candidate = URL(fileURLWithPath: expandedPath(base), isDirectory: true)
+                .appendingPathComponent(command)
+                .standardizedFileURL
+                .path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     nonisolated private func recursiveFiles(at root: URL) throws -> [String]? {
@@ -1562,11 +1583,16 @@ extension StudioModel: BASICFileHost, BASICSystemHost {
     }
 
     nonisolated func runSystemCommand(_ command: String) throws -> String {
-        try BASICSystemCommand.run(
+        try runSystemCommandResult(command, environment: .empty).output
+    }
+
+    nonisolated func runSystemCommandResult(_ command: String, environment: BASICEnvironmentPatch) throws -> BASICSystemCommandResult {
+        try BASICSystemCommand.runResult(
             command,
             workingDirectory: workingDirectorySnapshot(),
             columns: screenColumns(),
-            rows: screenRows()
+            rows: screenRows(),
+            environment: environment
         )
     }
 }

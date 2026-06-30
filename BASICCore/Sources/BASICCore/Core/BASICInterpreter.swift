@@ -1260,14 +1260,56 @@ public final class BASICInterpreter {
         case .cd(let path):
             try changeDirectory(path: path)
             return .next
+        case .pwd:
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("PWD is not supported by this host")
+            }
+            host?.printLine(try fileHost.currentDirectoryPath())
+            return .next
         case .files:
             try listFiles()
+            return .next
+        case .setEnvironment(let name, let value):
+            runtime.setEnvironmentValue(name: try string(name), value: try string(value))
+            return .next
+        case .unsetEnvironment(let name):
+            runtime.unsetEnvironmentValue(name: try string(name))
+            return .next
+        case .exportEnvironment(let name, let value):
+            let exportedValue = try value.map(evaluate) ?? runtime.value(for: VariableName(name: name, column: 0))
+            try runtime.exportEnvironmentValue(name: environmentName(forExport: name), value: exportedValue)
+            return .next
+        case .which(let command):
+            try printExecutablePath(command: try string(command))
+            return .next
+        case .typeCommand(let command):
+            try printCommandType(command: try string(command))
+            return .next
+        case .pushDirectory(let path):
+            try pushDirectory(path: path)
+            return .next
+        case .popDirectory:
+            try popDirectory()
+            return .next
+        case .directoryStack:
+            try printDirectoryStack()
             return .next
         case .system(let command):
             let output = try runSystemCommand(command)
             if !output.isEmpty {
                 host?.print(output, terminator: "")
                 updateOutputColumn(text: output, terminator: "")
+            }
+            return .next
+        case .exec(let command, let arguments):
+            let result = try runStructuredProcess(command: command, arguments: arguments)
+            if !result.stdout.isEmpty {
+                host?.print(result.stdout, terminator: "")
+                updateOutputColumn(text: result.stdout, terminator: "")
+            }
+            if !result.stderr.isEmpty {
+                host?.print(result.stderr, terminator: "")
+                updateOutputColumn(text: result.stderr, terminator: "")
             }
             return .next
         case .join(let expression):
@@ -3455,6 +3497,51 @@ public final class BASICInterpreter {
         }
     }
 
+    private func pushDirectory(path: Expression?) throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("PUSHD is not supported by this host")
+        }
+        let current = try fileHost.currentDirectoryPath()
+        let destination = try path.map(string) ?? runtime.environmentValue(name: "HOME")
+        guard !destination.isEmpty else {
+            throw BASICError.runtime("PUSHD requires a directory")
+        }
+        do {
+            try fileHost.changeDirectory(path: destination)
+            runtime.directoryStack.append(current)
+            try printDirectoryStack()
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not change directory to \(destination): \(error.localizedDescription)")
+        }
+    }
+
+    private func popDirectory() throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("POPD is not supported by this host")
+        }
+        guard let destination = runtime.directoryStack.popLast() else {
+            throw BASICError.runtime("Directory stack is empty")
+        }
+        do {
+            try fileHost.changeDirectory(path: destination)
+            try printDirectoryStack()
+        } catch let error as BASICError {
+            throw error
+        } catch {
+            throw BASICError.runtime("Could not change directory to \(destination): \(error.localizedDescription)")
+        }
+    }
+
+    private func printDirectoryStack() throws {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("DIRS is not supported by this host")
+        }
+        let paths = [try fileHost.currentDirectoryPath()] + runtime.directoryStack.reversed()
+        host?.printLine(paths.joined(separator: " "))
+    }
+
     private func listFiles() throws {
         guard let fileHost = host as? BASICFileHost else {
             throw BASICError.runtime("FILES is not supported by this host")
@@ -3807,8 +3894,72 @@ public final class BASICInterpreter {
         guard let systemHost = host as? BASICSystemHost else {
             throw BASICError.runtime("SYSTEM is not supported by this host")
         }
-        return try systemHost.runSystemCommand(try string(expression))
+        let result = try systemHost.runSystemCommandResult(try string(expression), environment: runtime.environmentPatch)
+        runtime.lastSystemStatus = result.exitCode
+        return result.output
     }
+
+    private func runStructuredProcess(command: Expression, arguments: [Expression]) throws -> BASICProcessResult {
+        guard let processHost = host as? BASICProcessHost else {
+            throw BASICError.runtime("EXEC is not supported by this host")
+        }
+        let fileHost = host as? BASICFileHost
+        let consoleHost = host as? BASICConsoleHost
+        let request = BASICProcessRequest(
+            executable: try string(command),
+            arguments: try arguments.map(string),
+            workingDirectory: try fileHost?.currentDirectoryPath(),
+            columns: consoleHost?.screenColumns(),
+            rows: consoleHost?.screenRows(),
+            environment: runtime.environmentPatch
+        )
+        let result = try processHost.runProcess(request)
+        runtime.lastSystemStatus = result.exitCode
+        return result
+    }
+
+    private func printExecutablePath(command: String) throws {
+        guard let resolver = host as? BASICExecutableResolverHost else {
+            throw BASICError.runtime("WHICH is not supported by this host")
+        }
+        guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
+            runtime.lastSystemStatus = 1
+            host?.printLine("\(command) not found")
+            return
+        }
+        runtime.lastSystemStatus = 0
+        host?.printLine(path)
+    }
+
+    private func printCommandType(command: String) throws {
+        let upper = command.uppercased()
+        if Self.basicBuiltinCommands.contains(upper) {
+            runtime.lastSystemStatus = 0
+            host?.printLine("\(command) is a BASICShell builtin")
+            return
+        }
+        guard let resolver = host as? BASICExecutableResolverHost else {
+            throw BASICError.runtime("TYPE is not supported by this host")
+        }
+        guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
+            runtime.lastSystemStatus = 1
+            host?.printLine("\(command) not found")
+            return
+        }
+        runtime.lastSystemStatus = 0
+        host?.printLine("\(command) is \(path)")
+    }
+
+    private func environmentName(forExport name: String) -> String {
+        guard let last = name.last, "$%#".contains(last) else { return name }
+        return String(name.dropLast())
+    }
+
+    private static let basicBuiltinCommands: Set<String> = [
+        "CD", "DIRS", "EDIT", "EXPORT", "FILES", "HELP", "LIST", "LOAD", "NEW", "POPD",
+        "PROMPT", "PUSHD", "PWD", "QUIT", "RUN", "SAVE", "SETENV", "STATUS", "SYSTEM",
+        "TASK", "TASKS", "TYPE", "UNSETENV", "WHICH"
+    ]
 
     private func advanceNextLoop(variable: VariableName?) throws -> Flow {
         guard let frame = forStack.last else {
@@ -4226,6 +4377,9 @@ public final class BASICInterpreter {
             if name.normalized == "CURRENT_THREAD$" {
                 return .string(BASICString(currentThreadName()))
             }
+            if name.normalized == "STATUS" || name.normalized == "ERRORLEVEL" {
+                return .number(Double(runtime.lastSystemStatus))
+            }
             if let constant = builtInConstant(named: name.normalized) {
                 return constant
             }
@@ -4319,6 +4473,13 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("LEN requires a string or array")
             }
             return .number(Double(string.characterCount))
+        case .environmentFunction(let expression):
+            return .string(BASICString(runtime.environmentValue(name: try string(expression))))
+        case .pwdFunction:
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("PWD$ is not supported by this host")
+            }
+            return .string(BASICString(try fileHost.currentDirectoryPath()))
         case .systemFunction(let expression):
             return .string(BASICString(try runSystemCommand(expression)))
         }
@@ -4484,8 +4645,10 @@ public final class BASICInterpreter {
             case .newObject(_, let arguments):
                 arguments.forEach(visit)
             case .unaryMinus(let expression), .await(let expression), .chrFunction(let expression),
-                 .lenFunction(let expression), .systemFunction(let expression):
+                 .lenFunction(let expression), .environmentFunction(let expression), .systemFunction(let expression):
                 visit(expression)
+            case .pwdFunction:
+                return
             case .binary(let left, _, let right):
                 visit(left)
                 visit(right)
