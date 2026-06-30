@@ -83,6 +83,8 @@ indirect enum Statement: Equatable {
     case optionLetMode(LetMode)
     case optionKeyMode(BASICKeyMode)
     case optionEventInput(type: String, mode: BASICEventInputMode)
+    case optionShellMode(Bool)
+    case optionStringSubstitution(Bool)
     case input(prompt: Expression?, target: ReadTarget)
     case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?, defaultValue: Expression?)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)

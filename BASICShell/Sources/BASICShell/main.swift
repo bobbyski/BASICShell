@@ -2501,6 +2501,8 @@ let session = BASICSession(
     host: host,
     promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
 )
+session.shellModeEnabled = true
+session.stringSubstitutionEnabled = true
 host.attachSession(session)
 host.attachExecutionControl(shellExecutionControl)
 session.foregroundRunLane = shellExecutionLane

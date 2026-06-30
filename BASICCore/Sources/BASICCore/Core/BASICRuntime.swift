@@ -14,6 +14,8 @@ final class BASICRuntime {
     var keyMode: BASICKeyMode = .aibasic
     var mouseEventMode: BASICEventInputMode = .auto
     var gamepadEventMode: BASICEventInputMode = .auto
+    var shellModeEnabled = false
+    var stringSubstitutionEnabled = false
     var randomGenerator = BASICRandomGenerator()
     var lastErrorNumber = 0
     var lastErrorLine = 0

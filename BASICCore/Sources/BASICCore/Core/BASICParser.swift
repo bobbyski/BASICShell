@@ -1132,7 +1132,21 @@ struct Parser {
         if matchIdentifier("GAMEPAD") {
             return .optionEventInput(type: "GAMEPAD", mode: try parseEventInputMode(optionName: "GAMEPAD"))
         }
-        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, or GAMEPAD")
+        if matchIdentifier("SHELLMODE") {
+            return .optionShellMode(try parseOnOffOption(optionName: "SHELLMODE"))
+        }
+        if matchIdentifier("SHELL") {
+            guard match(.minus), matchIdentifier("MODE") else { throw syntax("Expected SHELL-MODE") }
+            return .optionShellMode(try parseOnOffOption(optionName: "SHELL-MODE"))
+        }
+        if matchIdentifier("STRINGSUB") {
+            return .optionStringSubstitution(try parseOnOffOption(optionName: "STRINGSUB"))
+        }
+        if matchIdentifier("STRING") {
+            guard match(.minus), matchIdentifier("SUB") else { throw syntax("Expected STRING-SUB") }
+            return .optionStringSubstitution(try parseOnOffOption(optionName: "STRING-SUB"))
+        }
+        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, GAMEPAD, SHELLMODE, or STRINGSUB")
     }
 
     private mutating func parseEventInputMode(optionName: String) throws -> BASICEventInputMode {
@@ -1140,6 +1154,12 @@ struct Parser {
         if matchIdentifier("OFF") { return .off }
         if matchIdentifier("AUTO") { return .auto }
         throw syntax("Expected ON, OFF, or AUTO after OPTION \(optionName)")
+    }
+
+    private mutating func parseOnOffOption(optionName: String) throws -> Bool {
+        if matchIdentifier("ON") { return true }
+        if matchIdentifier("OFF") { return false }
+        throw syntax("Expected ON or OFF after OPTION \(optionName)")
     }
 
     private mutating func parseLetMode() throws -> LetMode {

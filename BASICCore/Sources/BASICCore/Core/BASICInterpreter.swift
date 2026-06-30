@@ -1183,6 +1183,12 @@ public final class BASICInterpreter {
             }
             synchronizeHostInput(for: type)
             return .next
+        case .optionShellMode(let enabled):
+            runtime.shellModeEnabled = enabled
+            return .next
+        case .optionStringSubstitution(let enabled):
+            runtime.stringSubstitutionEnabled = enabled
+            return .next
         case .input(let prompt, let target):
             let promptText = try prompt.map(string) ?? "\(inputTargetName(target))? "
             let raw = host?.readLine(prompt: promptText) ?? ""

@@ -4605,6 +4605,52 @@ struct BASICCoreTests {
         #expect(session.prompt == "\(NSUserName()):/tmp/aibasic> ")
     }
 
+    @Test("Shell options default off and can be toggled from BASIC")
+    func shellOptionsDefaultOffAndCanBeToggledFromBASIC() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        #expect(session.shellModeEnabled == false)
+        #expect(session.stringSubstitutionEnabled == false)
+
+        session.submit("OPTION SHELLMODE ON")
+        session.submit("OPTION STRINGSUB ON")
+
+        #expect(session.shellModeEnabled == true)
+        #expect(session.stringSubstitutionEnabled == true)
+
+        session.submit("OPTION SHELL-MODE OFF")
+        session.submit("OPTION STRING-SUB OFF")
+
+        #expect(session.shellModeEnabled == false)
+        #expect(session.stringSubstitutionEnabled == false)
+    }
+
+    @Test("Shell mode falls back to external commands after direct BASIC errors")
+    func shellModeFallsBackToExternalCommandsAfterDirectBASICErrors() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.systemOutputs["git status"] = "On branch feature/shell\n"
+
+        session.submit("git status")
+        #expect(host.systemCommands == [])
+        #expect(host.output == ["git status\n    ^\nSyntax error: Expected ="])
+
+        host.output.removeAll()
+        session.shellModeEnabled = true
+        session.submit("git status")
+
+        #expect(host.systemCommands == ["git status"])
+        #expect(host.output == ["On branch feature/shell"])
+
+        session.submit("OPTION SHELLMODE OFF")
+        host.output.removeAll()
+        session.submit("git status")
+
+        #expect(host.systemCommands == ["git status"])
+        #expect(host.output == ["git status\n    ^\nSyntax error: Expected ="])
+    }
+
     @Test("Debugger snapshots group inherited CLASS fields")
     func debuggerSnapshotsGroupInheritedClassFields() throws {
         let host = TestHost()

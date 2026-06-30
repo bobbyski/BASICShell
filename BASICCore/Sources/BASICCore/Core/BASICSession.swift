@@ -97,6 +97,18 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         renderedPrompt()
     }
 
+    /// Enables fallback to external shell-style command execution after direct BASIC command failures.
+    public var shellModeEnabled: Bool {
+        get { runtime.shellModeEnabled }
+        set { runtime.shellModeEnabled = newValue }
+    }
+
+    /// Enables future shell-style string substitution in strings.
+    public var stringSubstitutionEnabled: Bool {
+        get { runtime.stringSubstitutionEnabled }
+        set { runtime.stringSubstitutionEnabled = newValue }
+    }
+
     private let host: BASICHost
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
@@ -304,7 +316,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             case "QUIT", "EXIT":
                 return false
             default:
-                try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
+                do {
+                    try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
+                } catch let error as BASICError {
+                    guard runShellModeFallback(command: trimmed) else { throw error }
+                }
             }
         } catch let error as BASICError {
             (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
@@ -315,6 +331,30 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
 
         return true
+    }
+
+    private func runShellModeFallback(command: String) -> Bool {
+        guard runtime.shellModeEnabled else { return false }
+        guard let systemHost = host as? BASICSystemHost else { return false }
+        do {
+            let output = try systemHost.runSystemCommand(command)
+            if !output.isEmpty {
+                if output.hasSuffix("\n") {
+                    host.print(String(output.dropLast()), terminator: "\n")
+                } else {
+                    host.print(output, terminator: "\n")
+                }
+            }
+            return true
+        } catch let error as BASICError {
+            (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
+            host.printLine(error.description)
+            return true
+        } catch {
+            (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
+            host.printLine("Unexpected error: \(error)")
+            return true
+        }
     }
 
     private func readAutoLines(start: Int, step: Int) {
