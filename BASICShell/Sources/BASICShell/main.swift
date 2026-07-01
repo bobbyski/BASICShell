@@ -91,6 +91,7 @@ final class ShellLineEditor: @unchecked Sendable {
     private var fieldViewStart = 0
     private var fieldDisplayCursor = 0
     private var commandHistory = ShellLineEditor.loadCommandHistory()
+    private var aliasCompletionWords: [String] = []
     private static let maxCommandHistoryEntries = 500
     private static let commandCompletionWords = [
         "alias", "cat", "cd", "clear", "dirs", "edit", "exec", "exit", "export", "files",
@@ -298,6 +299,10 @@ final class ShellLineEditor: @unchecked Sendable {
         saveCommandHistory()
     }
 
+    func setAliasCompletionWords(_ words: [String]) {
+        aliasCompletionWords = words
+    }
+
     func deleteHistoryEntry(at index: Int) throws {
         guard commandHistory.indices.contains(index) else {
             throw BASICError.runtime("History entry \(index + 1) does not exist")
@@ -466,7 +471,7 @@ final class ShellLineEditor: @unchecked Sendable {
         }
 
         if context.isCommandPosition, !context.token.contains("/") {
-            let commandWords = Self.commandCompletionWords + Self.basicCompletionWords + pathExecutableCompletionWords()
+            let commandWords = Self.commandCompletionWords + Self.basicCompletionWords + aliasCompletionWords + pathExecutableCompletionWords()
             for word in commandWords where caseInsensitiveHasPrefix(word, prefix: context.token) {
                 append(word)
             }
@@ -3006,6 +3011,7 @@ print("Type HELP for commands. Type QUIT to exit.")
 
 var shellExitCode: Int32 = 0
 while true {
+    ShellLineEditor.shared.setAliasCompletionWords(session.aliasNames)
     guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()

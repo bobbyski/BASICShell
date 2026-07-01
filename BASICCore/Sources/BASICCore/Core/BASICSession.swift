@@ -83,6 +83,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public static let plainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "
     /// Classic READY prompt template.
     public static let shellPromptTemplate = "READY%nl> "
+    /// Continuation prompt shown while collecting a multi-line direct command.
+    public static let continuationPrompt = "... "
     /// Legacy default prompt string.
     public static let defaultPrompt = "\(NSUserName()):~ > "
     /// Nerd-font prompt template for shell-style hosts.
@@ -94,7 +96,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public var promptTemplate: String
     /// Current rendered prompt.
     public var prompt: String {
-        renderedPrompt()
+        guard pendingInteractiveLines.isEmpty else { return pendingContinuationPrompt }
+        return renderedPrompt()
     }
 
     /// Enables fallback to external shell-style command execution after direct BASIC command failures.
@@ -107,6 +110,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public var stringSubstitutionEnabled: Bool {
         get { runtime.stringSubstitutionEnabled }
         set { runtime.stringSubstitutionEnabled = newValue }
+    }
+
+    /// Session-local command alias names.
+    public var aliasNames: [String] {
+        aliases.keys.sorted()
     }
 
     private let host: BASICHost
@@ -128,6 +136,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private var pendingHostEvents: [BASICEventSelector: BASICValue] = [:]
     private var pendingHostEventOrder: [BASICEventSelector] = []
     private var isHostEventDrainQueued = false
+    private var aliases: [String: String] = [:]
+    private var pendingInteractiveLines: [String] = []
+    private var pendingContinuationPrompt = BASICSession.continuationPrompt
     private let timerLock = NSLock()
     private let timerQueue = DispatchQueue(label: "AIBasic.BASICSession.Timers", qos: .utility)
     private var timerBlocks: [Int: BASICTimerControlBlock] = [:]
@@ -154,8 +165,24 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Submits one console line, returning false when the caller should exit.
     @discardableResult
     public func submit(_ input: String) -> Bool {
+        submit(input, aliasExpansionDepth: 0)
+    }
+
+    @discardableResult
+    private func submit(_ input: String, aliasExpansionDepth: Int) -> Bool {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
+
+        if !pendingInteractiveLines.isEmpty {
+            do {
+                try submitPendingInteractiveLine(input)
+            } catch let error as BASICError {
+                host.printLine(error.description)
+            } catch {
+                host.printLine("Unexpected error: \(error)")
+            }
+            return true
+        }
 
         if let numbered = Self.splitNumberedLine(trimmed) {
             program.setLine(number: numbered.number, source: numbered.source)
@@ -163,6 +190,17 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
 
         do {
+            if let aliasCommand = try Self.aliasCommand(from: trimmed) {
+                try runAliasCommand(aliasCommand)
+                return true
+            }
+            if let unaliasCommand = try Self.unaliasCommand(from: trimmed) {
+                try runUnaliasCommand(unaliasCommand)
+                return true
+            }
+            if let expanded = try expandedAliasCommand(from: trimmed, depth: aliasExpansionDepth) {
+                return submit(expanded, aliasExpansionDepth: aliasExpansionDepth + 1)
+            }
             if let path = try Self.loadPath(from: trimmed) {
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("LOAD is not supported by this host")
@@ -364,6 +402,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, EXPORT, SYSTEM, EXEC, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             default:
+                if Self.interactiveBlockBalance(in: trimmed) > 0 {
+                    pendingContinuationPrompt = Self.alignedContinuationPrompt(for: renderedPrompt())
+                    pendingInteractiveLines = [input]
+                    return true
+                }
                 do {
                     try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
                 } catch let error as BASICError {
@@ -476,6 +519,71 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
         let paths = [try fileHost.currentDirectoryPath()] + runtime.directoryStack.reversed()
         host.printLine(paths.joined(separator: " "))
+    }
+
+    private func runAliasCommand(_ command: AliasCommand) throws {
+        switch command {
+        case .list:
+            for name in aliases.keys.sorted() {
+                if let value = aliases[name] {
+                    host.printLine(Self.renderAlias(name: name, value: value))
+                }
+            }
+        case .show(let name):
+            guard let value = aliases[name] else {
+                runtime.lastSystemStatus = 1
+                host.printLine("alias: \(name) not found")
+                return
+            }
+            runtime.lastSystemStatus = 0
+            host.printLine(Self.renderAlias(name: name, value: value))
+        case .set(let name, let value):
+            aliases[name] = value
+            runtime.lastSystemStatus = 0
+        }
+    }
+
+    private func runUnaliasCommand(_ command: UnaliasCommand) throws {
+        switch command {
+        case .clear:
+            aliases.removeAll()
+            runtime.lastSystemStatus = 0
+        case .remove(let name):
+            guard aliases.removeValue(forKey: name) != nil else {
+                runtime.lastSystemStatus = 1
+                host.printLine("unalias: \(name) not found")
+                return
+            }
+            runtime.lastSystemStatus = 0
+        }
+    }
+
+    private func expandedAliasCommand(from source: String, depth: Int) throws -> String? {
+        guard depth < 16 else {
+            throw BASICError.runtime("Alias expansion loop")
+        }
+        let split = Self.firstShellWord(in: source)
+        guard let replacement = aliases[split.word] else { return nil }
+        guard !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return split.rest }
+        guard !split.rest.isEmpty else { return replacement }
+        return replacement + " " + split.rest
+    }
+
+    private func submitPendingInteractiveLine(_ input: String) throws {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "." {
+            pendingInteractiveLines.removeAll()
+            pendingContinuationPrompt = Self.continuationPrompt
+            return
+        }
+
+        pendingInteractiveLines.append(input)
+        let source = pendingInteractiveLines.joined(separator: "\n")
+        guard Self.interactiveBlockBalance(in: source) <= 0 else { return }
+
+        pendingInteractiveLines.removeAll()
+        pendingContinuationPrompt = Self.continuationPrompt
+        try BASICInterpreter(program: immediateProgram(for: source), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
     }
 
     private func runHistoryCommand(_ command: HistoryCommand) throws {
@@ -1477,6 +1585,17 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         var value: String?
     }
 
+    private enum AliasCommand {
+        case list
+        case show(String)
+        case set(name: String, value: String)
+    }
+
+    private enum UnaliasCommand {
+        case clear
+        case remove(String)
+    }
+
     private enum HistoryCommand {
         case show(Int?)
         case clear
@@ -1654,6 +1773,213 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return ExportCommand(variableName: String(parts[0]), value: nil)
     }
 
+    private static func aliasCommand(from source: String) throws -> AliasCommand? {
+        guard keywordPrefix("ALIAS", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 5)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return .list }
+
+        guard let equals = rest.firstIndex(of: "=") else {
+            return .show(String(rest.split(whereSeparator: { $0.isWhitespace }).first ?? ""))
+        }
+
+        let name = rest[..<equals].trimmingCharacters(in: .whitespaces)
+        let value = rest[rest.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+        guard isValidAliasName(String(name)) else {
+            throw BASICError.syntax("Expected alias name before =")
+        }
+        return .set(name: String(name), value: unquotedAliasValue(String(value)))
+    }
+
+    private static func unaliasCommand(from source: String) throws -> UnaliasCommand? {
+        guard keywordPrefix("UNALIAS", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 7)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { throw BASICError.syntax("Expected alias name after unalias") }
+        guard rest == "-a" else {
+            let parts = rest.split(whereSeparator: { $0.isWhitespace })
+            guard parts.count == 1, let name = parts.first else {
+                throw BASICError.syntax("Expected unalias name or unalias -a")
+            }
+            return .remove(String(name))
+        }
+        return .clear
+    }
+
+    private static func isValidAliasName(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        return name.allSatisfy { !$0.isWhitespace && $0 != "=" }
+    }
+
+    private static func unquotedAliasValue(_ value: String) -> String {
+        guard value.count >= 2, let first = value.first, let last = value.last else { return value }
+        if (first == "'" && last == "'") || (first == "\"" && last == "\"") {
+            return String(value.dropFirst().dropLast())
+        }
+        return value
+    }
+
+    private static func renderAlias(name: String, value: String) -> String {
+        "alias \(name)='\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func firstShellWord(in source: String) -> (word: String, rest: String) {
+        let trimmed = source.trimmingCharacters(in: .whitespaces)
+        guard let separator = trimmed.firstIndex(where: { $0.isWhitespace }) else {
+            return (trimmed, "")
+        }
+        let word = String(trimmed[..<separator])
+        let rest = trimmed[separator...].trimmingCharacters(in: .whitespaces)
+        return (word, String(rest))
+    }
+
+    private static func alignedContinuationPrompt(for prompt: String) -> String {
+        let promptWidth = visiblePromptWidth(prompt)
+        let markerWidth = visiblePromptWidth(continuationPrompt)
+        return String(repeating: " ", count: max(0, promptWidth - markerWidth)) + continuationPrompt
+    }
+
+    private static func visiblePromptWidth(_ prompt: String) -> Int {
+        var width = 0
+        var index = prompt.startIndex
+        while index < prompt.endIndex {
+            let scalar = prompt[index].unicodeScalars.first
+            if scalar?.value == 0x1B {
+                index = indexAfterANSISequence(in: prompt, startingAt: index)
+                continue
+            }
+            if scalar?.value == 0x07 {
+                index = prompt.index(after: index)
+                continue
+            }
+            width += 1
+            index = prompt.index(after: index)
+        }
+        return width
+    }
+
+    private static func indexAfterANSISequence(in text: String, startingAt escapeIndex: String.Index) -> String.Index {
+        var index = text.index(after: escapeIndex)
+        guard index < text.endIndex else { return index }
+        let introducer = text[index]
+        index = text.index(after: index)
+
+        if introducer == "[" {
+            while index < text.endIndex {
+                let scalar = text[index].unicodeScalars.first?.value ?? 0
+                index = text.index(after: index)
+                if (0x40...0x7E).contains(scalar) {
+                    break
+                }
+            }
+            return index
+        }
+
+        if introducer == "]" {
+            while index < text.endIndex {
+                let char = text[index]
+                if char.unicodeScalars.first?.value == 0x07 {
+                    return text.index(after: index)
+                }
+                if char.unicodeScalars.first?.value == 0x1B {
+                    let next = text.index(after: index)
+                    if next < text.endIndex, text[next] == "\\" {
+                        return text.index(after: next)
+                    }
+                }
+                index = text.index(after: index)
+            }
+        }
+
+        return index
+    }
+
+    private static func interactiveBlockBalance(in source: String) -> Int {
+        var balance = 0
+        for rawLine in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = strippedCodeLine(String(rawLine))
+            for segment in line.split(separator: ":", omittingEmptySubsequences: true) {
+                balance += interactiveBlockDelta(for: String(segment))
+            }
+        }
+        return balance
+    }
+
+    private static func interactiveBlockDelta(for source: String) -> Int {
+        let statement = collapsedWhitespace(source).uppercased()
+        guard !statement.isEmpty else { return 0 }
+
+        var delta = 0
+        if statement.hasPrefix("END IF")
+            || statement.hasPrefix("END FUNCTION")
+            || statement.hasPrefix("END CLASS")
+            || statement.hasPrefix("END INTERFACE")
+            || statement.hasPrefix("END SELECT")
+            || statement.hasPrefix("END TYPE")
+            || statement == "NEXT"
+            || statement.hasPrefix("NEXT ")
+            || statement == "LOOP"
+            || statement.hasPrefix("LOOP ")
+            || statement == "WEND"
+            || statement.hasPrefix("WEND ") {
+            delta -= 1
+        }
+
+        if statement.hasPrefix("ASYNC FUNCTION ") || statement.hasPrefix("FUNCTION ") {
+            delta += 1
+        } else if statement.hasPrefix("CLASS ")
+                    || statement.hasPrefix("INTERFACE ")
+                    || statement.hasPrefix("TYPE ")
+                    || statement.hasPrefix("SELECT CASE ")
+                    || statement.hasPrefix("FOR ")
+                    || statement == "DO"
+                    || statement.hasPrefix("DO ")
+                    || statement.hasPrefix("WHILE ") {
+            delta += 1
+        } else if statement.hasPrefix("IF "), let thenRange = statement.range(of: " THEN") {
+            let afterThen = statement[thenRange.upperBound...].trimmingCharacters(in: .whitespaces)
+            if afterThen.isEmpty {
+                delta += 1
+            }
+        }
+
+        return delta
+    }
+
+    private static func strippedCodeLine(_ source: String) -> String {
+        var output = ""
+        var isInString = false
+        var index = source.startIndex
+        while index < source.endIndex {
+            let char = source[index]
+            if char == "\"" {
+                isInString.toggle()
+                output.append(" ")
+            } else if !isInString && char == "'" {
+                break
+            } else {
+                output.append(isInString ? " " : char)
+            }
+            index = source.index(after: index)
+        }
+
+        let upper = output.uppercased()
+        if let remRange = upper.range(of: " REM ") {
+            return String(output[..<remRange.lowerBound])
+        }
+        if upper.hasPrefix("REM ") || upper == "REM" {
+            return ""
+        }
+        return output
+    }
+
+    private static func collapsedWhitespace(_ source: String) -> String {
+        source
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
     private static func historyCommand(from source: String) throws -> HistoryCommand? {
         guard keywordPrefix("HISTORY", matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: 7)
@@ -1766,9 +2092,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private static let basicBuiltinCommands: Set<String> = [
-        "CD", "DIRS", "EDIT", "EXPORT", "FILES", "HELP", "LIST", "LOAD", "NEW", "POPD",
+        "ALIAS", "CD", "DIRS", "EDIT", "EXPORT", "FILES", "HELP", "LIST", "LOAD", "NEW", "POPD",
         "PROMPT", "PUSHD", "PWD", "QUIT", "RUN", "SAVE", "SETENV", "STATUS", "SYSTEM",
-        "TASK", "TASKS", "TYPE", "UNSETENV", "WHICH"
+        "TASK", "TASKS", "TYPE", "UNALIAS", "UNSETENV", "WHICH"
     ]
 
     private static func keywordPrefix(_ keyword: String, matches source: String) -> Bool {

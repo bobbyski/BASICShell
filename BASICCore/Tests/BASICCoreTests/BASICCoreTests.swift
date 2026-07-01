@@ -4713,6 +4713,97 @@ struct BASICCoreTests {
         #expect(host.output == ["git status\n    ^\nSyntax error: Expected ="])
     }
 
+    @Test("alias expands command words before direct execution")
+    func aliasExpandsCommandWordsBeforeDirectExecution() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("alias hi='PRINT \"hello\"'")
+        session.submit("hi")
+        session.submit("alias hi")
+
+        #expect(host.output == ["hello", "alias hi='PRINT \"hello\"'"])
+    }
+
+    @Test("alias expansion preserves trailing arguments for shell mode")
+    func aliasExpansionPreservesTrailingArgumentsForShellMode() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.shellModeEnabled = true
+        host.systemOutputs["git status --short"] = " M file.bas\n"
+
+        session.submit("alias gs='git status'")
+        session.submit("gs --short")
+
+        #expect(host.systemCommands == ["git status --short"])
+        #expect(host.output == [" M file.bas"])
+    }
+
+    @Test("alias lists removes and clears aliases")
+    func aliasListsRemovesAndClearsAliases() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("alias ll='ls -la'")
+        session.submit("alias gs='git status'")
+        session.submit("alias")
+        #expect(host.output == ["alias gs='git status'", "alias ll='ls -la'"])
+
+        host.output.removeAll()
+        session.submit("unalias gs")
+        session.submit("alias")
+        #expect(host.output == ["alias ll='ls -la'"])
+
+        host.output.removeAll()
+        session.submit("unalias -a")
+        session.submit("alias")
+        #expect(host.output.isEmpty)
+    }
+
+    @Test("direct mode collects multi-line blocks before execution")
+    func directModeCollectsMultilineBlocksBeforeExecution() {
+        let host = TestHost()
+        let session = BASICSession(host: host, promptTemplate: "READY> ")
+
+        session.submit("for i = 1 to 3")
+        #expect(session.prompt == "   ... ")
+        #expect(host.output.isEmpty)
+
+        session.submit("print i")
+        #expect(session.prompt == "   ... ")
+        #expect(host.output.isEmpty)
+
+        session.submit("next i")
+        #expect(session.prompt == "READY> ")
+        #expect(host.output == ["1", "2", "3"])
+    }
+
+    @Test("direct mode multi-line functions can be defined and called")
+    func directModeMultilineFunctionsCanBeDefinedAndCalled() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("function Twice(value as integer) as integer")
+        session.submit("Twice = value * 2")
+        session.submit("end function: print Twice(21)")
+
+        #expect(host.output == ["42"])
+    }
+
+    @Test("direct mode multi-line input can be cancelled")
+    func directModeMultilineInputCanBeCancelled() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("if 1 then")
+        #expect(session.prompt.hasSuffix(BASICSession.continuationPrompt))
+        session.submit(".")
+        #expect(!session.prompt.hasSuffix(BASICSession.continuationPrompt))
+
+        session.submit("print \"after\"")
+        #expect(host.output == ["after"])
+    }
+
     @Test("Shell mode passes Unix pipes and redirection syntax to the system shell")
     func shellModePassesUnixPipesAndRedirectionSyntaxToTheSystemShell() {
         let host = TestHost()
