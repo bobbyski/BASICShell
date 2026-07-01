@@ -92,21 +92,9 @@ final class ShellLineEditor: @unchecked Sendable {
     private var fieldDisplayCursor = 0
     private var commandHistory = ShellLineEditor.loadCommandHistory()
     private var aliasCompletionWords: [String] = []
+    private var basicSymbolCompletionWords: [String] = []
     private var includesExternalCommandCompletions = true
     private static let maxCommandHistoryEntries = 500
-    private static let commandCompletionWords = [
-        "alias", "cat", "cd", "clear", "dirs", "edit", "exec", "exit", "export", "files",
-        "help", "history", "load", "ls", "new", "pipe", "popd", "prompt", "pushd", "pwd",
-        "quit", "run", "save", "setenv", "system", "tasks", "type", "unsetenv", "which"
-    ]
-    private static let basicCompletionWords = [
-        "ASYNC", "AWAIT", "CALL", "CASE", "CLASS", "COLOR", "DATA", "DEF", "DIM", "DO",
-        "ELSE", "ELSEIF", "END", "ERROR", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB",
-        "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE", "JOIN", "LABEL", "LET", "LINE",
-        "LOCAL", "LOOP", "NEXT", "ON", "OPTION", "PRINT", "READ", "REM", "RESTORE",
-        "RETURN", "SELECT", "SLEEP", "STEP", "SYSTEM", "THEN", "TO", "TYPE", "WEND",
-        "WHILE", "YIELD"
-    ]
     private static let commandHistoryURL: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
@@ -317,6 +305,10 @@ final class ShellLineEditor: @unchecked Sendable {
         aliasCompletionWords = words
     }
 
+    func setBasicSymbolCompletionWords(_ words: [String]) {
+        basicSymbolCompletionWords = words
+    }
+
     func setIncludesExternalCommandCompletions(_ enabled: Bool) {
         includesExternalCommandCompletions = enabled
     }
@@ -448,7 +440,7 @@ final class ShellLineEditor: @unchecked Sendable {
         guard fieldLength == nil else { return }
 
         if var menu = completionMenu {
-            guard menu.context == completionContext(buffer: buffer, cursor: cursor) else {
+            guard menu.context == BASICCompletionEngine.context(buffer: buffer, cursor: cursor) else {
                 clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                 return
             }
@@ -462,7 +454,7 @@ final class ShellLineEditor: @unchecked Sendable {
             return
         }
 
-        let context = completionContext(buffer: buffer, cursor: cursor)
+        let context = BASICCompletionEngine.context(buffer: buffer, cursor: cursor)
         let candidates = completionCandidates(for: context)
         guard !candidates.isEmpty else {
             bell()
@@ -474,7 +466,7 @@ final class ShellLineEditor: @unchecked Sendable {
             return
         }
 
-        let common = commonPrefix(candidates)
+        let common = BASICCompletionEngine.commonPrefix(candidates)
         if common.count > context.token.count {
             replaceCompletionToken(with: common, context: context, buffer: &buffer, cursor: &cursor)
             return
@@ -487,53 +479,24 @@ final class ShellLineEditor: @unchecked Sendable {
 
     private struct CompletionMenu {
         let candidates: [String]
-        let context: CompletionContext
+        let context: BASICCompletionContext
         var selectedIndex: Int?
         var displayLineCount = 0
     }
 
-    private struct CompletionContext: Equatable {
-        let token: String
-        let startOffset: Int
-        let isCommandPosition: Bool
-    }
-
-    private func completionContext(buffer: String, cursor: Int) -> CompletionContext {
-        let prefix = String(buffer.prefix(cursor))
-        let tokenStart = prefix.lastIndex(where: { $0.isWhitespace }).map { prefix.index(after: $0) } ?? prefix.startIndex
-        let token = String(prefix[tokenStart...])
-        let leading = prefix[..<tokenStart].trimmingCharacters(in: .whitespacesAndNewlines)
-        return CompletionContext(
-            token: token,
-            startOffset: prefix.distance(from: prefix.startIndex, to: tokenStart),
-            isCommandPosition: leading.isEmpty
+    private func completionCandidates(for context: BASICCompletionContext) -> [String] {
+        var commandWords = BASICCompletionEngine.shellBuiltinWords
+            + BASICCompletionEngine.basicKeywordWords
+            + aliasCompletionWords
+        if includesExternalCommandCompletions {
+            commandWords += pathExecutableCompletionWords()
+        }
+        return BASICCompletionEngine.candidates(
+            for: context,
+            pathCandidates: pathCompletionCandidates(for: context.token),
+            commandWords: commandWords,
+            symbolWords: basicSymbolCompletionWords
         )
-    }
-
-    private func completionCandidates(for context: CompletionContext) -> [String] {
-        var seen = Set<String>()
-        var candidates: [String] = []
-
-        func append(_ value: String) {
-            guard !value.isEmpty, seen.insert(value).inserted else { return }
-            candidates.append(value)
-        }
-
-        for candidate in pathCompletionCandidates(for: context.token) {
-            append(candidate)
-        }
-
-        if context.isCommandPosition, !context.token.contains("/") {
-            var commandWords = Self.commandCompletionWords + Self.basicCompletionWords + aliasCompletionWords
-            if includesExternalCommandCompletions {
-                commandWords += pathExecutableCompletionWords()
-            }
-            for word in commandWords where caseInsensitiveHasPrefix(word, prefix: context.token) {
-                append(word)
-            }
-        }
-
-        return candidates.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     private func pathCompletionCandidates(for token: String) -> [String] {
@@ -543,7 +506,7 @@ final class ShellLineEditor: @unchecked Sendable {
 
         let visibleDirectory = split.directory
         return entries
-            .filter { caseInsensitiveHasPrefix($0, prefix: split.partial) }
+            .filter { BASICCompletionEngine.caseInsensitiveHasPrefix($0, prefix: split.partial) }
             .map { entry in
                 let fullPath = URL(fileURLWithPath: directoryPath).appendingPathComponent(entry).path
                 let suffix = FileManager.default.fileExists(atPath: fullPath, isDirectory: nil) && isDirectory(fullPath) ? "/" : ""
@@ -600,7 +563,7 @@ final class ShellLineEditor: @unchecked Sendable {
 
     private func replaceCompletionToken(
         with replacement: String,
-        context: CompletionContext,
+        context: BASICCompletionContext,
         buffer: inout String,
         cursor: inout Int
     ) {
@@ -611,21 +574,6 @@ final class ShellLineEditor: @unchecked Sendable {
         let redrawStart = min(context.startOffset, oldCursor)
         let prefix = terminalCursorMovement(from: oldCursor, to: redrawStart)
         repaint(buffer: buffer, cursor: cursor, from: redrawStart, prefix: prefix)
-    }
-
-    private func commonPrefix(_ values: [String]) -> String {
-        guard var prefix = values.first else { return "" }
-        for value in values.dropFirst() {
-            while !prefix.isEmpty && !caseInsensitiveHasPrefix(value, prefix: prefix) {
-                prefix.removeLast()
-            }
-        }
-        return prefix
-    }
-
-    private func caseInsensitiveHasPrefix(_ value: String, prefix: String) -> Bool {
-        guard !prefix.isEmpty else { return true }
-        return value.range(of: prefix, options: [.caseInsensitive, .anchored]) != nil
     }
 
     private func acceptCompletionSelection(
@@ -685,7 +633,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var line = ""
         for (index, candidate) in candidates.enumerated() {
             let padded = candidate.padding(toLength: cellWidth, withPad: " ", startingAt: 0)
-            let rendered = index == selectedIndex ? "\u{1B}[0;7m" + padded + "\u{1B}[0m" : padded
+            let rendered = index == selectedIndex ? "\u{1B}[7m" + padded + "\u{1B}[27m" : padded
             line += rendered
             if (index + 1).isMultiple(of: columnCount) {
                 lines.append(line)
@@ -3205,6 +3153,7 @@ print("Type HELP for commands. Type QUIT to exit.")
 var shellExitCode: Int32 = 0
 while true {
     ShellLineEditor.shared.setAliasCompletionWords(session.aliasNames)
+    ShellLineEditor.shared.setBasicSymbolCompletionWords(BASICCompletionEngine.programSymbolWords(in: session.program))
     ShellLineEditor.shared.setIncludesExternalCommandCompletions(session.shellModeEnabled)
     guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {

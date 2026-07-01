@@ -247,11 +247,16 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 }
                 return true
             }
-            if let promptCommand = try Self.promptString(from: trimmed) {
-                if let promptCommand {
-                    promptTemplate = promptCommand
-                } else {
+            if let promptCommand = try Self.promptCommand(from: trimmed) {
+                switch promptCommand {
+                case .show:
                     host.printLine(promptTemplate)
+                case .set(let template):
+                    promptTemplate = template
+                case .listProfiles:
+                    host.printLine("classic")
+                    host.printLine("plain")
+                    host.printLine("shell")
                 }
                 return true
             }
@@ -1554,9 +1559,47 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return try commandPath(keyword: "CD", from: source, requiresPath: false)
     }
 
-    private static func promptString(from source: String) throws -> String?? {
+    private enum PromptCommand {
+        case show
+        case set(String)
+        case listProfiles
+    }
+
+    private static func promptCommand(from source: String) throws -> PromptCommand? {
         guard keywordPrefix("PROMPT", matches: source) else { return nil }
-        return try commandPath(keyword: "PROMPT", from: source, requiresPath: false)
+        let start = source.index(source.startIndex, offsetBy: "PROMPT".count)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return .show }
+
+        let uppercased = rest.uppercased()
+        if uppercased == "PROFILES" || uppercased == "PROFILE" {
+            return .listProfiles
+        }
+
+        if keywordPrefix("PROFILE", matches: rest) {
+            let profileStart = rest.index(rest.startIndex, offsetBy: "PROFILE".count)
+            let name = rest[profileStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else {
+                throw BASICError.syntax("Expected prompt profile name")
+            }
+            return .set(try promptTemplate(forProfile: name))
+        }
+
+        let template = try commandPath(keyword: "PROMPT", from: source, requiresPath: false)
+        return .set(template ?? "")
+    }
+
+    private static func promptTemplate(forProfile name: String) throws -> String {
+        switch name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "classic", "basic":
+            return "READY%nl> "
+        case "plain":
+            return plainPromptTemplate
+        case "shell", "nerd", "powerline":
+            return defaultPromptTemplate
+        default:
+            throw BASICError.runtime("Unknown prompt profile \(name). Try: classic, plain, shell")
+        }
     }
 
     private struct ListCommand {

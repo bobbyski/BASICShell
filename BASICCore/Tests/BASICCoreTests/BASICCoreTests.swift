@@ -79,6 +79,76 @@ struct BASICCoreTests {
         #expect(host.output == ["HELLO"])
     }
 
+    @Test("Completion engine finds command and symbol candidates")
+    func completionEngineFindsCommandAndSymbolCandidates() {
+        let commandContext = BASICCompletionEngine.context(buffer: "pr", cursor: 2)
+        #expect(commandContext.token == "pr")
+        #expect(commandContext.startOffset == 0)
+        #expect(commandContext.isCommandPosition)
+
+        let commandCandidates = BASICCompletionEngine.candidates(
+            for: commandContext,
+            pathCandidates: [],
+            commandWords: ["PRINT", "PROMPT", "grep"],
+            symbolWords: ["ProcessItem"]
+        )
+        #expect(commandCandidates == ["PRINT", "ProcessItem", "PROMPT"])
+
+        let symbolContext = BASICCompletionEngine.context(buffer: "goto Ma", cursor: 7)
+        #expect(symbolContext.token == "Ma")
+        #expect(symbolContext.startOffset == 5)
+        #expect(!symbolContext.isCommandPosition)
+
+        let symbolCandidates = BASICCompletionEngine.candidates(
+            for: symbolContext,
+            pathCandidates: [],
+            commandWords: ["MAKE"],
+            symbolWords: ["MainLoop", "MaybeDone"]
+        )
+        #expect(symbolCandidates == ["MainLoop", "MaybeDone"])
+        #expect(BASICCompletionEngine.commonPrefix(symbolCandidates) == "Ma")
+    }
+
+    @Test("Completion engine extracts BASIC program symbols")
+    func completionEngineExtractsBASICProgramSymbols() {
+        let program = BASICProgram()
+        program.loadSource("""
+        Start:
+        label Done
+        function Add%(left as integer, right as integer) as integer
+        end function
+        function type Callback
+        def LegacyFn()
+        class Widget
+        end class
+        interface Renderable
+        end interface
+        type Point
+        end type
+        dim total%, name$ as string
+        global appState as string
+        local tempValue as integer
+        let currentScore = 0
+        """)
+
+        let words = BASICCompletionEngine.programSymbolWords(in: program)
+
+        #expect(words.contains("Start"))
+        #expect(words.contains("Done"))
+        #expect(words.contains("Add%"))
+        #expect(words.contains("Callback"))
+        #expect(!words.contains("TYPE"))
+        #expect(words.contains("LegacyFn"))
+        #expect(words.contains("Widget"))
+        #expect(words.contains("Renderable"))
+        #expect(words.contains("Point"))
+        #expect(words.contains("total%"))
+        #expect(words.contains("name$"))
+        #expect(words.contains("appState"))
+        #expect(words.contains("tempValue"))
+        #expect(words.contains("currentScore"))
+    }
+
     @Test("Direct mode question mark aliases PRINT")
     func directModeQuestionMarkAliasesPrint() {
         let host = TestHost()
@@ -4618,6 +4688,47 @@ struct BASICCoreTests {
 
         session.submit("PROMPT \"${user}:${currentdir}> \"")
         #expect(session.prompt == "\(NSUserName()):/tmp/aibasic> ")
+    }
+
+    @Test("PROMPT PROFILE applies named prompt presets")
+    func promptProfileAppliesNamedPromptPresets() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PROMPT PROFILE classic")
+        #expect(session.promptTemplate == "READY%nl> ")
+
+        session.submit("PROMPT PROFILE plain")
+        #expect(session.promptTemplate == BASICSession.plainPromptTemplate)
+
+        session.submit("PROMPT PROFILE shell")
+        #expect(session.promptTemplate == BASICSession.defaultPromptTemplate)
+
+        session.submit("PROMPT PROFILE basic")
+        #expect(session.promptTemplate == "READY%nl> ")
+
+        session.submit("PROMPT PROFILE powerline")
+        #expect(session.promptTemplate == BASICSession.defaultPromptTemplate)
+    }
+
+    @Test("PROMPT PROFILES lists available prompt presets")
+    func promptProfilesListsAvailablePromptPresets() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PROMPT PROFILES")
+
+        #expect(host.output == ["classic", "plain", "shell"])
+    }
+
+    @Test("PROMPT PROFILE reports unknown profile names")
+    func promptProfileReportsUnknownProfileNames() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("PROMPT PROFILE vaporwave")
+
+        #expect(host.output == ["Runtime error: Unknown prompt profile vaporwave. Try: classic, plain, shell"])
     }
 
     @Test("Shell options default off and can be toggled from BASIC")
