@@ -92,6 +92,7 @@ final class ShellLineEditor: @unchecked Sendable {
     private var fieldDisplayCursor = 0
     private var commandHistory = ShellLineEditor.loadCommandHistory()
     private var aliasCompletionWords: [String] = []
+    private var includesExternalCommandCompletions = true
     private static let maxCommandHistoryEntries = 500
     private static let commandCompletionWords = [
         "alias", "cat", "cd", "clear", "dirs", "edit", "exec", "exit", "export", "files",
@@ -176,6 +177,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var historyIndex: Int?
         var draftBeforeHistory = ""
         var historySearchQuery: String?
+        var completionMenu: CompletionMenu?
 
         Swift.print(prompt, terminator: "")
         if let fieldLength {
@@ -195,6 +197,12 @@ final class ShellLineEditor: @unchecked Sendable {
         while true {
             guard let raw = readRawKey(fd: fd) else { return nil }
             if raw == "\r" || raw == "\n" {
+                if acceptCompletionSelection(&completionMenu, prompt: prompt, buffer: &buffer, cursor: &cursor) {
+                    historyIndex = nil
+                    historySearchQuery = nil
+                    continue
+                }
+                clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                 Swift.print()
                 if usesCommandHistory {
                     appendCommandHistory(buffer)
@@ -203,11 +211,13 @@ final class ShellLineEditor: @unchecked Sendable {
             }
 
             if raw == "\u{4}", buffer.isEmpty {
+                clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                 Swift.print()
                 return nil
             }
 
             if raw == "\u{3}" {
+                clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                 Swift.print("^C")
                 buffer = ""
                 cursor = 0
@@ -215,6 +225,7 @@ final class ShellLineEditor: @unchecked Sendable {
             }
 
             if raw == "\u{12}" {
+                clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                 guard usesCommandHistory else { continue }
                 reverseSearchHistory(
                     buffer: &buffer,
@@ -228,13 +239,16 @@ final class ShellLineEditor: @unchecked Sendable {
 
             if raw == "\t" {
                 if exitOnSpecialKey {
+                    clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
                     Swift.print()
                     return BASICLineInputResult(text: buffer, exitKey: raw)
                 }
                 historySearchQuery = nil
-                completeLine(prompt: prompt, buffer: &buffer, cursor: &cursor)
+                completeLine(prompt: prompt, buffer: &buffer, cursor: &cursor, completionMenu: &completionMenu)
                 continue
             }
+
+            clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
 
             if raw == "\u{8}" || raw == "\u{7F}" {
                 historyIndex = nil
@@ -301,6 +315,10 @@ final class ShellLineEditor: @unchecked Sendable {
 
     func setAliasCompletionWords(_ words: [String]) {
         aliasCompletionWords = words
+    }
+
+    func setIncludesExternalCommandCompletions(_ enabled: Bool) {
+        includesExternalCommandCompletions = enabled
     }
 
     func deleteHistoryEntry(at index: Int) throws {
@@ -417,7 +435,33 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 
     private func completeLine(prompt: String, buffer: inout String, cursor: inout Int) {
+        var menu: CompletionMenu?
+        completeLine(prompt: prompt, buffer: &buffer, cursor: &cursor, completionMenu: &menu)
+    }
+
+    private func completeLine(
+        prompt: String,
+        buffer: inout String,
+        cursor: inout Int,
+        completionMenu: inout CompletionMenu?
+    ) {
         guard fieldLength == nil else { return }
+
+        if var menu = completionMenu {
+            guard menu.context == completionContext(buffer: buffer, cursor: cursor) else {
+                clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
+                return
+            }
+            if let selectedIndex = menu.selectedIndex {
+                menu.selectedIndex = (selectedIndex + 1) % menu.candidates.count
+            } else {
+                menu.selectedIndex = 0
+            }
+            renderCompletionMenu(&menu, prompt: prompt, buffer: buffer, cursor: cursor)
+            completionMenu = menu
+            return
+        }
+
         let context = completionContext(buffer: buffer, cursor: cursor)
         let candidates = completionCandidates(for: context)
         guard !candidates.isEmpty else {
@@ -436,10 +480,19 @@ final class ShellLineEditor: @unchecked Sendable {
             return
         }
 
-        printCompletionCandidates(candidates, prompt: prompt, buffer: buffer, cursor: cursor)
+        var menu = CompletionMenu(candidates: candidates, context: context)
+        renderCompletionMenu(&menu, prompt: prompt, buffer: buffer, cursor: cursor)
+        completionMenu = menu
     }
 
-    private struct CompletionContext {
+    private struct CompletionMenu {
+        let candidates: [String]
+        let context: CompletionContext
+        var selectedIndex: Int?
+        var displayLineCount = 0
+    }
+
+    private struct CompletionContext: Equatable {
         let token: String
         let startOffset: Int
         let isCommandPosition: Bool
@@ -471,7 +524,10 @@ final class ShellLineEditor: @unchecked Sendable {
         }
 
         if context.isCommandPosition, !context.token.contains("/") {
-            let commandWords = Self.commandCompletionWords + Self.basicCompletionWords + aliasCompletionWords + pathExecutableCompletionWords()
+            var commandWords = Self.commandCompletionWords + Self.basicCompletionWords + aliasCompletionWords
+            if includesExternalCommandCompletions {
+                commandWords += pathExecutableCompletionWords()
+            }
             for word in commandWords where caseInsensitiveHasPrefix(word, prefix: context.token) {
                 append(word)
             }
@@ -552,7 +608,9 @@ final class ShellLineEditor: @unchecked Sendable {
         let tokenRange = range(in: buffer, offset: context.startOffset, length: cursor - context.startOffset)
         buffer.replaceSubrange(tokenRange, with: replacement)
         cursor = context.startOffset + replacement.count
-        repaint(buffer: buffer, cursor: cursor, from: min(context.startOffset, oldCursor))
+        let redrawStart = min(context.startOffset, oldCursor)
+        let prefix = terminalCursorMovement(from: oldCursor, to: redrawStart)
+        repaint(buffer: buffer, cursor: cursor, from: redrawStart, prefix: prefix)
     }
 
     private func commonPrefix(_ values: [String]) -> String {
@@ -570,24 +628,159 @@ final class ShellLineEditor: @unchecked Sendable {
         return value.range(of: prefix, options: [.caseInsensitive, .anchored]) != nil
     }
 
-    private func printCompletionCandidates(_ candidates: [String], prompt: String, buffer: String, cursor: Int) {
+    private func acceptCompletionSelection(
+        _ completionMenu: inout CompletionMenu?,
+        prompt: String,
+        buffer: inout String,
+        cursor: inout Int
+    ) -> Bool {
+        guard let menu = completionMenu, let selectedIndex = menu.selectedIndex else {
+            return false
+        }
+        clearCompletionMenu(&completionMenu, prompt: prompt, buffer: buffer, cursor: cursor)
+        replaceCompletionToken(with: menu.candidates[selectedIndex], context: menu.context, buffer: &buffer, cursor: &cursor)
+        return true
+    }
+
+    private func clearCompletionMenu(
+        _ completionMenu: inout CompletionMenu?,
+        prompt: String,
+        buffer: String,
+        cursor: Int
+    ) {
+        guard let menu = completionMenu, menu.displayLineCount > 0 else {
+            completionMenu = nil
+            return
+        }
+        moveFromInputCursorToLineEnd(buffer: buffer, cursor: cursor)
+        for _ in 0..<menu.displayLineCount {
+            Swift.print("\r\n\u{1B}[2K", terminator: "")
+        }
+        returnFromCompletionRowsToInput(prompt: prompt, cursor: cursor, rowCount: menu.displayLineCount)
+        fflush(stdout)
+        completionMenu = nil
+    }
+
+    private func renderCompletionMenu(_ menu: inout CompletionMenu, prompt: String, buffer: String, cursor: Int) {
+        var oldMenu: CompletionMenu? = menu
+        clearCompletionMenu(&oldMenu, prompt: prompt, buffer: buffer, cursor: cursor)
+
+        let lines = completionMenuLines(candidates: menu.candidates, selectedIndex: menu.selectedIndex)
+        guard !lines.isEmpty else { return }
+
+        moveFromInputCursorToLineEnd(buffer: buffer, cursor: cursor)
+        for line in lines {
+            Swift.print("\r\n\u{1B}[2K" + line, terminator: "")
+        }
+        returnFromCompletionRowsToInput(prompt: prompt, cursor: cursor, rowCount: lines.count)
+        fflush(stdout)
+        menu.displayLineCount = lines.count
+    }
+
+    private func completionMenuLines(candidates: [String], selectedIndex: Int?) -> [String] {
         let columns = terminalColumns()
         let cellWidth = min(max((candidates.map(\.count).max() ?? 0) + 2, 8), columns)
         let columnCount = max(1, columns / cellWidth)
-        Swift.print()
+        var lines: [String] = []
+        var line = ""
         for (index, candidate) in candidates.enumerated() {
             let padded = candidate.padding(toLength: cellWidth, withPad: " ", startingAt: 0)
-            Swift.print(padded, terminator: (index + 1).isMultiple(of: columnCount) ? "\n" : "")
+            let rendered = index == selectedIndex ? "\u{1B}[0;7m" + padded + "\u{1B}[0m" : padded
+            line += rendered
+            if (index + 1).isMultiple(of: columnCount) {
+                lines.append(line)
+                line = ""
+            }
         }
-        if !candidates.count.isMultiple(of: columnCount) {
-            Swift.print()
+        if !line.isEmpty {
+            lines.append(line)
         }
-        Swift.print(prompt + buffer, terminator: "")
-        let backtrack = max(0, buffer.count - cursor)
-        if backtrack > 0 {
-            Swift.print(String(repeating: "\u{1B}[D", count: backtrack), terminator: "")
+        return lines
+    }
+
+    private func moveFromInputCursorToLineEnd(buffer: String, cursor: Int) {
+        let right = max(0, buffer.count - cursor)
+        if right > 0 {
+            Swift.print(String(repeating: "\u{1B}[C", count: right), terminator: "")
         }
-        fflush(stdout)
+    }
+
+    private func terminalCursorMovement(from oldCursor: Int, to newCursor: Int) -> String {
+        let delta = newCursor - oldCursor
+        if delta > 0 {
+            return String(repeating: "\u{1B}[C", count: delta)
+        }
+        if delta < 0 {
+            return String(repeating: "\u{1B}[D", count: -delta)
+        }
+        return ""
+    }
+
+    private func returnFromCompletionRowsToInput(prompt: String, cursor: Int, rowCount: Int) {
+        Swift.print("\r", terminator: "")
+        if rowCount > 0 {
+            Swift.print("\u{1B}[\(rowCount)A", terminator: "")
+        }
+        let targetColumn = visiblePromptWidth(prompt) + cursor
+        if targetColumn > 0 {
+            Swift.print("\u{1B}[\(targetColumn)C", terminator: "")
+        }
+    }
+
+    private func visiblePromptWidth(_ prompt: String) -> Int {
+        var width = 0
+        var index = prompt.startIndex
+        while index < prompt.endIndex {
+            let scalar = prompt[index].unicodeScalars.first
+            if scalar?.value == 0x1B {
+                index = indexAfterANSISequence(in: prompt, startingAt: index)
+                continue
+            }
+            if scalar?.value == 0x07 {
+                index = prompt.index(after: index)
+                continue
+            }
+            width += 1
+            index = prompt.index(after: index)
+        }
+        return width
+    }
+
+    private func indexAfterANSISequence(in text: String, startingAt escapeIndex: String.Index) -> String.Index {
+        var index = text.index(after: escapeIndex)
+        guard index < text.endIndex else { return index }
+        let introducer = text[index]
+        index = text.index(after: index)
+
+        if introducer == "[" {
+            while index < text.endIndex {
+                let scalar = text[index].unicodeScalars.first?.value ?? 0
+                index = text.index(after: index)
+                if (0x40...0x7E).contains(scalar) {
+                    break
+                }
+            }
+            return index
+        }
+
+        if introducer == "]" {
+            while index < text.endIndex {
+                let char = text[index]
+                if char.unicodeScalars.first?.value == 0x07 {
+                    return text.index(after: index)
+                }
+                if char.unicodeScalars.first?.value == 0x1B {
+                    let next = text.index(after: index)
+                    if next < text.endIndex, text[next] == "\\" {
+                        return text.index(after: next)
+                    }
+                }
+                index = text.index(after: index)
+            }
+            return index
+        }
+
+        return index
     }
 
     private func terminalColumns() -> Int {
@@ -3012,6 +3205,7 @@ print("Type HELP for commands. Type QUIT to exit.")
 var shellExitCode: Int32 = 0
 while true {
     ShellLineEditor.shared.setAliasCompletionWords(session.aliasNames)
+    ShellLineEditor.shared.setIncludesExternalCommandCompletions(session.shellModeEnabled)
     guard let line = host.readLine(prompt: session.prompt) else { break }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()
