@@ -92,6 +92,19 @@ final class ShellLineEditor: @unchecked Sendable {
     private var fieldDisplayCursor = 0
     private var commandHistory = ShellLineEditor.loadCommandHistory()
     private static let maxCommandHistoryEntries = 500
+    private static let commandCompletionWords = [
+        "alias", "cat", "cd", "clear", "dirs", "edit", "exec", "exit", "export", "files",
+        "help", "history", "load", "ls", "new", "pipe", "popd", "prompt", "pushd", "pwd",
+        "quit", "run", "save", "setenv", "system", "tasks", "type", "unsetenv", "which"
+    ]
+    private static let basicCompletionWords = [
+        "ASYNC", "AWAIT", "CALL", "CASE", "CLASS", "COLOR", "DATA", "DEF", "DIM", "DO",
+        "ELSE", "ELSEIF", "END", "ERROR", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB",
+        "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE", "JOIN", "LABEL", "LET", "LINE",
+        "LOCAL", "LOOP", "NEXT", "ON", "OPTION", "PRINT", "READ", "REM", "RESTORE",
+        "RETURN", "SELECT", "SLEEP", "STEP", "SYSTEM", "THEN", "TO", "TYPE", "WEND",
+        "WHILE", "YIELD"
+    ]
     private static let commandHistoryURL: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
@@ -161,6 +174,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var cursor = buffer.count
         var historyIndex: Int?
         var draftBeforeHistory = ""
+        var historySearchQuery: String?
 
         Swift.print(prompt, terminator: "")
         if let fieldLength {
@@ -199,17 +213,31 @@ final class ShellLineEditor: @unchecked Sendable {
                 return BASICLineInputResult(text: "")
             }
 
+            if raw == "\u{12}" {
+                guard usesCommandHistory else { continue }
+                reverseSearchHistory(
+                    buffer: &buffer,
+                    cursor: &cursor,
+                    historyIndex: &historyIndex,
+                    draftBeforeHistory: &draftBeforeHistory,
+                    searchQuery: &historySearchQuery
+                )
+                continue
+            }
+
             if raw == "\t" {
                 if exitOnSpecialKey {
                     Swift.print()
                     return BASICLineInputResult(text: buffer, exitKey: raw)
                 }
-                isOverwriteMode.toggle()
+                historySearchQuery = nil
+                completeLine(prompt: prompt, buffer: &buffer, cursor: &cursor)
                 continue
             }
 
             if raw == "\u{8}" || raw == "\u{7F}" {
                 historyIndex = nil
+                historySearchQuery = nil
                 guard cursor > 0 else { continue }
                 cursor -= 1
                 buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
@@ -228,13 +256,15 @@ final class ShellLineEditor: @unchecked Sendable {
                     cursor: &cursor,
                     usesCommandHistory: usesCommandHistory,
                     historyIndex: &historyIndex,
-                    draftBeforeHistory: &draftBeforeHistory
+                    draftBeforeHistory: &draftBeforeHistory,
+                    historySearchQuery: &historySearchQuery
                 )
                 continue
             }
 
             if raw.count == 1, let scalar = raw.unicodeScalars.first, scalar.value >= 32 {
                 historyIndex = nil
+                historySearchQuery = nil
                 insert(raw, into: &buffer, cursor: &cursor)
             }
         }
@@ -314,15 +344,18 @@ final class ShellLineEditor: @unchecked Sendable {
         cursor: inout Int,
         usesCommandHistory: Bool,
         historyIndex: inout Int?,
-        draftBeforeHistory: inout String
+        draftBeforeHistory: inout String,
+        historySearchQuery: inout String?
     ) {
         let key = BASICKeyNormalizer.normalize(raw)
         switch key {
         case "[H":
             guard usesCommandHistory else { break }
+            historySearchQuery = nil
             showPreviousCommand(buffer: &buffer, cursor: &cursor, historyIndex: &historyIndex, draftBeforeHistory: &draftBeforeHistory)
         case "[P":
             guard usesCommandHistory else { break }
+            historySearchQuery = nil
             showNextCommand(buffer: &buffer, cursor: &cursor, historyIndex: &historyIndex, draftBeforeHistory: draftBeforeHistory)
         case "[K": moveCursor(to: cursor - 1, cursor: &cursor, buffer: buffer)
         case "[M": moveCursor(to: cursor + 1, cursor: &cursor, buffer: buffer)
@@ -330,6 +363,7 @@ final class ShellLineEditor: @unchecked Sendable {
         case "[O": moveCursor(to: buffer.count, cursor: &cursor, buffer: buffer)
         case "[S":
             guard cursor < buffer.count else { return }
+            historySearchQuery = nil
             buffer.removeSubrange(range(in: buffer, offset: cursor, length: 1))
             repaint(buffer: buffer, cursor: cursor)
         case "[R":
@@ -337,6 +371,226 @@ final class ShellLineEditor: @unchecked Sendable {
         default:
             break
         }
+    }
+
+    private func reverseSearchHistory(
+        buffer: inout String,
+        cursor: inout Int,
+        historyIndex: inout Int?,
+        draftBeforeHistory: inout String,
+        searchQuery: inout String?
+    ) {
+        guard !commandHistory.isEmpty else { return }
+        let query: String
+        if let existingQuery = searchQuery {
+            query = existingQuery
+        } else {
+            draftBeforeHistory = buffer
+            query = buffer
+            searchQuery = query
+        }
+
+        let startIndex = historyIndex.map { max(0, $0 - 1) } ?? commandHistory.count - 1
+        guard let matchIndex = findPreviousHistoryMatch(query: query, beforeOrAt: startIndex) else {
+            bell()
+            return
+        }
+
+        historyIndex = matchIndex
+        replaceLine(with: commandHistory[matchIndex], buffer: &buffer, cursor: &cursor)
+    }
+
+    private func findPreviousHistoryMatch(query: String, beforeOrAt startIndex: Int) -> Int? {
+        guard !commandHistory.isEmpty else { return nil }
+        let safeStart = min(max(0, startIndex), commandHistory.count - 1)
+        for index in stride(from: safeStart, through: 0, by: -1) {
+            if query.isEmpty || commandHistory[index].localizedCaseInsensitiveContains(query) {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func completeLine(prompt: String, buffer: inout String, cursor: inout Int) {
+        guard fieldLength == nil else { return }
+        let context = completionContext(buffer: buffer, cursor: cursor)
+        let candidates = completionCandidates(for: context)
+        guard !candidates.isEmpty else {
+            bell()
+            return
+        }
+
+        if candidates.count == 1 {
+            replaceCompletionToken(with: candidates[0], context: context, buffer: &buffer, cursor: &cursor)
+            return
+        }
+
+        let common = commonPrefix(candidates)
+        if common.count > context.token.count {
+            replaceCompletionToken(with: common, context: context, buffer: &buffer, cursor: &cursor)
+            return
+        }
+
+        printCompletionCandidates(candidates, prompt: prompt, buffer: buffer, cursor: cursor)
+    }
+
+    private struct CompletionContext {
+        let token: String
+        let startOffset: Int
+        let isCommandPosition: Bool
+    }
+
+    private func completionContext(buffer: String, cursor: Int) -> CompletionContext {
+        let prefix = String(buffer.prefix(cursor))
+        let tokenStart = prefix.lastIndex(where: { $0.isWhitespace }).map { prefix.index(after: $0) } ?? prefix.startIndex
+        let token = String(prefix[tokenStart...])
+        let leading = prefix[..<tokenStart].trimmingCharacters(in: .whitespacesAndNewlines)
+        return CompletionContext(
+            token: token,
+            startOffset: prefix.distance(from: prefix.startIndex, to: tokenStart),
+            isCommandPosition: leading.isEmpty
+        )
+    }
+
+    private func completionCandidates(for context: CompletionContext) -> [String] {
+        var seen = Set<String>()
+        var candidates: [String] = []
+
+        func append(_ value: String) {
+            guard !value.isEmpty, seen.insert(value).inserted else { return }
+            candidates.append(value)
+        }
+
+        for candidate in pathCompletionCandidates(for: context.token) {
+            append(candidate)
+        }
+
+        if context.isCommandPosition, !context.token.contains("/") {
+            let commandWords = Self.commandCompletionWords + Self.basicCompletionWords + pathExecutableCompletionWords()
+            for word in commandWords where caseInsensitiveHasPrefix(word, prefix: context.token) {
+                append(word)
+            }
+        }
+
+        return candidates.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private func pathCompletionCandidates(for token: String) -> [String] {
+        let split = splitPathCompletionToken(token)
+        let directoryPath = expandedPath(split.directory)
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directoryPath) else { return [] }
+
+        let visibleDirectory = split.directory
+        return entries
+            .filter { caseInsensitiveHasPrefix($0, prefix: split.partial) }
+            .map { entry in
+                let fullPath = URL(fileURLWithPath: directoryPath).appendingPathComponent(entry).path
+                let suffix = FileManager.default.fileExists(atPath: fullPath, isDirectory: nil) && isDirectory(fullPath) ? "/" : ""
+                return visibleDirectory + escapedCompletionPathComponent(entry) + suffix
+            }
+    }
+
+    private func splitPathCompletionToken(_ token: String) -> (directory: String, partial: String) {
+        if let slash = token.lastIndex(of: "/") {
+            let directory = String(token[...slash])
+            let partial = String(token[token.index(after: slash)...])
+            return (directory, partial)
+        }
+        return ("", token)
+    }
+
+    private func expandedPath(_ visibleDirectory: String) -> String {
+        if visibleDirectory.isEmpty {
+            return FileManager.default.currentDirectoryPath
+        }
+        if visibleDirectory == "~/" {
+            return FileManager.default.homeDirectoryForCurrentUser.path
+        }
+        if visibleDirectory.hasPrefix("~/") {
+            let rest = visibleDirectory.dropFirst(2)
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(rest)).path
+        }
+        return NSString(string: visibleDirectory).expandingTildeInPath
+    }
+
+    private func isDirectory(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    private func escapedCompletionPathComponent(_ value: String) -> String {
+        value.replacingOccurrences(of: " ", with: "\\ ")
+    }
+
+    private func pathExecutableCompletionWords() -> [String] {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        var words: [String] = []
+        var seen = Set<String>()
+        for directory in path.split(separator: ":", omittingEmptySubsequences: true) {
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: String(directory)) else { continue }
+            for entry in entries where seen.insert(entry).inserted {
+                let fullPath = URL(fileURLWithPath: String(directory)).appendingPathComponent(entry).path
+                guard access(fullPath, X_OK) == 0, !isDirectory(fullPath) else { continue }
+                words.append(entry)
+            }
+        }
+        return words
+    }
+
+    private func replaceCompletionToken(
+        with replacement: String,
+        context: CompletionContext,
+        buffer: inout String,
+        cursor: inout Int
+    ) {
+        let oldCursor = cursor
+        let tokenRange = range(in: buffer, offset: context.startOffset, length: cursor - context.startOffset)
+        buffer.replaceSubrange(tokenRange, with: replacement)
+        cursor = context.startOffset + replacement.count
+        repaint(buffer: buffer, cursor: cursor, from: min(context.startOffset, oldCursor))
+    }
+
+    private func commonPrefix(_ values: [String]) -> String {
+        guard var prefix = values.first else { return "" }
+        for value in values.dropFirst() {
+            while !prefix.isEmpty && !caseInsensitiveHasPrefix(value, prefix: prefix) {
+                prefix.removeLast()
+            }
+        }
+        return prefix
+    }
+
+    private func caseInsensitiveHasPrefix(_ value: String, prefix: String) -> Bool {
+        guard !prefix.isEmpty else { return true }
+        return value.range(of: prefix, options: [.caseInsensitive, .anchored]) != nil
+    }
+
+    private func printCompletionCandidates(_ candidates: [String], prompt: String, buffer: String, cursor: Int) {
+        let columns = terminalColumns()
+        let cellWidth = min(max((candidates.map(\.count).max() ?? 0) + 2, 8), columns)
+        let columnCount = max(1, columns / cellWidth)
+        Swift.print()
+        for (index, candidate) in candidates.enumerated() {
+            let padded = candidate.padding(toLength: cellWidth, withPad: " ", startingAt: 0)
+            Swift.print(padded, terminator: (index + 1).isMultiple(of: columnCount) ? "\n" : "")
+        }
+        if !candidates.count.isMultiple(of: columnCount) {
+            Swift.print()
+        }
+        Swift.print(prompt + buffer, terminator: "")
+        let backtrack = max(0, buffer.count - cursor)
+        if backtrack > 0 {
+            Swift.print(String(repeating: "\u{1B}[D", count: backtrack), terminator: "")
+        }
+        fflush(stdout)
+    }
+
+    private func terminalColumns() -> Int {
+        var size = winsize()
+        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 {
+            return Int(size.ws_col)
+        }
+        return 80
     }
 
     private func showPreviousCommand(
@@ -377,6 +631,11 @@ final class ShellLineEditor: @unchecked Sendable {
         buffer = text
         cursor = buffer.count
         Swift.print("\u{1B}[K" + buffer, terminator: "")
+        fflush(stdout)
+    }
+
+    private func bell() {
+        Swift.print("\u{7}", terminator: "")
         fflush(stdout)
     }
 
