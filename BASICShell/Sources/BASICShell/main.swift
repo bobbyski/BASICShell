@@ -95,6 +95,11 @@ final class ShellLineEditor: @unchecked Sendable {
     private static let commandHistoryURL: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("BASICShell", isDirectory: true).appendingPathComponent("BASICShellHistory.txt")
+    }()
+    private static let legacyCommandHistoryURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("AIBasic", isDirectory: true).appendingPathComponent("BASICShellHistory.txt")
     }()
 
@@ -254,6 +259,23 @@ final class ShellLineEditor: @unchecked Sendable {
         return readRawKey(fd: fd)
     }
 
+    func historyEntries() -> [String] {
+        commandHistory
+    }
+
+    func clearHistory() {
+        commandHistory.removeAll()
+        saveCommandHistory()
+    }
+
+    func deleteHistoryEntry(at index: Int) throws {
+        guard commandHistory.indices.contains(index) else {
+            throw BASICError.runtime("History entry \(index + 1) does not exist")
+        }
+        commandHistory.remove(at: index)
+        saveCommandHistory()
+    }
+
     private func readRawKey(fd: Int32) -> String? {
         var byte: UInt8 = 0
         guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
@@ -370,7 +392,10 @@ final class ShellLineEditor: @unchecked Sendable {
     }
 
     private static func loadCommandHistory() -> [String] {
-        guard let contents = try? String(contentsOf: commandHistoryURL, encoding: .utf8) else {
+        let sourceURL = FileManager.default.fileExists(atPath: commandHistoryURL.path)
+            ? commandHistoryURL
+            : legacyCommandHistoryURL
+        guard let contents = try? String(contentsOf: sourceURL, encoding: .utf8) else {
             return []
         }
         return contents
@@ -615,8 +640,9 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
+    var supportsForegroundTTYProcesses: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
     var isGraphicsAvailable: Bool { isVectorTerminalAvailable }
     var isVectorTerminalAvailable: Bool { vectorTerminalAvailability }
@@ -704,6 +730,18 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASIC
 
     func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult? {
         ShellLineEditor.shared.readLine(prompt: prompt, exitOnSpecialKey: exitOnSpecialKey, options: options)
+    }
+
+    func commandHistoryEntries() -> [String] {
+        ShellLineEditor.shared.historyEntries()
+    }
+
+    func clearCommandHistory() {
+        ShellLineEditor.shared.clearHistory()
+    }
+
+    func deleteCommandHistoryEntry(at index: Int) throws {
+        try ShellLineEditor.shared.deleteHistoryEntry(at: index)
     }
 
     func screenColumns() -> Int {

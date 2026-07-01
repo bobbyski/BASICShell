@@ -414,17 +414,34 @@ struct Parser {
             }
             var stdout: ReadTarget?
             var stderr: ReadTarget?
+            var tty = false
+            var timeout: Expression?
             while !isStatementEnd {
                 if matchIdentifier("TO") {
                     stdout = .reference(try parseVariableReference(message: "Expected variable after TO"))
                 } else if matchIdentifier("ERR") || matchIdentifier("ERROR") || matchIdentifier("ERRORS") {
                     guard matchIdentifier("TO") else { throw syntax("Expected TO after ERRORS") }
                     stderr = .reference(try parseVariableReference(message: "Expected variable after ERRORS TO"))
+                } else if matchIdentifier("TTY") {
+                    tty = try parseTrueFalseOption(optionName: "TTY")
+                } else if matchIdentifier("TIMEOUT") {
+                    timeout = try parseExpression()
                 } else {
                     throw syntax("Unexpected input after EXEC")
                 }
             }
-            return .exec(command: command, arguments: arguments, stdout: stdout, stderr: stderr)
+            return .exec(command: command, arguments: arguments, stdout: stdout, stderr: stderr, tty: tty, timeout: timeout)
+        }
+        if matchIdentifier("PIPE") {
+            var stages = [try parsePipelineStage()]
+            while matchIdentifier("TO") {
+                stages.append(try parsePipelineStage())
+            }
+            guard stages.count > 1 else { throw syntax("PIPE expects at least two commands") }
+            if stages[0].arguments.isEmpty, stages[0].command.canStartPipelineInput {
+                return .pipe(input: stages[0].command, stages: Array(stages.dropFirst()))
+            }
+            return .pipe(input: nil, stages: stages)
         }
         if matchIdentifier("JOIN") {
             return .join(try parseExpression())
@@ -1213,6 +1230,12 @@ struct Parser {
         throw syntax("Expected ON or OFF after OPTION \(optionName)")
     }
 
+    private mutating func parseTrueFalseOption(optionName: String) throws -> Bool {
+        if matchIdentifier("TRUE") || matchIdentifier("ON") { return true }
+        if matchIdentifier("FALSE") || matchIdentifier("OFF") { return false }
+        throw syntax("Expected TRUE or FALSE after \(optionName)")
+    }
+
     private mutating func parseLetMode() throws -> LetMode {
         if matchIdentifier("GLOBAL") {
             guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected GLOBAL-LET") }
@@ -1535,6 +1558,15 @@ struct Parser {
         return arguments
     }
 
+    private mutating func parsePipelineStage() throws -> BASICPipelineStage {
+        let command = try parseExpression()
+        var arguments: [Expression] = []
+        while match(.comma) {
+            arguments.append(try parseExpression())
+        }
+        return BASICPipelineStage(command: command, arguments: arguments)
+    }
+
     private mutating func parseVariableReference(message: String) throws -> VariableReference {
         let base = try consumeVariableName(message)
         var indexes: [Expression] = []
@@ -1729,8 +1761,17 @@ struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "PIPE", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]
+}
+
+private extension Expression {
+    var canStartPipelineInput: Bool {
+        if case .string = self {
+            return false
+        }
+        return true
+    }
 }

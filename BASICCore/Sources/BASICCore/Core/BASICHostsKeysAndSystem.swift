@@ -137,12 +137,30 @@ public protocol BASICSystemHost: BASICHost {
 public protocol BASICProcessHost: BASICHost {
     /// Runs an executable directly with argv-style arguments.
     func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult
+    /// Runs argv-style processes as a foreground pipeline.
+    func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult
+}
+
+/// Optional host capability for running shell-mode fallback commands on the foreground terminal.
+public protocol BASICForegroundTTYProcessHost: BASICHost {
+    /// True when the host wants shell-mode external commands to inherit terminal stdin/stdout/stderr.
+    var supportsForegroundTTYProcesses: Bool { get }
 }
 
 /// Optional host capability for resolving executables against a shell-like environment.
 public protocol BASICExecutableResolverHost: BASICHost {
     /// Resolves a command name or path to an executable path.
     func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String?
+}
+
+/// Optional host capability for interactive command history.
+public protocol BASICCommandHistoryHost: BASICHost {
+    /// Returns persisted command history in oldest-to-newest order.
+    func commandHistoryEntries() -> [String]
+    /// Removes all persisted command history.
+    func clearCommandHistory()
+    /// Deletes a command history entry using a zero-based index.
+    func deleteCommandHistoryEntry(at index: Int) throws
 }
 
 /// Public canvas snapshot returned by VectorTerminal host adapters.
@@ -782,8 +800,11 @@ public extension BASICSystemHost {
     /// Default SYSTEM result implementation using `/bin/sh -lc`.
     func runSystemCommandResult(_ command: String, environment: BASICEnvironmentPatch = .empty) throws -> BASICSystemCommandResult {
         let dimensions = self as? BASICConsoleHost
+        let workingDirectoryPath = try (self as? BASICFileHost)?.currentDirectoryPath()
+        let workingDirectory = workingDirectoryPath.map { URL(fileURLWithPath: $0, isDirectory: true) }
         return try BASICSystemCommand.runResult(
             command,
+            workingDirectory: workingDirectory,
             columns: dimensions?.screenColumns(),
             rows: dimensions?.screenRows(),
             environment: environment
@@ -824,6 +845,14 @@ public struct BASICSystemCommandResult: Equatable, Sendable {
     }
 }
 
+/// Structured argv-style process I/O mode.
+public enum BASICProcessIOMode: Equatable, Sendable {
+    /// Capture stdout and stderr into a `BASICProcessResult`.
+    case captured
+    /// Inherit the host process terminal streams for interactive foreground tools.
+    case inheritedTerminal
+}
+
 /// Structured argv-style process request.
 public struct BASICProcessRequest: Equatable, Sendable {
     public let executable: String
@@ -832,6 +861,9 @@ public struct BASICProcessRequest: Equatable, Sendable {
     public let columns: Int?
     public let rows: Int?
     public let environment: BASICEnvironmentPatch
+    public let standardInput: String?
+    public let timeoutSeconds: Double?
+    public let ioMode: BASICProcessIOMode
 
     public init(
         executable: String,
@@ -839,7 +871,10 @@ public struct BASICProcessRequest: Equatable, Sendable {
         workingDirectory: String? = nil,
         columns: Int? = nil,
         rows: Int? = nil,
-        environment: BASICEnvironmentPatch = .empty
+        environment: BASICEnvironmentPatch = .empty,
+        standardInput: String? = nil,
+        timeoutSeconds: Double? = nil,
+        ioMode: BASICProcessIOMode = .captured
     ) {
         self.executable = executable
         self.arguments = arguments
@@ -847,6 +882,51 @@ public struct BASICProcessRequest: Equatable, Sendable {
         self.columns = columns
         self.rows = rows
         self.environment = environment
+        self.standardInput = standardInput
+        self.timeoutSeconds = timeoutSeconds
+        self.ioMode = ioMode
+    }
+
+    public func withStandardInput(_ input: String) -> BASICProcessRequest {
+        BASICProcessRequest(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            columns: columns,
+            rows: rows,
+            environment: environment,
+            standardInput: input,
+            timeoutSeconds: timeoutSeconds,
+            ioMode: ioMode
+        )
+    }
+
+    public func withIOMode(_ mode: BASICProcessIOMode) -> BASICProcessRequest {
+        BASICProcessRequest(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            columns: columns,
+            rows: rows,
+            environment: environment,
+            standardInput: standardInput,
+            timeoutSeconds: timeoutSeconds,
+            ioMode: mode
+        )
+    }
+
+    public func withTimeoutSeconds(_ seconds: Double?) -> BASICProcessRequest {
+        BASICProcessRequest(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            columns: columns,
+            rows: rows,
+            environment: environment,
+            standardInput: standardInput,
+            timeoutSeconds: seconds,
+            ioMode: ioMode
+        )
     }
 }
 
@@ -884,6 +964,11 @@ public extension BASICProcessHost {
     /// Default structured process implementation.
     func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
         try BASICSystemCommand.runProcess(request)
+    }
+
+    /// Default structured pipeline implementation.
+    func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult {
+        try BASICSystemCommand.runPipeline(requests)
     }
 }
 
@@ -955,9 +1040,13 @@ public enum BASICSystemCommand {
     }
 
     public static func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        if request.ioMode == .inheritedTerminal {
+            return try runInheritedTerminalProcess(request)
+        }
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
+        let stdin = request.standardInput.map { _ in Pipe() }
         process.executableURL = executableURL(for: request.executable)
         process.arguments = executableArguments(for: request.executable, arguments: request.arguments)
         let workingDirectory = request.workingDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -971,6 +1060,9 @@ public enum BASICSystemCommand {
         )
         process.standardOutput = stdout
         process.standardError = stderr
+        if let stdin {
+            process.standardInput = stdin.fileHandleForReading
+        }
 
         do {
             try process.run()
@@ -981,6 +1073,10 @@ public enum BASICSystemCommand {
         let stdoutData = BASICProcessOutputBox()
         let stderrData = BASICProcessOutputBox()
         let outputGroup = DispatchGroup()
+        if let stdin, let input = request.standardInput {
+            try? stdin.fileHandleForReading.close()
+            writeStandardInput(input, to: stdin, group: outputGroup)
+        }
         outputGroup.enter()
         DispatchQueue.global(qos: .utility).async {
             stdoutData.set(stdout.fileHandleForReading.readDataToEndOfFile())
@@ -991,13 +1087,193 @@ public enum BASICSystemCommand {
             stderrData.set(stderr.fileHandleForReading.readDataToEndOfFile())
             outputGroup.leave()
         }
-        process.waitUntilExit()
+        let completed = waitForProcessExit(process, timeoutSeconds: request.timeoutSeconds)
+        outputGroup.wait()
+        let stderrText = String(decoding: stderrData.value(), as: UTF8.self)
+        return BASICProcessResult(
+            stdout: String(decoding: stdoutData.value(), as: UTF8.self),
+            stderr: timedOutStderr(existing: stderrText, timeoutSeconds: request.timeoutSeconds, completed: completed),
+            exitCode: completed ? Int(process.terminationStatus) : 124
+        )
+    }
+
+    private static func runInheritedTerminalProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        guard request.standardInput == nil else {
+            throw BASICError.runtime("TTY process mode does not support BASIC string stdin")
+        }
+        let process = Process()
+        process.executableURL = executableURL(for: request.executable)
+        process.arguments = executableArguments(for: request.executable, arguments: request.arguments)
+        if let workingDirectory = request.workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+        }
+        process.environment = terminalEnvironment(
+            columns: request.columns,
+            rows: request.rows,
+            patch: request.environment
+        )
+        process.standardInput = FileHandle.standardInput
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+
+        do {
+            try process.run()
+        } catch {
+            throw BASICError.runtime("Could not execute process: \(error.localizedDescription)")
+        }
+
+        let completed = waitForProcessExit(process, timeoutSeconds: request.timeoutSeconds)
+        return BASICProcessResult(
+            stdout: "",
+            stderr: timedOutStderr(existing: "", timeoutSeconds: request.timeoutSeconds, completed: completed),
+            exitCode: completed ? Int(process.terminationStatus) : 124
+        )
+    }
+
+    public static func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult {
+        guard !requests.isEmpty else {
+            throw BASICError.runtime("PIPE expects at least one process")
+        }
+        guard requests.allSatisfy({ $0.ioMode == .captured }) else {
+            throw BASICError.runtime("PIPE does not support TTY process mode")
+        }
+        if requests.count == 1 {
+            return try runProcess(requests[0])
+        }
+
+        let processes = requests.map { request in
+            let process = Process()
+            process.executableURL = executableURL(for: request.executable)
+            process.arguments = executableArguments(for: request.executable, arguments: request.arguments)
+            if let workingDirectory = request.workingDirectory {
+                process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+            }
+            process.environment = terminalEnvironment(
+                columns: request.columns,
+                rows: request.rows,
+                patch: request.environment
+            )
+            return process
+        }
+        var intermediatePipes: [Pipe] = []
+        let stdin = requests[0].standardInput.map { _ in Pipe() }
+        if let stdin {
+            processes[0].standardInput = stdin.fileHandleForReading
+        }
+        for index in 0..<(processes.count - 1) {
+            let pipe = Pipe()
+            processes[index].standardOutput = pipe.fileHandleForWriting
+            processes[index + 1].standardInput = pipe.fileHandleForReading
+            intermediatePipes.append(pipe)
+        }
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        processes[processes.count - 1].standardOutput = stdout.fileHandleForWriting
+        processes.forEach { $0.standardError = stderr.fileHandleForWriting }
+
+        var startedProcesses: [Process] = []
+        do {
+            for process in processes {
+                try process.run()
+                startedProcesses.append(process)
+            }
+        } catch {
+            startedProcesses.forEach { $0.terminate() }
+            throw BASICError.runtime("Could not execute pipeline: \(error.localizedDescription)")
+        }
+
+        intermediatePipes.forEach {
+            try? $0.fileHandleForWriting.close()
+            try? $0.fileHandleForReading.close()
+        }
+        try? stdout.fileHandleForWriting.close()
+        try? stderr.fileHandleForWriting.close()
+
+        let stdoutData = BASICProcessOutputBox()
+        let stderrData = BASICProcessOutputBox()
+        let outputGroup = DispatchGroup()
+        if let stdin, let input = requests[0].standardInput {
+            try? stdin.fileHandleForReading.close()
+            writeStandardInput(input, to: stdin, group: outputGroup)
+        }
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stdoutData.set(stdout.fileHandleForReading.readDataToEndOfFile())
+            outputGroup.leave()
+        }
+        outputGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stderrData.set(stderr.fileHandleForReading.readDataToEndOfFile())
+            outputGroup.leave()
+        }
+
+        processes.forEach { $0.waitUntilExit() }
         outputGroup.wait()
         return BASICProcessResult(
             stdout: String(decoding: stdoutData.value(), as: UTF8.self),
             stderr: String(decoding: stderrData.value(), as: UTF8.self),
-            exitCode: Int(process.terminationStatus)
+            exitCode: Int(processes[processes.count - 1].terminationStatus)
         )
+    }
+
+    private static func writeStandardInput(_ input: String, to pipe: Pipe, group: DispatchGroup) {
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            let data = Data(input.utf8)
+            pipe.fileHandleForWriting.write(data)
+            try? pipe.fileHandleForWriting.close()
+            group.leave()
+        }
+    }
+
+    private static func waitForProcessExit(_ process: Process, timeoutSeconds: Double?) -> Bool {
+        guard let timeoutSeconds else {
+            process.waitUntilExit()
+            return true
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            semaphore.signal()
+        }
+        if !process.isRunning {
+            return true
+        }
+        let timeoutNanoseconds = UInt64((timeoutSeconds * 1_000_000_000).rounded(.up))
+        if semaphore.wait(timeout: .now() + .nanoseconds(Int(timeoutNanoseconds))) == .success {
+            return true
+        }
+
+        process.terminate()
+        if semaphore.wait(timeout: .now() + .milliseconds(500)) == .success {
+            return false
+        }
+
+        #if canImport(Darwin)
+        kill(process.processIdentifier, SIGKILL)
+        _ = semaphore.wait(timeout: .now() + .seconds(2))
+        #else
+        _ = semaphore.wait(timeout: .now() + .milliseconds(500))
+        #endif
+        return false
+    }
+
+    private static func timedOutStderr(existing: String, timeoutSeconds: Double?, completed: Bool) -> String {
+        guard !completed, let timeoutSeconds else { return existing }
+        let message = "Process timed out after \(formatTimeoutSeconds(timeoutSeconds)) seconds\n"
+        return existing + message
+    }
+
+    private static func formatTimeoutSeconds(_ seconds: Double) -> String {
+        if seconds.rounded() == seconds {
+            return String(Int(seconds))
+        }
+        var text = String(format: "%.3f", seconds)
+        while text.last == "0" {
+            text.removeLast()
+        }
+        return text
     }
 
     private static func executableURL(for executable: String) -> URL {

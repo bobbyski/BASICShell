@@ -331,6 +331,14 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 printTaskStatus(detail: upper == "TASKS DETAIL")
                 return true
             }
+            if let historyPipeline = try Self.historyPipelineCommand(from: trimmed) {
+                try runHistoryPipelineCommand(historyPipeline)
+                return true
+            }
+            if let historyCommand = try Self.historyCommand(from: trimmed) {
+                try runHistoryCommand(historyCommand)
+                return true
+            }
             let taskParts = trimmed.split(whereSeparator: { $0.isWhitespace })
             if taskParts.count == 2,
                taskParts[0].caseInsensitiveCompare("TASK") == .orderedSame,
@@ -375,6 +383,32 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
 
     private func runShellModeFallback(command: String) -> Bool {
         guard runtime.shellModeEnabled else { return false }
+        if let processHost = host as? BASICProcessHost,
+           (host as? BASICForegroundTTYProcessHost)?.supportsForegroundTTYProcesses == true {
+            do {
+                let fileHost = host as? BASICFileHost
+                let consoleHost = host as? BASICConsoleHost
+                let result = try processHost.runProcess(BASICProcessRequest(
+                    executable: "/bin/sh",
+                    arguments: ["-lc", command],
+                    workingDirectory: try fileHost?.currentDirectoryPath(),
+                    columns: consoleHost?.screenColumns(),
+                    rows: consoleHost?.screenRows(),
+                    environment: runtime.environmentPatch,
+                    ioMode: .inheritedTerminal
+                ))
+                runtime.lastSystemStatus = result.exitCode
+                return true
+            } catch let error as BASICError {
+                (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
+                host.printLine(error.description)
+                return true
+            } catch {
+                (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
+                host.printLine("Unexpected error: \(error)")
+                return true
+            }
+        }
         guard let systemHost = host as? BASICSystemHost else { return false }
         do {
             let result = try systemHost.runSystemCommandResult(command, environment: runtime.environmentPatch)
@@ -442,6 +476,67 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
         let paths = [try fileHost.currentDirectoryPath()] + runtime.directoryStack.reversed()
         host.printLine(paths.joined(separator: " "))
+    }
+
+    private func runHistoryCommand(_ command: HistoryCommand) throws {
+        let output = try historyOutput(for: command)
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+        for line in lines.dropLast(output.hasSuffix("\n") ? 1 : 0) {
+            host.printLine(String(line))
+        }
+    }
+
+    private func runHistoryPipelineCommand(_ pipeline: HistoryPipelineCommand) throws {
+        guard let processHost = host as? BASICProcessHost else {
+            throw BASICError.runtime("history pipeline is not supported by this host")
+        }
+        let input = try historyOutput(for: pipeline.history)
+        let fileHost = host as? BASICFileHost
+        let consoleHost = host as? BASICConsoleHost
+        let result = try processHost.runProcess(BASICProcessRequest(
+            executable: "/bin/sh",
+            arguments: ["-lc", pipeline.command],
+            workingDirectory: try fileHost?.currentDirectoryPath(),
+            columns: consoleHost?.screenColumns(),
+            rows: consoleHost?.screenRows(),
+            environment: runtime.environmentPatch,
+            standardInput: input
+        ))
+        runtime.lastSystemStatus = result.exitCode
+        if !result.stdout.isEmpty {
+            host.print(result.stdout, terminator: "")
+        }
+        if !result.stderr.isEmpty {
+            host.print(result.stderr, terminator: "")
+        }
+    }
+
+    private func historyOutput(for command: HistoryCommand) throws -> String {
+        guard let historyHost = host as? BASICCommandHistoryHost else {
+            throw BASICError.runtime("HISTORY is not supported by this host")
+        }
+
+        switch command {
+        case .show(let count):
+            let entries = historyHost.commandHistoryEntries()
+            guard !entries.isEmpty else { return "" }
+            let start = count.map { max(0, entries.count - $0) } ?? 0
+            let width = String(entries.count).count
+            let lines = (start..<entries.count).map { index in
+                let number = String(index + 1).padding(toLength: width, withPad: " ", startingAt: 0)
+                return "\(number)  \(entries[index])"
+            }
+            return lines.joined(separator: "\n") + "\n"
+        case .clear:
+            historyHost.clearCommandHistory()
+            return ""
+        case .delete(let number):
+            guard number > 0 else {
+                throw BASICError.runtime("history -d expects a positive entry number")
+            }
+            try historyHost.deleteCommandHistoryEntry(at: number - 1)
+            return ""
+        }
     }
 
     private func printExecutablePath(command: String) throws {
@@ -1382,6 +1477,17 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         var value: String?
     }
 
+    private enum HistoryCommand {
+        case show(Int?)
+        case clear
+        case delete(Int)
+    }
+
+    private struct HistoryPipelineCommand {
+        var history: HistoryCommand
+        var command: String
+    }
+
     private static func listCommand(from source: String) throws -> ListCommand? {
         guard keywordPrefix("LIST", matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: 4)
@@ -1546,6 +1652,47 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let parts = rest.split(whereSeparator: { $0.isWhitespace })
         guard parts.count == 1 else { throw BASICError.syntax("Expected EXPORT name or EXPORT name=value") }
         return ExportCommand(variableName: String(parts[0]), value: nil)
+    }
+
+    private static func historyCommand(from source: String) throws -> HistoryCommand? {
+        guard keywordPrefix("HISTORY", matches: source) else { return nil }
+        let start = source.index(source.startIndex, offsetBy: 7)
+        let rest = source[start...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return .show(nil) }
+
+        let parts = rest.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        if parts.count == 1, parts[0] == "-c" {
+            return .clear
+        }
+        if parts.count == 2, parts[0] == "-d" {
+            guard let number = Int(parts[1]) else {
+                throw BASICError.syntax("Expected history entry number after history -d")
+            }
+            return .delete(number)
+        }
+        if parts.count == 1, let count = Int(parts[0]) {
+            guard count > 0 else { throw BASICError.runtime("HISTORY count must be positive") }
+            return .show(count)
+        }
+        throw BASICError.syntax("Expected history, history count, history -c, or history -d n")
+    }
+
+    private static func historyPipelineCommand(from source: String) throws -> HistoryPipelineCommand? {
+        guard keywordPrefix("HISTORY", matches: source), let pipe = source.firstIndex(of: "|") else { return nil }
+        let left = String(source[..<pipe]).trimmingCharacters(in: .whitespaces)
+        let right = source[source.index(after: pipe)...].trimmingCharacters(in: .whitespaces)
+        guard !right.isEmpty else {
+            throw BASICError.syntax("Expected command after |")
+        }
+        guard let history = try historyCommand(from: left) else {
+            throw BASICError.syntax("Expected history command before |")
+        }
+        switch history {
+        case .show:
+            return HistoryPipelineCommand(history: history, command: String(right))
+        case .clear, .delete:
+            throw BASICError.syntax("history -c and history -d cannot be used in a pipeline")
+        }
     }
 
     private static func whichCommand(from source: String) -> String? {

@@ -2794,6 +2794,21 @@ struct BASICCoreTests {
         #expect(lines.count == 1)
     }
 
+    @Test("SYSTEM command runner supports shell pipes and redirection")
+    func systemCommandRunnerSupportsShellPipesAndRedirection() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIBasic-system-pipes-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let command = "printf alpha | tr a-z A-Z > out.txt; sh -c 'printf err >&2' 2> err.txt; cat out.txt; printf ':'; cat err.txt"
+        let output = try BASICSystemCommand.run(command, workingDirectory: directory)
+
+        #expect(output == "ALPHA:err")
+        #expect(try String(contentsOf: directory.appendingPathComponent("out.txt"), encoding: .utf8) == "ALPHA")
+        #expect(try String(contentsOf: directory.appendingPathComponent("err.txt"), encoding: .utf8) == "err")
+    }
+
     @Test("SYSTEM$ function returns command output")
     func systemFunctionReturnsCommandOutput() {
         let host = TestHost()
@@ -4626,6 +4641,50 @@ struct BASICCoreTests {
         #expect(session.stringSubstitutionEnabled == false)
     }
 
+    @Test("history command lists recent commands")
+    func historyCommandListsRecentCommands() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.commandHistory = ["one", "two", "three", "four"]
+
+        session.submit("history 2")
+        #expect(host.output == ["3  three", "4  four"])
+
+        host.output.removeAll()
+        session.submit("history")
+        #expect(host.output == ["1  one", "2  two", "3  three", "4  four"])
+    }
+
+    @Test("history command can delete and clear entries")
+    func historyCommandCanDeleteAndClearEntries() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.commandHistory = ["one", "two", "three"]
+
+        session.submit("history -d 2")
+        #expect(host.commandHistory == ["one", "three"])
+
+        session.submit("history -c")
+        #expect(host.commandHistory.isEmpty)
+    }
+
+    @Test("history command can pipe output to external commands")
+    func historyCommandCanPipeOutputToExternalCommands() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.commandHistory = ["one", "two", "three"]
+        host.processResults["/bin/sh"] = BASICProcessResult(stdout: "2  two\n", stderr: "", exitCode: 0)
+
+        session.submit("history | grep two")
+        session.submit("PRINT STATUS")
+
+        #expect(host.output == ["2  two\n0"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "/bin/sh")
+        #expect(host.processRequests[0].arguments == ["-lc", "grep two"])
+        #expect(host.processRequests[0].standardInput == "1  one\n2  two\n3  three\n")
+    }
+
     @Test("Shell mode falls back to external commands after direct BASIC errors")
     func shellModeFallsBackToExternalCommandsAfterDirectBASICErrors() {
         let host = TestHost()
@@ -4652,6 +4711,47 @@ struct BASICCoreTests {
 
         #expect(host.systemCommands == ["git status"])
         #expect(host.output == ["git status\n    ^\nSyntax error: Expected ="])
+    }
+
+    @Test("Shell mode passes Unix pipes and redirection syntax to the system shell")
+    func shellModePassesUnixPipesAndRedirectionSyntaxToTheSystemShell() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let command = "printf alpha | tr a-z A-Z > out.txt 2> err.txt"
+        host.systemStatuses[command] = 0
+
+        session.shellModeEnabled = true
+        session.submit(command)
+
+        #expect(host.systemCommands == [command])
+        #expect(host.output == [])
+        session.submit("PRINT STATUS")
+        #expect(host.output == ["0"])
+    }
+
+    @Test("Shell mode can run fallback commands on inherited terminal hosts")
+    func shellModeCanRunFallbackCommandsOnInheritedTerminalHosts() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.currentDirectory = "/tmp/project"
+        host.columns = 100
+        host.rows = 33
+        host.supportsForegroundTTYProcesses = true
+        host.processResults["/bin/sh"] = BASICProcessResult(stdout: "", stderr: "", exitCode: 5)
+
+        session.shellModeEnabled = true
+        session.submit("git status")
+        session.submit("PRINT STATUS")
+
+        #expect(host.systemCommands.isEmpty)
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "/bin/sh")
+        #expect(host.processRequests[0].arguments == ["-lc", "git status"])
+        #expect(host.processRequests[0].workingDirectory == "/tmp/project")
+        #expect(host.processRequests[0].columns == 100)
+        #expect(host.processRequests[0].rows == 33)
+        #expect(host.processRequests[0].ioMode == .inheritedTerminal)
+        #expect(host.output == ["5"])
     }
 
     @Test("PWD exposes current directory as command and expression")
@@ -4850,6 +4950,71 @@ struct BASICCoreTests {
         #expect(host.processRequests[0].arguments == ["-lc", "printf out; printf err >&2"])
     }
 
+    @Test("EXEC TTY TRUE requests inherited terminal process mode")
+    func execTTYTrueRequestsInheritedTerminalProcessMode() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.processResults["top"] = BASICProcessResult(stdout: "", stderr: "", exitCode: 0)
+
+        session.submit("EXEC \"top\" TTY TRUE")
+        session.submit("PRINT STATUS")
+
+        #expect(host.output == ["0"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "/bin/sh")
+        #expect(host.processRequests[0].arguments == ["-lc", "top"])
+        #expect(host.processRequests[0].ioMode == .inheritedTerminal)
+    }
+
+    @Test("EXEC argv form can request inherited terminal process mode")
+    func execArgvFormCanRequestInheritedTerminalProcessMode() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.processResults["top"] = BASICProcessResult(stdout: "", stderr: "", exitCode: 0)
+
+        session.submit("EXEC \"top\", \"-l\", \"1\" TTY TRUE")
+
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].executable == "top")
+        #expect(host.processRequests[0].arguments == ["-l", "1"])
+        #expect(host.processRequests[0].ioMode == .inheritedTerminal)
+    }
+
+    @Test("EXEC TIMEOUT passes a timeout to the process host")
+    func execTimeoutPassesATimeoutToTheProcessHost() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.processResults["tool"] = BASICProcessResult(stdout: "done\n", stderr: "", exitCode: 0)
+
+        session.submit("EXEC \"tool\", \"arg\" TIMEOUT 1.5")
+
+        #expect(host.output == ["done\n"])
+        #expect(host.processRequests.count == 1)
+        #expect(host.processRequests[0].timeoutSeconds == 1.5)
+    }
+
+    @Test("EXEC TIMEOUT rejects non-positive values")
+    func execTimeoutRejectsNonPositiveValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("EXEC \"tool\" TIMEOUT 0")
+
+        #expect(host.processRequests.isEmpty)
+        #expect(host.output.first?.contains("EXEC TIMEOUT must be greater than zero") == true)
+    }
+
+    @Test("EXEC TTY TRUE rejects captured stream targets")
+    func execTTYTrueRejectsCapturedStreamTargets() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("EXEC \"top\" TTY TRUE TO out$")
+
+        #expect(host.processRequests.isEmpty)
+        #expect(host.output.first?.contains("EXEC TTY TRUE cannot capture stdout or stderr") == true)
+    }
+
     @Test("EXEC rejects file-path style TO targets")
     func execRejectsFilePathStyleToTargets() {
         let host = TestHost()
@@ -4859,6 +5024,91 @@ struct BASICCoreTests {
 
         #expect(host.processRequests.isEmpty)
         #expect(host.output.first?.contains("Syntax error") == true)
+    }
+
+    @Test("PIPE runs structured pipeline stages and records output status")
+    func pipeRunsStructuredPipelineStagesAndRecordsOutputStatus() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.currentDirectory = "/tmp/project"
+        host.columns = 132
+        host.rows = 44
+        host.pipelineResult = BASICProcessResult(
+            stdout: "ALPHA\n",
+            stderr: "warn\n",
+            exitCode: 4
+        )
+
+        session.submit("LET TOKEN$ = \"abc\"")
+        session.submit("EXPORT TOKEN$")
+        session.submit("PIPE \"printf\", \"alpha\" TO \"tr\", \"a-z\", \"A-Z\"")
+        session.submit("PRINT STATUS")
+
+        #expect(host.output == ["ALPHA\nwarn\n4"])
+        #expect(host.pipelineRequests.count == 1)
+        #expect(host.pipelineRequests[0].count == 2)
+        #expect(host.pipelineRequests[0][0].executable == "printf")
+        #expect(host.pipelineRequests[0][0].arguments == ["alpha"])
+        #expect(host.pipelineRequests[0][0].workingDirectory == "/tmp/project")
+        #expect(host.pipelineRequests[0][0].columns == 132)
+        #expect(host.pipelineRequests[0][0].rows == 44)
+        #expect(host.pipelineRequests[0][0].environment.values["TOKEN"] == "abc")
+        #expect(host.pipelineRequests[0][1].executable == "tr")
+        #expect(host.pipelineRequests[0][1].arguments == ["a-z", "A-Z"])
+    }
+
+    @Test("PIPE can feed BASIC string input into a process")
+    func pipeCanFeedBasicStringInputIntoProcess() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.pipelineResult = BASICProcessResult(
+            stdout: "BETA\nALPHA\n",
+            stderr: "",
+            exitCode: 0
+        )
+
+        session.submit("LET PAYLOAD$ = \"beta\" + CHR$(10) + \"alpha\" + CHR$(10)")
+        session.submit("PIPE PAYLOAD$ TO \"sort\"")
+
+        #expect(host.output == ["BETA\nALPHA\n"])
+        #expect(host.pipelineRequests.count == 1)
+        #expect(host.pipelineRequests[0].count == 1)
+        #expect(host.pipelineRequests[0][0].executable == "sort")
+        #expect(host.pipelineRequests[0][0].standardInput == "beta\nalpha\n")
+    }
+
+    @Test("Default process runner wires structured pipelines")
+    func defaultProcessRunnerWiresStructuredPipelines() throws {
+        let result = try BASICSystemCommand.runPipeline([
+            BASICProcessRequest(executable: "/bin/echo", arguments: ["alpha"], workingDirectory: nil, columns: nil, rows: nil),
+            BASICProcessRequest(executable: "/usr/bin/tr", arguments: ["a-z", "A-Z"], workingDirectory: nil, columns: nil, rows: nil)
+        ])
+
+        #expect(result.stdout == "ALPHA\n")
+        #expect(result.stderr == "")
+        #expect(result.exitCode == 0)
+    }
+
+    @Test("Default process runner feeds standard input into pipelines")
+    func defaultProcessRunnerFeedsStandardInputIntoPipelines() throws {
+        let result = try BASICSystemCommand.runPipeline([
+            BASICProcessRequest(executable: "/usr/bin/sort", standardInput: "beta\nalpha\n")
+        ])
+
+        #expect(result.stdout == "alpha\nbeta\n")
+        #expect(result.stderr == "")
+        #expect(result.exitCode == 0)
+    }
+
+    @Test("Default process runner terminates timed out processes")
+    func defaultProcessRunnerTerminatesTimedOutProcesses() throws {
+        let result = try BASICSystemCommand.runProcess(
+            BASICProcessRequest(executable: "/bin/sleep", arguments: ["2"], timeoutSeconds: 0.05)
+        )
+
+        #expect(result.stdout == "")
+        #expect(result.stderr.contains("Process timed out after 0.05 seconds"))
+        #expect(result.exitCode == 124)
     }
 
     @Test("EXIT and QUIT direct commands can request process status")
@@ -6942,7 +7192,7 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
+private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
@@ -6952,6 +7202,7 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var lineInputResults: [BASICLineInputResult] = []
     var lineInputOptions: [BASICLineInputOptions] = []
     var keys: [String] = []
+    var commandHistory: [String] = []
     var files: [String: String] = [:]
     var currentDirectory = "."
     var systemCommands: [String] = []
@@ -6961,6 +7212,9 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var executablePaths: [String: String] = [:]
     var processRequests: [BASICProcessRequest] = []
     var processResults: [String: BASICProcessResult] = [:]
+    var pipelineRequests: [[BASICProcessRequest]] = []
+    var pipelineResult = BASICProcessResult(stdout: "", stderr: "", exitCode: 0)
+    var supportsForegroundTTYProcesses = false
     var breakAfterOutputCount: Int?
     var breakOnBlockingKeyRead = false
     weak var executionControl: BASICExecutionControl?
@@ -7119,9 +7373,29 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
         executablePaths[command]
     }
 
+    func commandHistoryEntries() -> [String] {
+        commandHistory
+    }
+
+    func clearCommandHistory() {
+        commandHistory.removeAll()
+    }
+
+    func deleteCommandHistoryEntry(at index: Int) throws {
+        guard commandHistory.indices.contains(index) else {
+            throw BASICError.runtime("History entry \(index + 1) does not exist")
+        }
+        commandHistory.remove(at: index)
+    }
+
     func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
         processRequests.append(request)
         return processResults[request.executable] ?? BASICProcessResult(stdout: "", stderr: "", exitCode: 0)
+    }
+
+    func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult {
+        pipelineRequests.append(requests)
+        return pipelineResult
     }
 
     func setScreenMode(_ mode: BASICScreenMode) {

@@ -1301,12 +1301,14 @@ public final class BASICInterpreter {
                 updateOutputColumn(text: output, terminator: "")
             }
             return .next
-        case .exec(let command, let arguments, let stdout, let stderr):
+        case .exec(let command, let arguments, let stdout, let stderr, let tty, let timeout):
             let result = try runStructuredProcess(
                 command: command,
                 arguments: arguments,
                 stdout: stdout,
-                stderr: stderr
+                stderr: stderr,
+                tty: tty,
+                timeout: timeout
             )
             if let stdout {
                 try assignReadValue(.string(BASICString(result.stdout)), to: stdout)
@@ -1319,6 +1321,17 @@ public final class BASICInterpreter {
                 updateOutputColumn(text: result.stdout, terminator: "")
             }
             if stderr == nil && !result.stderr.isEmpty {
+                host?.print(result.stderr, terminator: "")
+                updateOutputColumn(text: result.stderr, terminator: "")
+            }
+            return .next
+        case .pipe(let input, let stages):
+            let result = try runStructuredPipeline(input: input, stages: stages)
+            if !result.stdout.isEmpty {
+                host?.print(result.stdout, terminator: "")
+                updateOutputColumn(text: result.stdout, terminator: "")
+            }
+            if !result.stderr.isEmpty {
                 host?.print(result.stderr, terminator: "")
                 updateOutputColumn(text: result.stderr, terminator: "")
             }
@@ -3914,10 +3927,15 @@ public final class BASICInterpreter {
         command: Expression,
         arguments: [Expression],
         stdout: ReadTarget?,
-        stderr: ReadTarget?
+        stderr: ReadTarget?,
+        tty: Bool,
+        timeout: Expression?
     ) throws -> BASICProcessResult {
         guard let processHost = host as? BASICProcessHost else {
             throw BASICError.runtime("EXEC is not supported by this host")
+        }
+        if tty && (stdout != nil || stderr != nil) {
+            throw BASICError.runtime("EXEC TTY TRUE cannot capture stdout or stderr")
         }
         let fileHost = host as? BASICFileHost
         let consoleHost = host as? BASICConsoleHost
@@ -3937,9 +3955,52 @@ public final class BASICInterpreter {
             workingDirectory: try fileHost?.currentDirectoryPath(),
             columns: consoleHost?.screenColumns(),
             rows: consoleHost?.screenRows(),
-            environment: runtime.environmentPatch
+            environment: runtime.environmentPatch,
+            timeoutSeconds: try timeout.map { try positiveTimeoutSeconds($0) },
+            ioMode: tty ? .inheritedTerminal : .captured
         )
         let result = try processHost.runProcess(request)
+        runtime.lastSystemStatus = result.exitCode
+        return result
+    }
+
+    private func positiveTimeoutSeconds(_ expression: Expression) throws -> Double {
+        let seconds = try numeric(try evaluate(expression))
+        guard seconds > 0 else {
+            throw BASICError.runtime("EXEC TIMEOUT must be greater than zero")
+        }
+        return seconds
+    }
+
+    private func runStructuredPipeline(input: Expression?, stages: [BASICPipelineStage]) throws -> BASICProcessResult {
+        guard input != nil || stages.count > 1 else {
+            throw BASICError.runtime("PIPE expects at least two commands")
+        }
+        guard let processHost = host as? BASICProcessHost else {
+            throw BASICError.runtime("PIPE is not supported by this host")
+        }
+        let fileHost = host as? BASICFileHost
+        let consoleHost = host as? BASICConsoleHost
+        let workingDirectory = try fileHost?.currentDirectoryPath()
+        let columns = consoleHost?.screenColumns()
+        let rows = consoleHost?.screenRows()
+        var requests = try stages.map { stage in
+            BASICProcessRequest(
+                executable: try string(stage.command),
+                arguments: try stage.arguments.map(string),
+                workingDirectory: workingDirectory,
+                columns: columns,
+                rows: rows,
+                environment: runtime.environmentPatch
+            )
+        }
+        if let input {
+            guard !requests.isEmpty else {
+                throw BASICError.runtime("PIPE expects a command after TO")
+            }
+            requests[0] = requests[0].withStandardInput(try string(input))
+        }
+        let result = try processHost.runPipeline(requests)
         runtime.lastSystemStatus = result.exitCode
         return result
     }

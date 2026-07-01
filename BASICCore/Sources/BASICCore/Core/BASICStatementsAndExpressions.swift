@@ -26,6 +26,11 @@ enum Flow: Equatable {
     case end
 }
 
+struct BASICPipelineStage: Equatable {
+    let command: Expression
+    let arguments: [Expression]
+}
+
 indirect enum Statement: Equatable {
     case empty
     case remark
@@ -110,7 +115,8 @@ indirect enum Statement: Equatable {
     case popDirectory
     case directoryStack
     case system(Expression)
-    case exec(command: Expression, arguments: [Expression], stdout: ReadTarget?, stderr: ReadTarget?)
+    case exec(command: Expression, arguments: [Expression], stdout: ReadTarget?, stderr: ReadTarget?, tty: Bool, timeout: Expression?)
+    case pipe(input: Expression?, stages: [BASICPipelineStage])
     case join(Expression)
     case yield
     case randomize(Expression?)
