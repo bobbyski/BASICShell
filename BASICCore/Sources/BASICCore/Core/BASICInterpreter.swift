@@ -414,6 +414,34 @@ public final class BASICInterpreter {
             declaredType: .scalar(.double),
             value: .number(Double(rows))
         )
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "SCRIPT$", column: 0),
+            declaredType: .scalar(.string),
+            value: .string(BASICString(runtime.scriptPath))
+        )
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "ARGC", column: 0),
+            declaredType: .scalar(.double),
+            value: .number(Double(runtime.scriptArguments.count))
+        )
+        try runtime.dim(
+            kind: .global,
+            variable: VariableName(name: "ARGV$", column: 0),
+            dimensions: [max(0, runtime.scriptArguments.count - 1)],
+            declaredType: .scalar(.string)
+        )
+        for (index, argument) in runtime.scriptArguments.enumerated() {
+            try runtime.assign(
+                reference: VariableReference(
+                    base: VariableName(name: "ARGV$", column: 0),
+                    indexes: [.number(Double(index))]
+                ),
+                indexes: [.number(Double(index))],
+                value: .string(BASICString(argument))
+            )
+        }
     }
 
     private func expandedProgramLines() throws -> [ProgramLine] {
@@ -3228,6 +3256,8 @@ public final class BASICInterpreter {
             return value.rounded() == value ? String(Int(value)) : String(value)
         case .string(let value):
             return "\"\(value)\""
+        case .interpolatedString(let value):
+            return "$\"\(value)\""
         case .boolean(let value):
             return value ? "true" : "false"
         case .null:
@@ -4421,7 +4451,12 @@ public final class BASICInterpreter {
         case .number(let value):
             return .number(value)
         case .string(let value):
+            if runtime.stringSubstitutionEnabled {
+                return .string(BASICString(try interpolatedString(value)))
+            }
             return .string(BASICString(value))
+        case .interpolatedString(let value):
+            return .string(BASICString(try interpolatedString(value)))
         case .boolean(let value):
             return .boolean(value)
         case .null:
@@ -4707,7 +4742,7 @@ public final class BASICInterpreter {
 
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .string, .boolean, .null:
+            case .number, .string, .interpolatedString, .boolean, .null:
                 return
             case .closure:
                 return
@@ -5041,6 +5076,43 @@ public final class BASICInterpreter {
             }
         }
         return value
+    }
+
+    private func interpolatedString(_ template: String) throws -> String {
+        var output = ""
+        var index = template.startIndex
+        while index < template.endIndex {
+            if template[index] == "$",
+               template.index(after: index) < template.endIndex,
+               template[template.index(after: index)] == "{" {
+                let expressionStart = template.index(index, offsetBy: 2)
+                guard let expressionEnd = interpolationEnd(in: template, from: expressionStart) else {
+                    throw BASICError.runtime("Unterminated string interpolation")
+                }
+                let source = String(template[expressionStart..<expressionEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !source.isEmpty else {
+                    throw BASICError.runtime("Empty string interpolation")
+                }
+                var parser = try Parser(source: source)
+                output += try evaluate(parser.parseExpressionOnly()).description
+                index = template.index(after: expressionEnd)
+            } else {
+                output.append(template[index])
+                index = template.index(after: index)
+            }
+        }
+        return output
+    }
+
+    private func interpolationEnd(in template: String, from start: String.Index) -> String.Index? {
+        var index = start
+        while index < template.endIndex {
+            if template[index] == "}" {
+                return index
+            }
+            index = template.index(after: index)
+        }
+        return nil
     }
 
     private func numeric(_ value: BASICValue) throws -> Double {

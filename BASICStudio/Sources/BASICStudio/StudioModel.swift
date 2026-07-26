@@ -637,6 +637,24 @@ final class StudioModel: ObservableObject {
         inputCoordinator.activeLineInputOptions()
     }
 
+    func consoleCompletionAliasWords() -> [String] {
+        session.aliasNames
+    }
+
+    func consoleCompletionSymbolWords() -> [String] {
+        let program = BASICProgram()
+        program.loadSource(programText, fileName: currentProgramFileName)
+        return BASICCompletionEngine.programSymbolWords(in: program)
+    }
+
+    func consoleCompletionIncludesExternalCommands() -> Bool {
+        session.shellModeEnabled
+    }
+
+    func consoleCompletionWorkingDirectoryPath() -> String {
+        (try? currentDirectoryPath()) ?? FileManager.default.currentDirectoryPath
+    }
+
     private func rebuildProgramFromEditor() {
         session.program.loadSource(programText, fileName: currentProgramFileName)
         updateEditorDiagnostics()

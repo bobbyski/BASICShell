@@ -15,8 +15,9 @@ public struct BASICCompletionContext: Equatable, Sendable {
 public enum BASICCompletionEngine {
     public static let shellBuiltinWords = [
         "alias", "cat", "cd", "clear", "dirs", "edit", "exec", "exit", "export", "files",
-        "help", "history", "load", "ls", "new", "pipe", "popd", "prompt", "pushd", "pwd",
-        "quit", "run", "save", "setenv", "system", "tasks", "type", "unalias", "unsetenv", "which"
+        "bg", "fg", "help", "history", "jobs", "kill", "load", "ls", "new", "pipe", "popd",
+        "prompt", "pushd", "pwd", "quit", "run", "save", "setenv", "system", "tasks", "type",
+        "unalias", "unsetenv", "wait", "which"
     ]
 
     public static let basicKeywordWords = [
@@ -167,34 +168,89 @@ public enum BASICCompletionEngine {
     private static func basicCompletionTokens(from source: String) -> [String] {
         var tokens: [String] = []
         var current = ""
-        var inString = false
 
-        for character in source {
-            if character == "\"" {
-                inString.toggle()
+        func flushCurrent() {
+            if !current.isEmpty {
+                tokens.append(current)
+                current = ""
+            }
+        }
+
+        func hasClosingQuote(from quoteStart: String.Index, delimiter: Character) -> Bool {
+            var cursor = source.index(after: quoteStart)
+            while cursor < source.endIndex {
+                if source[cursor] == delimiter {
+                    return true
+                }
+                cursor = source.index(after: cursor)
+            }
+            return false
+        }
+
+        func hasTripleQuote(at position: String.Index) -> Bool {
+            guard position < source.endIndex, source[position] == "\"" else { return false }
+            let second = source.index(after: position)
+            guard second < source.endIndex, source[second] == "\"" else { return false }
+            let third = source.index(after: second)
+            return third < source.endIndex && source[third] == "\""
+        }
+
+        func skipString(from quoteStart: String.Index, delimiter: Character) -> String.Index {
+            if delimiter == "\"", hasTripleQuote(at: quoteStart) {
+                var cursor = source.index(quoteStart, offsetBy: 3)
+                while cursor < source.endIndex, !hasTripleQuote(at: cursor) {
+                    cursor = source.index(after: cursor)
+                }
+                return cursor < source.endIndex ? source.index(cursor, offsetBy: 3) : source.endIndex
+            }
+
+            var cursor = source.index(after: quoteStart)
+            while cursor < source.endIndex {
+                let current = source[cursor]
+                cursor = source.index(after: cursor)
+                if current == delimiter { break }
+            }
+            return cursor
+        }
+
+        var index = source.startIndex
+        while index < source.endIndex {
+            let character = source[index]
+
+            if character == "$" {
+                let quote = source.index(after: index)
+                if quote < source.endIndex, ["\"", "'", "`"].contains(source[quote]) {
+                    flushCurrent()
+                    index = skipString(from: quote, delimiter: source[quote])
+                    continue
+                }
+            }
+
+            if ["\"", "`"].contains(character) {
+                flushCurrent()
+                index = skipString(from: index, delimiter: character)
                 continue
             }
-            guard !inString else { continue }
+
+            if character == "'" {
+                flushCurrent()
+                guard hasClosingQuote(from: index, delimiter: "'") else { break }
+                index = skipString(from: index, delimiter: "'")
+                continue
+            }
 
             if character.isLetter || character.isNumber || "_$%#.".contains(character) {
                 current.append(character)
             } else {
-                if !current.isEmpty {
-                    tokens.append(current)
-                    current = ""
-                }
+                flushCurrent()
                 if character == "," {
                     tokens.append(",")
                 }
-                if character == "'" {
-                    break
-                }
             }
+            index = source.index(after: index)
         }
 
-        if !current.isEmpty {
-            tokens.append(current)
-        }
+        flushCurrent()
         return tokens
     }
 

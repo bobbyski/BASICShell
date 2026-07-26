@@ -112,6 +112,22 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         set { runtime.stringSubstitutionEnabled = newValue }
     }
 
+    /// Environment mutations exported by this session for child processes.
+    public var processEnvironmentPatch: BASICEnvironmentPatch {
+        runtime.environmentPatch
+    }
+
+    /// Last external/system status visible through STATUS and ERRORLEVEL.
+    public var lastSystemStatus: Int {
+        get { runtime.lastSystemStatus }
+        set { runtime.lastSystemStatus = newValue }
+    }
+
+    /// Sets script metadata visible to the next program run through `SCRIPT$`, `ARGC`, and `ARGV$()`.
+    public func setScriptContext(path: String, arguments: [String]) {
+        runtime.setScriptContext(path: path, arguments: arguments)
+    }
+
     /// Session-local command alias names.
     public var aliasNames: [String] {
         aliases.keys.sorted()
@@ -208,6 +224,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 do {
                     program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
                     fileState.lastFilePath = path
+                    setScriptContext(path: path, arguments: [])
                 } catch {
                     throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
                 }
@@ -321,6 +338,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 do {
                     program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
                     fileState.lastFilePath = path
+                    setScriptContext(path: path, arguments: [])
                     let diagnostics = self.diagnostics()
                     if diagnostics.isEmpty {
                         try runProgramInForeground(executionControl: foregroundExecutionControl)
@@ -404,7 +422,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 stopAllTimers()
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, JOBS, WAIT, KILL, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, EXPORT, SYSTEM, EXEC, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             default:
                 if Self.interactiveBlockBalance(in: trimmed) > 0 {
@@ -2135,9 +2153,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private static let basicBuiltinCommands: Set<String> = [
-        "ALIAS", "CD", "DIRS", "EDIT", "EXPORT", "FILES", "HELP", "LIST", "LOAD", "NEW", "POPD",
-        "PROMPT", "PUSHD", "PWD", "QUIT", "RUN", "SAVE", "SETENV", "STATUS", "SYSTEM",
-        "TASK", "TASKS", "TYPE", "UNALIAS", "UNSETENV", "WHICH"
+        "ALIAS", "BG", "CD", "DIRS", "EDIT", "EXPORT", "FG", "FILES", "HELP", "JOBS",
+        "KILL", "LIST", "LOAD", "NEW", "POPD", "PROMPT", "PUSHD", "PWD", "QUIT", "RUN",
+        "SAVE", "SETENV", "STATUS", "SYSTEM", "TASK", "TASKS", "TYPE", "UNALIAS",
+        "UNSETENV", "WAIT", "WHICH"
     ]
 
     private static func keywordPrefix(_ keyword: String, matches source: String) -> Bool {

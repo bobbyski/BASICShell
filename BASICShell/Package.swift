@@ -15,16 +15,11 @@ let package = Package(
             name: "BASICShell",
             dependencies: [
                 "BASICCore",
+                "TermKit",
                 "VectorTerminalSDK"
             ],
             resources: [
                 .copy("Resources/Demos")
-            ]
-        ),
-        .executableTarget(
-            name: "BASICEdit",
-            dependencies: [
-                "TermKit"
             ]
         )
     ]

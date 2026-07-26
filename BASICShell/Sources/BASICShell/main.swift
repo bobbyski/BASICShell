@@ -3,7 +3,345 @@ import Darwin
 import Foundation
 @preconcurrency import VectorTerminalSDK
 
+if runBASICShellIntegratedEditorIfRequested(arguments: CommandLine.arguments) {
+    exit(0)
+}
+
 nonisolated(unsafe) private var shellInterruptWriteFD: Int32 = -1
+
+func ignoringTerminalOutputStop(_ operation: () -> Int32) -> Int32 {
+    let previous = signal(SIGTTOU, SIG_IGN)
+    defer { _ = signal(SIGTTOU, previous) }
+    return operation()
+}
+
+final class ShellForegroundProcessRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeProcess: BASICForegroundProcessSnapshot?
+
+    func foregroundProcessStarted(_ process: BASICForegroundProcessSnapshot) {
+        lock.lock()
+        activeProcess = process
+        lock.unlock()
+        ShellEventTrace.shared.write("foreground-process-start pid=\(process.processID) pgid=\(process.processGroupID) command=\(process.command)")
+    }
+
+    func foregroundProcessEnded(_ process: BASICForegroundProcessSnapshot) {
+        lock.lock()
+        if activeProcess == process {
+            activeProcess = nil
+        }
+        lock.unlock()
+        ShellEventTrace.shared.write("foreground-process-end pid=\(process.processID) pgid=\(process.processGroupID) command=\(process.command)")
+    }
+
+    func interruptActiveProcess() -> Bool {
+        lock.lock()
+        let process = activeProcess
+        lock.unlock()
+
+        guard let process else { return false }
+        #if canImport(Darwin)
+        if process.processGroupID > 0, kill(-process.processGroupID, SIGINT) == 0 {
+            ShellEventTrace.shared.write("foreground-process-interrupt pgid=\(process.processGroupID)")
+            return true
+        }
+        if kill(process.processID, SIGINT) == 0 {
+            ShellEventTrace.shared.write("foreground-process-interrupt pid=\(process.processID)")
+            return true
+        }
+        #endif
+        ShellEventTrace.shared.write("foreground-process-interrupt-failed pid=\(process.processID) pgid=\(process.processGroupID)")
+        return false
+    }
+}
+
+private enum ShellJobState: Equatable {
+    case running
+    case exited(Int32)
+    case signaled(Int32)
+
+    var displayName: String {
+        switch self {
+        case .running:
+            return "Running"
+        case .exited(let status):
+            return status == 0 ? "Done" : "Exit \(status)"
+        case .signaled(let signal):
+            return "Signal \(signal)"
+        }
+    }
+
+    var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
+}
+
+private final class ShellBackgroundJob {
+    let id: Int
+    let process: Process
+    let processID: Int32
+    let processGroupID: Int32
+    let command: String
+    let startedAt = Date()
+    var state: ShellJobState = .running
+    var reportedCompletion = false
+
+    init(id: Int, process: Process, processID: Int32, processGroupID: Int32, command: String) {
+        self.id = id
+        self.process = process
+        self.processID = processID
+        self.processGroupID = processGroupID
+        self.command = command
+    }
+}
+
+private final class ShellJobTable {
+    private var nextID = 1
+    private var jobs: [Int: ShellBackgroundJob] = [:]
+
+    func start(
+        command: String,
+        workingDirectory: String?,
+        environment: BASICEnvironmentPatch,
+        columns: Int?,
+        rows: Int?
+    ) throws -> ShellBackgroundJob {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-lc", command]
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+        }
+        process.environment = Self.terminalEnvironment(columns: columns, rows: rows, patch: environment)
+        process.standardInput = isatty(STDIN_FILENO) == 1
+            ? FileHandle.standardInput
+            : try FileHandle(forReadingFrom: URL(fileURLWithPath: "/dev/null"))
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+
+        do {
+            try process.run()
+        } catch {
+            throw BASICError.runtime("Could not start background job: \(error.localizedDescription)")
+        }
+
+        let pid = process.processIdentifier
+        let processGroupID: Int32
+        #if canImport(Darwin)
+        processGroupID = setpgid(pid, pid) == 0 ? pid : pid
+        #else
+        processGroupID = pid
+        #endif
+
+        let job = ShellBackgroundJob(
+            id: nextID,
+            process: process,
+            processID: pid,
+            processGroupID: processGroupID,
+            command: command
+        )
+        jobs[job.id] = job
+        nextID += 1
+        ShellEventTrace.shared.write("background-job-start id=\(job.id) pid=\(job.processID) pgid=\(job.processGroupID) command=\(job.command)")
+        return job
+    }
+
+    func jobsSnapshot(includeCompleted: Bool = true) -> [ShellBackgroundJob] {
+        refreshStatuses()
+        return jobs.values
+            .filter { includeCompleted || $0.state.isRunning }
+            .sorted { $0.id < $1.id }
+    }
+
+    func reapFinishedJobs() -> [ShellBackgroundJob] {
+        refreshStatuses()
+        let finished = jobsSnapshot(includeCompleted: true).filter { !$0.state.isRunning && !$0.reportedCompletion }
+        for job in finished {
+            job.reportedCompletion = true
+        }
+        return finished
+    }
+
+    func markCompletedJobsReported(_ reportedJobs: [ShellBackgroundJob]) {
+        for job in reportedJobs where !job.state.isRunning {
+            job.reportedCompletion = true
+        }
+    }
+
+    func waitForAll() -> Int32 {
+        var status: Int32 = 0
+        for job in jobsSnapshot(includeCompleted: true) where job.state.isRunning {
+            status = wait(for: job)
+        }
+        removeCompletedJobs()
+        return status
+    }
+
+    func wait(for identifier: String) throws -> Int32 {
+        let job = try requireJob(identifier)
+        let status = wait(for: job)
+        removeCompletedJobs()
+        return status
+    }
+
+    func signal(identifier: String, signal: Int32) throws {
+        let job = try requireJob(identifier)
+        guard job.state.isRunning else {
+            throw BASICError.runtime("kill: job \(identifier) is not running")
+        }
+        #if canImport(Darwin)
+        if job.processGroupID > 0, kill(-job.processGroupID, signal) == 0 {
+            ShellEventTrace.shared.write("background-job-signal id=\(job.id) pgid=\(job.processGroupID) signal=\(signal)")
+            return
+        }
+        if kill(job.processID, signal) == 0 {
+            ShellEventTrace.shared.write("background-job-signal id=\(job.id) pid=\(job.processID) signal=\(signal)")
+            return
+        }
+        throw BASICError.runtime("kill: \(String(cString: strerror(errno)))")
+        #else
+        job.process.terminate()
+        #endif
+    }
+
+    func resume(identifier: String) throws {
+        let job = try requireJob(identifier)
+        guard job.state.isRunning else {
+            throw BASICError.runtime("bg: job \(identifier) is not running")
+        }
+        try sendContinue(to: job)
+        ShellEventTrace.shared.write("background-job-resume id=\(job.id) pgid=\(job.processGroupID) command=\(job.command)")
+    }
+
+    func foreground(
+        identifier: String,
+        terminalFD: Int32,
+        foregroundProcessRegistry: ShellForegroundProcessRegistry
+    ) throws -> Int32 {
+        let job = try requireJob(identifier)
+        if !job.state.isRunning {
+            let status = jobStatusCode(job)
+            removeCompletedJobs()
+            return status
+        }
+
+        let previousProcessGroup = isatty(terminalFD) == 1 ? tcgetpgrp(terminalFD) : -1
+        let ownsTerminal = previousProcessGroup >= 0 && job.processGroupID > 0 && tcsetpgrp(terminalFD, job.processGroupID) == 0
+        let snapshot = BASICForegroundProcessSnapshot(
+            processID: job.processID,
+            processGroupID: job.processGroupID,
+            command: job.command
+        )
+        foregroundProcessRegistry.foregroundProcessStarted(snapshot)
+        defer {
+            foregroundProcessRegistry.foregroundProcessEnded(snapshot)
+            if ownsTerminal {
+                _ = ignoringTerminalOutputStop {
+                    tcsetpgrp(terminalFD, previousProcessGroup)
+                }
+            }
+        }
+
+        try sendContinue(to: job)
+        ShellEventTrace.shared.write("background-job-foreground id=\(job.id) pgid=\(job.processGroupID) command=\(job.command)")
+        let status = wait(for: job)
+        removeCompletedJobs()
+        return status
+    }
+
+    private func wait(for job: ShellBackgroundJob) -> Int32 {
+        if job.state.isRunning {
+            job.process.waitUntilExit()
+            updateState(for: job)
+        }
+        ShellEventTrace.shared.write("background-job-wait id=\(job.id) status=\(jobStatusCode(job)) command=\(job.command)")
+        return jobStatusCode(job)
+    }
+
+    private func requireJob(_ identifier: String) throws -> ShellBackgroundJob {
+        refreshStatuses()
+        if Self.isCurrentJobIdentifier(identifier), let job = jobs.values.sorted(by: { $0.id < $1.id }).last {
+            return job
+        }
+        if let jobID = Self.jobID(from: identifier), let job = jobs[jobID] {
+            return job
+        }
+        if let pid = Int32(identifier), let job = jobs.values.first(where: { $0.processID == pid }) {
+            return job
+        }
+        throw BASICError.runtime("job not found: \(identifier)")
+    }
+
+    private func sendContinue(to job: ShellBackgroundJob) throws {
+        #if canImport(Darwin)
+        if job.processGroupID > 0, kill(-job.processGroupID, SIGCONT) == 0 {
+            return
+        }
+        if kill(job.processID, SIGCONT) == 0 {
+            return
+        }
+        throw BASICError.runtime("bg: \(String(cString: strerror(errno)))")
+        #endif
+    }
+
+    private func refreshStatuses() {
+        for job in jobs.values where job.state.isRunning && !job.process.isRunning {
+            updateState(for: job)
+        }
+    }
+
+    private func updateState(for job: ShellBackgroundJob) {
+        switch job.process.terminationReason {
+        case .exit:
+            job.state = .exited(job.process.terminationStatus)
+        case .uncaughtSignal:
+            job.state = .signaled(job.process.terminationStatus)
+        @unknown default:
+            job.state = .exited(job.process.terminationStatus)
+        }
+    }
+
+    private func removeCompletedJobs() {
+        for job in jobs.values where !job.state.isRunning {
+            jobs.removeValue(forKey: job.id)
+        }
+    }
+
+    private func jobStatusCode(_ job: ShellBackgroundJob) -> Int32 {
+        switch job.state {
+        case .running:
+            return 0
+        case .exited(let status):
+            return status
+        case .signaled(let signal):
+            return 128 + signal
+        }
+    }
+
+    private static func jobID(from identifier: String) -> Int? {
+        let trimmed = identifier.trimmingCharacters(in: .whitespaces)
+        let digits = trimmed.hasPrefix("%") ? trimmed.dropFirst() : Substring(trimmed)
+        return Int(digits)
+    }
+
+    private static func isCurrentJobIdentifier(_ identifier: String) -> Bool {
+        let trimmed = identifier.trimmingCharacters(in: .whitespaces)
+        return trimmed == "%" || trimmed == "%%" || trimmed == "%+"
+    }
+
+    private static func terminalEnvironment(columns: Int?, rows: Int?, patch: BASICEnvironmentPatch) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        if let columns {
+            environment["COLUMNS"] = String(max(1, columns))
+        }
+        if let rows {
+            environment["LINES"] = String(max(1, rows))
+        }
+        return patch.applying(to: environment)
+    }
+}
 
 final class ShellEventTrace: @unchecked Sendable {
     static let shared = ShellEventTrace()
@@ -47,10 +385,15 @@ private func handleShellInterruptSignal(_ signal: Int32) {
     _ = Darwin.write(shellInterruptWriteFD, &byte, 1)
 }
 
-final class ShellInterruptBridge {
+final class ShellInterruptBridge: @unchecked Sendable {
     private var readFD: Int32 = -1
     private var writeFD: Int32 = -1
     private var readerThread: Thread?
+    private let processRegistry: ShellForegroundProcessRegistry
+
+    init(processRegistry: ShellForegroundProcessRegistry) {
+        self.processRegistry = processRegistry
+    }
 
     func start(executionControl: BASICExecutionControl) {
         guard readFD < 0, writeFD < 0 else { return }
@@ -72,7 +415,9 @@ final class ShellInterruptBridge {
             while Darwin.read(readFD, &byte, 1) == 1 {
                 ShellEventTrace.shared.write("interrupt-bridge byte=\(byte)")
                 if byte == 3 {
-                    executionControl.requestBreak()
+                    if !self.processRegistry.interruptActiveProcess() {
+                        executionControl.requestBreak()
+                    }
                 }
             }
         }
@@ -122,6 +467,7 @@ final class ShellLineEditor: @unchecked Sendable {
         let fd = STDIN_FILENO
         guard isatty(fd) == 1 else {
             Swift.print(prompt, terminator: "")
+            fflush(stdout)
             return Swift.readLine().map {
                 let text = limited($0, maxLength: options.maxLength)
                 if usesCommandHistory { appendCommandHistory(text) }
@@ -132,6 +478,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var originalTermios = termios()
         guard tcgetattr(fd, &originalTermios) == 0 else {
             Swift.print(prompt, terminator: "")
+            fflush(stdout)
             return Swift.readLine().map {
                 let text = limited($0, maxLength: options.maxLength)
                 if usesCommandHistory { appendCommandHistory(text) }
@@ -141,10 +488,14 @@ final class ShellLineEditor: @unchecked Sendable {
 
         var rawTermios = originalTermios
         rawTermios.c_lflag &= ~tcflag_t(ICANON | ECHO)
+        if usesCommandHistory {
+            rawTermios.c_lflag &= ~tcflag_t(ISIG)
+        }
         rawTermios.c_cc.16 = 1
         rawTermios.c_cc.17 = 0
         guard tcsetattr(fd, TCSANOW, &rawTermios) == 0 else {
             Swift.print(prompt, terminator: "")
+            fflush(stdout)
             return Swift.readLine().map {
                 let text = limited($0, maxLength: options.maxLength)
                 if usesCommandHistory { appendCommandHistory(text) }
@@ -168,6 +519,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var completionMenu: CompletionMenu?
 
         Swift.print(prompt, terminator: "")
+        fflush(stdout)
         if let fieldLength {
             let visible = String(buffer.prefix(fieldLength))
             fieldDisplayCursor = min(cursor, fieldLength)
@@ -323,7 +675,12 @@ final class ShellLineEditor: @unchecked Sendable {
 
     private func readRawKey(fd: Int32) -> String? {
         var byte: UInt8 = 0
-        guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
+        while true {
+            let count = Darwin.read(fd, &byte, 1)
+            if count == 1 { break }
+            if count < 0, errno == EINTR { continue }
+            return nil
+        }
         var bytes = [byte]
         if byte == 27 {
             while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
@@ -633,7 +990,7 @@ final class ShellLineEditor: @unchecked Sendable {
         var line = ""
         for (index, candidate) in candidates.enumerated() {
             let padded = candidate.padding(toLength: cellWidth, withPad: " ", startingAt: 0)
-            let rendered = index == selectedIndex ? "\u{1B}[7m" + padded + "\u{1B}[27m" : padded
+            let rendered = index == selectedIndex ? "\u{1B}[30;42m" + padded + "\u{1B}[39;49m" : padded
             line += rendered
             if (index + 1).isMultiple(of: columnCount) {
                 lines.append(line)
@@ -1045,7 +1402,7 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICForegroundProcessObserver, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
     var supportsForegroundTTYProcesses: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
@@ -1053,6 +1410,7 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASIC
     var isVectorTerminalAvailable: Bool { vectorTerminalAvailability }
     var graphicsUnavailableMessage: String { "VectorTerminal graphics are not supported by this terminal" }
     private let graphicsPolicy: ShellGraphicsPolicy
+    private let foregroundProcessRegistry: ShellForegroundProcessRegistry
     private lazy var vectorTerminalAvailability = vectorTerminalProbe.isAvailable
     private var didUseVectorTerminal = false
     private var graphicsMode = BASICScreenMode(number: 0, width: 0, height: 0, colorCount: 0)
@@ -1084,8 +1442,9 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASIC
         return (canvas, true)
     }()
 
-    init(graphicsPolicy: ShellGraphicsPolicy) {
+    init(graphicsPolicy: ShellGraphicsPolicy, foregroundProcessRegistry: ShellForegroundProcessRegistry) {
         self.graphicsPolicy = graphicsPolicy
+        self.foregroundProcessRegistry = foregroundProcessRegistry
     }
 
     func attachSession(_ session: BASICSession) {
@@ -1094,6 +1453,22 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASIC
 
     func attachExecutionControl(_ executionControl: BASICExecutionControl) {
         self.executionControl = executionControl
+    }
+
+    func foregroundProcessStarted(_ process: BASICForegroundProcessSnapshot) {
+        foregroundProcessRegistry.foregroundProcessStarted(process)
+    }
+
+    func foregroundProcessEnded(_ process: BASICForegroundProcessSnapshot) {
+        foregroundProcessRegistry.foregroundProcessEnded(process)
+    }
+
+    func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+        try BASICSystemCommand.runProcess(request, observer: self)
+    }
+
+    func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult {
+        try BASICSystemCommand.runPipeline(requests, observer: self)
     }
 
     private func detectVectorTerminalAvailability() -> Bool {
@@ -2954,13 +3329,15 @@ do {
     exit(1)
 }
 
-let host = ConsoleHost(graphicsPolicy: graphicsPolicy)
+let foregroundProcessRegistry = ShellForegroundProcessRegistry()
+let host = ConsoleHost(graphicsPolicy: graphicsPolicy, foregroundProcessRegistry: foregroundProcessRegistry)
 defer {
     host.clearVectorTerminalOnExit()
 }
 let shellExecutionLane = BASICWorkerLane(label: "AIBasic.Shell.Execution")
 let shellExecutionControl = BASICExecutionControl()
-let shellInterruptBridge = ShellInterruptBridge()
+let shellInterruptBridge = ShellInterruptBridge(processRegistry: foregroundProcessRegistry)
+private let shellJobTable = ShellJobTable()
 let session = BASICSession(
     host: host,
     promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
@@ -2989,9 +3366,43 @@ func drainSessionEventLoop() {
 }
 
 @MainActor
+func restoreShellTerminalAfterEditor() {
+    ShellEventTrace.shared.write("editor-terminal-restore start")
+    let fd = STDIN_FILENO
+    if isatty(fd) == 1 {
+        var settings = termios()
+        if tcgetattr(fd, &settings) == 0 {
+            settings.c_iflag |= tcflag_t(BRKINT | ICRNL | IXON)
+            settings.c_iflag &= ~tcflag_t(INLCR | IGNCR)
+            settings.c_oflag |= tcflag_t(OPOST | ONLCR)
+            settings.c_lflag |= tcflag_t(ICANON | ECHO | ECHOE | ECHOK | ISIG | IEXTEN)
+            settings.c_lflag &= ~tcflag_t(ECHONL)
+            settings.c_cc.16 = 1
+            settings.c_cc.17 = 0
+            _ = tcsetattr(fd, TCSANOW, &settings)
+            _ = tcflush(fd, TCIFLUSH)
+        }
+    }
+    Swift.print(
+        "\u{001B}[0m" +
+        "\u{001B}[?1049l" +
+        "\u{001B}[?25h" +
+        "\u{001B}[?1000l" +
+        "\u{001B}[?1002l" +
+        "\u{001B}[?1003l" +
+        "\u{001B}[?1006l",
+        terminator: ""
+    )
+    fflush(stdout)
+    Swift.print("")
+    fflush(stdout)
+    ShellEventTrace.shared.write("editor-terminal-restore end")
+}
+
+@MainActor
 func runTermKitEditor() {
     let temporaryURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("AIBasic-EDIT-\(UUID().uuidString).bas")
+        .appendingPathComponent("BASICShell-EDIT-\(UUID().uuidString).bas")
 
     do {
         try session.program.listing().write(to: temporaryURL, atomically: true, encoding: .utf8)
@@ -3004,23 +3415,13 @@ func runTermKitEditor() {
         try? FileManager.default.removeItem(at: temporaryURL)
     }
 
-    let editorCandidates = SelfPackage.editorCandidateURLs(invokedExecutablePath: CommandLine.arguments[0])
-
-    let command: String
-    if let editorURL = editorCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
-        command = "\(shellQuoted(editorURL.path)) \(shellQuoted(temporaryURL.path))"
-    } else if FileManager.default.fileExists(atPath: SelfPackage.rootURL.appendingPathComponent("Package.swift").path) {
-        command = "cd \(shellQuoted(SelfPackage.rootURL.path)) && swift run BASICEdit \(shellQuoted(temporaryURL.path))"
-    } else {
-        host.printLine("Unable to find BASICEdit helper.")
-        host.printLine("Searched:")
-        for url in editorCandidates {
-            host.printLine("  \(url.path)")
-        }
-        return
-    }
-
-    let result = runShellCommand(command)
+    let result = runIntegratedEditorProcess(
+        executablePath: CommandLine.arguments[0],
+        bufferPath: temporaryURL.path,
+        foregroundProcessRegistry: foregroundProcessRegistry
+    )
+    ShellEventTrace.shared.write("editor-return status=\(result)")
+    restoreShellTerminalAfterEditor()
     guard result == 0 else {
         host.printLine("Editor exited with status \(result).")
         return
@@ -3039,7 +3440,373 @@ func shellQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
-func runShellCommand(_ command: String) -> Int32 {
+func runIntegratedEditorProcess(
+    executablePath: String,
+    bufferPath: String,
+    foregroundProcessRegistry: ShellForegroundProcessRegistry? = nil
+) -> Int32 {
+    var pid = pid_t()
+    var arguments: [UnsafeMutablePointer<CChar>?] = [
+        strdup(executablePath),
+        strdup(integratedEditorFlag),
+        strdup(bufferPath),
+        nil
+    ]
+    defer {
+        for argument in arguments where argument != nil {
+            free(argument)
+        }
+    }
+
+    var attributes: posix_spawnattr_t?
+    let hasAttributes = posix_spawnattr_init(&attributes) == 0
+    if hasAttributes {
+        let flags = Int16(POSIX_SPAWN_SETPGROUP)
+        _ = posix_spawnattr_setflags(&attributes, flags)
+        _ = posix_spawnattr_setpgroup(&attributes, 0)
+    }
+    defer {
+        if hasAttributes {
+            posix_spawnattr_destroy(&attributes)
+        }
+    }
+
+    let spawnStatus: Int32
+    ShellEventTrace.shared.write("editor-spawn path=\(executablePath) buffer=\(bufferPath)")
+    if hasAttributes {
+        spawnStatus = withUnsafePointer(to: &attributes) { attributesPointer in
+            posix_spawnp(&pid, executablePath, nil, attributesPointer, &arguments, environ)
+        }
+    } else {
+        spawnStatus = posix_spawnp(&pid, executablePath, nil, nil, &arguments, environ)
+    }
+    guard spawnStatus == 0 else {
+        ShellEventTrace.shared.write("editor-spawn-failed status=\(spawnStatus)")
+        return spawnStatus
+    }
+    ShellEventTrace.shared.write("editor-spawned pid=\(pid)")
+
+    let process = BASICForegroundProcessSnapshot(
+        processID: pid,
+        processGroupID: pid,
+        command: "EDIT"
+    )
+    foregroundProcessRegistry?.foregroundProcessStarted(process)
+    let terminalFD = STDIN_FILENO
+    let previousProcessGroup = isatty(terminalFD) == 1 ? tcgetpgrp(terminalFD) : -1
+    let ownsTerminal = previousProcessGroup >= 0 && tcsetpgrp(terminalFD, pid) == 0
+    defer {
+        foregroundProcessRegistry?.foregroundProcessEnded(process)
+        if ownsTerminal {
+            _ = ignoringTerminalOutputStop {
+                tcsetpgrp(terminalFD, previousProcessGroup)
+            }
+        }
+    }
+
+    var waitStatus: Int32 = 0
+    while waitpid(pid, &waitStatus, 0) < 0 {
+        if errno == EINTR {
+            continue
+        }
+        ShellEventTrace.shared.write("editor-wait-failed errno=\(errno)")
+        return errno
+    }
+    ShellEventTrace.shared.write("editor-wait status=\(waitStatus)")
+    if waitStatus & 0x7f == 0 {
+        return (waitStatus >> 8) & 0xff
+    }
+    return 128 + (waitStatus & 0x7f)
+}
+
+@MainActor
+func reportCompletedBackgroundJobs() {
+    for job in shellJobTable.reapFinishedJobs() {
+        host.printLine("[\(job.id)]  \(job.state.displayName)  \(job.command)")
+    }
+}
+
+@MainActor
+func handleShellJobControlCommand(_ line: String) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+
+    if let command = backgroundCommand(from: trimmed) {
+        guard session.shellModeEnabled else {
+            host.printLine("background jobs require OPTION SHELLMODE ON")
+            session.lastSystemStatus = 2
+            return true
+        }
+        guard !command.isEmpty else {
+            host.printLine("Syntax error: Expected command before &")
+            session.lastSystemStatus = 2
+            return true
+        }
+        do {
+            let job = try shellJobTable.start(
+                command: command,
+                workingDirectory: try host.currentDirectoryPath(),
+                environment: session.processEnvironmentPatch,
+                columns: host.screenColumns(),
+                rows: host.screenRows()
+            )
+            host.printLine("[\(job.id)] \(job.processID)")
+            session.lastSystemStatus = 0
+        } catch let error as BASICError {
+            host.printLine(error.description)
+            session.lastSystemStatus = 1
+        } catch {
+            host.printLine("Unexpected error: \(error.localizedDescription)")
+            session.lastSystemStatus = 1
+        }
+        return true
+    }
+
+    let words = shellWords(in: trimmed)
+    guard let command = words.first?.lowercased() else { return false }
+    switch command {
+    case "jobs":
+        guard words.count == 1 || words == ["jobs", "-l"] else {
+            host.printLine("jobs: usage: jobs [-l]")
+            session.lastSystemStatus = 2
+            return true
+        }
+        printJobs(long: words.contains("-l"))
+        session.lastSystemStatus = 0
+        return true
+    case "wait":
+        runWaitCommand(arguments: Array(words.dropFirst()))
+        return true
+    case "kill":
+        runKillCommand(arguments: Array(words.dropFirst()))
+        return true
+    case "fg":
+        runForegroundCommand(arguments: Array(words.dropFirst()))
+        return true
+    case "bg":
+        runBackgroundResumeCommand(arguments: Array(words.dropFirst()))
+        return true
+    default:
+        return false
+    }
+}
+
+@MainActor
+func printJobs(long: Bool) {
+    let jobs = shellJobTable.jobsSnapshot()
+    guard !jobs.isEmpty else { return }
+    for job in jobs {
+        if long {
+            host.printLine("[\(job.id)] \(job.processID) \(job.state.displayName)  \(job.command)")
+        } else {
+            host.printLine("[\(job.id)] \(job.state.displayName)  \(job.command)")
+        }
+    }
+    shellJobTable.markCompletedJobsReported(jobs)
+}
+
+@MainActor
+func runWaitCommand(arguments: [String]) {
+    do {
+        if arguments.isEmpty {
+            session.lastSystemStatus = Int(shellJobTable.waitForAll())
+            return
+        }
+        var status: Int32 = 0
+        for identifier in arguments {
+            status = try shellJobTable.wait(for: identifier)
+        }
+        session.lastSystemStatus = Int(status)
+    } catch let error as BASICError {
+        host.printLine(error.description)
+        session.lastSystemStatus = 1
+    } catch {
+        host.printLine("Unexpected error: \(error.localizedDescription)")
+        session.lastSystemStatus = 1
+    }
+}
+
+@MainActor
+func runKillCommand(arguments: [String]) {
+    var remaining = arguments
+    let signal: Int32
+    if let first = remaining.first, first.hasPrefix("-") {
+        do {
+            signal = try parseSignal(first)
+            remaining.removeFirst()
+        } catch let error as BASICError {
+            host.printLine(error.description)
+            session.lastSystemStatus = 2
+            return
+        } catch {
+            host.printLine("Unexpected error: \(error.localizedDescription)")
+            session.lastSystemStatus = 2
+            return
+        }
+    } else {
+        signal = SIGTERM
+    }
+
+    guard !remaining.isEmpty else {
+        host.printLine("kill: usage: kill [-SIGNAL] %job|pid ...")
+        session.lastSystemStatus = 2
+        return
+    }
+
+    var status = 0
+    for identifier in remaining {
+        do {
+            try shellJobTable.signal(identifier: identifier, signal: signal)
+        } catch let error as BASICError {
+            host.printLine(error.description)
+            status = 1
+        } catch {
+            host.printLine("Unexpected error: \(error.localizedDescription)")
+            status = 1
+        }
+    }
+    session.lastSystemStatus = status
+}
+
+@MainActor
+func runForegroundCommand(arguments: [String]) {
+    guard arguments.count <= 1 else {
+        host.printLine("fg: usage: fg [%job|pid]")
+        session.lastSystemStatus = 2
+        return
+    }
+    let identifier = arguments.first ?? "%"
+    do {
+        session.lastSystemStatus = Int(try shellJobTable.foreground(
+            identifier: identifier,
+            terminalFD: STDIN_FILENO,
+            foregroundProcessRegistry: foregroundProcessRegistry
+        ))
+    } catch let error as BASICError {
+        host.printLine(error.description)
+        session.lastSystemStatus = 1
+    } catch {
+        host.printLine("Unexpected error: \(error.localizedDescription)")
+        session.lastSystemStatus = 1
+    }
+}
+
+@MainActor
+func runBackgroundResumeCommand(arguments: [String]) {
+    guard arguments.count <= 1 else {
+        host.printLine("bg: usage: bg [%job|pid]")
+        session.lastSystemStatus = 2
+        return
+    }
+    let identifier = arguments.first ?? "%"
+    do {
+        try shellJobTable.resume(identifier: identifier)
+        session.lastSystemStatus = 0
+    } catch let error as BASICError {
+        host.printLine(error.description)
+        session.lastSystemStatus = 1
+    } catch {
+        host.printLine("Unexpected error: \(error.localizedDescription)")
+        session.lastSystemStatus = 1
+    }
+}
+
+func backgroundCommand(from source: String) -> String? {
+    var inSingleQuote = false
+    var inDoubleQuote = false
+    var escaped = false
+    var lastAmpersand: String.Index?
+
+    for index in source.indices {
+        let character = source[index]
+        if escaped {
+            escaped = false
+            continue
+        }
+        if character == "\\" {
+            escaped = true
+            continue
+        }
+        if character == "'", !inDoubleQuote {
+            inSingleQuote.toggle()
+            continue
+        }
+        if character == "\"", !inSingleQuote {
+            inDoubleQuote.toggle()
+            continue
+        }
+        if character == "&", !inSingleQuote, !inDoubleQuote {
+            lastAmpersand = index
+        }
+    }
+
+    guard let ampersand = lastAmpersand else { return nil }
+    let after = source[source.index(after: ampersand)...].trimmingCharacters(in: .whitespaces)
+    guard after.isEmpty else { return nil }
+    return source[..<ampersand].trimmingCharacters(in: .whitespaces)
+}
+
+func shellWords(in source: String) -> [String] {
+    var words: [String] = []
+    var current = ""
+    var inSingleQuote = false
+    var inDoubleQuote = false
+    var escaped = false
+
+    for character in source {
+        if escaped {
+            current.append(character)
+            escaped = false
+            continue
+        }
+        if character == "\\" {
+            escaped = true
+            continue
+        }
+        if character == "'", !inDoubleQuote {
+            inSingleQuote.toggle()
+            continue
+        }
+        if character == "\"", !inSingleQuote {
+            inDoubleQuote.toggle()
+            continue
+        }
+        if character.isWhitespace, !inSingleQuote, !inDoubleQuote {
+            if !current.isEmpty {
+                words.append(current)
+                current.removeAll()
+            }
+            continue
+        }
+        current.append(character)
+    }
+    if !current.isEmpty {
+        words.append(current)
+    }
+    return words
+}
+
+func parseSignal(_ value: String) throws -> Int32 {
+    let raw = value.dropFirst()
+    guard !raw.isEmpty else { throw BASICError.syntax("Expected signal after -") }
+    if let number = Int32(raw), number > 0 {
+        return number
+    }
+    let name = raw.uppercased().hasPrefix("SIG") ? String(raw.dropFirst(3)).uppercased() : raw.uppercased()
+    switch name {
+    case "HUP": return SIGHUP
+    case "INT": return SIGINT
+    case "QUIT": return SIGQUIT
+    case "KILL": return SIGKILL
+    case "TERM": return SIGTERM
+    case "STOP": return SIGSTOP
+    case "CONT": return SIGCONT
+    default:
+        throw BASICError.syntax("Unknown signal \(value)")
+    }
+}
+
+func runShellCommand(_ command: String, foregroundProcessRegistry: ShellForegroundProcessRegistry? = nil) -> Int32 {
     var pid = pid_t()
     var arguments: [UnsafeMutablePointer<CChar>?] = [
         strdup("sh"),
@@ -3053,34 +3820,54 @@ func runShellCommand(_ command: String) -> Int32 {
         }
     }
 
-    let spawnStatus = posix_spawnp(&pid, "sh", nil, nil, &arguments, environ)
+    var attributes: posix_spawnattr_t?
+    let hasAttributes = posix_spawnattr_init(&attributes) == 0
+    if hasAttributes {
+        let flags = Int16(POSIX_SPAWN_SETPGROUP)
+        _ = posix_spawnattr_setflags(&attributes, flags)
+        _ = posix_spawnattr_setpgroup(&attributes, 0)
+    }
+    defer {
+        if hasAttributes {
+            posix_spawnattr_destroy(&attributes)
+        }
+    }
+
+    let spawnStatus: Int32
+    if hasAttributes {
+        spawnStatus = withUnsafePointer(to: &attributes) { attributesPointer in
+            posix_spawnp(&pid, "sh", nil, attributesPointer, &arguments, environ)
+        }
+    } else {
+        spawnStatus = posix_spawnp(&pid, "sh", nil, nil, &arguments, environ)
+    }
     guard spawnStatus == 0 else { return spawnStatus }
 
+    let process = BASICForegroundProcessSnapshot(processID: pid, processGroupID: pid, command: command)
+    foregroundProcessRegistry?.foregroundProcessStarted(process)
+    let terminalFD = STDIN_FILENO
+    let previousProcessGroup = isatty(terminalFD) == 1 ? tcgetpgrp(terminalFD) : -1
+    let ownsTerminal = previousProcessGroup >= 0 && tcsetpgrp(terminalFD, pid) == 0
+    defer {
+        foregroundProcessRegistry?.foregroundProcessEnded(process)
+        if ownsTerminal {
+            _ = ignoringTerminalOutputStop {
+                tcsetpgrp(terminalFD, previousProcessGroup)
+            }
+        }
+    }
+
     var waitStatus: Int32 = 0
-    guard waitpid(pid, &waitStatus, 0) >= 0 else { return errno }
+    while waitpid(pid, &waitStatus, 0) < 0 {
+        if errno == EINTR {
+            continue
+        }
+        return errno
+    }
     if waitStatus & 0x7f == 0 {
         return (waitStatus >> 8) & 0xff
     }
     return 128 + (waitStatus & 0x7f)
-}
-
-enum SelfPackage {
-    static var rootURL: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-    }
-
-    static func editorCandidateURLs(invokedExecutablePath: String) -> [URL] {
-        let invokedDirectory = URL(fileURLWithPath: invokedExecutablePath).deletingLastPathComponent()
-        return [
-            invokedDirectory.appendingPathComponent("BASICEdit"),
-            rootURL.appendingPathComponent(".build/debug/BASICEdit"),
-            rootURL.appendingPathComponent(".build/arm64-apple-macosx/debug/BASICEdit"),
-            rootURL.appendingPathComponent(".build/x86_64-apple-macosx/debug/BASICEdit")
-        ]
-    }
 }
 
 func isRunCommand(_ input: String) -> Bool {
@@ -3130,6 +3917,7 @@ if arguments.first == "--cls" {
 if let scriptPath = arguments.first {
     do {
         session.program.loadSource(try host.loadTextFile(path: scriptPath), fileName: scriptPath)
+        session.setScriptContext(path: scriptPath, arguments: Array(arguments.dropFirst()))
         if printDiagnosticsIfNeeded() {
             finish(1)
         }
@@ -3152,10 +3940,15 @@ print("Type HELP for commands. Type QUIT to exit.")
 
 var shellExitCode: Int32 = 0
 while true {
+    reportCompletedBackgroundJobs()
     ShellLineEditor.shared.setAliasCompletionWords(session.aliasNames)
     ShellLineEditor.shared.setBasicSymbolCompletionWords(BASICCompletionEngine.programSymbolWords(in: session.program))
     ShellLineEditor.shared.setIncludesExternalCommandCompletions(session.shellModeEnabled)
     guard let line = host.readLine(prompt: session.prompt) else { break }
+    if handleShellJobControlCommand(line) {
+        drainSessionEventLoop()
+        continue
+    }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runTermKitEditor()
         drainSessionEventLoop()

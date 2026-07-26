@@ -20,6 +20,8 @@ final class BASICRuntime {
     var unsetEnvironmentNames: Set<String> = []
     var directoryStack: [String] = []
     var lastSystemStatus = 0
+    var scriptPath = ""
+    var scriptArguments: [String] = []
     var randomGenerator = BASICRandomGenerator()
     var lastErrorNumber = 0
     var lastErrorLine = 0
@@ -53,6 +55,13 @@ final class BASICRuntime {
         unsetEnvironmentNames.removeAll()
         directoryStack.removeAll()
         lastSystemStatus = 0
+        scriptPath = ""
+        scriptArguments = []
+    }
+
+    func setScriptContext(path: String, arguments: [String]) {
+        scriptPath = path
+        scriptArguments = arguments
     }
 
     func setEnvironmentValue(name: String, value: String) {

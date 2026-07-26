@@ -50,6 +50,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var commandHistory = AIBasicTerminalContainerView.loadCommandHistory()
     private var commandHistoryIndex: Int?
     private var draftBeforeCommandHistory = ""
+    private var completionMenu: CompletionMenu?
     private var keyMonitor: Any?
     private var mouseUpMonitor: Any?
     private var pendingEscapeBytes: [UInt8] = []
@@ -222,6 +223,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             renderedCharacterCount = 0
             inputBuffer = ""
             inputCursor = 0
+            completionMenu = nil
             hasInitializedLineInputDefault = false
         }
 
@@ -575,6 +577,10 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
             switch byte {
             case 10, 13:
+                if acceptCompletionSelection(operations: &operations) {
+                    continue
+                }
+                clearCompletionMenu()
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key("\n"))
                 } else {
@@ -593,11 +599,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                 }
             case 9:
                 if model?.shouldCaptureTerminalKeyOnly() == true || model?.shouldExitLineInputOnSpecialKey() == true {
+                    clearCompletionMenu()
                     appendRawSpecialKeySequence("\t", operations: &operations)
                 } else {
-                    appendText("\t", to: &operations)
+                    completeLine(operations: &operations)
                 }
             case 8, 127:
+                clearCompletionMenu()
                 if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key(BASICRawKey.backspace))
                 } else {
@@ -608,8 +616,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                     model?.stopProgram()
                 } else if model?.shouldCaptureTerminalKeyOnly() == true {
                     operations.append(.key(String(UnicodeScalar(byte))))
+                } else {
+                    clearCompletionMenu()
                 }
             case 32...126:
+                clearCompletionMenu()
                 if byte == UInt8(ascii: "["),
                    let compactRead = readCompactBracketSequence(from: &iterator) {
                     if let compactSequence = compactRead.sequence {
@@ -623,6 +634,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
                     appendPrintableByte(byte, operations: &operations)
                 }
             case 27:
+                clearCompletionMenu()
                 var bytes = [byte]
                 while let next = iterator.next() {
                     bytes.append(next)
@@ -768,6 +780,238 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         } else {
             operations.append(.append(String(repeating: "\u{1B}[D", count: -delta)))
         }
+    }
+
+    private struct CompletionMenu {
+        let candidates: [String]
+        let context: BASICCompletionContext
+        var selectedIndex: Int?
+        var displayLineCount = 0
+    }
+
+    private func completeLine(operations: inout [TerminalInputOperation]) {
+        guard model?.activeLineInputOptions().fieldLength == nil else { return }
+        ensureLineInputDefaultInitialized()
+
+        if var menu = completionMenu {
+            guard menu.context == BASICCompletionEngine.context(buffer: inputBuffer, cursor: inputCursor) else {
+                clearCompletionMenu()
+                return
+            }
+            if let selectedIndex = menu.selectedIndex {
+                menu.selectedIndex = (selectedIndex + 1) % menu.candidates.count
+            } else {
+                menu.selectedIndex = 0
+            }
+            renderCompletionMenu(&menu)
+            completionMenu = menu
+            return
+        }
+
+        let context = BASICCompletionEngine.context(buffer: inputBuffer, cursor: inputCursor)
+        let candidates = completionCandidates(for: context)
+        guard !candidates.isEmpty else {
+            feedTerminal("\u{07}")
+            return
+        }
+
+        if candidates.count == 1 {
+            replaceCompletionToken(with: candidates[0], context: context, operations: &operations)
+            return
+        }
+
+        let common = BASICCompletionEngine.commonPrefix(candidates)
+        if common.count > context.token.count {
+            replaceCompletionToken(with: common, context: context, operations: &operations)
+            return
+        }
+
+        var menu = CompletionMenu(candidates: candidates, context: context)
+        renderCompletionMenu(&menu)
+        completionMenu = menu
+    }
+
+    private func completionCandidates(for context: BASICCompletionContext) -> [String] {
+        var commandWords = BASICCompletionEngine.shellBuiltinWords
+            + BASICCompletionEngine.basicKeywordWords
+            + (model?.consoleCompletionAliasWords() ?? [])
+        if model?.consoleCompletionIncludesExternalCommands() == true {
+            commandWords += pathExecutableCompletionWords()
+        }
+        return BASICCompletionEngine.candidates(
+            for: context,
+            pathCandidates: pathCompletionCandidates(for: context.token),
+            commandWords: commandWords,
+            symbolWords: model?.consoleCompletionSymbolWords() ?? []
+        )
+    }
+
+    private func pathCompletionCandidates(for token: String) -> [String] {
+        let split = splitPathCompletionToken(token)
+        let directoryPath = expandedPath(split.directory)
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directoryPath) else { return [] }
+
+        let visibleDirectory = split.directory
+        return entries
+            .filter { BASICCompletionEngine.caseInsensitiveHasPrefix($0, prefix: split.partial) }
+            .map { entry in
+                let fullPath = URL(fileURLWithPath: directoryPath).appendingPathComponent(entry).path
+                let suffix = FileManager.default.fileExists(atPath: fullPath, isDirectory: nil) && isDirectory(fullPath) ? "/" : ""
+                return visibleDirectory + escapedCompletionPathComponent(entry) + suffix
+            }
+    }
+
+    private func splitPathCompletionToken(_ token: String) -> (directory: String, partial: String) {
+        if let slash = token.lastIndex(of: "/") {
+            let directory = String(token[...slash])
+            let partial = String(token[token.index(after: slash)...])
+            return (directory, partial)
+        }
+        return ("", token)
+    }
+
+    private func expandedPath(_ visibleDirectory: String) -> String {
+        if visibleDirectory.isEmpty {
+            return model?.consoleCompletionWorkingDirectoryPath() ?? FileManager.default.currentDirectoryPath
+        }
+        if visibleDirectory == "~/" {
+            return FileManager.default.homeDirectoryForCurrentUser.path
+        }
+        if visibleDirectory.hasPrefix("~/") {
+            let rest = visibleDirectory.dropFirst(2)
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(rest)).path
+        }
+        if visibleDirectory.hasPrefix("/") {
+            return NSString(string: visibleDirectory).expandingTildeInPath
+        }
+        let base = URL(
+            fileURLWithPath: model?.consoleCompletionWorkingDirectoryPath() ?? FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        return URL(fileURLWithPath: visibleDirectory, relativeTo: base).standardizedFileURL.path
+    }
+
+    private func isDirectory(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    private func escapedCompletionPathComponent(_ value: String) -> String {
+        value.replacingOccurrences(of: " ", with: "\\ ")
+    }
+
+    private func pathExecutableCompletionWords() -> [String] {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        var words: [String] = []
+        var seen = Set<String>()
+        for directory in path.split(separator: ":", omittingEmptySubsequences: true) {
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: String(directory)) else { continue }
+            for entry in entries where seen.insert(entry).inserted {
+                let fullPath = URL(fileURLWithPath: String(directory)).appendingPathComponent(entry).path
+                guard access(fullPath, X_OK) == 0, !isDirectory(fullPath) else { continue }
+                words.append(entry)
+            }
+        }
+        return words
+    }
+
+    private func replaceCompletionToken(
+        with replacement: String,
+        context: BASICCompletionContext,
+        operations: inout [TerminalInputOperation]
+    ) {
+        let oldCursor = inputCursor
+        let tokenRange = range(offset: context.startOffset, length: inputCursor - context.startOffset)
+        inputBuffer.replaceSubrange(tokenRange, with: replacement)
+        inputCursor = context.startOffset + replacement.count
+
+        let redrawStart = min(context.startOffset, oldCursor)
+        let moveToRedrawStart = terminalCursorMovement(from: oldCursor, to: redrawStart)
+        let suffix = String(inputBuffer.dropFirst(redrawStart))
+        let backtrack = max(0, inputBuffer.count - inputCursor)
+        operations.append(.append(moveToRedrawStart + "\u{1B}[K" + suffix + String(repeating: "\u{1B}[D", count: backtrack)))
+    }
+
+    private func acceptCompletionSelection(operations: inout [TerminalInputOperation]) -> Bool {
+        guard let menu = completionMenu, let selectedIndex = menu.selectedIndex else {
+            return false
+        }
+        clearCompletionMenu()
+        replaceCompletionToken(with: menu.candidates[selectedIndex], context: menu.context, operations: &operations)
+        return true
+    }
+
+    private func clearCompletionMenu() {
+        guard let menu = completionMenu, menu.displayLineCount > 0 else {
+            completionMenu = nil
+            return
+        }
+        let output = "\u{1B}[s"
+            + terminalCursorMovement(from: inputCursor, to: inputBuffer.count)
+            + String(repeating: "\r\n\u{1B}[2K", count: menu.displayLineCount)
+            + "\u{1B}[u"
+        feedTerminal(output)
+        completionMenu = nil
+    }
+
+    private func renderCompletionMenu(_ menu: inout CompletionMenu) {
+        var oldMenu = completionMenu
+        clearCompletionMenu(&oldMenu)
+
+        let lines = completionMenuLines(candidates: menu.candidates, selectedIndex: menu.selectedIndex)
+        guard !lines.isEmpty else { return }
+
+        let output = "\u{1B}[s"
+            + terminalCursorMovement(from: inputCursor, to: inputBuffer.count)
+            + lines.map { "\r\n\u{1B}[2K" + $0 }.joined()
+            + "\u{1B}[u"
+        feedTerminal(output)
+        menu.displayLineCount = lines.count
+    }
+
+    private func clearCompletionMenu(_ menu: inout CompletionMenu?) {
+        guard let existing = menu, existing.displayLineCount > 0 else {
+            menu = nil
+            return
+        }
+        let output = "\u{1B}[s"
+            + terminalCursorMovement(from: inputCursor, to: inputBuffer.count)
+            + String(repeating: "\r\n\u{1B}[2K", count: existing.displayLineCount)
+            + "\u{1B}[u"
+        feedTerminal(output)
+        menu = nil
+    }
+
+    private func completionMenuLines(candidates: [String], selectedIndex: Int?) -> [String] {
+        let columns = max(1, terminalView.getTerminal().cols)
+        let cellWidth = min(max((candidates.map(\.count).max() ?? 0) + 2, 8), columns)
+        let columnCount = max(1, columns / cellWidth)
+        var lines: [String] = []
+        var line = ""
+        for (index, candidate) in candidates.enumerated() {
+            let padded = candidate.padding(toLength: cellWidth, withPad: " ", startingAt: 0)
+            let rendered = index == selectedIndex ? "\u{1B}[30;42m" + padded + "\u{1B}[39;49m" : padded
+            line += rendered
+            if (index + 1).isMultiple(of: columnCount) {
+                lines.append(line)
+                line = ""
+            }
+        }
+        if !line.isEmpty {
+            lines.append(line)
+        }
+        return lines
+    }
+
+    private func terminalCursorMovement(from oldCursor: Int, to newCursor: Int) -> String {
+        let delta = newCursor - oldCursor
+        if delta > 0 {
+            return String(repeating: "\u{1B}[C", count: delta)
+        }
+        if delta < 0 {
+            return String(repeating: "\u{1B}[D", count: -delta)
+        }
+        return ""
     }
 
     private func handleEditingEscape(_ raw: String, operations: inout [TerminalInputOperation]) {

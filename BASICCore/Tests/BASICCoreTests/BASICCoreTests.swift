@@ -36,6 +36,19 @@ private final class ThreadSafeValueBox<Value>: @unchecked Sendable {
     }
 }
 
+private final class ProcessObserverProbe: BASICForegroundProcessObserver {
+    private(set) var started: [BASICForegroundProcessSnapshot] = []
+    private(set) var ended: [BASICForegroundProcessSnapshot] = []
+
+    func foregroundProcessStarted(_ process: BASICForegroundProcessSnapshot) {
+        started.append(process)
+    }
+
+    func foregroundProcessEnded(_ process: BASICForegroundProcessSnapshot) {
+        ended.append(process)
+    }
+}
+
 private func repositoryRootURL() -> URL {
     URL(fileURLWithPath: String(#filePath))
         .deletingLastPathComponent()
@@ -77,6 +90,66 @@ struct BASICCoreTests {
         session.submit("PRINT \"HELLO\"")
 
         #expect(host.output == ["HELLO"])
+    }
+
+    @Test("Strings support alternate quotes triple quotes and interpolation")
+    func stringsSupportAlternateQuotesTripleQuotesAndInterpolation() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource(#"""
+        name$ = 'Ada'
+        n = 4
+        print 'single " quote'
+        print `backtick " and ' quotes`
+        print $"Hello ${name$} ${n + 1}"
+        print "Plain ${name$}"
+        block$ = $"""Hello ${name$}
+        count ${n + 2}"""
+        print block$
+        option stringsub on
+        print "Plain ${name$}"
+        text$ = """line "one"
+        line 'two'
+        line `three`"""
+        print text$
+        """#)
+
+        try session.runProgramInForeground()
+
+        #expect(host.output == [
+            "single \" quote",
+            "backtick \" and ' quotes",
+            "Hello Ada 5",
+            "Plain ${name$}",
+            "Hello Ada\ncount 6",
+            "Plain Ada",
+            "line \"one\"\nline 'two'\nline `three`"
+        ])
+    }
+
+    @Test("Scripts expose path and arguments")
+    func scriptsExposePathAndArguments() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.setScriptContext(path: "/tmp/demo.bas", arguments: ["alpha", "beta gamma"])
+        session.program.loadSource("""
+        PRINT SCRIPT$
+        PRINT ARGC
+        FOR i = 0 TO ARGC - 1
+            PRINT ARGV$(i)
+        NEXT i
+        """, fileName: "/tmp/demo.bas")
+
+        try session.runProgramInForeground()
+
+        #expect(host.output == ["/tmp/demo.bas", "2", "alpha", "beta gamma"])
+
+        host.output.removeAll()
+        session.setScriptContext(path: "/tmp/empty.bas", arguments: [])
+
+        try session.runProgramInForeground()
+
+        #expect(host.output == ["/tmp/empty.bas", "0"])
     }
 
     @Test("Completion engine finds command and symbol candidates")
@@ -5300,6 +5373,42 @@ struct BASICCoreTests {
         #expect(result.stdout == "alpha\nbeta\n")
         #expect(result.stderr == "")
         #expect(result.exitCode == 0)
+    }
+
+    @Test("Default process runner reports foreground process lifecycle")
+    func defaultProcessRunnerReportsForegroundProcessLifecycle() throws {
+        let observer = ProcessObserverProbe()
+        let result = try BASICSystemCommand.runProcess(
+            BASICProcessRequest(executable: "/bin/echo", arguments: ["observer"]),
+            observer: observer
+        )
+
+        #expect(result.stdout == "observer\n")
+        #expect(result.stderr == "")
+        #expect(result.exitCode == 0)
+        #expect(observer.started.count == 1)
+        #expect(observer.ended == observer.started)
+        #expect(observer.started[0].processID > 0)
+        #expect(observer.started[0].processGroupID > 0)
+        #expect(observer.started[0].command == "/bin/echo observer")
+    }
+
+    @Test("Default process runner reports pipeline lifecycle")
+    func defaultProcessRunnerReportsPipelineLifecycle() throws {
+        let observer = ProcessObserverProbe()
+        let result = try BASICSystemCommand.runPipeline([
+            BASICProcessRequest(executable: "/bin/echo", arguments: ["alpha"], workingDirectory: nil, columns: nil, rows: nil),
+            BASICProcessRequest(executable: "/usr/bin/tr", arguments: ["a-z", "A-Z"], workingDirectory: nil, columns: nil, rows: nil)
+        ], observer: observer)
+
+        #expect(result.stdout == "ALPHA\n")
+        #expect(result.stderr == "")
+        #expect(result.exitCode == 0)
+        #expect(observer.started.count == 1)
+        #expect(observer.ended == observer.started)
+        #expect(observer.started[0].processID > 0)
+        #expect(observer.started[0].processGroupID > 0)
+        #expect(observer.started[0].command == "/bin/echo alpha | /usr/bin/tr a-z A-Z")
     }
 
     @Test("Default process runner terminates timed out processes")

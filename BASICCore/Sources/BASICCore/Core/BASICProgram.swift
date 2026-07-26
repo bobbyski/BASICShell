@@ -150,9 +150,10 @@ public final class BASICProgram: @unchecked Sendable {
             sourceLineOffset = 1
         }
 
-        let lineRecords = joinContinuationLines(
-            sourceLines.enumerated().map { (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element) }
-        )
+        let physicalLineRecords = sourceLines.enumerated().map {
+            (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element)
+        }
+        let lineRecords = joinContinuationLines(joinTripleQuotedLines(physicalLineRecords))
 
         return lineRecords
             .filter { !$0.source.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -179,6 +180,41 @@ public final class BASICProgram: @unchecked Sendable {
             } else {
                 joinedLines.append((lineNumber: pending?.lineNumber ?? sourceLine.lineNumber, source: combined))
                 pending = nil
+            }
+        }
+
+        if let pending {
+            joinedLines.append(pending)
+        }
+
+        return joinedLines
+    }
+
+    private static func joinTripleQuotedLines(_ sourceLines: [(lineNumber: Int, source: String)]) -> [(lineNumber: Int, source: String)] {
+        var joinedLines: [(lineNumber: Int, source: String)] = []
+        var pending: (lineNumber: Int, source: String)?
+        var insideTripleQuotedString = false
+
+        for sourceLine in sourceLines {
+            if var pendingRecord = pending {
+                pendingRecord.source += "\n" + sourceLine.source
+                insideTripleQuotedString.toggleIfNeeded(forTripleQuotesIn: sourceLine.source)
+                if insideTripleQuotedString {
+                    pending = pendingRecord
+                } else {
+                    joinedLines.append(pendingRecord)
+                    pending = nil
+                }
+                continue
+            }
+
+            var isInside = false
+            isInside.toggleIfNeeded(forTripleQuotesIn: sourceLine.source)
+            if isInside {
+                insideTripleQuotedString = true
+                pending = sourceLine
+            } else {
+                joinedLines.append(sourceLine)
             }
         }
 
@@ -232,25 +268,74 @@ public final class BASICProgram: @unchecked Sendable {
             index = source.endIndex
         }
 
+        func hasTripleQuote(at position: String.Index) -> Bool {
+            guard position < source.endIndex, source[position] == "\"" else { return false }
+            let second = source.index(after: position)
+            guard second < source.endIndex, source[second] == "\"" else { return false }
+            let third = source.index(after: second)
+            return third < source.endIndex && source[third] == "\""
+        }
+
+        func hasClosingQuote(from quoteStart: String.Index, delimiter: Character) -> Bool {
+            var cursor = source.index(after: quoteStart)
+            while cursor < source.endIndex {
+                if source[cursor] == delimiter {
+                    return true
+                }
+                cursor = source.index(after: cursor)
+            }
+            return false
+        }
+
+        func appendStringLiteral(from literalStart: String.Index, quoteStart: String.Index, delimiter: Character) {
+            index = source.index(after: quoteStart)
+            if delimiter == "\"", hasTripleQuote(at: quoteStart) {
+                index = source.index(quoteStart, offsetBy: 3)
+                while index < source.endIndex, !hasTripleQuote(at: index) {
+                    index = source.index(after: index)
+                }
+                if index < source.endIndex {
+                    index = source.index(index, offsetBy: 3)
+                }
+                output += source[literalStart..<index]
+                return
+            }
+
+            while index < source.endIndex {
+                let current = source[index]
+                index = source.index(after: index)
+                if current == delimiter { break }
+            }
+            output += source[literalStart..<index]
+        }
+
         while index < source.endIndex {
             let character = source[index]
 
-            if character == "\"" {
-                let start = index
-                index = source.index(after: index)
-                while index < source.endIndex {
-                    let current = source[index]
-                    index = source.index(after: index)
-                    if current == "\"" { break }
+            if character == "$" {
+                let quote = source.index(after: index)
+                if quote < source.endIndex, ["\"", "'", "`"].contains(source[quote]) {
+                    appendStringLiteral(from: index, quoteStart: quote, delimiter: source[quote])
+                    previousWord = nil
+                    continue
                 }
-                output += source[start..<index]
+            }
+
+            if ["\"", "`"].contains(character) {
+                appendStringLiteral(from: index, quoteStart: index, delimiter: character)
                 previousWord = nil
                 continue
             }
 
             if character == "'" {
-                appendComment(from: index)
-                break
+                if hasClosingQuote(from: index, delimiter: "'") {
+                    appendStringLiteral(from: index, quoteStart: index, delimiter: "'")
+                    previousWord = nil
+                    continue
+                } else {
+                    appendComment(from: index)
+                    break
+                }
             }
             if character == "#", output.trimmingCharacters(in: .whitespaces).isEmpty {
                 appendComment(from: index)
@@ -330,6 +415,51 @@ public final class BASICProgram: @unchecked Sendable {
             index = source.endIndex
         }
 
+        func hasTripleQuote(at position: String.Index) -> Bool {
+            guard position < source.endIndex, source[position] == "\"" else { return false }
+            let second = source.index(after: position)
+            guard second < source.endIndex, source[second] == "\"" else { return false }
+            let third = source.index(after: second)
+            return third < source.endIndex && source[third] == "\""
+        }
+
+        func hasClosingQuote(from quoteStart: String.Index, delimiter: Character) -> Bool {
+            var cursor = source.index(after: quoteStart)
+            while cursor < source.endIndex {
+                if source[cursor] == delimiter {
+                    return true
+                }
+                cursor = source.index(after: cursor)
+            }
+            return false
+        }
+
+        func appendStringLiteral(from literalStart: String.Index, quoteStart: String.Index, delimiter: Character) {
+            index = source.index(after: quoteStart)
+            if delimiter == "\"", hasTripleQuote(at: quoteStart) {
+                index = source.index(quoteStart, offsetBy: 3)
+                while index < source.endIndex, !hasTripleQuote(at: index) {
+                    index = source.index(after: index)
+                }
+                if index < source.endIndex {
+                    index = source.index(index, offsetBy: 3)
+                }
+                output += ansiString + source[literalStart..<index] + ansiReset
+                atLineStart = false
+                previousWasIdentifier = false
+                return
+            }
+
+            while index < source.endIndex {
+                let current = source[index]
+                index = source.index(after: index)
+                if current == delimiter { break }
+            }
+            output += ansiString + source[literalStart..<index] + ansiReset
+            atLineStart = false
+            previousWasIdentifier = false
+        }
+
         while index < source.endIndex {
             let character = source[index]
             if character.isWhitespace {
@@ -343,25 +473,27 @@ public final class BASICProgram: @unchecked Sendable {
                 appendComment(from: index)
                 break
             }
-            if character == "'" {
-                appendComment(from: index)
-                break
-            }
             if character == "/", source.index(after: index) < source.endIndex, source[source.index(after: index)] == "/" {
                 appendComment(from: index)
                 break
             }
-            if character == "\"" {
-                let start = index
-                index = source.index(after: index)
-                while index < source.endIndex {
-                    let current = source[index]
-                    index = source.index(after: index)
-                    if current == "\"" { break }
+            if character == "$" {
+                let quote = source.index(after: index)
+                if quote < source.endIndex, ["\"", "'", "`"].contains(source[quote]) {
+                    appendStringLiteral(from: index, quoteStart: quote, delimiter: source[quote])
+                    continue
                 }
-                output += ansiString + source[start..<index] + ansiReset
-                atLineStart = false
-                previousWasIdentifier = false
+            }
+            if ["\"", "`"].contains(character) {
+                appendStringLiteral(from: index, quoteStart: index, delimiter: character)
+                continue
+            }
+            if character == "'" {
+                if atLineStart || !hasClosingQuote(from: index, delimiter: "'") {
+                    appendComment(from: index)
+                    break
+                }
+                appendStringLiteral(from: index, quoteStart: index, delimiter: "'")
                 continue
             }
             if character.isNumber {
@@ -405,5 +537,29 @@ public final class BASICProgram: @unchecked Sendable {
             index = source.index(after: index)
         }
         return output + ansiReset
+    }
+}
+
+private extension Bool {
+    mutating func toggleIfNeeded(forTripleQuotesIn source: String) {
+        var index = source.startIndex
+        while index < source.endIndex {
+            guard source[index] == "\"" else {
+                index = source.index(after: index)
+                continue
+            }
+            let second = source.index(after: index)
+            guard second < source.endIndex, source[second] == "\"" else {
+                index = second
+                continue
+            }
+            let third = source.index(after: second)
+            guard third < source.endIndex, source[third] == "\"" else {
+                index = third
+                continue
+            }
+            toggle()
+            index = source.index(after: third)
+        }
     }
 }

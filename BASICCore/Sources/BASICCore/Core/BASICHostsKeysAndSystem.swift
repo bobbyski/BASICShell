@@ -943,6 +943,25 @@ public struct BASICProcessResult: Equatable, Sendable {
     }
 }
 
+/// Foreground process identity reported to interactive hosts that want to forward signals.
+public struct BASICForegroundProcessSnapshot: Equatable, Sendable {
+    public let processID: Int32
+    public let processGroupID: Int32
+    public let command: String
+
+    public init(processID: Int32, processGroupID: Int32, command: String) {
+        self.processID = processID
+        self.processGroupID = processGroupID
+        self.command = command
+    }
+}
+
+/// Optional observer used by shell hosts to track the active foreground process group.
+public protocol BASICForegroundProcessObserver: AnyObject {
+    func foregroundProcessStarted(_ process: BASICForegroundProcessSnapshot)
+    func foregroundProcessEnded(_ process: BASICForegroundProcessSnapshot)
+}
+
 private final class BASICProcessOutputBox: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
@@ -1039,9 +1058,12 @@ public enum BASICSystemCommand {
         return BASICSystemCommandResult(output: String(decoding: data, as: UTF8.self), exitCode: Int(process.terminationStatus))
     }
 
-    public static func runProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+    public static func runProcess(
+        _ request: BASICProcessRequest,
+        observer: BASICForegroundProcessObserver? = nil
+    ) throws -> BASICProcessResult {
         if request.ioMode == .inheritedTerminal {
-            return try runInheritedTerminalProcess(request)
+            return try runInheritedTerminalProcess(request, observer: observer)
         }
         let process = Process()
         let stdout = Pipe()
@@ -1069,6 +1091,16 @@ public enum BASICSystemCommand {
         } catch {
             throw BASICError.runtime("Could not execute process: \(error.localizedDescription)")
         }
+        let processGroupID = configureProcessGroup(for: process)
+        let snapshot = BASICForegroundProcessSnapshot(
+            processID: process.processIdentifier,
+            processGroupID: processGroupID,
+            command: processCommandDescription(request)
+        )
+        observer?.foregroundProcessStarted(snapshot)
+        defer {
+            observer?.foregroundProcessEnded(snapshot)
+        }
 
         let stdoutData = BASICProcessOutputBox()
         let stderrData = BASICProcessOutputBox()
@@ -1087,7 +1119,11 @@ public enum BASICSystemCommand {
             stderrData.set(stderr.fileHandleForReading.readDataToEndOfFile())
             outputGroup.leave()
         }
-        let completed = waitForProcessExit(process, timeoutSeconds: request.timeoutSeconds)
+        let completed = waitForProcessExit(
+            process,
+            timeoutSeconds: request.timeoutSeconds,
+            processGroupID: processGroupID
+        )
         outputGroup.wait()
         let stderrText = String(decoding: stderrData.value(), as: UTF8.self)
         return BASICProcessResult(
@@ -1097,7 +1133,10 @@ public enum BASICSystemCommand {
         )
     }
 
-    private static func runInheritedTerminalProcess(_ request: BASICProcessRequest) throws -> BASICProcessResult {
+    private static func runInheritedTerminalProcess(
+        _ request: BASICProcessRequest,
+        observer: BASICForegroundProcessObserver?
+    ) throws -> BASICProcessResult {
         guard request.standardInput == nil else {
             throw BASICError.runtime("TTY process mode does not support BASIC string stdin")
         }
@@ -1121,8 +1160,22 @@ public enum BASICSystemCommand {
         } catch {
             throw BASICError.runtime("Could not execute process: \(error.localizedDescription)")
         }
+        let processGroupID = configureProcessGroup(for: process)
+        let snapshot = BASICForegroundProcessSnapshot(
+            processID: process.processIdentifier,
+            processGroupID: processGroupID,
+            command: processCommandDescription(request)
+        )
+        observer?.foregroundProcessStarted(snapshot)
+        defer {
+            observer?.foregroundProcessEnded(snapshot)
+        }
 
-        let completed = waitForProcessExit(process, timeoutSeconds: request.timeoutSeconds)
+        let completed = waitForProcessExit(
+            process,
+            timeoutSeconds: request.timeoutSeconds,
+            processGroupID: processGroupID
+        )
         return BASICProcessResult(
             stdout: "",
             stderr: timedOutStderr(existing: "", timeoutSeconds: request.timeoutSeconds, completed: completed),
@@ -1130,7 +1183,10 @@ public enum BASICSystemCommand {
         )
     }
 
-    public static func runPipeline(_ requests: [BASICProcessRequest]) throws -> BASICProcessResult {
+    public static func runPipeline(
+        _ requests: [BASICProcessRequest],
+        observer: BASICForegroundProcessObserver? = nil
+    ) throws -> BASICProcessResult {
         guard !requests.isEmpty else {
             throw BASICError.runtime("PIPE expects at least one process")
         }
@@ -1138,7 +1194,7 @@ public enum BASICSystemCommand {
             throw BASICError.runtime("PIPE does not support TTY process mode")
         }
         if requests.count == 1 {
-            return try runProcess(requests[0])
+            return try runProcess(requests[0], observer: observer)
         }
 
         let processes = requests.map { request in
@@ -1181,6 +1237,16 @@ public enum BASICSystemCommand {
         } catch {
             startedProcesses.forEach { $0.terminate() }
             throw BASICError.runtime("Could not execute pipeline: \(error.localizedDescription)")
+        }
+        let processGroupID = configureProcessGroup(for: processes)
+        let snapshot = BASICForegroundProcessSnapshot(
+            processID: processes[0].processIdentifier,
+            processGroupID: processGroupID,
+            command: requests.map(processCommandDescription).joined(separator: " | ")
+        )
+        observer?.foregroundProcessStarted(snapshot)
+        defer {
+            observer?.foregroundProcessEnded(snapshot)
         }
 
         intermediatePipes.forEach {
@@ -1227,7 +1293,38 @@ public enum BASICSystemCommand {
         }
     }
 
-    private static func waitForProcessExit(_ process: Process, timeoutSeconds: Double?) -> Bool {
+    private static func configureProcessGroup(for process: Process) -> Int32 {
+        #if canImport(Darwin)
+        let pid = process.processIdentifier
+        if setpgid(pid, pid) == 0 {
+            return pid
+        }
+        return pid
+        #else
+        return process.processIdentifier
+        #endif
+    }
+
+    private static func configureProcessGroup(for processes: [Process]) -> Int32 {
+        guard let leader = processes.first else { return 0 }
+        let groupID = configureProcessGroup(for: leader)
+        #if canImport(Darwin)
+        for process in processes.dropFirst() {
+            _ = setpgid(process.processIdentifier, groupID)
+        }
+        #endif
+        return groupID
+    }
+
+    private static func processCommandDescription(_ request: BASICProcessRequest) -> String {
+        ([request.executable] + request.arguments).joined(separator: " ")
+    }
+
+    private static func waitForProcessExit(
+        _ process: Process,
+        timeoutSeconds: Double?,
+        processGroupID: Int32? = nil
+    ) -> Bool {
         guard let timeoutSeconds else {
             process.waitUntilExit()
             return true
@@ -1245,18 +1342,37 @@ public enum BASICSystemCommand {
             return true
         }
 
-        process.terminate()
+        terminateProcess(process, processGroupID: processGroupID)
         if semaphore.wait(timeout: .now() + .milliseconds(500)) == .success {
             return false
         }
 
         #if canImport(Darwin)
-        kill(process.processIdentifier, SIGKILL)
+        killProcess(process, signal: SIGKILL, processGroupID: processGroupID)
         _ = semaphore.wait(timeout: .now() + .seconds(2))
         #else
         _ = semaphore.wait(timeout: .now() + .milliseconds(500))
         #endif
         return false
+    }
+
+    private static func terminateProcess(_ process: Process, processGroupID: Int32?) {
+        #if canImport(Darwin)
+        killProcess(process, signal: SIGTERM, processGroupID: processGroupID)
+        #else
+        process.terminate()
+        #endif
+    }
+
+    private static func killProcess(_ process: Process, signal: Int32, processGroupID: Int32?) {
+        #if canImport(Darwin)
+        if let processGroupID, processGroupID > 0, kill(-processGroupID, signal) == 0 {
+            return
+        }
+        kill(process.processIdentifier, signal)
+        #else
+        process.terminate()
+        #endif
     }
 
     private static func timedOutStderr(existing: String, timeoutSeconds: Double?, completed: Bool) -> String {

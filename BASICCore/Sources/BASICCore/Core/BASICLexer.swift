@@ -35,8 +35,12 @@ struct Lexer {
         if character.isNumber || (character == "." && nextCharacter?.isNumber == true) {
             return try scanNumber()
         }
-        if character == "\"" {
-            return try scanString()
+        if character == "$", let nextCharacter, Self.stringDelimiters.contains(nextCharacter) {
+            advance()
+            return try scanString(delimiter: nextCharacter, forceInterpolated: true, column: column)
+        }
+        if Self.stringDelimiters.contains(character), !(character == "'" && startsComment(character)) {
+            return try scanString(delimiter: character, forceInterpolated: false, column: column)
         }
         if character.isLetter {
             return scanIdentifier()
@@ -93,11 +97,29 @@ struct Lexer {
         return emit(.number(value), column: column)
     }
 
-    private mutating func scanString() throws -> LexedToken {
-        let column = self.column
+    private mutating func scanString(delimiter: Character, forceInterpolated: Bool, column: Int) throws -> LexedToken {
+        let isTripleQuoted = delimiter == "\"" && hasTripleQuote(at: index)
+        if isTripleQuoted {
+            advance()
+            advance()
+            advance()
+            let start = index
+            while index < source.endIndex, !hasTripleQuote(at: index) {
+                advance()
+            }
+            guard index < source.endIndex else {
+                throw BASICError.contextualSyntax(message: "Unterminated string", source: source, column: column)
+            }
+            let value = String(source[start..<index])
+            advance()
+            advance()
+            advance()
+            return emit(forceInterpolated ? .interpolatedString(value) : .string(value), column: column)
+        }
+
         advance()
         let start = index
-        while index < source.endIndex, source[index] != "\"" {
+        while index < source.endIndex, source[index] != delimiter {
             advance()
         }
         guard index < source.endIndex else {
@@ -105,7 +127,7 @@ struct Lexer {
         }
         let value = String(source[start..<index])
         advance()
-        return emit(.string(value), column: column)
+        return emit(forceInterpolated ? .interpolatedString(value) : .string(value), column: column)
     }
 
     private mutating func scanIdentifier() -> LexedToken {
@@ -151,7 +173,7 @@ struct Lexer {
 
     private func startsComment(_ character: Character) -> Bool {
         if character == "'" {
-            return true
+            return atStatementStart || !hasClosingQuote(delimiter: "'")
         }
         if character == "#" {
             return isAtPhysicalLineStart
@@ -170,6 +192,27 @@ struct Lexer {
     private var nextCharacter: Character? {
         let next = source.index(after: index)
         return next < source.endIndex ? source[next] : nil
+    }
+
+    private static let stringDelimiters: Set<Character> = ["\"", "'", "`"]
+
+    private func hasClosingQuote(delimiter: Character) -> Bool {
+        var cursor = source.index(after: index)
+        while cursor < source.endIndex {
+            if source[cursor] == delimiter {
+                return true
+            }
+            cursor = source.index(after: cursor)
+        }
+        return false
+    }
+
+    private func hasTripleQuote(at position: String.Index) -> Bool {
+        guard position < source.endIndex, source[position] == "\"" else { return false }
+        let second = source.index(after: position)
+        guard second < source.endIndex, source[second] == "\"" else { return false }
+        let third = source.index(after: second)
+        return third < source.endIndex && source[third] == "\""
     }
 
     private var column: Int {

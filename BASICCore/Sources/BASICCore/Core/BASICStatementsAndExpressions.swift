@@ -208,6 +208,7 @@ indirect enum ConditionalAction: Equatable {
 indirect enum Expression: Equatable {
     case number(Double)
     case string(String)
+    case interpolatedString(String)
     case boolean(Bool)
     case null
     case closure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: Expression)
@@ -242,6 +243,7 @@ enum BinaryOperation: Equatable {
 enum Token: Equatable {
     case number(Double)
     case string(String)
+    case interpolatedString(String)
     case identifier(String)
     case comma
     case semicolon

@@ -30,6 +30,12 @@ struct Parser {
         return .sequence(statements)
     }
 
+    mutating func parseExpressionOnly() throws -> Expression {
+        let expression = try parseExpression()
+        try consumeEnd()
+        return expression
+    }
+
     mutating func parseClosureBlockAssignmentHeader() throws -> (
         kind: AssignmentKind,
         variable: VariableName,
@@ -1371,6 +1377,7 @@ struct Parser {
         switch advance() {
         case .number(let value): return .number(value)
         case .string(let value): return .string(value)
+        case .interpolatedString(let value): return .interpolatedString(value)
         case .identifier(let name):
             let uppercased = name.uppercased()
             if uppercased == "TRUE" { return .boolean(true) }
