@@ -22,7 +22,16 @@ private struct StudioVTGHitRegion: Equatable {
 @MainActor
 final class StudioModel: ObservableObject {
     @Published var selectedPane: StudioPane = .console
-    @Published var inspectorPane: InspectorPane?
+    @Published var inspectorPane: InspectorPane? {
+        didSet {
+            guard oldValue != inspectorPane else { return }
+            refreshHostFlags()
+            syncDebuggerAttachment()
+            if inspectorPane == .logs {
+                drainPendingLogEntries()
+            }
+        }
+    }
     @Published var isCommandBarVisible = false
     @Published var isEditorGutterVisible = false {
         didSet { saveSettings() }
@@ -55,8 +64,8 @@ final class StudioModel: ObservableObject {
             session.promptTemplate = promptTemplate
             let newPrompt = session.prompt
             if consoleText.hasSuffix(oldPrompt) {
-                consoleText.removeLast(oldPrompt.count)
-                consoleText += newPrompt
+                removeConsoleSuffix(oldPrompt.count)
+                appendConsole(newPrompt)
             }
             saveSettings()
         }
@@ -76,16 +85,39 @@ final class StudioModel: ObservableObject {
             updateEditorDiagnostics()
         }
     }
-    @Published var consoleText = BASICSession.defaultPrompt
+    /// Written only through `appendConsole`/`replaceConsole`/`removeConsoleSuffix` so
+    /// `consoleLineCount` and `consoleTrimmedCharacters` stay in step with it.
+    @Published private(set) var consoleText = BASICSession.defaultPrompt
+    /// Newlines in `consoleText`, plus one. Maintained incrementally: recomputing it would
+    /// be a full scan of the buffer on every append.
+    private(set) var consoleLineCount = 1
+    /// Characters dropped off the front of `consoleText` by scrollback trimming, ever.
+    /// The console view adds this to `consoleText.count` to recover a monotonic
+    /// "characters emitted" total, so a trim does not read as a console reset.
+    private(set) var consoleTrimmedCharacters = 0
+    @Published var consoleScrollbackLines = StudioSettings.defaultConsoleScrollbackLines {
+        didSet {
+            let clamped = StudioSettings.clampedConsoleScrollbackLines(consoleScrollbackLines)
+            if clamped != consoleScrollbackLines {
+                consoleScrollbackLines = clamped
+                return
+            }
+            guard oldValue != consoleScrollbackLines else { return }
+            saveSettings()
+            trimConsoleScrollback(force: true)
+        }
+    }
     @Published var command = ""
     @Published var graphicsRevision = 0
     @Published var debuggerBreakpoints: [BASICBreakpoint] = []
     @Published var debuggerExecutionLine: Int?
     @Published var showsLiveExecutionLine = false {
         didSet {
+            guard oldValue != showsLiveExecutionLine else { return }
             if !showsLiveExecutionLine && isProgramRunning {
                 debuggerExecutionLine = nil
             }
+            syncDebuggerAttachment()
         }
     }
     @Published var isProgramPaused = false
@@ -96,9 +128,17 @@ final class StudioModel: ObservableObject {
     @Published var debuggerGlobalVariables: [BASICVariableSnapshot] = []
     @Published var debuggerTasks: [BASICTaskSnapshot] = []
     @Published var debuggerSelectedTaskID: Int?
-    @Published var isLoggingEnabled = true
-    @Published var isTraceLoggingEnabled = false
-    @Published var logEntries: [StudioLogEntry] = []
+    @Published var isLoggingEnabled = true {
+        didSet { refreshHostFlags() }
+    }
+    @Published var isTraceLoggingEnabled = false {
+        didSet { refreshHostFlags() }
+    }
+    /// Log storage is deliberately not `@Published`: appending here must not invalidate
+    /// the whole view tree while a program runs. `logRevision` is the published signal,
+    /// and it only changes while the Log pane is actually on screen.
+    private(set) var logEntries: [StudioLogEntry] = []
+    @Published private(set) var logRevision = 0
     @Published var showUserLogs = true
     @Published var showBasicLogs = false
     @Published var selectedLogLevels: Set<String> = []
@@ -126,8 +166,15 @@ final class StudioModel: ObservableObject {
     private var suppressNextEmptyProgramSubmit = false
     private var suppressNextProgramNewlineKey = false
     private var debuggerTaskRefreshTask: Task<Void, Never>?
+    private let hostFlags = StudioHostFlags()
+    private let logBuffer = StudioLogBuffer()
+    private var logDrainTask: Task<Void, Never>?
 
-    private lazy var session = BASICSession(host: self, promptTemplate: promptTemplate)
+    private lazy var session: BASICSession = {
+        let session = BASICSession(host: self, promptTemplate: promptTemplate)
+        session.stopsForegroundProgramOnBreak = true
+        return session
+    }()
 
     private var prompt: String {
         session.prompt
@@ -156,9 +203,10 @@ final class StudioModel: ObservableObject {
         promptTemplate = BASICPromptTemplateStore.load(default: savedPromptTemplate)
         fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
+        consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
         isLoadingSettings = false
         BASICPromptTemplateStore.save(promptTemplate)
-        consoleText = session.prompt
+        replaceConsole(with: session.prompt)
 
         let arguments = Array(CommandLine.arguments.dropFirst())
         if let path = arguments.first,
@@ -172,6 +220,7 @@ final class StudioModel: ObservableObject {
         }
 
         saveSettings()
+        refreshHostFlags()
         updateEditorDiagnostics()
     }
 
@@ -208,8 +257,10 @@ final class StudioModel: ObservableObject {
     }
 
     func clearLogs() {
+        logBuffer.removeAll()
         logEntries.removeAll()
         selectedLogLevels.removeAll()
+        logRevision &+= 1
     }
 
     func toggleTraceLogging() {
@@ -218,16 +269,90 @@ final class StudioModel: ObservableObject {
 
     func appendLog(level: String, issuer: LogIssuer, module: String? = nil, text: String) {
         guard isLoggingEnabled else { return }
-        logEntries.append(StudioLogEntry(
+        // Flush anything the interpreter thread has queued so entries stay in order.
+        drainPendingLogEntries()
+        appendLogEntry(StudioLogEntry(
             timestamp: Date(),
             issuer: issuer,
             level: normalizedLogLevel(level),
             module: normalizedLogModule(module, issuer: issuer),
             text: text
         ))
+        publishLogsIfVisible()
+    }
+
+    private func appendLogEntry(_ entry: StudioLogEntry) {
+        logEntries.append(entry)
         if logEntries.count > 1000 {
             logEntries.removeFirst(logEntries.count - 1000)
         }
+    }
+
+    /// Publishes only when a reader is on screen. With the Log pane closed the entries
+    /// are still recorded, so opening the pane later shows the full history.
+    private func publishLogsIfVisible() {
+        guard inspectorPane == .logs else { return }
+        logRevision &+= 1
+    }
+
+    /// Called from the interpreter thread. Hands the entry to a lock-protected buffer
+    /// and schedules at most one main-actor drain per 100 ms window.
+    nonisolated func enqueueLog(level: String, issuer: String, module: String, text: String) {
+        let becameNonEmpty = logBuffer.append(
+            StudioLogBuffer.PendingEntry(
+                timestamp: Date(),
+                level: level,
+                issuer: issuer,
+                module: module,
+                text: text
+            )
+        )
+        guard becameNonEmpty else { return }
+        Task { @MainActor [weak self] in
+            self?.scheduleLogDrain()
+        }
+    }
+
+    private func scheduleLogDrain() {
+        guard logDrainTask == nil else { return }
+        logDrainTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let self else { return }
+            self.logDrainTask = nil
+            self.drainPendingLogEntries()
+        }
+    }
+
+    private func drainPendingLogEntries() {
+        let drained = logBuffer.drain()
+        guard !drained.entries.isEmpty || drained.dropped > 0 else { return }
+        if drained.dropped > 0 {
+            appendLogEntry(StudioLogEntry(
+                timestamp: drained.entries.first?.timestamp ?? Date(),
+                issuer: .basic,
+                level: "LOG",
+                module: "BASICStudio.swift",
+                text: "dropped \(drained.dropped) log entries while the Log pane was not reading"
+            ))
+        }
+        for entry in drained.entries {
+            appendLogEntry(StudioLogEntry(
+                timestamp: entry.timestamp,
+                issuer: entry.issuer.uppercased() == "U" ? .user : .basic,
+                level: normalizedLogLevel(entry.level),
+                module: normalizedLogModule(entry.module, issuer: entry.issuer.uppercased() == "U" ? .user : .basic),
+                text: entry.text
+            ))
+        }
+        publishLogsIfVisible()
+    }
+
+    private func refreshHostFlags() {
+        hostFlags.update(
+            loggingEnabled: isLoggingEnabled,
+            traceEnabled: isTraceLoggingEnabled,
+            debuggerOpen: inspectorPane == .debug
+        )
     }
 
     private func normalizedLogLevel(_ level: String) -> String {
@@ -477,7 +602,7 @@ final class StudioModel: ObservableObject {
         currentProgramURL = nil
         currentProgramFileName = nil
         updateWindowTitle()
-        consoleText = prompt
+        replaceConsole(with: prompt)
         graphics.clear(color: nil)
         graphicsRevision += 1
         isProgramPaused = false
@@ -557,13 +682,13 @@ final class StudioModel: ObservableObject {
                     appendLog(level: "INPUT", issuer: .basic, text: "queued printable key while program is running")
                     inputCoordinator.pushKey(text)
                 } else {
-                    consoleText += text
+                    appendConsole(text)
                 }
             case .submit(let command):
                 appendLog(level: "INPUT", issuer: .basic, text: "submit \(command.isEmpty ? "<empty>" : command)")
                 if inputCoordinator.awaitingLineInput() {
                     if inputCoordinator.activeLineInputOptions().fieldLength == nil {
-                        consoleText += "\n"
+                        appendConsole("\n")
                     }
                     inputCoordinator.submitLine(command)
                 } else if inputCoordinator.shouldCaptureKeyOnly() {
@@ -575,7 +700,7 @@ final class StudioModel: ObservableObject {
                         inputCoordinator.pushKey("\n")
                     }
                 } else {
-                    consoleText += "\n"
+                    appendConsole("\n")
                     submitConsoleCommand(command, echo: false)
                     if isProgramRunning {
                         suppressNextEmptyProgramSubmit = true
@@ -585,7 +710,7 @@ final class StudioModel: ObservableObject {
                 appendLog(level: "INPUT", issuer: .basic, text: "line input exit key \(key) with \(line.count) chars")
                 if inputCoordinator.awaitingLineInput() {
                     if inputCoordinator.activeLineInputOptions().fieldLength == nil {
-                        consoleText += "\n"
+                        appendConsole("\n")
                     }
                     inputCoordinator.submitLineInputExit(line: line, key: key)
                 } else {
@@ -703,14 +828,74 @@ final class StudioModel: ObservableObject {
     }
 
     private func appendConsoleOutput(_ text: String, terminator: String = "\n") {
-        consoleText += text + terminator
+        appendConsole(text + terminator)
     }
 
     private func echoConsoleCommand(_ command: String) {
         if !consoleText.hasSuffix(prompt) {
-            consoleText += prompt
+            appendConsole(prompt)
         }
-        consoleText += command + "\n"
+        appendConsole(command + "\n")
+    }
+
+    // MARK: - Console buffer
+
+    /// Appends to the console and keeps the line count current.
+    ///
+    /// Counting newlines in the appended chunk is proportional to the chunk, not to the
+    /// whole buffer, which is what makes the scrollback check below O(1).
+    private func appendConsole(_ text: String) {
+        guard !text.isEmpty else { return }
+        consoleText += text
+        consoleLineCount += Self.newlineCount(in: text)
+        trimConsoleScrollback(force: false)
+    }
+
+    /// Replaces the whole console, as CLS and NEW do. Resets the trim counter so the
+    /// console view sees the total go backwards and clears its terminal.
+    private func replaceConsole(with text: String) {
+        consoleText = text
+        consoleLineCount = 1 + Self.newlineCount(in: text)
+        consoleTrimmedCharacters = 0
+    }
+
+    private func removeConsoleSuffix(_ characterCount: Int) {
+        guard characterCount > 0, characterCount <= consoleText.count else { return }
+        let start = consoleText.index(consoleText.endIndex, offsetBy: -characterCount)
+        consoleLineCount -= Self.newlineCount(in: consoleText[start...])
+        consoleText.removeSubrange(start..<consoleText.endIndex)
+    }
+
+    private static func newlineCount<S: StringProtocol>(in text: S) -> Int {
+        var count = 0
+        for byte in text.utf8 where byte == UInt8(ascii: "\n") {
+            count += 1
+        }
+        return count
+    }
+
+    /// Drops the oldest console lines once the buffer runs past the configured cap.
+    ///
+    /// Normal appends trim only after overshooting by `slack`, then cut back to the cap,
+    /// so the scan is amortized instead of running on every printed line. `force` skips
+    /// the slack and is used when the setting itself changes.
+    private func trimConsoleScrollback(force: Bool) {
+        let cap = consoleScrollbackLines
+        let slack = force ? 0 : max(256, cap / 4)
+        guard consoleLineCount > cap + slack else { return }
+
+        let requested = consoleLineCount - cap
+        var remaining = requested
+        var cut = consoleText.startIndex
+        while remaining > 0, let newline = consoleText[cut...].firstIndex(of: "\n") {
+            cut = consoleText.index(after: newline)
+            remaining -= 1
+        }
+        guard cut > consoleText.startIndex else { return }
+
+        consoleTrimmedCharacters += consoleText.distance(from: consoleText.startIndex, to: cut)
+        consoleLineCount -= requested - remaining
+        consoleText.removeSubrange(consoleText.startIndex..<cut)
     }
 
     private func submitConsoleCommand(_ command: String, echo: Bool) {
@@ -751,7 +936,7 @@ final class StudioModel: ObservableObject {
             }
         }
 
-        consoleText += prompt
+        appendConsole(prompt)
     }
 
     private enum DebugRunCommand: Sendable {
@@ -800,6 +985,7 @@ final class StudioModel: ObservableObject {
         if command == .continueExecution || command == .stepInto || command == .stepOver || command == .stepOut {
             control.ignoreBreakpointOnce(at: activeExecutionControl?.location)
         }
+        control.setDebuggerAttached(isDebuggerObserving)
         activeExecutionControl = control
         isProgramRunning = true
         debuggerTasks = session.debugTasks
@@ -851,9 +1037,14 @@ final class StudioModel: ObservableObject {
         case .failure(let error as BASICError):
             switch error {
             case .breakRequested(let line):
-                debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
-                    ?? line.flatMap(sourceLineNumber(forBasicLineNumber:))
-                paused = true
+                if session.stopsForegroundProgramOnBreak {
+                    debuggerExecutionLine = nil
+                    paused = false
+                } else {
+                    debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
+                        ?? line.flatMap(sourceLineNumber(forBasicLineNumber:))
+                    paused = true
+                }
             case .breakpoint(let location):
                 debuggerExecutionLine = debuggerSourceLineNumber(for: location)
                 paused = true
@@ -892,6 +1083,7 @@ final class StudioModel: ObservableObject {
         }
         isProgramRunning = false
         inputCoordinator.setProgramRunning(false)
+        drainPendingLogEntries()
         appendLog(level: paused ? "PAUSE" : "RUN", issuer: .basic, text: paused ? "program paused" : "program finished")
 
         let debuggerIsActive = inspectorPane == .debug
@@ -900,17 +1092,49 @@ final class StudioModel: ObservableObject {
             appendConsoleOutput(consoleMessage)
         }
         if !shouldSuppressConsolePause {
-            consoleText += prompt
+            appendConsole(prompt)
+        }
+    }
+
+    /// True when something on screen actually consumes live debugger state.
+    ///
+    /// With the Debug pane closed and the live-execution-line marker off, nothing reads
+    /// the task list or the current source location while a program runs, so neither the
+    /// poll nor the interpreter's per-statement location bookkeeping needs to happen.
+    /// Breakpoints and stepping still work: `BASICExecutionControl` re-enables tracking
+    /// on its own for both, and the Stop button goes through `requestBreak`, which is
+    /// independent of all of this.
+    private var isDebuggerObserving: Bool {
+        inspectorPane == .debug || showsLiveExecutionLine
+    }
+
+    /// Re-evaluates debugger attachment against a run that is already in flight, so
+    /// opening the Debug pane mid-run starts populating it immediately.
+    private func syncDebuggerAttachment() {
+        activeExecutionControl?.setDebuggerAttached(isDebuggerObserving)
+        guard isProgramRunning else { return }
+        if isDebuggerObserving {
+            startDebuggerTaskRefresh()
+        } else {
+            stopDebuggerTaskRefresh()
         }
     }
 
     private func startDebuggerTaskRefresh() {
         debuggerTaskRefreshTask?.cancel()
+        debuggerTaskRefreshTask = nil
+        guard isDebuggerObserving else { return }
         debuggerTaskRefreshTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
-                guard self.isProgramRunning else { break }
-                self.debuggerTasks = self.session.debugTasks
-                self.normalizeSelectedDebuggerTask()
+                guard self.isProgramRunning, self.isDebuggerObserving else { break }
+                // Assign only on change: BASICTaskSnapshot is Equatable, and an
+                // unconditional assignment to a @Published array invalidates the whole
+                // Studio view tree eight times a second for no visible difference.
+                let tasks = self.session.debugTasks
+                if tasks != self.debuggerTasks {
+                    self.debuggerTasks = tasks
+                    self.normalizeSelectedDebuggerTask()
+                }
                 if self.showsLiveExecutionLine {
                     self.refreshDebuggerExecutionLine()
                 }
@@ -1029,7 +1253,10 @@ final class StudioModel: ObservableObject {
     }
 
     private func refreshDebuggerExecutionLine() {
-        debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
+        let line = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
+        if line != debuggerExecutionLine {
+            debuggerExecutionLine = line
+        }
     }
 
     private func debuggerSourceLineNumber(for location: BASICBreakpointLocation) -> Int? {
@@ -1069,7 +1296,8 @@ final class StudioModel: ObservableObject {
                 workingDirectoryPath: workingDirectoryURL.path,
                 promptTemplate: promptTemplate,
                 fontFamily: fontFamily,
-                fontSize: fontSize
+                fontSize: fontSize,
+                consoleScrollbackLines: consoleScrollbackLines
             )
         )
     }
@@ -1316,10 +1544,6 @@ final class StudioModel: ObservableObject {
         programText.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 
-    var consoleLineCount: Int {
-        guard !consoleText.isEmpty else { return 0 }
-        return consoleText.split(separator: "\n", omittingEmptySubsequences: false).count
-    }
 }
 
 extension StudioModel: StudioDebuggerInterface {}
@@ -1331,18 +1555,18 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, 
         runOnMainSync(operation)
     }
 
+    // These three are on the interpreter's per-statement path. They must never hop to
+    // the main thread; see StudioHostFlags.swift.
     nonisolated var isBASICLoggingEnabled: Bool {
-        valueOnMainSync { isLoggingEnabled }
+        hostFlags.isLoggingEnabled
     }
 
     nonisolated var isBASICTraceEnabled: Bool {
-        valueOnMainSync { isLoggingEnabled && isTraceLoggingEnabled }
+        hostFlags.isTraceEnabled
     }
 
     nonisolated func log(level: String, issuer: String, module: String, text: String) {
-        runOnMainSync {
-            appendLog(level: level, issuer: issuer.uppercased() == "U" ? .user : .basic, module: module, text: text)
-        }
+        enqueueLog(level: level, issuer: issuer, module: module, text: text)
     }
 
     nonisolated func print(_ text: String, terminator: String) {
@@ -1445,7 +1669,7 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, 
     }
 }
 
-extension StudioModel: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost {
+extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICProcessHost, BASICExecutableResolverHost {
     nonisolated func loadTextFile(path: String) throws -> String {
         do {
             return try String(contentsOfFile: expandedPath(path), encoding: .utf8)
@@ -1499,6 +1723,27 @@ extension StudioModel: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICEx
             }
         }
         return []
+    }
+
+    nonisolated func httpGet(url: String) async throws -> BASICHTTPResponse {
+        guard let requestURL = URL(string: url),
+              let scheme = requestURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw BASICError.runtime("HTTPGETASYNC requires an http or https URL")
+        }
+        let (data, response) = try await URLSession.shared.data(from: requestURL)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BASICError.runtime("HTTPGETASYNC did not receive an HTTP response")
+        }
+        let headers = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            result[String(describing: entry.key)] = String(describing: entry.value)
+        }
+        return BASICHTTPResponse(
+            url: httpResponse.url?.absoluteString ?? url,
+            statusCode: httpResponse.statusCode,
+            body: String(decoding: data, as: UTF8.self),
+            headers: headers
+        )
     }
 
     nonisolated func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {

@@ -53,6 +53,38 @@ public protocol BASICHost: AnyObject {
     func readLine(prompt: String) -> String?
 }
 
+/// Session-shared serialization boundary for console and log output.
+///
+/// Async BASIC interpreters may execute on different Swift lanes. They retain the real host
+/// for capability checks, while all user-visible output passes through this coordinator so
+/// terminal writes cannot interleave and UI hosts keep their own main-actor adapter intact.
+final class BASICHostOutputCoordinator: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private let host: BASICHost
+
+    init(host: BASICHost) {
+        self.host = host
+    }
+
+    func print(_ text: String, terminator: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        host.print(text, terminator: terminator)
+    }
+
+    func printLine(_ text: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        host.printLine(text)
+    }
+
+    func log(level: String, issuer: String, module: String, text: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        (host as? any BASICLoggingHost)?.log(level: level, issuer: issuer, module: module, text: text)
+    }
+}
+
 /// Optional host capability for ANSI-colored LIST output.
 public protocol BASICListingStyleHost: BASICHost {
     /// True when the host can safely render ANSI syntax coloring for LIST output.
@@ -123,6 +155,32 @@ public protocol BASICFileHost: BASICHost {
     func listFiles() throws -> [String]
     /// Lists files in a specific directory path.
     func listFiles(path: String) throws -> [String]
+}
+
+/// A host-provided HTTP response returned by asynchronous network operations.
+public struct BASICHTTPResponse: Equatable, Sendable {
+    /// Final response URL after redirects, when known.
+    public let url: String
+    /// HTTP status code.
+    public let statusCode: Int
+    /// UTF-8 response body. Hosts may replace invalid UTF-8 with the Unicode replacement character.
+    public let body: String
+    /// Response headers represented as display strings.
+    public let headers: [String: String]
+
+    /// Creates an HTTP response value for the BASIC network boundary.
+    public init(url: String, statusCode: Int, body: String, headers: [String: String] = [:]) {
+        self.url = url
+        self.statusCode = statusCode
+        self.body = body
+        self.headers = headers
+    }
+}
+
+/// Host interface for asynchronous network operations.
+public protocol BASICNetworkHost: BASICHost {
+    /// Performs an HTTP GET without blocking the serialized BASIC runtime lane.
+    func httpGet(url: String) async throws -> BASICHTTPResponse
 }
 
 /// Host interface for SYSTEM and SYSTEM$ command execution.

@@ -21,11 +21,11 @@ public enum BASICCompletionEngine {
     ]
 
     public static let basicKeywordWords = [
-        "ASYNC", "AWAIT", "CALL", "CASE", "CLASS", "COLOR", "DATA", "DEF", "DIM", "DO",
+        "ASYNC", "AWAIT", "BACKGROUND", "CALL", "CANCEL", "CASE", "CLASS", "COLOR", "DATA", "DEF", "DIM", "DO",
         "ELSE", "ELSEIF", "END", "ERROR", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB",
         "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE", "JOIN", "LABEL", "LET", "LINE",
         "LOCAL", "LOOP", "NEXT", "ON", "OPTION", "PRINT", "READ", "REM", "RESTORE",
-        "RETURN", "SELECT", "SLEEP", "STEP", "SYSTEM", "THEN", "TO", "TYPE", "WEND",
+        "HTTPGETASYNC", "READFILEASYNC", "RETURN", "SELECT", "SLEEP", "STEP", "SYSTEM", "TASK", "TASKERROR$", "TASKSTATUS$", "THEN", "TO", "TYPE", "WEND", "WRITEFILEASYNC",
         "WHILE", "YIELD"
     ]
 

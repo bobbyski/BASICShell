@@ -246,11 +246,11 @@ public final class BASICProgram: @unchecked Sendable {
     private static let ansiNumber = "\u{001B}[38;5;141m"
 
     private static let listingKeywords: Set<String> = [
-        "AS", "ASYNC", "AWAIT", "CASE", "CLASS", "CLOSE", "COLOR", "DATA", "DIM", "ELSE", "ELSEIF",
+        "AS", "ASYNC", "AWAIT", "BACKGROUND", "CANCEL", "CASE", "CLASS", "CLOSE", "COLOR", "DATA", "DIM", "ELSE", "ELSEIF",
         "END", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB", "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE",
         "JOIN", "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
         "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
-        "STEP", "SYSTEM", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
+        "STEP", "SYSTEM", "TASK", "TASKERROR$", "TASKSTATUS$", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
     ]
 
     private static let lineReferenceKeywords: Set<String> = [

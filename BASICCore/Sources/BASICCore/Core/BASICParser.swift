@@ -449,8 +449,14 @@ struct Parser {
             }
             return .pipe(input: nil, stages: stages)
         }
+        if matchIdentifier("BACKGROUND") {
+            return .background(try parseExpression())
+        }
         if matchIdentifier("JOIN") {
             return .join(try parseExpression())
+        }
+        if matchIdentifier("CANCEL") {
+            return .cancelTask(try parseExpression())
         }
         if matchIdentifier("YIELD") {
             return .yield
@@ -1285,6 +1291,7 @@ struct Parser {
         case "STRING": type = .scalar(.string)
         case "BOOLEAN": type = .scalar(.boolean)
         case "VARIANT": type = .scalar(.variant)
+        case "TASK": type = .scalar(.task)
         case "DICTIONARY": type = .dictionary
         case "VOID" where allowVoid: type = .void
         case "VOID": throw BASICError.contextualType(message: "VOID is only valid as a function return type", source: source, column: typeToken.column)
@@ -1768,7 +1775,7 @@ struct Parser {
 
     private static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
-        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "PIPE", "JOIN", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
+        "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "PIPE", "JOIN", "CANCEL", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
     ]

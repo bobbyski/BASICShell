@@ -24,6 +24,10 @@ public final class BASICExecutionControl: @unchecked Sendable {
     private var ignoredBreakpointLocation: BASICBreakpointLocation?
     private var mode: BASICExecutionMode = .run
     private var targetTaskID: Int?
+    private var debuggerAttached = true
+    private var retainsBreakRequestsAsDebuggerPauses = true
+    private var tracksLocation = true
+    private var waitWakeHandlers: [UUID: @Sendable () -> Void] = [:]
 
     /// Creates an execution control with no pending breakpoints or break request.
     public init() {}
@@ -41,6 +45,22 @@ public final class BASICExecutionControl: @unchecked Sendable {
     public func requestBreak() {
         lock.lock()
         breakRequested = true
+        let handlers = Array(waitWakeHandlers.values)
+        lock.unlock()
+        handlers.forEach { $0() }
+    }
+
+    func registerWaitWakeHandler(_ handler: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        lock.lock()
+        waitWakeHandlers[id] = handler
+        lock.unlock()
+        return id
+    }
+
+    func unregisterWaitWakeHandler(_ id: UUID) {
+        lock.lock()
+        waitWakeHandlers[id] = nil
         lock.unlock()
     }
 
@@ -62,6 +82,7 @@ public final class BASICExecutionControl: @unchecked Sendable {
     public func setBreakpoints(_ breakpoints: [BASICBreakpoint]) {
         lock.lock()
         self.breakpoints = breakpoints.filter(\.isEnabled).map(\.location)
+        refreshTracksLocationLocked()
         lock.unlock()
     }
 
@@ -69,7 +90,63 @@ public final class BASICExecutionControl: @unchecked Sendable {
     public func setMode(_ mode: BASICExecutionMode) {
         lock.lock()
         self.mode = mode
+        refreshTracksLocationLocked()
         lock.unlock()
+    }
+
+    /// Declares whether a debugger UI is currently observing this run.
+    ///
+    /// Detaching lets the interpreter skip the per-statement source-location bookkeeping
+    /// that only a live debugger reads. Breakpoints and stepping re-enable that
+    /// bookkeeping on their own, so detaching never disables a stop the user asked for.
+    /// Break requests (the Stop button, Ctrl-C) are unaffected either way.
+    public func setDebuggerAttached(_ attached: Bool) {
+        lock.lock()
+        debuggerAttached = attached
+        refreshTracksLocationLocked()
+        lock.unlock()
+    }
+
+    /// Controls whether a break request pauses resumable async BASIC frames.
+    ///
+    /// Studio keeps this enabled. BASICShell disables it for foreground runs so Ctrl-C
+    /// cancels the run and its child tasks instead of leaving hidden suspended work.
+    public func setRetainsBreakRequestsAsDebuggerPauses(_ retains: Bool) {
+        lock.lock()
+        retainsBreakRequestsAsDebuggerPauses = retains
+        lock.unlock()
+    }
+
+    var shouldRetainBreakRequestsAsDebuggerPauses: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return retainsBreakRequestsAsDebuggerPauses
+    }
+
+    var debuggerTargetTaskID: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return targetTaskID
+    }
+
+    /// Whether per-statement source-location tracking is currently required.
+    public var tracksStatementLocation: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return tracksLocation
+    }
+
+    private func refreshTracksLocationLocked() {
+        if debuggerAttached || !breakpoints.isEmpty {
+            tracksLocation = true
+            return
+        }
+        switch mode {
+        case .run:
+            tracksLocation = false
+        case .stepInto, .stepOver, .stepOut:
+            tracksLocation = true
+        }
     }
 
     /// Restricts debugger stepping pauses to a specific logical BASIC task.
@@ -97,28 +174,48 @@ public final class BASICExecutionControl: @unchecked Sendable {
         }
     }
 
-    func update(lineNumber: Int?, location: BASICBreakpointLocation) {
-        update(lineNumber: lineNumber, location: location, taskID: nil)
+    func update(lineNumber: Int?, location: @autoclosure () -> BASICBreakpointLocation) {
+        update(lineNumber: lineNumber, location: location(), taskID: nil)
     }
 
-    func update(lineNumber: Int?, location: BASICBreakpointLocation, taskID: Int?) {
+    /// Records the statement about to run and returns the location it stored, if any.
+    ///
+    /// `location` is an autoclosure so a detached debugger never pays for building a
+    /// `BASICBreakpointLocation` (and retaining its file name) once per statement.
+    @discardableResult
+    func update(lineNumber: Int?, location: @autoclosure () -> BASICBreakpointLocation, taskID: Int?) -> BASICBreakpointLocation? {
         lock.lock()
+        guard tracksLocation else {
+            if targetTaskID == nil || targetTaskID == taskID {
+                currentLineNumber = lineNumber
+                currentLocation = nil
+            }
+            lock.unlock()
+            return nil
+        }
+        let resolved = location()
         if let targetTaskID, targetTaskID != taskID {
             lock.unlock()
-            return
+            return resolved
         }
         currentLineNumber = lineNumber
-        currentLocation = location
+        currentLocation = resolved
         lock.unlock()
+        return resolved
     }
 
     func checkBreak() throws {
+        try checkBreak(taskID: nil, location: nil)
+    }
+
+    func checkBreak(taskID: Int?, location: BASICBreakpointLocation?) throws {
         lock.lock()
         let shouldBreak = breakRequested
-        let line = currentLineNumber
+        let line = currentLineNumber ?? location?.lineNumber
         var matchedBreakpoint: BASICBreakpointLocation?
-        if let currentLocation, let breakpoint = breakpoints.first(where: { $0.matches(currentLocation) }) {
-            if ignoredBreakpointLocation?.matches(currentLocation) == true {
+        let resolvedLocation = location ?? currentLocation
+        if let resolvedLocation, let breakpoint = breakpoints.first(where: { $0.matches(resolvedLocation) }) {
+            if ignoredBreakpointLocation?.matches(resolvedLocation) == true {
                 ignoredBreakpointLocation = nil
             } else {
                 matchedBreakpoint = breakpoint
@@ -133,7 +230,9 @@ public final class BASICExecutionControl: @unchecked Sendable {
         }
     }
 
-    func shouldPauseAfterStep(callDepth: Int, taskID: Int?) -> Bool {
+    /// `callDepth` is an autoclosure so a plain `.run` never walks the call stacks to
+    /// compute a depth that the `.run` case immediately discards.
+    func shouldPauseAfterStep(callDepth: @autoclosure () -> Int, taskID: Int?) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         if let targetTaskID, targetTaskID != taskID {
@@ -145,9 +244,9 @@ public final class BASICExecutionControl: @unchecked Sendable {
         case .stepInto:
             return true
         case .stepOver(let depth):
-            return callDepth <= depth
+            return callDepth() <= depth
         case .stepOut(let depth):
-            return callDepth <= max(0, depth - 1)
+            return callDepth() <= max(0, depth - 1)
         }
     }
 }
@@ -223,6 +322,10 @@ public struct BASICTaskSnapshot: Identifiable, Equatable, Sendable {
     public let location: BASICBreakpointLocation?
     /// Whether cancellation has been requested.
     public let isCancellationRequested: Bool
+    /// Whether BASIC code has awaited, joined, cancelled, or explicitly inspected this task.
+    public let isObserved: Bool
+    /// Whether BASIC code explicitly launched this task as background work.
+    public let isBackground: Bool
     /// Number of cooperative yield boundaries reached by this task.
     public let yieldCount: Int
     /// Number of known child tasks parented by this task.
@@ -275,6 +378,9 @@ public typealias BASICTaskHostOperation = @Sendable () async throws -> Void
 /// Host-side work closure that completes a logical task with a BASIC value.
 typealias BASICTaskHostResultOperation = @Sendable () async throws -> BASICValue
 
+/// BASIC interpreter work that owns a logical task while executing on a Swift lane.
+typealias BASICTaskBASICResultOperation = @Sendable (BASICTask) async throws -> BASICValue
+
 /// Stable user/runtime handle for a logical BASIC task.
 public struct BASICTaskHandle: Identifiable, Equatable, Sendable {
     /// Stable task identifier.
@@ -304,6 +410,8 @@ public final class BASICTask: @unchecked Sendable {
     private var suspendedGlobalVariables: [BASICVariableSnapshot] = []
     private var resultValue: BASICValue?
     private var errorDescription: String?
+    private var observed = false
+    private var background = false
 
     /// Stable task identifier.
     public let id: Int
@@ -364,6 +472,8 @@ public final class BASICTask: @unchecked Sendable {
             suspensionReason: suspensionReason,
             location: currentLocation,
             isCancellationRequested: cancellationRequested,
+            isObserved: observed,
+            isBackground: background,
             yieldCount: yieldCountValue,
             childCount: childCount,
             waiterCount: waiterCount,
@@ -405,6 +515,19 @@ public final class BASICTask: @unchecked Sendable {
     func recordYield() {
         lock.lock()
         yieldCountValue += 1
+        lock.unlock()
+    }
+
+    func markObserved() {
+        lock.lock()
+        observed = true
+        lock.unlock()
+    }
+
+    func markBackground() {
+        lock.lock()
+        observed = true
+        background = true
         lock.unlock()
     }
 
@@ -457,6 +580,44 @@ public final class BASICTask: @unchecked Sendable {
     }
 }
 
+private final class BASICDebuggerSuspension: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var resumedControl: BASICExecutionControl?
+    private var isCancelled = false
+
+    func waitForResume() throws -> BASICExecutionControl {
+        condition.lock()
+        while resumedControl == nil && !isCancelled {
+            condition.wait()
+        }
+        let control = resumedControl
+        let cancelled = isCancelled
+        condition.unlock()
+
+        if cancelled {
+            throw CancellationError()
+        }
+        guard let control else {
+            throw BASICError.runtime("Debugger resumed a task without execution control")
+        }
+        return control
+    }
+
+    func resume(with control: BASICExecutionControl) {
+        condition.lock()
+        resumedControl = control
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func cancel() {
+        condition.lock()
+        isCancelled = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
 /// Cooperative task registry and scheduler seed for BASIC execution.
 public final class BASICTaskScheduler: @unchecked Sendable {
     private enum HostCompletion: Sendable {
@@ -466,12 +627,16 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let stateCondition = NSCondition()
+    private var stateGeneration: UInt64 = 0
     private let completionEventLoop: BASICEventLoop?
     private var nextID = 1
     private var tasks: [Int: BASICTask] = [:]
     private var readyQueue: [Int] = []
     private var hostTasks: [Int: Task<Void, Never>] = [:]
     private var awaitersByTaskID: [Int: Set<Int>] = [:]
+    private var debuggerSuspensions: [Int: BASICDebuggerSuspension] = [:]
+    private var debuggerPauseErrors: [Int: BASICError] = [:]
     private var currentTaskID: Int?
 
     /// Creates an empty task scheduler.
@@ -482,12 +647,34 @@ public final class BASICTaskScheduler: @unchecked Sendable {
     /// Creates and queues a logical BASIC task.
     public func createTask(name: String = "Program", parentID: Int? = nil) -> BASICTask {
         lock.lock()
-        defer { lock.unlock() }
         let task = BASICTask(id: nextID, parentID: parentID, name: name)
         nextID += 1
         tasks[task.id] = task
         readyQueue.append(task.id)
+        lock.unlock()
+        signalStateChange()
         return task
+    }
+
+    /// Monotonic generation used to wait for task/event state changes without polling.
+    var currentStateGeneration: UInt64 {
+        stateCondition.lock()
+        defer { stateCondition.unlock() }
+        return stateGeneration
+    }
+
+    /// Blocks until task state has changed since the supplied generation.
+    func waitForStateChange(after generation: UInt64) {
+        stateCondition.lock()
+        while stateGeneration == generation {
+            stateCondition.wait()
+        }
+        stateCondition.unlock()
+    }
+
+    /// Wakes task waiters after an external control event such as debugger break.
+    func notifyWaiters() {
+        signalStateChange()
     }
 
     /// Returns immutable snapshots for all known tasks.
@@ -531,6 +718,48 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return tasks[id]?.handle
+    }
+
+    /// Returns one immutable task snapshot without requiring callers to scan the task list.
+    public func snapshot(for id: Int) -> BASICTaskSnapshot? {
+        drainCompletionCallbacks()
+        lock.lock()
+        let task = tasks[id]
+        let childCount = tasks.values.reduce(into: 0) { count, candidate in
+            if candidate.parentID == id { count += 1 }
+        }
+        let waiterCount = awaitersByTaskID[id]?.count ?? 0
+        lock.unlock()
+        return task?.snapshot(childCount: childCount, waiterCount: waiterCount)
+    }
+
+    /// Marks a task as intentionally consumed or inspected by BASIC code.
+    @discardableResult
+    public func markObserved(id: Int) -> Bool {
+        lock.lock()
+        let task = tasks[id]
+        lock.unlock()
+        guard let task else { return false }
+        task.markObserved()
+        signalStateChange()
+        return true
+    }
+
+    /// Marks a task as explicit fire-and-forget background work.
+    @discardableResult
+    public func markBackground(id: Int) -> Bool {
+        lock.lock()
+        let task = tasks[id]
+        lock.unlock()
+        guard let task else { return false }
+        task.markBackground()
+        signalStateChange()
+        return true
+    }
+
+    /// Returns direct child tasks that BASIC code neither consumed nor explicitly backgrounded.
+    public func unobservedChildren(of parentID: Int) -> [BASICTaskSnapshot] {
+        snapshots.filter { $0.parentID == parentID && !$0.isObserved && !$0.isBackground }
     }
 
     /// Creates a child logical task and returns its stable handle.
@@ -590,11 +819,42 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         lock.lock()
         let task = tasks[id]
         let hostTask = hostTasks[id]
+        let debuggerSuspension = debuggerSuspensions.removeValue(forKey: id)
+        debuggerPauseErrors[id] = nil
         lock.unlock()
         guard let task else { return false }
         task.requestCancellation()
+        debuggerSuspension?.cancel()
         hostTask?.cancel()
         wakeAwaiters(for: id)
+        signalStateChange()
+        return true
+    }
+
+    /// Requests cancellation for a task and every currently known descendant.
+    ///
+    /// Foreground Stop/Ctrl-C uses this rather than leaving timers, network requests, or
+    /// nested async BASIC functions alive after their owning program has ended.
+    @discardableResult
+    public func requestCancellationTree(id rootID: Int) -> Bool {
+        lock.lock()
+        guard tasks[rootID] != nil else {
+            lock.unlock()
+            return false
+        }
+        var pending = [rootID]
+        var orderedIDs: [Int] = []
+        while let parentID = pending.popLast() {
+            orderedIDs.append(parentID)
+            pending.append(contentsOf: tasks.values.compactMap { task in
+                task.parentID == parentID ? task.id : nil
+            })
+        }
+        lock.unlock()
+
+        for id in orderedIDs.reversed() {
+            _ = requestCancellation(id: id)
+        }
         return true
     }
 
@@ -639,6 +899,42 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         return handle
     }
 
+    /// Starts an isolated BASIC interpreter operation represented by its own logical task.
+    ///
+    /// Unlike a host operation, BASIC work is debugger-visible as running and receives the
+    /// task object so nested async calls and awaits retain the correct parent relationship.
+    func startBASICOperationTaskWithResult(
+        name: String,
+        parentID: Int? = nil,
+        work: @escaping BASICTaskBASICResultOperation
+    ) -> BASICTaskHandle {
+        let task = createTask(name: name, parentID: parentID)
+        task.markRunning()
+        lock.lock()
+        readyQueue.removeAll { $0 == task.id }
+        lock.unlock()
+
+        let handle = task.handle
+        let swiftTask = Task.detached { [weak self] in
+            do {
+                try Task.checkCancellation()
+                let result = try await work(task)
+                try Task.checkCancellation()
+                self?.completeHostOperationTask(id: handle.id, completion: .success(result))
+            } catch is CancellationError {
+                self?.completeHostOperationTask(id: handle.id, completion: .cancelled)
+            } catch BASICError.breakRequested {
+                self?.completeHostOperationTask(id: handle.id, completion: .cancelled)
+            } catch {
+                self?.completeHostOperationTask(id: handle.id, completion: .failure(String(describing: error)))
+            }
+        }
+        lock.lock()
+        hostTasks[handle.id] = swiftTask
+        lock.unlock()
+        return handle
+    }
+
     /// Suspends a task while a host operation runs outside the interpreter.
     @discardableResult
     public func suspendForHostOperation(id: Int, operation: String) -> Bool {
@@ -648,6 +944,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         lock.unlock()
         guard let task else { return false }
         task.markSuspended(.hostOperation(operation))
+        signalStateChange()
         return true
     }
 
@@ -682,7 +979,76 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             return false
         }
         task.markSuspended(.join(taskID: awaitingTaskID), frames: frames, globalVariables: globalVariables)
+        signalStateChange()
         return true
+    }
+
+    /// Parks an async BASIC interpreter at a debugger boundary without unwinding its
+    /// function stack or local runtime contexts. Continue/Step supplies the next shared
+    /// execution-control object and wakes this exact interpreter frame.
+    func suspendForDebugger(
+        task: BASICTask,
+        error: BASICError,
+        frames: [BASICSuspendedFrame],
+        globalVariables: [BASICVariableSnapshot]
+    ) throws -> BASICExecutionControl {
+        let suspension = BASICDebuggerSuspension()
+        lock.lock()
+        guard tasks[task.id] != nil, !task.isCancellationRequested else {
+            lock.unlock()
+            throw CancellationError()
+        }
+        readyQueue.removeAll { $0 == task.id }
+        debuggerSuspensions[task.id] = suspension
+        debuggerPauseErrors[task.id] = error
+        lock.unlock()
+
+        task.markSuspended(.debugger, frames: frames, globalVariables: globalVariables)
+        signalStateChange()
+        let control = try suspension.waitForResume()
+        if task.isCancellationRequested {
+            throw CancellationError()
+        }
+        markResumedRunning(task)
+        return control
+    }
+
+    /// Returns the first debugger pause raised by an async BASIC task.
+    func pendingDebuggerPause(excluding taskID: Int? = nil) -> BASICError? {
+        lock.lock()
+        defer { lock.unlock() }
+        return debuggerPauseErrors.keys.sorted().first(where: { $0 != taskID })
+            .flatMap { debuggerPauseErrors[$0] }
+    }
+
+    /// Resumes debugger-suspended async BASIC work using the new Continue/Step control.
+    /// If the selected task is the root waiter rather than the suspended child, all child
+    /// suspensions are resumed so the selected root can make progress.
+    @discardableResult
+    func resumeDebuggerTasks(with control: BASICExecutionControl) -> [Int] {
+        lock.lock()
+        let requestedID = control.debuggerTargetTaskID
+        let selectedIDs: [Int]
+        if let requestedID, debuggerSuspensions[requestedID] != nil {
+            selectedIDs = [requestedID]
+        } else {
+            selectedIDs = debuggerSuspensions.keys.sorted()
+        }
+        let resumptions = selectedIDs.compactMap { id -> (Int, BASICDebuggerSuspension, BASICBreakpointLocation?)? in
+            guard let suspension = debuggerSuspensions.removeValue(forKey: id) else { return nil }
+            debuggerPauseErrors[id] = nil
+            return (id, suspension, tasks[id]?.location)
+        }
+        lock.unlock()
+
+        for (_, suspension, location) in resumptions {
+            control.ignoreBreakpointOnce(at: location)
+            suspension.resume(with: control)
+        }
+        if !resumptions.isEmpty {
+            signalStateChange()
+        }
+        return resumptions.map(\.0)
     }
 
     /// Moves a suspended task back to the ready queue after its wait condition is satisfied.
@@ -708,6 +1074,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             readyQueue.append(id)
         }
         lock.unlock()
+        signalStateChange()
         return true
     }
 
@@ -717,25 +1084,39 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         readyQueue.removeAll { $0 == task.id }
         lock.unlock()
         task.markRunning()
+        signalStateChange()
+    }
+
+    /// Restores a task that resumed from an await without changing debugger focus.
+    func markResumedRunning(_ task: BASICTask) {
+        lock.lock()
+        readyQueue.removeAll { $0 == task.id }
+        lock.unlock()
+        task.markRunning()
+        signalStateChange()
     }
 
     func markSuspended(_ task: BASICTask, reason: BASICTaskSuspensionReason = .debugger) {
         task.markSuspended(reason)
+        signalStateChange()
     }
 
     func markCompleted(_ task: BASICTask) {
         task.markCompleted()
         wakeAwaiters(for: task.id)
+        signalStateChange()
     }
 
     func markCancelled(_ task: BASICTask) {
         task.markCancelled()
         wakeAwaiters(for: task.id)
+        signalStateChange()
     }
 
     func markFailed(_ task: BASICTask, error: Error) {
         task.markFailed(error)
         wakeAwaiters(for: task.id)
+        signalStateChange()
     }
 
     private func drainCompletionCallbacks() {
@@ -751,6 +1132,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
         completionEventLoop.post { [weak self] in
             self?.finishHostOperationTask(id: id, completion: completion)
         }
+        signalStateChange()
     }
 
     private func finishHostOperationTask(id: Int, completion: HostCompletion) {
@@ -772,6 +1154,7 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             }
         }
         wakeAwaiters(for: id)
+        signalStateChange()
     }
 
     private func removeAwaiter(_ taskID: Int) {
@@ -804,6 +1187,16 @@ public final class BASICTaskScheduler: @unchecked Sendable {
             }
             lock.unlock()
         }
+        if !waiters.isEmpty {
+            signalStateChange()
+        }
+    }
+
+    private func signalStateChange() {
+        stateCondition.lock()
+        stateGeneration &+= 1
+        stateCondition.broadcast()
+        stateCondition.unlock()
     }
 }
 

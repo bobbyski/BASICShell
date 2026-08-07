@@ -1402,7 +1402,7 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASICForegroundProcessObserver, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICProcessHost, BASICForegroundProcessObserver, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
     var usesColoredListing: Bool { true }
     var supportsForegroundTTYProcesses: Bool { true }
     var isBASICLoggingEnabled: Bool { false }
@@ -1729,6 +1729,27 @@ final class ConsoleHost: BASICFileHost, BASICSystemHost, BASICProcessHost, BASIC
             .contentsOfDirectory(atPath: FileManager.default.currentDirectoryPath)
             .filter { !$0.hasPrefix(".") }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func httpGet(url: String) async throws -> BASICHTTPResponse {
+        guard let requestURL = URL(string: url),
+              let scheme = requestURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw BASICError.runtime("HTTPGETASYNC requires an http or https URL")
+        }
+        let (data, response) = try await URLSession.shared.data(from: requestURL)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BASICError.runtime("HTTPGETASYNC did not receive an HTTP response")
+        }
+        let headers = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            result[String(describing: entry.key)] = String(describing: entry.value)
+        }
+        return BASICHTTPResponse(
+            url: httpResponse.url?.absoluteString ?? url,
+            statusCode: httpResponse.statusCode,
+            body: String(decoding: data, as: UTF8.self),
+            headers: headers
+        )
     }
 
     func listFiles(path: String) throws -> [String] {

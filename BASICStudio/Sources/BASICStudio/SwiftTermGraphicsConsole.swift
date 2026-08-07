@@ -24,6 +24,8 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
         nsView.connectVTG(to: model)
         nsView.render(
             consoleText: model.consoleText,
+            trimmedCharacters: model.consoleTrimmedCharacters,
+            scrollbackLines: model.consoleScrollbackLines,
             screenSize: model.terminalScreenSize,
             fontFamily: model.fontFamily,
             fontSize: model.fontSize,
@@ -38,6 +40,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     private let terminalView = VectorTerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
     private var renderedCharacterCount = 0
+    private var renderedScrollbackLines: Int?
     private var renderedScreenSize: TerminalScreenSize?
     private var renderedFontFamily: String?
     private var renderedFontSize: Double?
@@ -196,11 +199,18 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     func render(
         consoleText: String,
+        trimmedCharacters: Int,
+        scrollbackLines: Int,
         screenSize: TerminalScreenSize,
         fontFamily: String,
         fontSize: Double,
         graphicsLayersVisible: Bool
     ) {
+        if renderedScrollbackLines != scrollbackLines {
+            terminalView.getTerminal().changeScrollback(scrollbackLines)
+            renderedScrollbackLines = scrollbackLines
+        }
+
         if renderedFontFamily != fontFamily || renderedFontSize != fontSize {
             applyFont(family: fontFamily, size: fontSize)
             renderedFontFamily = fontFamily
@@ -218,7 +228,12 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             applyScreenSize(force: true)
         }
 
-        if consoleText.count < renderedCharacterCount {
+        // `trimmedCharacters` counts what scrollback trimming has dropped off the front of
+        // the model's buffer, so this total keeps rising across a trim. Without it a trim
+        // would look like the console shrank and force a full terminal reset and refeed.
+        let emittedCharacterCount = trimmedCharacters + consoleText.count
+
+        if emittedCharacterCount < renderedCharacterCount {
             terminalView.getTerminal().resetToInitialState()
             renderedCharacterCount = 0
             inputBuffer = ""
@@ -227,11 +242,15 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             hasInitializedLineInputDefault = false
         }
 
-        if consoleText.count > renderedCharacterCount {
-            let start = consoleText.index(consoleText.startIndex, offsetBy: renderedCharacterCount)
+        if emittedCharacterCount > renderedCharacterCount {
+            // Index from the end so the walk is proportional to what is new, not to the
+            // whole buffer. Clamped in case a trim outran an update and dropped characters
+            // this view had not fed yet.
+            let pending = min(emittedCharacterCount - renderedCharacterCount, consoleText.count)
+            let start = consoleText.index(consoleText.endIndex, offsetBy: -pending)
             let newText = String(consoleText[start...]).replacingOccurrences(of: "\n", with: "\r\n")
             feedTerminal(newText)
-            renderedCharacterCount = consoleText.count
+            renderedCharacterCount = emittedCharacterCount
         }
     }
 

@@ -65,6 +65,18 @@ enum TerminalScreenSize: String, CaseIterable, Codable {
 }
 
 struct StudioSettings: Codable {
+    /// Lines of console history kept by the terminal view and the model's console mirror.
+    ///
+    /// The cap bounds both what the user can scroll back through and the size of the
+    /// string the console re-reads on every update, so it is a memory *and* a throughput
+    /// setting. Values are clamped to `consoleScrollbackRange`.
+    static let defaultConsoleScrollbackLines = 5000
+    static let consoleScrollbackRange = 200...50_000
+
+    static func clampedConsoleScrollbackLines(_ lines: Int) -> Int {
+        min(max(lines, consoleScrollbackRange.lowerBound), consoleScrollbackRange.upperBound)
+    }
+
     var editorTheme: EditorTheme = .dark
     var isEditorGutterVisible = false
     var terminalScreenSize: TerminalScreenSize = .flexible
@@ -72,6 +84,7 @@ struct StudioSettings: Codable {
     var promptTemplate: String = BASICSession.defaultPromptTemplate
     var fontFamily: String = StudioFonts.defaultFamily
     var fontSize: Double = 13
+    var consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines
 
     private enum CodingKeys: String, CodingKey {
         case editorTheme
@@ -81,6 +94,7 @@ struct StudioSettings: Codable {
         case promptTemplate
         case fontFamily
         case fontSize
+        case consoleScrollbackLines
     }
 
     init(
@@ -90,7 +104,8 @@ struct StudioSettings: Codable {
         workingDirectoryPath: String? = nil,
         promptTemplate: String = BASICSession.defaultPromptTemplate,
         fontFamily: String = StudioFonts.defaultFamily,
-        fontSize: Double = 13
+        fontSize: Double = 13,
+        consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines
     ) {
         self.editorTheme = editorTheme
         self.isEditorGutterVisible = isEditorGutterVisible
@@ -99,6 +114,7 @@ struct StudioSettings: Codable {
         self.promptTemplate = promptTemplate
         self.fontFamily = fontFamily
         self.fontSize = fontSize
+        self.consoleScrollbackLines = Self.clampedConsoleScrollbackLines(consoleScrollbackLines)
     }
 
     init(from decoder: Decoder) throws {
@@ -110,6 +126,9 @@ struct StudioSettings: Codable {
         promptTemplate = try container.decodeIfPresent(String.self, forKey: .promptTemplate) ?? BASICSession.defaultPromptTemplate
         fontFamily = try container.decodeIfPresent(String.self, forKey: .fontFamily) ?? StudioFonts.defaultFamily
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 13
+        consoleScrollbackLines = Self.clampedConsoleScrollbackLines(
+            try container.decodeIfPresent(Int.self, forKey: .consoleScrollbackLines) ?? Self.defaultConsoleScrollbackLines
+        )
     }
 }
 
@@ -168,8 +187,49 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Font", systemImage: "textformat")
                 }
+
+            consolePage
+                .tabItem {
+                    Label("Console", systemImage: "terminal")
+                }
         }
         .padding()
+    }
+
+    private static let scrollbackSliderBounds: ClosedRange<Double> = {
+        let range = StudioSettings.consoleScrollbackRange
+        return Double(range.lowerBound)...Double(range.upperBound)
+    }()
+
+    private var scrollbackLinesBinding: Binding<Double> {
+        Binding(
+            get: { Double(model.consoleScrollbackLines) },
+            set: { model.consoleScrollbackLines = Int($0.rounded()) }
+        )
+    }
+
+    private var consolePage: some View {
+        Form {
+            Section("Scrollback") {
+                HStack {
+                    Text("Lines")
+                    Slider(value: scrollbackLinesBinding, in: Self.scrollbackSliderBounds, step: 100)
+                    Stepper(
+                        value: $model.consoleScrollbackLines,
+                        in: StudioSettings.consoleScrollbackRange,
+                        step: 100
+                    ) {
+                        Text("\(model.consoleScrollbackLines)")
+                            .frame(width: 56, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+                }
+
+                Text("Older console lines are discarded once the console passes this many lines. Lowering it reduces memory use and speeds up programs that print heavily, because the console re-reads its buffer on every update.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var generalPage: some View {

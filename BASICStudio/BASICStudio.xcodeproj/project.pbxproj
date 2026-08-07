@@ -11,6 +11,7 @@
 		123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */; };
 		2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
 		2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38AB3D82C7A880B72971A1D /* StudioFonts.swift */; };
+		2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */; };
 		34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */; };
 		3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */; };
 		43F22C7C5E351E6D8886C112 /* DebugPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = F768CDEF475FDA4603BD917D /* DebugPane.swift */; };
@@ -35,6 +36,7 @@
 
 /* Begin PBXFileReference section */
 		0CB8284FB31709C1BD017047 /* MonacoEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonacoEditor.swift; sourceTree = "<group>"; };
+		1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioHostFlags.swift; sourceTree = "<group>"; };
 		1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudioApp.swift; sourceTree = "<group>"; };
 		22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDocumentationPane.swift; sourceTree = "<group>"; };
 		2F75838E7973F9367D5B0837 /* BASICCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCore; path = ../BASICCore; sourceTree = SOURCE_ROOT; };
@@ -127,6 +129,7 @@
 				DB6405A0933EA2491CDDF863 /* LogPane.swift */,
 				0CB8284FB31709C1BD017047 /* MonacoEditor.swift */,
 				A38AB3D82C7A880B72971A1D /* StudioFonts.swift */,
+				1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */,
 				C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */,
 				6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */,
 				338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */,
@@ -241,6 +244,7 @@
 				8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */,
 				34689C416CEB23C25E5C8455 /* NerdPromptEditorView.swift in Sources */,
 				2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */,
+				2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */,
 				4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */,
 				3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */,
 				693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */,

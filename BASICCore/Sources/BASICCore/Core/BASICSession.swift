@@ -134,10 +134,12 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private let host: BASICHost
+    private let outputCoordinator: BASICHostOutputCoordinator
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
     private let taskScheduler: BASICTaskScheduler
     private var activeInterpreter: BASICInterpreter?
+    private var activeProgramTask: BASICTask?
     /// Optional lane used by synchronous foreground RUN commands.
     public var foregroundRunLane: BASICWorkerLane?
     /// Optional execution control used by interactive foreground RUN commands.
@@ -162,6 +164,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Creates a session bound to a host.
     public init(host: BASICHost, promptTemplate: String = BASICSession.defaultPromptTemplate) {
         self.host = host
+        self.outputCoordinator = BASICHostOutputCoordinator(host: host)
         self.promptTemplate = promptTemplate
         let eventLoop = BASICEventLoop()
         self.eventLoop = eventLoop
@@ -431,8 +434,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                     return true
                 }
                 do {
-                    try BASICInterpreter(program: immediateProgram(for: trimmed), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
+                    try runImmediateSource(trimmed)
                 } catch let error as BASICError {
+                    if error.isDebugPause {
+                        throw error
+                    }
                     guard runShellModeFallback(command: trimmed) else { throw error }
                 }
             }
@@ -606,7 +612,26 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
 
         pendingInteractiveLines.removeAll()
         pendingContinuationPrompt = Self.continuationPrompt
-        try BASICInterpreter(program: immediateProgram(for: source), host: host, runtime: runtime, fileState: fileState, timerHost: self).run()
+        try runImmediateSource(source)
+    }
+
+    private func runImmediateSource(_ source: String) throws {
+        foregroundExecutionControl?.reset()
+        foregroundExecutionControl?.setRetainsBreakRequestsAsDebuggerPauses(!stopsForegroundProgramOnBreak)
+        let task = taskScheduler.createTask(name: "Direct")
+        let interpreter = BASICInterpreter(
+            program: immediateProgram(for: source),
+            host: host,
+            runtime: runtime,
+            fileState: fileState,
+            executionControl: foregroundExecutionControl,
+            task: task,
+            taskScheduler: taskScheduler,
+            timerHost: self,
+            eventLoop: eventLoop,
+            outputCoordinator: outputCoordinator
+        )
+        try interpreter.run()
     }
 
     private func runHistoryCommand(_ command: HistoryCommand) throws {
@@ -841,7 +866,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public func runProgram(startLine: Int? = nil, executionControl: BASICExecutionControl? = nil) throws {
         stopAllTimers()
         runtime.resetForRun()
+        executionControl?.setRetainsBreakRequestsAsDebuggerPauses(!stopsForegroundProgramOnBreak)
         let task = taskScheduler.createTask(name: "Program")
+        activeProgramTask = task
         let interpreter = BASICInterpreter(
             program: program,
             host: host,
@@ -851,31 +878,61 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             task: task,
             taskScheduler: taskScheduler,
             timerHost: self,
-            eventLoop: eventLoop
+            eventLoop: eventLoop,
+            outputCoordinator: outputCoordinator
         )
         activeInterpreter = interpreter
         do {
             try interpreter.run(startLine: startLine)
+            reportUnobservedTasks(parentID: task.id)
             stopAllTimers()
             activeInterpreter = nil
+            activeProgramTask = nil
         } catch let error as BASICError {
             switch error {
             case .breakRequested, .breakpoint, .stepComplete:
                 if case .breakRequested = error, stopsForegroundProgramOnBreak {
+                    cancelActiveProgramTaskTree()
                     stopAllTimers()
                     activeInterpreter = nil
+                    activeProgramTask = nil
                 } else {
                     pauseRuntimeTimersForDebugger()
                 }
             default:
                 stopAllTimers()
                 activeInterpreter = nil
+                activeProgramTask = nil
             }
             throw error
         } catch {
             stopAllTimers()
             activeInterpreter = nil
+            activeProgramTask = nil
             throw error
+        }
+    }
+
+    private func cancelActiveProgramTaskTree() {
+        guard let activeProgramTask else { return }
+        _ = taskScheduler.requestCancellationTree(id: activeProgramTask.id)
+        taskScheduler.markCancelled(activeProgramTask)
+    }
+
+    private func reportUnobservedTasks(parentID: Int) {
+        for task in taskScheduler.unobservedChildren(of: parentID) {
+            let prefix = "Warning: task #\(task.id) \(task.name)"
+            switch task.state {
+            case .failed:
+                let detail = task.errorDescription.map { ": \($0)" } ?? ""
+                host.printLine("\(prefix) failed without being awaited\(detail)")
+            case .cancelled:
+                host.printLine("\(prefix) was cancelled without being observed")
+            case .completed:
+                host.printLine("\(prefix) completed without being awaited")
+            case .ready, .running, .suspended:
+                host.printLine("\(prefix) is still running; use AWAIT, JOIN, CANCEL, or BACKGROUND")
+            }
         }
     }
 
@@ -1308,25 +1365,38 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             try runProgram(executionControl: executionControl)
             return
         }
+        executionControl?.setRetainsBreakRequestsAsDebuggerPauses(!stopsForegroundProgramOnBreak)
         activeInterpreter.setExecutionControl(executionControl)
+        if let executionControl {
+            _ = taskScheduler.resumeDebuggerTasks(with: executionControl)
+        }
         restartRunningTimers()
         do {
             try activeInterpreter.continueExecution()
             stopAllTimers()
             self.activeInterpreter = nil
+            activeProgramTask = nil
         } catch let error as BASICError {
             switch error {
             case .breakRequested, .breakpoint, .stepComplete:
-                pauseRuntimeTimersForDebugger()
-                break
+                if case .breakRequested = error, stopsForegroundProgramOnBreak {
+                    cancelActiveProgramTaskTree()
+                    stopAllTimers()
+                    self.activeInterpreter = nil
+                    activeProgramTask = nil
+                } else {
+                    pauseRuntimeTimersForDebugger()
+                }
             default:
                 stopAllTimers()
                 self.activeInterpreter = nil
+                activeProgramTask = nil
             }
             throw error
         } catch {
             stopAllTimers()
             self.activeInterpreter = nil
+            activeProgramTask = nil
             throw error
         }
     }

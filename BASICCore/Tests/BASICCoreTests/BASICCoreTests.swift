@@ -36,6 +36,70 @@ private final class ThreadSafeValueBox<Value>: @unchecked Sendable {
     }
 }
 
+private final class ConcurrentOutputProbeHost: BASICHost, @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeWrites = 0
+    private var highestActiveWriteCount = 0
+    private var capturedLines: [String] = []
+
+    var maximumConcurrentWrites: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return highestActiveWriteCount
+    }
+
+    var lines: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedLines
+    }
+
+    func print(_ text: String, terminator: String) {
+        recordWrite(text + terminator)
+    }
+
+    func printLine(_ text: String) {
+        recordWrite(text + "\n")
+    }
+
+    func readLine(prompt: String) -> String? {
+        nil
+    }
+
+    private func recordWrite(_ text: String) {
+        lock.lock()
+        activeWrites += 1
+        highestActiveWriteCount = max(highestActiveWriteCount, activeWrites)
+        lock.unlock()
+
+        Thread.sleep(forTimeInterval: 0.002)
+
+        lock.lock()
+        capturedLines.append(text)
+        activeWrites -= 1
+        lock.unlock()
+    }
+}
+
+private actor AsyncTestGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
 private final class ProcessObserverProbe: BASICForegroundProcessObserver {
     private(set) var started: [BASICForegroundProcessSnapshot] = []
     private(set) var ended: [BASICForegroundProcessSnapshot] = []
@@ -65,7 +129,7 @@ private func sharedDemoSource(named name: String) throws -> String {
     return try String(contentsOf: url, encoding: .utf8)
 }
 
-@Suite("BASICCore")
+@Suite("BASICCore", .serialized)
 struct BASICCoreTests {
     @Test("Runs arithmetic and looping programs")
     func runsProgram() {
@@ -3415,8 +3479,9 @@ struct BASICCoreTests {
             return
         }
 
+        let release = AsyncTestGate()
         let child = session.startHostOperationTaskWithResult(name: "Async value", parentID: parent.id, operation: "test") {
-            await Task.yield()
+            await release.wait()
             return .number(42)
         }
         let frame = BASICSuspendedFrame(
@@ -3430,6 +3495,7 @@ struct BASICCoreTests {
         #expect(session.debugTasks.first { $0.id == parent.id }?.state == .suspended)
         #expect(!session.readyTaskHandles.contains(parent))
 
+        await release.open()
         try await waitForTaskState(session, id: child.id, expected: .completed)
 
         #expect(session.taskAwaitState(id: child.id) == .completed(.number(42)))
@@ -3495,8 +3561,10 @@ struct BASICCoreTests {
     func hostOperationTasksCompleteOnSwiftAsyncLanes() async throws {
         let session = BASICSession(host: TestHost())
         let log = ThreadSafeStringLog()
+        let release = AsyncTestGate()
 
         let alpha = session.startHostOperationTask(name: "ALPHA", operation: "timer") {
+            await release.wait()
             for iterator in 1...3 {
                 log.append("ALPHA ITER \(iterator) BEFORE YIELD")
                 await Task.yield()
@@ -3504,6 +3572,7 @@ struct BASICCoreTests {
             }
         }
         let beta = session.startHostOperationTask(name: "BETA", operation: "timer") {
+            await release.wait()
             for iterator in 1...3 {
                 log.append("BETA ITER \(iterator) BEFORE YIELD")
                 await Task.yield()
@@ -3513,6 +3582,8 @@ struct BASICCoreTests {
 
         #expect(session.debugTasks.first { $0.id == alpha.id }?.state == .suspended)
         #expect(session.debugTasks.first { $0.id == beta.id }?.suspensionReason == .hostOperation("timer"))
+
+        await release.open()
 
         try await waitForTaskState(session, id: alpha.id, expected: .completed)
         try await waitForTaskState(session, id: beta.id, expected: .completed)
@@ -3658,6 +3729,81 @@ struct BASICCoreTests {
         #expect(host.output == ["slice 12", "VALUE =payload", "NUMBER =12"])
     }
 
+    @Test("Async file hosts return task values without blocking the BASIC lane")
+    func asyncFileHostsReturnTaskValues() throws {
+        let host = TestHost()
+        host.files["input.txt"] = "alpha"
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        global readTask as task = ReadFileAsync("input.txt")
+        text$ = await readTask
+        global writeTask as task = WriteFileAsync("output.txt", text$ + " beta")
+        byteCount = await writeTask
+        print text$
+        print byteCount
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["alpha", "10"])
+        #expect(host.files["output.txt"] == "alpha beta")
+        #expect(session.debugTasks.contains { $0.name == "READFILEASYNC" && $0.state == .completed })
+        #expect(session.debugTasks.contains { $0.name == "WRITEFILEASYNC" && $0.state == .completed })
+    }
+
+    @Test("Async HTTP host returns structured response data")
+    func asyncHTTPHostReturnsStructuredResponseData() throws {
+        let host = TestHost()
+        host.httpResponses["https://example.test/data"] = BASICHTTPResponse(
+            url: "https://example.test/final",
+            statusCode: 200,
+            body: "payload",
+            headers: ["Content-Type": "text/plain"]
+        )
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        global request as task = HttpGetAsync("https://example.test/data")
+        response = await request
+        headers = response("HEADERS")
+        print response("STATUS")
+        print response("BODY")
+        print response("URL")
+        print headers("Content-Type")
+        """)
+
+        try session.runProgram()
+
+        #expect(host.httpRequests == ["https://example.test/data"])
+        #expect(host.output == ["200", "payload", "https://example.test/final", "text/plain"])
+        #expect(session.debugTasks.contains { $0.name == "HTTPGETASYNC" && $0.state == .completed })
+    }
+
+    @Test("Async HTTP failures surface at AWAIT")
+    func asyncHTTPFailuresSurfaceAtAwait() throws {
+        let host = TestHost()
+        host.httpErrors["https://example.test/fail"] = "network unavailable"
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        on error goto Failed
+        request = HttpGetAsync("https://example.test/fail")
+        response = await request
+        print "UNEXPECTED"
+        end
+        Failed:
+            print "ERROR="; ERR
+            print "MESSAGE="; taskerror$(request)
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output.count == 2)
+        #expect(host.output[0].hasPrefix("ERROR="))
+        #expect(host.output[1].contains("network unavailable"))
+        #expect(session.debugTasks.contains { $0.name == "HTTPGETASYNC" && $0.state == .failed })
+    }
+
     @Test("ASYNC FUNCTION calls produce awaitable task handles")
     func asyncFunctionCallsProduceAwaitableTaskHandles() throws {
         let host = TestHost()
@@ -3665,9 +3811,10 @@ struct BASICCoreTests {
 
         session.program.loadSource("""
         print "slice 13"
-        handle = AsyncAdd(6, 7)
-        if handle > 0 then print "HANDLE OK"
+        global handle as task = AsyncAdd(6, 7)
         total = await handle
+        print "STATUS ="; taskstatus$(handle)
+        print "HANDLE ="; handle
         print "TOTAL ="; total
         async function AsyncAdd(a as integer, b as integer) as integer
             return a + b
@@ -3676,8 +3823,78 @@ struct BASICCoreTests {
 
         try session.runProgram()
 
-        #expect(host.output == ["slice 13", "HANDLE OK", "TOTAL =13"])
+        #expect(host.output.count == 4)
+        #expect(host.output[0] == "slice 13")
+        #expect(host.output[1] == "STATUS =COMPLETED")
+        #expect(host.output[2].hasPrefix("HANDLE =<TASK #"))
+        #expect(host.output[2].hasSuffix(" AsyncAdd>"))
+        #expect(host.output[3] == "TOTAL =13")
         #expect(session.debugTasks.contains { $0.name == "AsyncAdd" })
+        #expect(session.debugGlobalVariables.first { $0.name == "handle" }?.typeName == "TASK")
+    }
+
+    @Test("TASK declarations reject non-task values")
+    func taskDeclarationsRejectNonTaskValues() throws {
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("global handle as task = 1")
+
+        do {
+            try session.runProgram()
+            Issue.record("Expected TASK assignment to reject a numeric value")
+        } catch {
+            #expect(String(describing: error).contains("Cannot assign non-task value"))
+        }
+    }
+
+    @Test("Discarded async calls require explicit background intent")
+    func discardedAsyncCallsRequireExplicitBackgroundIntent() throws {
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("AsyncValue(42)")
+
+        do {
+            try session.runProgram()
+            Issue.record("Expected a discarded async call to fail")
+        } catch {
+            #expect(String(describing: error).contains("Task result was ignored"))
+        }
+    }
+
+    @Test("BACKGROUND explicitly launches fire-and-forget async work")
+    func backgroundExplicitlyLaunchesFireAndForgetAsyncWork() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("background AsyncValue(42)")
+
+        try session.runProgram()
+
+        let task = try #require(session.debugTasks.first { $0.name == "ASYNCVALUE" })
+        #expect(task.isBackground)
+        #expect(task.isObserved)
+        #expect(host.output.isEmpty)
+    }
+
+    @Test("Unawaited retained tasks produce an end-of-run diagnostic")
+    func unawaitedRetainedTasksProduceEndOfRunDiagnostic() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("global handle as task = AsyncValue(42)")
+
+        try session.runProgram()
+
+        #expect(host.output.count == 1)
+        #expect(host.output[0].contains("Warning: task #"))
+        #expect(host.output[0].contains("ASYNCVALUE"))
+    }
+
+    @Test("Direct mode can await a retained task")
+    func directModeCanAwaitRetainedTask() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        #expect(session.submit("global handle as task = AsyncValue(\"direct\")"))
+        #expect(session.submit("print await handle"))
+
+        #expect(host.output == ["direct"])
     }
 
     @Test("ASYNC FUNCTION body runs on scheduled task before await result")
@@ -3705,6 +3922,124 @@ struct BASICCoreTests {
             "ASYNC BODY GAMMA 4",
             "RESULT =GAMMA: 4"
         ])
+    }
+
+    @Test("Async interpreters serialize writes through the session output boundary")
+    func asyncInterpretersSerializeHostOutput() throws {
+        let host = ConcurrentOutputProbeHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        global first as task = WriteMany("A")
+        global second as task = WriteMany("B")
+        join first
+        join second
+
+        async function WriteMany(prefix$ as string) as integer
+            for i = 1 to 20
+                print prefix$; i
+            next i
+            return 20
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.maximumConcurrentWrites == 1)
+        #expect(host.lines.count == 40)
+    }
+
+    @Test("Async function breakpoints retain frames across step and continue")
+    func asyncFunctionDebuggerPauseIsResumable() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let breakpointLocation = BASICBreakpointLocation(lineNumber: 7, statementNumber: 0)
+        let initialControl = BASICExecutionControl()
+        initialControl.setBreakpoints([BASICBreakpoint(location: breakpointLocation)])
+        session.program.loadSource("""
+        global handle as task = Work()
+        global result as integer = await handle
+        print "RESULT="; result
+
+        async function Work() as integer
+            local value as integer = 1
+            value = value + 1
+            value = value + 10
+            return value
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: initialControl)
+            Issue.record("Expected async breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == breakpointLocation)
+        }
+
+        let pausedTask = try #require(session.debugTasks.first { $0.name == "Work" })
+        #expect(pausedTask.state == .suspended)
+        #expect(pausedTask.suspensionReason == .debugger)
+        #expect(pausedTask.suspendedFrames.first?.resumeLocation == breakpointLocation)
+        #expect(pausedTask.suspendedFrames.first?.localVariables.first { $0.name.lowercased() == "value" }?.value == "1")
+
+        let stepControl = BASICExecutionControl()
+        stepControl.setBreakpoints([BASICBreakpoint(location: breakpointLocation)])
+        stepControl.setMode(.stepInto)
+        stepControl.setTargetTaskID(pausedTask.id)
+        do {
+            try session.continueProgram(executionControl: stepControl)
+            Issue.record("Expected async step pause")
+        } catch BASICError.stepComplete(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 8, statementNumber: 0))
+        }
+
+        let steppedTask = try #require(session.debugTasks.first { $0.id == pausedTask.id })
+        #expect(steppedTask.state == .suspended)
+        #expect(steppedTask.suspendedFrames.first?.resumeLocation == BASICBreakpointLocation(lineNumber: 8, statementNumber: 0))
+        #expect(steppedTask.suspendedFrames.first?.localVariables.first { $0.name.lowercased() == "value" }?.value == "2")
+
+        let continueControl = BASICExecutionControl()
+        continueControl.setBreakpoints([BASICBreakpoint(location: breakpointLocation)])
+        try session.continueProgram(executionControl: continueControl)
+
+        #expect(host.output == ["RESULT=12"])
+        #expect(session.debugTasks.first { $0.id == pausedTask.id }?.state == .completed)
+    }
+
+    @Test("Cancelling a debugger-suspended async function releases its retained frame")
+    func cancellingDebuggerSuspendedAsyncFunction() async throws {
+        let session = BASICSession(host: TestHost())
+        let breakpointLocation = BASICBreakpointLocation(lineNumber: 6, statementNumber: 0)
+        let control = BASICExecutionControl()
+        control.setBreakpoints([BASICBreakpoint(location: breakpointLocation)])
+        session.program.loadSource("""
+        global handle as task = Work()
+        global result as integer = await handle
+
+        async function Work() as integer
+            local value as integer = 1
+            value = value + 1
+            return value
+        end function
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected async breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == breakpointLocation)
+        }
+
+        let pausedTask = try #require(session.debugTasks.first { $0.name == "Work" })
+        #expect(session.requestTaskCancellation(id: pausedTask.id))
+        try await waitForTaskState(session, id: pausedTask.id, expected: .cancelled)
+
+        do {
+            try session.continueProgram(executionControl: BASICExecutionControl())
+            Issue.record("Expected awaiting parent to observe cancellation")
+        } catch {
+            #expect(String(describing: error).contains("Awaited task was cancelled"))
+        }
+        #expect(session.debugTasks.first { $0.id == pausedTask.id }?.suspendedFrames.isEmpty == true)
     }
 
     @Test("JOIN waits for an async task and discards its result")
@@ -3768,6 +4103,156 @@ struct BASICCoreTests {
             "RESULT =SNAP: 15:Ada: 7",
             "LIVE =LIVE:99:Grace:8"
         ])
+    }
+
+    @Test("ASYNC FUNCTION can await nested async functions and host timers")
+    func asyncFunctionCanAwaitNestedAsyncFunctionsAndHostTimers() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        value = await OuterAsync(7)
+        print "VALUE ="; value
+        async function OuterAsync(input as integer) as integer
+            waited = await Sleep(5)
+            inner = await InnerAsync(input + waited)
+            return inner + 1
+        end function
+        async function InnerAsync(input as integer) as integer
+            return input * 2
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["VALUE =25"])
+        let tasks = session.debugTasks
+        let program = tasks.first { $0.name == "Program" }
+        let outer = tasks.first { $0.name == "OuterAsync" }
+        let timer = tasks.first { $0.name == "SLEEP" }
+        let inner = tasks.first { $0.name == "InnerAsync" }
+        #expect(outer?.parentID == program?.id)
+        #expect(timer?.parentID == outer?.id)
+        #expect(inner?.parentID == outer?.id)
+        #expect(tasks.allSatisfy { $0.state == .completed })
+    }
+
+    @Test("Cancelling an async function cancels its owned await tree")
+    func cancellingAsyncFunctionCancelsItsOwnedAwaitTree() async throws {
+        let session = BASICSession(host: TestHost())
+        let lane = BASICWorkerLane(label: "AIBasicTests.AsyncCancellation")
+        let resultBox = ThreadSafeValueBox<BASICWorkerLaneRunResult>()
+
+        session.program.loadSource("""
+        value = await SlowAsync()
+        print value
+        async function SlowAsync() as integer
+            waited = await Sleep(10000)
+            return waited
+        end function
+        """)
+
+        #expect(session.runProgram(on: lane) { result in
+            resultBox.store(result)
+        })
+
+        var asyncTaskID: Int?
+        for _ in 0..<100 {
+            asyncTaskID = session.debugTasks.first { $0.name == "SlowAsync" }?.id
+            if asyncTaskID != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let taskID = try #require(asyncTaskID)
+        #expect(session.requestTaskCancellation(id: taskID))
+        try await waitForTaskState(session, id: taskID, expected: .cancelled)
+
+        var result: BASICWorkerLaneRunResult?
+        for _ in 0..<100 {
+            result = resultBox.value
+            if result != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        if case .failure(let message) = result {
+            #expect(message.contains("Awaited task was cancelled"))
+        } else {
+            Issue.record("Expected the awaiting program to report cancellation")
+        }
+
+        let timer = try #require(session.debugTasks.first { $0.name == "SLEEP" })
+        try await waitForTaskState(session, id: timer.id, expected: .cancelled)
+    }
+
+    @Test("Foreground Stop or Ctrl-C cancels the complete async task tree")
+    func foregroundBreakCancelsCompleteAsyncTaskTree() async throws {
+        let session = BASICSession(host: TestHost())
+        let lane = BASICWorkerLane(label: "AIBasicTests.ForegroundAsyncStop")
+        let control = BASICExecutionControl()
+        let resultBox = ThreadSafeValueBox<BASICWorkerLaneRunResult>()
+        session.stopsForegroundProgramOnBreak = true
+        session.program.loadSource("""
+        value = await OuterAsync()
+        print value
+        async function OuterAsync() as integer
+            waited = await Sleep(10000)
+            return waited
+        end function
+        """)
+
+        #expect(session.runProgram(on: lane, executionControl: control) { result in
+            resultBox.store(result)
+        })
+
+        var timerID: Int?
+        for _ in 0..<100 {
+            timerID = session.debugTasks.first { $0.name == "SLEEP" }?.id
+            if timerID != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        _ = try #require(timerID)
+        control.requestBreak()
+
+        var result: BASICWorkerLaneRunResult?
+        for _ in 0..<100 {
+            result = resultBox.value
+            if result != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        if case .failure(let message) = result {
+            #expect(message.contains("Break"))
+        } else {
+            Issue.record("Expected foreground break to end the run")
+        }
+
+        for snapshot in session.debugTasks.filter({ ["Program", "OuterAsync", "SLEEP"].contains($0.name) }) {
+            try await waitForTaskState(session, id: snapshot.id, expected: .cancelled)
+        }
+        #expect(session.debugTasks.filter { ["Program", "OuterAsync", "SLEEP"].contains($0.name) }.count == 3)
+    }
+
+    @Test("BASIC task status error and cancellation APIs are available")
+    func basicTaskStatusErrorAndCancellationAPIsAreAvailable() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        completeHandle = AsyncValue(42)
+        join completeHandle
+        print taskstatus$(completeHandle)
+        print "ERROR="; taskerror$(completeHandle)
+        slowHandle = SlowAsync()
+        cancel slowHandle
+        print taskstatus$(slowHandle)
+        async function SlowAsync() as integer
+            waited = await Sleep(10000)
+            return waited
+        end function
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["COMPLETED", "ERROR=", "CANCELLED"])
+        let slow = try #require(session.debugTasks.first { $0.name == "SlowAsync" })
+        #expect(slow.isCancellationRequested)
     }
 
     @Test("ASYNC FUNCTION failures surface at AWAIT and respect ON ERROR")
@@ -7503,7 +7988,7 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
+private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false
@@ -7515,6 +8000,9 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
     var keys: [String] = []
     var commandHistory: [String] = []
     var files: [String: String] = [:]
+    var httpRequests: [String] = []
+    var httpResponses: [String: BASICHTTPResponse] = [:]
+    var httpErrors: [String: String] = [:]
     var currentDirectory = "."
     var systemCommands: [String] = []
     var systemOutputs: [String: String] = [:]
@@ -7658,6 +8146,17 @@ private final class TestHost: BASICFileHost, BASICGraphicsHost, BASICSystemHost,
             .map { String($0.dropFirst(prefix.count)) }
             .filter { !$0.isEmpty }
             .sorted()
+    }
+
+    func httpGet(url: String) async throws -> BASICHTTPResponse {
+        httpRequests.append(url)
+        if let message = httpErrors[url] {
+            throw BASICError.runtime(message)
+        }
+        guard let response = httpResponses[url] else {
+            throw BASICError.runtime("No test HTTP response for \(url)")
+        }
+        return response
     }
 
     private func resolvedPath(_ path: String) -> String {

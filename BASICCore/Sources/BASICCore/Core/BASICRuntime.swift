@@ -114,7 +114,7 @@ final class BASICRuntime {
             return String(number)
         case .boolean(let value):
             return value ? "TRUE" : "FALSE"
-        case .record, .object, .systemObject, .closure, .array, .dictionary:
+        case .record, .object, .systemObject, .task, .closure, .array, .dictionary:
             throw BASICError.runtime("EXPORT requires a scalar value")
         }
     }
@@ -861,8 +861,8 @@ final class BASICRuntime {
             return string.rawString
         case .boolean(let boolean):
             return boolean
-        case .systemObject, .closure:
-            throw BASICError.runtime("System objects cannot be encoded as JSON")
+        case .systemObject, .task, .closure:
+            throw BASICError.runtime("System objects, tasks, and closures cannot be encoded as JSON")
         case .array(let array):
             return try jsonArrayObject(for: array)
         case .dictionary(let dictionary):
@@ -1000,6 +1000,8 @@ final class BASICRuntime {
                 return .classType(name)
             case .systemObject(let name, _):
                 return .classType(name)
+            case .task:
+                return .scalar(.task)
             case .closure:
                 return .scalar(.variant)
             case .array(let array):
@@ -1143,6 +1145,14 @@ final class BASICRuntime {
                 throw BASICError.type(message: "Boolean \(variable.name) must be FALSE, TRUE, 0, or 1")
             }
             return .boolean(number == 1)
+        case .task:
+            if case .task = value {
+                return value
+            }
+            if case .empty = value {
+                return .empty
+            }
+            throw BASICError.type(message: "Cannot assign non-task value to \(variable.name)")
         }
     }
 
@@ -2174,6 +2184,7 @@ final class BASICRuntime {
         case .scalar(.string): return .string(BASICString(""))
         case .scalar(.boolean): return .boolean(false)
         case .scalar(.variant): return .empty
+        case .scalar(.task): return .empty
         case .scalar: return .number(0)
         case .record(let name):
             guard let definition = recordDefinitions[name.uppercased()] else {

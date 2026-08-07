@@ -95,6 +95,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
     case record(String, [String: BASICValue])
     case object(String, [String: BASICValue])
     case systemObject(String, Int)
+    case task(BASICTaskHandle)
     case closure(BASICCapturedClosure)
     case array(BASICArray)
     case dictionary(BASICDictionary)
@@ -115,6 +116,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
             return leftName == rightName && leftFields == rightFields
         case (.systemObject(let leftName, let leftID), .systemObject(let rightName, let rightID)):
             return leftName == rightName && leftID == rightID
+        case (.task(let left), .task(let right)):
+            return left == right
         case (.closure(let left), .closure(let right)):
             return left === right
         case (.array(let left), .array(let right)):
@@ -147,6 +150,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
             return "<\(name)>"
         case .systemObject(let name, _):
             return "<\(name)>"
+        case .task(let handle):
+            return "<TASK #\(handle.id) \(handle.name)>"
         case .closure(let closure):
             return "<FUNCTION \(closure.name)>"
         case .array(let array):
@@ -162,7 +167,7 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .record, .object, .systemObject, .closure, .array, .dictionary: return true
+        case .record, .object, .systemObject, .task, .closure, .array, .dictionary: return true
         }
     }
 
@@ -213,6 +218,8 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
             return name
         case .systemObject(let name, _):
             return name
+        case .task:
+            return "TASK"
         case .closure(let closure):
             return "FUNCTION \(closure.signatureDescription)"
         case .array(let array):
@@ -348,6 +355,7 @@ enum BASICScalarType: String, Equatable, Sendable {
     case string = "STRING"
     case boolean = "BOOLEAN"
     case variant = "VARIANT"
+    case task = "TASK"
 }
 
 enum BASICType: Equatable, Sendable {
@@ -915,16 +923,28 @@ struct BASICAsyncFunctionJob: @unchecked Sendable {
     let receiverClassName: String?
     let argumentValues: [BASICValue]
     let allowVoid: Bool
+    let outputCoordinator: BASICHostOutputCoordinator
 
-    func run() async throws -> FunctionCallResult {
+    func run(
+        task: BASICTask,
+        taskScheduler: BASICTaskScheduler,
+        eventLoop: BASICEventLoop?,
+        executionControl: BASICExecutionControl?
+    ) async throws -> FunctionCallResult {
         await Task.yield()
+        try Task.checkCancellation()
         let runtime = BASICRuntime()
         runtime.restore(snapshot: runtimeSnapshot)
         let interpreter = BASICInterpreter(
             program: program,
             host: host.host,
             runtime: runtime,
-            fileState: BASICFileState()
+            fileState: BASICFileState(),
+            executionControl: executionControl,
+            task: task,
+            taskScheduler: taskScheduler,
+            eventLoop: eventLoop,
+            outputCoordinator: outputCoordinator
         )
         try interpreter.prepare(startLine: nil)
         return try interpreter.callFunctionSynchronously(

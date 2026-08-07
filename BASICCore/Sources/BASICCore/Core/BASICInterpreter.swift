@@ -6,6 +6,9 @@ import Darwin
 public final class BASICInterpreter {
     private let program: BASICProgram
     private weak var host: BASICHost?
+    /// Resolved once so the per-statement trace hook does not repeat a dynamic cast.
+    private weak var loggingHost: (any BASICLoggingHost)?
+    private let outputCoordinator: BASICHostOutputCoordinator
     let runtime: BASICRuntime
     private let fileState: BASICFileState
     private var executionControl: BASICExecutionControl?
@@ -51,7 +54,7 @@ public final class BASICInterpreter {
 
     /// Creates an interpreter with fresh runtime state.
     public convenience init(program: BASICProgram, host: BASICHost) {
-        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil, task: nil, taskScheduler: nil, eventLoop: nil)
+        self.init(program: program, host: host, runtime: BASICRuntime(), fileState: BASICFileState(), executionControl: nil, task: nil, taskScheduler: nil, eventLoop: nil, outputCoordinator: nil)
     }
 
     init(
@@ -63,10 +66,13 @@ public final class BASICInterpreter {
         task: BASICTask? = nil,
         taskScheduler: BASICTaskScheduler? = nil,
         timerHost: BASICTimerHost? = nil,
-        eventLoop: BASICEventLoop? = nil
+        eventLoop: BASICEventLoop? = nil,
+        outputCoordinator: BASICHostOutputCoordinator? = nil
     ) {
         self.program = program
         self.host = host
+        self.loggingHost = host as? any BASICLoggingHost
+        self.outputCoordinator = outputCoordinator ?? BASICHostOutputCoordinator(host: host)
         self.runtime = runtime
         self.fileState = fileState
         self.executionControl = executionControl
@@ -633,7 +639,7 @@ public final class BASICInterpreter {
                     continue
                 }
                 updateExecutionLocation(current)
-                try executionControl?.checkBreak()
+                try checkExecutionBreak()
                 traceExecution(current)
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
                 try apply(flow: next, currentPC: pc, parsed: parsedLines)
@@ -760,14 +766,38 @@ public final class BASICInterpreter {
 
     private func updateExecutionLocation(_ line: ParsedLine) {
         currentSourceFileName = line.fileName
-        executionControl?.update(lineNumber: line.displayLineNumber, location: line.breakpointLocation, taskID: task?.id)
-        task?.update(location: line.breakpointLocation)
+        guard let executionControl else {
+            task?.update(location: line.breakpointLocation)
+            return
+        }
+        let location = executionControl.update(
+            lineNumber: line.displayLineNumber,
+            location: line.breakpointLocation,
+            taskID: task?.id
+        )
+        if let location {
+            task?.update(location: location)
+        }
+    }
+
+    private func checkExecutionBreak() throws {
+        try executionControl?.checkBreak(taskID: task?.id, location: task?.location)
+    }
+
+    private func throwPendingAsyncDebuggerPause() throws {
+        guard task?.parentID == nil,
+              let error = taskScheduler?.pendingDebuggerPause(excluding: task?.id) else {
+            return
+        }
+        throw error
     }
 
     private func drainPendingEventsIfAllowed(limit: Int) throws {
+        try throwPendingAsyncDebuggerPause()
         guard executionControl?.isStepping != true else { return }
         eventLoop?.runPending(limit: limit)
         try eventLoop?.throwPendingError()
+        try throwPendingAsyncDebuggerPause()
     }
 
     private func defaultLogModuleName() -> String {
@@ -811,7 +841,9 @@ public final class BASICInterpreter {
                     index: offset,
                     kind: debugFrameKind(for: frame.definition),
                     name: frame.definition.ownerClassName.map { "\($0).\((frame.definition.displayName))" } ?? frame.definition.displayName,
-                    location: parsedLines[safe: frame.definition.startIndex]?.breakpointLocation,
+                    location: offset == 0
+                        ? task?.location ?? parsedLines[safe: frame.definition.startIndex]?.breakpointLocation
+                        : parsedLines[safe: frame.definition.startIndex]?.breakpointLocation,
                     declaringClassName: frame.definition.ownerClassName,
                     receiverClassName: frame.receiverClassName,
                     isOverride: frame.definition.isOverride
@@ -969,21 +1001,21 @@ public final class BASICInterpreter {
             return .next
         case .print(let parts):
             let rendered = try renderPrint(parts, startColumn: outputColumn)
-            host?.print(rendered.text, terminator: rendered.terminator)
+            outputCoordinator.print(rendered.text, terminator: rendered.terminator)
             updateOutputColumn(rendered)
             return .next
         case .printUsing(let format, let values, let trailingSeparator):
             let rendered = try renderUsing(format: format, values: values, trailingSeparator: trailingSeparator, startColumn: outputColumn)
-            host?.print(rendered.text, terminator: rendered.terminator)
+            outputCoordinator.print(rendered.text, terminator: rendered.terminator)
             updateOutputColumn(rendered)
             return .next
         case .log(let level, let parts):
-            guard let loggingHost = host as? BASICLoggingHost,
+            guard let loggingHost,
                   loggingHost.isBASICLoggingEnabled else {
                 return .next
             }
             let rendered = try renderPrint(parts, startColumn: 0)
-            loggingHost.log(
+            outputCoordinator.log(
                 level: try string(level),
                 issuer: "U",
                 module: currentLogModuleOverride ?? defaultLogModuleName(),
@@ -1019,14 +1051,14 @@ public final class BASICInterpreter {
             let (color, background) = try resolveColorStatement(expressions)
             currentTextForeground = color
             currentTextBackground = background
-            host?.print(ansiColorSequence(foreground: color, background: background), terminator: "")
+            outputCoordinator.print(ansiColorSequence(foreground: color, background: background), terminator: "")
             currentGraphicsColor = color
             if let graphicsHost = host as? BASICGraphicsHost, graphicsHost.isGraphicsAvailable {
                 graphicsHost.setGraphicsColor(color)
             }
             return .next
         case .cls:
-            host?.printLine("\u{001B}[2J\u{001B}[H")
+            outputCoordinator.printLine("\u{001B}[2J\u{001B}[H")
             if let graphicsHost = host as? BASICGraphicsHost, graphicsHost.isGraphicsAvailable {
                 graphicsHost.clearGraphics(color: nil)
             }
@@ -1040,7 +1072,7 @@ public final class BASICInterpreter {
             } else {
                 let safeRow = max(1, row)
                 let safeColumn = max(1, column)
-                host?.print("\u{001B}[\(safeRow);\(safeColumn)H", terminator: "")
+                outputCoordinator.print("\u{001B}[\(safeRow);\(safeColumn)H", terminator: "")
             }
             outputColumn = max(0, column - 1)
             return .next
@@ -1189,7 +1221,11 @@ public final class BASICInterpreter {
             )
             return .next
         case .expression(let expression):
-            _ = try evaluateStandaloneExpression(expression)
+            let value = try evaluateStandaloneExpression(expression)
+            if case .task(let handle) = value {
+                _ = taskScheduler?.requestCancellation(id: handle.id)
+                throw BASICError.runtime("Task result was ignored; use AWAIT, assign it to a TASK variable, or launch it with BACKGROUND")
+            }
             return .next
         case .dim(let kind, let variable, let dimensions, let declaredType):
             try runtime.dim(kind: kind, variable: variable, dimensions: try dimensions.map { try $0.map(integer) }, declaredType: declaredType)
@@ -1292,7 +1328,7 @@ public final class BASICInterpreter {
             guard let fileHost = host as? BASICFileHost else {
                 throw BASICError.runtime("PWD is not supported by this host")
             }
-            host?.printLine(try fileHost.currentDirectoryPath())
+            outputCoordinator.printLine(try fileHost.currentDirectoryPath())
             return .next
         case .files:
             try listFiles()
@@ -1325,7 +1361,7 @@ public final class BASICInterpreter {
         case .system(let command):
             let output = try runSystemCommand(command)
             if !output.isEmpty {
-                host?.print(output, terminator: "")
+                outputCoordinator.print(output, terminator: "")
                 updateOutputColumn(text: output, terminator: "")
             }
             return .next
@@ -1345,27 +1381,44 @@ public final class BASICInterpreter {
                 try assignReadValue(.string(BASICString(result.stderr)), to: stderr)
             }
             if stdout == nil && !result.stdout.isEmpty {
-                host?.print(result.stdout, terminator: "")
+                outputCoordinator.print(result.stdout, terminator: "")
                 updateOutputColumn(text: result.stdout, terminator: "")
             }
             if stderr == nil && !result.stderr.isEmpty {
-                host?.print(result.stderr, terminator: "")
+                outputCoordinator.print(result.stderr, terminator: "")
                 updateOutputColumn(text: result.stderr, terminator: "")
             }
             return .next
         case .pipe(let input, let stages):
             let result = try runStructuredPipeline(input: input, stages: stages)
             if !result.stdout.isEmpty {
-                host?.print(result.stdout, terminator: "")
+                outputCoordinator.print(result.stdout, terminator: "")
                 updateOutputColumn(text: result.stdout, terminator: "")
             }
             if !result.stderr.isEmpty {
-                host?.print(result.stderr, terminator: "")
+                outputCoordinator.print(result.stderr, terminator: "")
                 updateOutputColumn(text: result.stderr, terminator: "")
+            }
+            return .next
+        case .background(let expression):
+            let value = try evaluate(expression)
+            guard case .task(let handle) = value,
+                  taskScheduler?.markBackground(id: handle.id) == true else {
+                throw BASICError.runtime("BACKGROUND requires an async task")
             }
             return .next
         case .join(let expression):
             try joinTask(try evaluate(expression))
+            return .next
+        case .cancelTask(let expression):
+            guard let taskScheduler else {
+                throw BASICError.runtime("CANCEL is not supported outside a running BASIC session")
+            }
+            let taskID = try taskHandleID(from: evaluate(expression), operation: "CANCEL")
+            _ = taskScheduler.markObserved(id: taskID)
+            guard taskScheduler.requestCancellation(id: taskID) else {
+                throw BASICError.runtime("CANCEL requires a known task handle")
+            }
             return .next
         case .yield:
             task?.recordYield()
@@ -1478,7 +1531,7 @@ public final class BASICInterpreter {
             return .functionReturn
         case .pause:
             if host?.readLine(prompt: "PAUSE") == nil {
-                host?.printLine("PAUSE")
+                outputCoordinator.printLine("PAUSE")
                 outputColumn = 0
             }
             return .next
@@ -2110,7 +2163,7 @@ public final class BASICInterpreter {
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
-        "LOG", "LOC", "LTW", "MID$", "RAD", "RIGHT$", "RND", "SCN", "SEC", "SGN", "SLEEP",
+        "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
         "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
@@ -2139,7 +2192,7 @@ public final class BASICInterpreter {
             guard let taskScheduler else {
                 throw BASICError.runtime("ASYNCVALUE is not supported outside a running BASIC session")
             }
-            let parentID = taskScheduler.currentTask?.id
+            let parentID = task?.id ?? taskScheduler.currentTask?.id
             let handle = taskScheduler.startHostOperationTaskWithResult(
                 name: "ASYNCVALUE",
                 parentID: parentID,
@@ -2148,7 +2201,7 @@ public final class BASICInterpreter {
                 await Task.yield()
                 return value
             }
-            return .number(Double(handle.id))
+            return .task(handle)
         case "ATN":
             return .number(atan(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "BINARY$":
@@ -2198,10 +2251,41 @@ public final class BASICInterpreter {
             return .number(sinh(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "HTN":
             return .number(tanh(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "HTTPGETASYNC":
+            try requireArgumentCount(name.name, arguments, 1)
+            let url = try rawString(arguments[0])
+            guard let taskScheduler else {
+                throw BASICError.runtime("HTTPGETASYNC is not supported outside a running BASIC session")
+            }
+            guard let networkHost = host as? BASICNetworkHost else {
+                throw BASICError.runtime("HTTPGETASYNC is not supported by this host")
+            }
+            let hostReference = BASICHostReference(host: networkHost)
+            let parentID = task?.id ?? taskScheduler.currentTask?.id
+            let handle = taskScheduler.startHostOperationTaskWithResult(
+                name: "HTTPGETASYNC",
+                parentID: parentID,
+                operation: "http-get"
+            ) {
+                guard let host = hostReference.host as? BASICNetworkHost else {
+                    throw BASICError.runtime("HTTPGETASYNC host became unavailable")
+                }
+                let response = try await host.httpGet(url: url)
+                let headers = response.headers.reduce(into: [String: BASICValue]()) { result, entry in
+                    result[entry.key] = .string(BASICString(entry.value))
+                }
+                return .dictionary(BASICDictionary(values: [
+                    "BODY": .string(BASICString(response.body)),
+                    "HEADERS": .dictionary(BASICDictionary(values: headers)),
+                    "STATUS": .number(Double(response.statusCode)),
+                    "URL": .string(BASICString(response.url))
+                ]))
+            }
+            return .task(handle)
         case "INKEY$":
             try requireArgumentCount(name.name, arguments, 0)
             let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
-            try executionControl?.checkBreak()
+            try checkExecutionBreak()
             let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
             return .string(BASICString(BASICKeyNormalizer.normalize(rawKey, encoding: encoding)))
         case "INPUT$":
@@ -2254,6 +2338,28 @@ public final class BASICInterpreter {
             return try runtime.settingReflectedField(value: evaluate(arguments[0]), selector: evaluate(arguments[1]), newValue: evaluate(arguments[2]))
         case "RAD":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments) * Double.pi / 180)
+        case "READFILEASYNC":
+            try requireArgumentCount(name.name, arguments, 1)
+            let path = try rawString(arguments[0])
+            guard let taskScheduler else {
+                throw BASICError.runtime("READFILEASYNC is not supported outside a running BASIC session")
+            }
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("READFILEASYNC is not supported by this host")
+            }
+            let hostReference = BASICHostReference(host: fileHost)
+            let parentID = task?.id ?? taskScheduler.currentTask?.id
+            let handle = taskScheduler.startHostOperationTaskWithResult(
+                name: "READFILEASYNC",
+                parentID: parentID,
+                operation: "file-read"
+            ) {
+                guard let host = hostReference.host as? BASICFileHost else {
+                    throw BASICError.runtime("READFILEASYNC host became unavailable")
+                }
+                return .string(BASICString(try host.loadTextFile(path: path)))
+            }
+            return .task(handle)
         case "RND":
             try requireArgumentRange(name.name, arguments, 0...1)
             let argument = try arguments.first.map { try numeric(try evaluate($0)) }
@@ -2269,7 +2375,7 @@ public final class BASICInterpreter {
             guard let taskScheduler else {
                 throw BASICError.runtime("SLEEP is not supported outside a running BASIC session")
             }
-            let parentID = taskScheduler.currentTask?.id
+            let parentID = task?.id ?? taskScheduler.currentTask?.id
             let nanoseconds = UInt64(milliseconds) * 1_000_000
             let handle = taskScheduler.startHostOperationTaskWithResult(
                 name: "SLEEP",
@@ -2283,7 +2389,24 @@ public final class BASICInterpreter {
                 }
                 return .number(Double(milliseconds))
             }
-            return .number(Double(handle.id))
+            return .task(handle)
+        case "TASKERROR$":
+            try requireArgumentCount(name.name, arguments, 1)
+            let taskID = try taskHandleID(from: evaluate(arguments[0]), operation: "TASKERROR$")
+            _ = taskScheduler?.markObserved(id: taskID)
+            guard let snapshot = taskScheduler?.snapshot(for: taskID) else {
+                throw BASICError.runtime("TASKERROR$ requires a known task handle")
+            }
+            return .string(BASICString(snapshot.errorDescription ?? ""))
+        case "TASKSTATUS$":
+            try requireArgumentCount(name.name, arguments, 1)
+            let taskID = try taskHandleID(from: evaluate(arguments[0]), operation: "TASKSTATUS$")
+            _ = taskScheduler?.markObserved(id: taskID)
+            guard let snapshot = taskScheduler?.snapshot(for: taskID) else {
+                throw BASICError.runtime("TASKSTATUS$ requires a known task handle")
+            }
+            let status = snapshot.isCancellationRequested ? BASICTaskState.cancelled : snapshot.state
+            return .string(BASICString(status.rawValue.uppercased()))
         case "SIN":
             return .number(sin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SPACE$":
@@ -2310,6 +2433,30 @@ public final class BASICInterpreter {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss"
             return .string(BASICString(formatter.string(from: Date())))
+        case "WRITEFILEASYNC":
+            try requireArgumentCount(name.name, arguments, 2)
+            let path = try rawString(arguments[0])
+            let text = try rawString(arguments[1])
+            guard let taskScheduler else {
+                throw BASICError.runtime("WRITEFILEASYNC is not supported outside a running BASIC session")
+            }
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("WRITEFILEASYNC is not supported by this host")
+            }
+            let hostReference = BASICHostReference(host: fileHost)
+            let parentID = task?.id ?? taskScheduler.currentTask?.id
+            let handle = taskScheduler.startHostOperationTaskWithResult(
+                name: "WRITEFILEASYNC",
+                parentID: parentID,
+                operation: "file-write"
+            ) {
+                guard let host = hostReference.host as? BASICFileHost else {
+                    throw BASICError.runtime("WRITEFILEASYNC host became unavailable")
+                }
+                try host.saveTextFile(path: path, text: text)
+                return .number(Double(text.utf8.count))
+            }
+            return .task(handle)
         case "TOJSONSTRING":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try evaluate(arguments[0])
@@ -2717,17 +2864,22 @@ public final class BASICInterpreter {
             receiver: receiver,
             receiverClassName: receiverClassName,
             argumentValues: argumentValues,
-            allowVoid: allowVoid
+            allowVoid: allowVoid,
+            outputCoordinator: outputCoordinator
         )
-        let handle = taskScheduler.startHostOperationTaskWithResult(
+        let handle = taskScheduler.startBASICOperationTaskWithResult(
             name: definition.displayName,
-            parentID: taskScheduler.currentTask?.id,
-            operation: "async function"
-        ) {
-            let result = try await job.run()
+            parentID: task?.id ?? taskScheduler.currentTask?.id
+        ) { [eventLoop, executionControl] asyncTask in
+            let result = try await job.run(
+                task: asyncTask,
+                taskScheduler: taskScheduler,
+                eventLoop: eventLoop,
+                executionControl: executionControl
+            )
             return result.value
         }
-        return FunctionCallResult(value: .number(Double(handle.id)), receiver: nil)
+        return FunctionCallResult(value: .task(handle), receiver: nil)
     }
 
     private func callFunctionSynchronously(
@@ -2815,10 +2967,13 @@ public final class BASICInterpreter {
 
         var pc = definition.startIndex + 1
         let parsed = parsedLines
-        do {
-            while pc < definition.endIndex {
+        while pc < definition.endIndex {
+            do {
+                if let task, task.isCancellationRequested {
+                    throw CancellationError()
+                }
                 updateExecutionLocation(parsed[pc])
-                try executionControl?.checkBreak()
+                try checkExecutionBreak()
                 let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
                 try drainPendingEventsIfAllowed(limit: 16)
                 switch flow {
@@ -2853,15 +3008,46 @@ public final class BASICInterpreter {
                         throw BASICError.stepComplete(parsed[pc].breakpointLocation)
                     }
                 }
+            } catch let error as BASICError {
+                if error.isDebugPause {
+                    snapshotPausedDebugState()
+                    if try suspendAsyncFunctionForDebugger(error) {
+                        continue
+                    }
+                }
+                throw error
             }
-        } catch let error as BASICError {
-            if error.isDebugPause {
-                snapshotPausedDebugState()
-            }
-            throw error
         }
 
         return resultValue()
+    }
+
+    private func suspendAsyncFunctionForDebugger(_ error: BASICError) throws -> Bool {
+        guard let task,
+              task.parentID != nil,
+              let taskScheduler else {
+            return false
+        }
+        if case .breakRequested = error,
+           executionControl?.shouldRetainBreakRequestsAsDebuggerPauses != true {
+            return false
+        }
+
+        let snapshot = task.snapshot()
+        let frames = currentSuspendedFrames(
+            fallbackKind: "Function",
+            fallbackName: functionStack.last?.definition.displayName ?? task.name,
+            fallbackLocation: snapshot.location
+        )
+        let resumedControl = try taskScheduler.suspendForDebugger(
+            task: task,
+            error: error,
+            frames: frames,
+            globalVariables: runtime.globalSnapshots()
+        )
+        setExecutionControl(resumedControl)
+        clearPausedDebugSnapshots()
+        return true
     }
 
     func dispatchEvent(selector: BASICEventSelector, data: BASICValue) throws {
@@ -3055,22 +3241,22 @@ public final class BASICInterpreter {
     }
 
     private func logTarget(module: String, text: String) {
-        guard let loggingHost = host as? BASICLoggingHost,
+        guard let loggingHost,
               loggingHost.isBASICLoggingEnabled else {
             return
         }
-        loggingHost.log(level: "TARGET", issuer: "B", module: module, text: text)
+        outputCoordinator.log(level: "TARGET", issuer: "B", module: module, text: text)
     }
 
     private func traceExecution(_ line: ParsedLine) {
-        guard let loggingHost = host as? BASICLoggingHost,
+        guard let loggingHost,
               loggingHost.isBASICLoggingEnabled,
               traceOverride ?? loggingHost.isBASICTraceEnabled else {
             return
         }
         let basicLine = line.displayLineNumber != line.sourceLineNumber ? "(\(line.displayLineNumber))" : ""
         let prefix = "\(line.sourceLineNumber)\(basicLine): "
-        loggingHost.log(
+        outputCoordinator.log(
             level: "TRACE",
             issuer: "B",
             module: line.fileName.map { URL(fileURLWithPath: $0).lastPathComponent } ?? defaultLogModuleName(),
@@ -3538,7 +3724,7 @@ public final class BASICInterpreter {
             throw BASICError.runtime("CD is not supported by this host")
         }
         guard let path else {
-            host?.printLine(try fileHost.currentDirectoryPath())
+            outputCoordinator.printLine(try fileHost.currentDirectoryPath())
             return
         }
         let resolvedPath = try string(path)
@@ -3593,7 +3779,7 @@ public final class BASICInterpreter {
             throw BASICError.runtime("DIRS is not supported by this host")
         }
         let paths = [try fileHost.currentDirectoryPath()] + runtime.directoryStack.reversed()
-        host?.printLine(paths.joined(separator: " "))
+        outputCoordinator.printLine(paths.joined(separator: " "))
     }
 
     private func listFiles() throws {
@@ -3604,7 +3790,7 @@ public final class BASICInterpreter {
             let files = try fileHost.listFiles()
             if !files.isEmpty {
                 let columns = (host as? BASICConsoleHost)?.screenColumns() ?? 80
-                host?.printLine(BASICFileListFormatter.columns(files, terminalColumns: columns))
+                outputCoordinator.printLine(BASICFileListFormatter.columns(files, terminalColumns: columns))
             }
         } catch let error as BASICError {
             throw error
@@ -3746,17 +3932,17 @@ public final class BASICInterpreter {
         var result = ""
         if let keyboardHost = host as? BASICBlockingKeyboardHost {
             while result.count < count {
-                try executionControl?.checkBreak()
+                try checkExecutionBreak()
                 guard let rawKey = keyboardHost.readBlockingKey() else {
-                    try executionControl?.checkBreak()
+                    try checkExecutionBreak()
                     break
                 }
                 result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
-                try executionControl?.checkBreak()
+                try checkExecutionBreak()
             }
         } else if let keyboardHost = host as? BASICKeyboardHost {
             while result.count < count, let rawKey = keyboardHost.readKey(), !rawKey.isEmpty {
-                try executionControl?.checkBreak()
+                try checkExecutionBreak()
                 result += BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
             }
         }
@@ -4041,18 +4227,18 @@ public final class BASICInterpreter {
         }
         guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
             runtime.lastSystemStatus = 1
-            host?.printLine("\(command) not found")
+            outputCoordinator.printLine("\(command) not found")
             return
         }
         runtime.lastSystemStatus = 0
-        host?.printLine(path)
+        outputCoordinator.printLine(path)
     }
 
     private func printCommandType(command: String) throws {
         let upper = command.uppercased()
         if Self.basicBuiltinCommands.contains(upper) {
             runtime.lastSystemStatus = 0
-            host?.printLine("\(command) is a BASICShell builtin")
+            outputCoordinator.printLine("\(command) is a BASICShell builtin")
             return
         }
         guard let resolver = host as? BASICExecutableResolverHost else {
@@ -4060,11 +4246,11 @@ public final class BASICInterpreter {
         }
         guard let path = try resolver.resolveExecutable(command, environment: runtime.environmentPatch) else {
             runtime.lastSystemStatus = 1
-            host?.printLine("\(command) not found")
+            outputCoordinator.printLine("\(command) not found")
             return
         }
         runtime.lastSystemStatus = 0
-        host?.printLine("\(command) is \(path)")
+        outputCoordinator.printLine("\(command) is \(path)")
     }
 
     private func environmentName(forExport name: String) -> String {
@@ -4624,23 +4810,34 @@ public final class BASICInterpreter {
     }
 
     private func awaitTaskValueIfKnown(_ value: BASICValue) throws -> BASICValue? {
-        guard let taskScheduler, let number = value.number else {
+        guard let taskScheduler else { return nil }
+        let taskID: Int
+        switch value {
+        case .task(let handle):
+            taskID = handle.id
+        case .number(let number) where number > 0 && Double(Int(number)) == number:
+            taskID = Int(number)
+        default:
             return nil
         }
-        let taskID = Int(number)
-        guard taskID > 0, Double(taskID) == number else {
-            return nil
-        }
+        _ = taskScheduler.markObserved(id: taskID)
 
         var suspendedTask: BASICTask?
         var didSuspend = false
+        let breakWakeToken = executionControl?.registerWaitWakeHandler { [weak taskScheduler] in
+            taskScheduler?.notifyWaiters()
+        }
         defer {
+            if let breakWakeToken {
+                executionControl?.unregisterWaitWakeHandler(breakWakeToken)
+            }
             if didSuspend, let suspendedTask {
-                taskScheduler.markRunning(suspendedTask)
+                taskScheduler.markResumedRunning(suspendedTask)
             }
         }
 
         while true {
+            let generation = taskScheduler.currentStateGeneration
             switch taskScheduler.awaitState(for: taskID) {
             case .missing:
                 return nil
@@ -4651,8 +4848,13 @@ public final class BASICInterpreter {
             case .failed(let message):
                 throw BASICError.runtime(message.map { "Awaited task failed: \($0)" } ?? "Awaited task failed")
             case .waiting:
+                if let currentTask = task ?? taskScheduler.currentTask,
+                   currentTask.isCancellationRequested {
+                    cancelOwnedAwaitedTask(taskID, parent: currentTask, scheduler: taskScheduler)
+                    throw BASICError.breakRequested(currentTask.snapshot().location?.lineNumber)
+                }
                 if !didSuspend {
-                    guard let currentTask = taskScheduler.currentTask else {
+                    guard let currentTask = task ?? taskScheduler.currentTask else {
                         throw BASICError.runtime("AWAIT requires a running BASIC task")
                     }
                     suspendedTask = currentTask
@@ -4669,30 +4871,37 @@ public final class BASICInterpreter {
                     )
                     didSuspend = true
                 }
-                try executionControl?.checkBreak()
-                Thread.sleep(forTimeInterval: 0.001)
+                try throwPendingAsyncDebuggerPause()
+                try checkExecutionBreak()
+                try eventLoop?.throwPendingError()
+                taskScheduler.waitForStateChange(after: generation)
             }
         }
     }
 
     private func joinTask(_ value: BASICValue) throws {
-        guard let taskScheduler, let number = value.number else {
-            throw BASICError.runtime("JOIN requires a task handle")
+        guard let taskScheduler else {
+            throw BASICError.runtime("JOIN requires a running BASIC session")
         }
-        let taskID = Int(number)
-        guard taskID > 0, Double(taskID) == number else {
-            throw BASICError.runtime("JOIN requires a task handle")
-        }
+        let taskID = try taskHandleID(from: value, operation: "JOIN")
+        _ = taskScheduler.markObserved(id: taskID)
 
         var suspendedTask: BASICTask?
         var didSuspend = false
+        let breakWakeToken = executionControl?.registerWaitWakeHandler { [weak taskScheduler] in
+            taskScheduler?.notifyWaiters()
+        }
         defer {
+            if let breakWakeToken {
+                executionControl?.unregisterWaitWakeHandler(breakWakeToken)
+            }
             if didSuspend, let suspendedTask {
-                taskScheduler.markRunning(suspendedTask)
+                taskScheduler.markResumedRunning(suspendedTask)
             }
         }
 
         while true {
+            let generation = taskScheduler.currentStateGeneration
             switch taskScheduler.joinState(for: taskID) {
             case .missing:
                 throw BASICError.runtime("JOIN requires a known task handle")
@@ -4703,8 +4912,13 @@ public final class BASICInterpreter {
             case .failed(let message):
                 throw BASICError.runtime(message.map { "Joined task failed: \($0)" } ?? "Joined task failed")
             case .waiting:
+                if let currentTask = task ?? taskScheduler.currentTask,
+                   currentTask.isCancellationRequested {
+                    cancelOwnedAwaitedTask(taskID, parent: currentTask, scheduler: taskScheduler)
+                    throw BASICError.breakRequested(currentTask.snapshot().location?.lineNumber)
+                }
                 if !didSuspend {
-                    guard let currentTask = taskScheduler.currentTask else {
+                    guard let currentTask = task ?? taskScheduler.currentTask else {
                         throw BASICError.runtime("JOIN requires a running BASIC task")
                     }
                     suspendedTask = currentTask
@@ -4721,10 +4935,35 @@ public final class BASICInterpreter {
                     )
                     didSuspend = true
                 }
-                try executionControl?.checkBreak()
-                Thread.sleep(forTimeInterval: 0.001)
+                try throwPendingAsyncDebuggerPause()
+                try checkExecutionBreak()
+                try eventLoop?.throwPendingError()
+                taskScheduler.waitForStateChange(after: generation)
             }
         }
+    }
+
+    private func cancelOwnedAwaitedTask(
+        _ awaitedTaskID: Int,
+        parent: BASICTask,
+        scheduler: BASICTaskScheduler
+    ) {
+        guard scheduler.handle(for: awaitedTaskID)?.parentID == parent.id else { return }
+        _ = scheduler.requestCancellation(id: awaitedTaskID)
+    }
+
+    private func taskHandleID(from value: BASICValue, operation: String) throws -> Int {
+        if case .task(let handle) = value {
+            return handle.id
+        }
+        guard let number = value.number else {
+            throw BASICError.runtime("\(operation) requires a task handle")
+        }
+        let taskID = Int(number)
+        guard taskID > 0, Double(taskID) == number else {
+            throw BASICError.runtime("\(operation) requires a task handle")
+        }
+        return taskID
     }
 
     private func capturedVariableNames(in expression: Expression) -> [VariableName] {

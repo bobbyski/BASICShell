@@ -7,7 +7,7 @@
 
 In the current runtime slice, `YIELD` does not visibly pause execution because only one logical task runs at a time. It records a scheduler yield point on the current task and behaves like a no-op for program output.
 
-Future async/thread slices will use `YIELD` as a safe place for the scheduler to let other ready BASIC tasks run.
+Async and event-driven programs use `YIELD` as a safe cooperative boundary where the scheduler can process ready work, cancellation, host completions, and queued events.
 
 ```basic
 print "before"

@@ -117,7 +117,9 @@ indirect enum Statement: Equatable {
     case system(Expression)
     case exec(command: Expression, arguments: [Expression], stdout: ReadTarget?, stderr: ReadTarget?, tty: Bool, timeout: Expression?)
     case pipe(input: Expression?, stages: [BASICPipelineStage])
+    case background(Expression)
     case join(Expression)
+    case cancelTask(Expression)
     case yield
     case randomize(Expression?)
     case goto(Int)
