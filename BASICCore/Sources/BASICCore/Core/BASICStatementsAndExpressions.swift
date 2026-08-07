@@ -31,6 +31,11 @@ struct BASICPipelineStage: Equatable {
     let arguments: [Expression]
 }
 
+struct BASICLegacyFieldSpec: Equatable {
+    let width: Expression
+    let variable: VariableName
+}
+
 indirect enum Statement: Equatable {
     case empty
     case remark
@@ -92,10 +97,15 @@ indirect enum Statement: Equatable {
     case optionStringSubstitution(Bool)
     case input(prompt: Expression?, target: ReadTarget)
     case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?, defaultValue: Expression?)
-    case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression)
+    case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression, recordLength: Expression?)
     case closeFile(Expression?)
     case putFile(number: Expression, parts: [PrintPart])
     case getFile(number: Expression, targets: [ReadTarget])
+    case getRecordFile(number: Expression, record: Expression?)
+    case writeFile(number: Expression, values: [Expression])
+    case fieldFile(number: Expression, fields: [BASICLegacyFieldSpec])
+    case setFieldString(target: ReadTarget, value: Expression, rightAligned: Bool)
+    case seekFile(number: Expression, position: Expression)
     case resetFile(Expression)
     case printFile(number: Expression, parts: [PrintPart])
     case printFileUsing(number: Expression, format: Expression, values: [Expression], trailingSeparator: PrintSeparator?)

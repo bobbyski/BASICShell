@@ -2,7 +2,7 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen)
 
-Returns `TRUE` when a legacy sequential input file has reached the end of its contents.
+Returns `TRUE` when a legacy numbered file's current position has reached the end of its contents. Text positions count characters; RAW/BINARY positions count bytes.
 
 ```basic
 open "notes.txt" for input as #1

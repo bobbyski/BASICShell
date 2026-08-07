@@ -824,6 +824,27 @@ public final class BASICInterpreter {
         pausedDebugGlobalVariables ?? runtime.globalSnapshots()
     }
 
+    var debugFiles: [BASICFileSnapshot] {
+        let numbered = legacyFiles.keys.sorted().compactMap { handle -> BASICFileSnapshot? in
+            guard let file = legacyFiles[handle] else { return nil }
+            let logicalSize = file.contentType == .raw ? file.content.byteCount : file.content.characterCount
+            return BASICFileSnapshot(
+                id: "legacy:\(handle)",
+                reference: "#\(handle)",
+                path: file.path ?? "",
+                access: file.access?.rawValue ?? "",
+                type: file.legacyMode?.rawValue ?? file.contentType?.rawValue ?? "",
+                position: file.position,
+                size: file.content.byteCount,
+                isAtEOF: file.position >= logicalSize,
+                isOpen: file.isOpen,
+                recordLength: file.recordLength,
+                lastError: file.lastError
+            )
+        }
+        return runtime.fileSnapshots + numbered
+    }
+
     var debugCallStack: [BASICCallStackFrame] {
         pausedDebugCallStack ?? currentDebugCallStack()
     }
@@ -949,6 +970,17 @@ public final class BASICInterpreter {
     }
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
+        do {
+            let flow = try executeUnchecked(statement, pc: pc, parsed: parsed)
+            clearLegacyFileError(for: statement)
+            return flow
+        } catch {
+            recordLegacyFileError(error, for: statement)
+            throw error
+        }
+    }
+
+    private func executeUnchecked(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
         case .empty, .remark, .data, .defFunction, .functionTypeDeclaration:
             return .next
@@ -1285,17 +1317,37 @@ public final class BASICInterpreter {
             }
             outputColumn = 0
             return .next
-        case .openFile(let path, let mode, let number):
-            try openLegacyFile(path: path, mode: mode, number: number)
+        case .openFile(let path, let mode, let number, let recordLength):
+            try openLegacyFile(path: path, mode: mode, number: number, recordLength: recordLength)
             return .next
         case .closeFile(let number):
             try closeLegacyFile(number: number)
             return .next
         case .putFile(let number, let parts):
-            try printLegacyFile(number: number, parts: parts)
+            let handle = try legacyFileHandle(number)
+            if legacyFiles[handle]?.legacyMode == .random {
+                try putLegacyRecord(handle: handle, parts: parts)
+            } else {
+                try printLegacyFile(number: number, parts: parts)
+            }
             return .next
         case .getFile(let number, let targets):
             try inputLegacyFile(number: number, targets: targets)
+            return .next
+        case .getRecordFile(let number, let record):
+            try getLegacyRecord(handle: legacyFileHandle(number), record: record)
+            return .next
+        case .writeFile(let number, let values):
+            try writeLegacyFile(number: number, values: values)
+            return .next
+        case .fieldFile(let number, let fields):
+            try defineLegacyFields(number: number, fields: fields)
+            return .next
+        case .setFieldString(let target, let value, let rightAligned):
+            try setLegacyFieldString(target: target, value: value, rightAligned: rightAligned)
+            return .next
+        case .seekFile(let number, let position):
+            try seekLegacyFile(number: number, position: position)
             return .next
         case .resetFile(let number):
             try resetLegacyFile(number: number)
@@ -1576,6 +1628,38 @@ public final class BASICInterpreter {
         case .exitSelect:
             return .exitSelect
         }
+    }
+
+    private func legacyFileNumber(in statement: Statement) -> Expression? {
+        switch statement {
+        case .closeFile(let number): return number
+        case .putFile(let number, _), .getFile(let number, _), .getRecordFile(let number, _),
+             .writeFile(let number, _), .fieldFile(let number, _), .seekFile(let number, _),
+             .resetFile(let number), .printFile(let number, _), .printFileUsing(let number, _, _, _),
+             .inputFile(let number, _), .lineInputFile(let number, _):
+            return number
+        default:
+            return nil
+        }
+    }
+
+    private func clearLegacyFileError(for statement: Statement) {
+        guard let number = legacyFileNumber(in: statement),
+              let handle = try? legacyFileHandle(number) else { return }
+        legacyFiles[handle]?.lastError = nil
+    }
+
+    private func recordLegacyFileError(_ error: Error, for statement: Statement) {
+        if case .setFieldString(let target, _, _) = statement {
+            let variableName = inputTargetName(target).uppercased()
+            for handle in legacyFiles.keys where legacyFiles[handle]?.fields.contains(where: { $0.variable.normalized == variableName }) == true {
+                legacyFiles[handle]?.lastError = String(describing: error)
+            }
+            return
+        }
+        guard let number = legacyFileNumber(in: statement),
+              let handle = try? legacyFileHandle(number) else { return }
+        legacyFiles[handle]?.lastError = String(describing: error)
     }
 
     private func forLoopFlow(
@@ -1871,6 +1955,9 @@ public final class BASICInterpreter {
             }
 
             let normalized = name.uppercased()
+            guard !BASICRuntime.isBuiltInClass(name) else {
+                throw BASICError.runtime("Cannot redefine built-in class \(normalized)")
+            }
             guard definitions[normalized] == nil else {
                 throw BASICError.runtime("CLASS \(name) is already defined")
             }
@@ -2162,8 +2249,8 @@ public final class BASICInterpreter {
 
     private static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
-        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$",
-        "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
+        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
+        "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
         "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
@@ -2179,11 +2266,12 @@ public final class BASICInterpreter {
         case "ACS":
             return .number(acos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASC":
-            let value = try singleRawStringArgument(name: name.name, arguments: arguments)
-            guard let scalar = value.unicodeScalars.first else {
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let string = try evaluate(arguments[0]).string,
+                  let byte = string.rawData.first else {
                 throw BASICError.runtime("ASC requires a non-empty string")
             }
-            return .number(Double(scalar.value))
+            return .number(Double(byte))
         case "ASN":
             return .number(asin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASYNCVALUE":
@@ -2301,12 +2389,48 @@ public final class BASICInterpreter {
             let value = try rawString(arguments[0])
             let count = max(0, try integer(arguments[1]))
             return .string(BASICString(String(value.prefix(count))))
-        case "LOG", "LOC":
+        case "LOF":
+            try requireArgumentCount(name.name, arguments, 1)
+            return .number(Double(try legacyFileLength(arguments[0])))
+        case "LOC":
+            try requireArgumentCount(name.name, arguments, 1)
+            let value = try evaluate(arguments[0])
+            if let number = value.number, number.rounded() == number,
+               legacyFiles[Int(number)]?.isOpen == true {
+                return .number(Double(try legacyFileLocation(handle: Int(number))))
+            }
+            return .number(log(try numeric(value)))
+        case "LOG":
             return .number(log(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "LTW":
             return .number(log2(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "MID$":
             return try intrinsicMid(arguments: arguments)
+        case "MKI$":
+            let value = try singleIntegerArgument(name: name.name, arguments: arguments)
+            guard (Int(Int16.min)...Int(Int16.max)).contains(value) else {
+                throw BASICError.runtime("Overflow")
+            }
+            let bits = UInt16(bitPattern: Int16(value))
+            return .string(BASICString(rawData: Data([
+                UInt8(bits & 0xff), UInt8((bits >> 8) & 0xff)
+            ])))
+        case "MKS$":
+            let bits = Float(try singleNumericArgument(name: name.name, arguments: arguments)).bitPattern
+            return .string(BASICString(rawData: littleEndianData(bits)))
+        case "MKD$":
+            let bits = try singleNumericArgument(name: name.name, arguments: arguments).bitPattern
+            return .string(BASICString(rawData: littleEndianData(bits)))
+        case "CVI":
+            let data = try conversionData(name: name.name, arguments: arguments, count: 2)
+            let bits = UInt16(data[0]) | UInt16(data[1]) << 8
+            return .number(Double(Int16(bitPattern: bits)))
+        case "CVS":
+            let data = try conversionData(name: name.name, arguments: arguments, count: 4)
+            return .number(Double(Float(bitPattern: littleEndianUInt32(data))))
+        case "CVD":
+            let data = try conversionData(name: name.name, arguments: arguments, count: 8)
+            return .number(Double(bitPattern: littleEndianUInt64(data)))
         case "POS":
             try requireArgumentCount(name.name, arguments, 1)
             return .number(Double(outputColumn + 1))
@@ -2369,6 +2493,10 @@ public final class BASICInterpreter {
             return .number(value == 0 ? 0 : (value < 0 ? -1 : 1))
         case "SEC":
             return .number(1 / cos(try singleNumericArgument(name: name.name, arguments: arguments)))
+        case "SEEK":
+            try requireArgumentCount(name.name, arguments, 1)
+            let handle = try legacyFileHandle(arguments[0])
+            return .number(Double(try legacyFileSeekPosition(handle: handle)))
         case "SLEEP":
             try requireArgumentCount(name.name, arguments, 1)
             let milliseconds = max(0, try integer(arguments[0]))
@@ -2651,6 +2779,12 @@ public final class BASICInterpreter {
     }
 
     private func callMethod(receiver: VariableReference, method: VariableName, arguments: [Expression], allowVoid: Bool = false) throws -> BASICValue {
+        if receiver.base.normalized == "FILE",
+           receiver.indexes.isEmpty,
+           receiver.fields.isEmpty,
+           !runtime.hasVariable(receiver.base) {
+            return try callSharedFileMethod(method: method, arguments: arguments)
+        }
         let receiverDeclaredType = runtime.declaredType(for: receiver)
         let receiverValue = try runtime.value(
             for: receiver,
@@ -2713,6 +2847,94 @@ public final class BASICInterpreter {
                 throw missingMethodError
             }
             throw error
+        }
+    }
+
+    private func callSharedFileMethod(method: VariableName, arguments: [Expression]) throws -> BASICValue {
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("File I/O is not supported by this host")
+        }
+        func path(_ expression: Expression) throws -> String {
+            try validatedBASICFilePath(string(expression))
+        }
+        switch method.normalized {
+        case "CWD", "CWD$":
+            try requireArgumentCount("File.Cwd$", arguments, 0)
+            return .string(BASICString(try fileHost.currentDirectoryPath()))
+        case "CHDIR":
+            try requireArgumentCount("File.ChDir", arguments, 1)
+            try fileHost.changeDirectory(path: path(arguments[0]))
+            return .empty
+        case "MKDIR":
+            try requireArgumentCount("File.Mkdir", arguments, 1)
+            try fileHost.createDirectory(path: path(arguments[0]))
+            return .empty
+        case "RM":
+            try requireArgumentCount("File.Rm", arguments, 1)
+            try fileHost.removePath(path: path(arguments[0]))
+            return .empty
+        case "RENAME":
+            try requireArgumentCount("File.Rename", arguments, 2)
+            try fileHost.renamePath(from: path(arguments[0]), to: path(arguments[1]))
+            return .empty
+        case "EXISTS":
+            try requireArgumentCount("File.Exists", arguments, 1)
+            return .boolean(try fileHost.fileExists(path: path(arguments[0])))
+        case "ISDIR":
+            try requireArgumentCount("File.IsDir", arguments, 1)
+            return .boolean(try fileHost.isDirectory(path: path(arguments[0])))
+        case "FILES", "FILES$":
+            try requireArgumentRange("File.Files$", arguments, 0...1)
+            let directoryPath = try arguments.first.map(path) ?? fileHost.currentDirectoryPath()
+            let names = try fileHost.listDirectory(path: directoryPath)
+            return .array(BASICArray(
+                dimensions: [names.isEmpty ? -1 : names.count - 1],
+                type: .scalar(.string),
+                isDynamic: true,
+                values: names.map { .string(BASICString($0)) }
+            ))
+        case "READTEXT", "READTEXT$":
+            try requireArgumentCount("File.ReadText$", arguments, 1)
+            return .string(BASICString(try fileHost.loadTextFile(path: path(arguments[0]))))
+        case "WRITETEXT":
+            try requireArgumentCount("File.WriteText", arguments, 2)
+            try fileHost.saveTextFile(path: path(arguments[0]), text: string(arguments[1]))
+            return .empty
+        case "READBYTES", "READBYTES$":
+            try requireArgumentCount("File.ReadBytes$", arguments, 1)
+            return .string(BASICString(rawData: try fileHost.loadFileData(path: path(arguments[0]))))
+        case "WRITEBYTES":
+            try requireArgumentCount("File.WriteBytes", arguments, 2)
+            guard let bytes = try evaluate(arguments[1]).string else {
+                throw BASICError.runtime("File.WriteBytes expects a string")
+            }
+            try fileHost.saveFileData(path: path(arguments[0]), data: bytes.rawData)
+            return .empty
+        case "APPENDBYTES":
+            try requireArgumentCount("File.AppendBytes", arguments, 2)
+            let filePath = try path(arguments[0])
+            guard let bytes = try evaluate(arguments[1]).string else {
+                throw BASICError.runtime("File.AppendBytes expects a string")
+            }
+            var data = try fileHost.fileExists(path: filePath) ? fileHost.loadFileData(path: filePath) : Data()
+            data.append(bytes.rawData)
+            try fileHost.saveFileData(path: filePath, data: data)
+            return .empty
+        case "READJSON":
+            try requireArgumentRange("File.ReadJson", arguments, 1...2)
+            let permissive = try arguments.count == 2 ? boolean(evaluate(arguments[1])) : true
+            return try runtime.valueFromJSONString(
+                fileHost.loadTextFile(path: path(arguments[0])),
+                permissive: permissive
+            )
+        case "WRITEJSON":
+            try requireArgumentRange("File.WriteJson", arguments, 2...3)
+            let pretty = try arguments.count == 3 ? boolean(evaluate(arguments[2])) : false
+            let text = try runtime.jsonString(for: evaluate(arguments[1]), pretty: pretty)
+            try fileHost.saveTextFile(path: path(arguments[0]), text: text)
+            return .empty
+        default:
+            throw BASICError.runtime("File has no shared method \(method.name)")
         }
     }
 
@@ -3727,7 +3949,7 @@ public final class BASICInterpreter {
             outputCoordinator.printLine(try fileHost.currentDirectoryPath())
             return
         }
-        let resolvedPath = try string(path)
+        let resolvedPath = try validatedBASICFilePath(string(path))
         do {
             try fileHost.changeDirectory(path: resolvedPath)
         } catch let error as BASICError {
@@ -3799,7 +4021,7 @@ public final class BASICInterpreter {
         }
     }
 
-    private func openLegacyFile(path: Expression, mode: BASICLegacyFileMode, number: Expression) throws {
+    private func openLegacyFile(path: Expression, mode: BASICLegacyFileMode, number: Expression, recordLength: Expression?) throws {
         guard let fileHost = host as? BASICFileHost else {
             throw BASICError.runtime("File I/O is not supported by this host")
         }
@@ -3807,11 +4029,19 @@ public final class BASICInterpreter {
         guard legacyFiles[handle]?.isOpen != true else {
             throw BASICError.runtime("File Already Open")
         }
-        let resolvedPath = try string(path)
+        let resolvedPath = try validatedBASICFilePath(string(path))
+        let resolvedRecordLength = try recordLength.map(integer) ?? (mode == .random ? 128 : nil)
+        if recordLength != nil, mode != .random {
+            throw BASICError.runtime("LEN is only valid for RANDOM files")
+        }
+        if mode == .random, (resolvedRecordLength ?? 0) <= 0 {
+            throw BASICError.runtime("Bad record length")
+        }
         let exists = try fileHost.fileExists(path: resolvedPath)
         let content: BASICString
         let position: Int
         let access: BASICFileAccess
+        let contentType: BASICFileContentType
         switch mode {
         case .input:
             guard exists else { throw BASICError.runtime("File Not Found") }
@@ -3819,24 +4049,38 @@ public final class BASICInterpreter {
             content = BASICString(text)
             position = 0
             access = .read
+            contentType = .text
         case .output:
             content = BASICString("")
             position = 0
             access = .write
+            contentType = .text
             try fileHost.saveTextFile(path: resolvedPath, text: "")
         case .append:
             let text = exists ? try fileHost.loadTextFile(path: resolvedPath) : ""
             content = BASICString(text)
             position = text.count
             access = .write
+            contentType = .text
+        case .binary, .random:
+            let data = exists ? try fileHost.loadFileData(path: resolvedPath) : Data()
+            content = BASICString(rawData: data)
+            position = 0
+            access = .both
+            contentType = .raw
+            if !exists {
+                try fileHost.saveFileData(path: resolvedPath, data: Data())
+            }
         }
         legacyFiles[handle] = BASICOpenFile(
             path: resolvedPath,
             access: access,
-            contentType: .text,
+            contentType: contentType,
+            legacyMode: mode,
             isOpen: true,
             content: content,
-            position: position
+            position: position,
+            recordLength: resolvedRecordLength
         )
     }
 
@@ -3868,6 +4112,9 @@ public final class BASICInterpreter {
     private func printLegacyFile(number: Expression, parts: [PrintPart]) throws {
         let handle = try legacyFileHandle(number)
         var file = try writableLegacyFile(handle: handle)
+        guard file.contentType == .text else {
+            throw BASICError.runtime("Bad file mode")
+        }
         let rendered = try renderPrint(parts)
         let path = try legacyOpenPath(file)
         let text = rendered.text + rendered.terminator
@@ -3877,9 +4124,173 @@ public final class BASICInterpreter {
         legacyFiles[handle] = file
     }
 
+    private func writeLegacyFile(number: Expression, values: [Expression]) throws {
+        let handle = try legacyFileHandle(number)
+        var file = try writableLegacyFile(handle: handle)
+        guard file.contentType == .text else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        let fields = try values.map { expression -> String in
+            let value = try evaluate(expression)
+            switch value {
+            case .string(let string):
+                return "\"" + string.rawString.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            case .boolean(let boolean):
+                return boolean ? "TRUE" : "FALSE"
+            case .empty, .null:
+                return ""
+            default:
+                return value.description
+            }
+        }
+        let text = fields.joined(separator: ",") + "\n"
+        let path = try legacyOpenPath(file)
+        file.content = file.content.concatenating(BASICString(text))
+        file.position = file.content.characterCount
+        try legacyFileHost().saveTextFile(path: path, text: file.content.rawString)
+        legacyFiles[handle] = file
+    }
+
+    private func defineLegacyFields(number: Expression, fields: [BASICLegacyFieldSpec]) throws {
+        let handle = try legacyFileHandle(number)
+        guard var file = legacyFiles[handle], file.isOpen, file.legacyMode == .random,
+              let recordLength = file.recordLength, recordLength > 0 else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        var definitions: [BASICRandomField] = []
+        var totalWidth = 0
+        for field in fields {
+            let width = try integer(field.width)
+            guard width > 0 else { throw BASICError.runtime("FIELD width must be positive") }
+            guard field.variable.name.hasSuffix("$") else {
+                throw BASICError.runtime("FIELD requires string variables")
+            }
+            totalWidth += width
+            guard totalWidth <= recordLength else {
+                throw BASICError.runtime("FIELD overflow")
+            }
+            definitions.append(BASICRandomField(width: width, variable: field.variable))
+            try runtime.assign(
+                kind: .bare,
+                variable: field.variable,
+                declaredType: nil,
+                value: .string(BASICString(rawData: Data(repeating: 32, count: width)))
+            )
+        }
+        file.fields = definitions
+        legacyFiles[handle] = file
+    }
+
+    private func setLegacyFieldString(target: ReadTarget, value: Expression, rightAligned: Bool) throws {
+        guard case .variable(let variable) = target else {
+            throw BASICError.runtime("LSET and RSET require a FIELD string variable")
+        }
+        guard let field = legacyFiles.values.lazy.compactMap({ file in
+            file.fields.first { $0.variable.normalized == variable.normalized }
+        }).first else {
+            throw BASICError.runtime("LSET and RSET require a FIELD string variable")
+        }
+        guard let string = try evaluate(value).string else {
+            throw BASICError.runtime("Expected a string")
+        }
+        var bytes = Data(string.rawData.prefix(field.width))
+        if bytes.count < field.width {
+            let padding = Data(repeating: 32, count: field.width - bytes.count)
+            bytes = rightAligned ? padding + bytes : bytes + padding
+        }
+        try assignReadValue(.string(BASICString(rawData: bytes)), to: target)
+    }
+
+    private func putLegacyRecord(handle: Int, parts: [PrintPart]) throws {
+        guard var file = legacyFiles[handle], file.isOpen, file.legacyMode == .random,
+              let recordLength = file.recordLength, recordLength > 0 else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        let recordNumber: Int
+        if parts.isEmpty {
+            recordNumber = file.position / recordLength + 1
+        } else if parts.count == 1, case .expression(let expression) = parts[0] {
+            recordNumber = try integer(expression)
+        } else {
+            throw BASICError.runtime("PUT expects an optional record number in RANDOM mode")
+        }
+        guard recordNumber > 0 else { throw BASICError.runtime("Bad record number") }
+        var record = Data()
+        for field in file.fields {
+            guard let value = runtime.value(for: field.variable).string else {
+                throw BASICError.runtime("FIELD variable must be a string")
+            }
+            var bytes = Data(value.rawData.prefix(field.width))
+            if bytes.count < field.width {
+                bytes.append(Data(repeating: 32, count: field.width - bytes.count))
+            }
+            record.append(bytes)
+        }
+        if record.count < recordLength {
+            record.append(Data(repeating: 0, count: recordLength - record.count))
+        }
+        let offset = (recordNumber - 1) * recordLength
+        var data = file.content.rawData
+        if data.count < offset {
+            data.append(Data(repeating: 0, count: offset - data.count))
+        }
+        let replacementEnd = min(data.count, offset + recordLength)
+        data.replaceSubrange(offset..<replacementEnd, with: record.prefix(recordLength))
+        file.content = BASICString(rawData: data)
+        file.position = offset + recordLength
+        try legacyFileHost().saveFileData(path: legacyOpenPath(file), data: data)
+        legacyFiles[handle] = file
+    }
+
+    private func getLegacyRecord(handle: Int, record: Expression?) throws {
+        guard var file = legacyFiles[handle], file.isOpen, file.legacyMode == .random,
+              let recordLength = file.recordLength, recordLength > 0 else {
+            throw BASICError.runtime("Bad file mode")
+        }
+        let recordNumber = try record.map(integer) ?? (file.position / recordLength + 1)
+        guard recordNumber > 0 else { throw BASICError.runtime("Bad record number") }
+        let offset = (recordNumber - 1) * recordLength
+        let data = file.content.rawData
+        guard offset + recordLength <= data.count else {
+            throw BASICError.runtime("Input past end")
+        }
+        let bytes = data.subdata(in: offset..<(offset + recordLength))
+        var fieldOffset = 0
+        for field in file.fields {
+            let end = fieldOffset + field.width
+            try runtime.assign(
+                kind: .bare,
+                variable: field.variable,
+                declaredType: nil,
+                value: .string(BASICString(rawData: bytes.subdata(in: fieldOffset..<end)))
+            )
+            fieldOffset = end
+        }
+        file.position = offset + recordLength
+        legacyFiles[handle] = file
+    }
+
+    private func seekLegacyFile(number: Expression, position: Expression) throws {
+        let handle = try legacyFileHandle(number)
+        guard var file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        let requested = try integer(position)
+        guard requested > 0 else { throw BASICError.runtime("Bad file position") }
+        if file.legacyMode == .random, let recordLength = file.recordLength {
+            file.position = (requested - 1) * recordLength
+        } else {
+            file.position = requested - 1
+        }
+        legacyFiles[handle] = file
+    }
+
     private func printLegacyFileUsing(number: Expression, format: Expression, values: [Expression], trailingSeparator: PrintSeparator?) throws {
         let handle = try legacyFileHandle(number)
         var file = try writableLegacyFile(handle: handle)
+        guard file.contentType == .text else {
+            throw BASICError.runtime("Bad file mode")
+        }
         let rendered = try renderUsing(format: format, values: values, trailingSeparator: trailingSeparator)
         let path = try legacyOpenPath(file)
         let text = rendered.text + rendered.terminator
@@ -3914,7 +4325,8 @@ public final class BASICInterpreter {
     private func legacyEOF(_ number: Expression) throws -> BASICValue {
         let handle = try legacyFileHandle(number)
         let file = try readableLegacyFile(handle: handle)
-        return .boolean(file.position >= file.content.rawString.count)
+        let size = file.contentType == .raw ? file.content.byteCount : file.content.characterCount
+        return .boolean(file.position >= size)
     }
 
     private func intrinsicInputString(name: String, arguments: [Expression]) throws -> BASICValue {
@@ -3951,6 +4363,18 @@ public final class BASICInterpreter {
 
     private func readLegacyCharacters(handle: Int, count: Int) throws -> BASICString {
         var file = try readableLegacyFile(handle: handle)
+        if file.contentType == .raw {
+            let data = file.content.rawData
+            guard file.position < data.count else {
+                legacyFiles[handle] = file
+                throw BASICError.runtime("Input past end")
+            }
+            let end = min(data.count, file.position + count)
+            let value = BASICString(rawData: data.subdata(in: file.position..<end))
+            file.position = end
+            legacyFiles[handle] = file
+            return value
+        }
         let raw = file.content.rawString
         guard file.position < raw.count else {
             legacyFiles[handle] = file
@@ -3966,6 +4390,9 @@ public final class BASICInterpreter {
 
     private func readLegacyLine(handle: Int) throws -> String? {
         var file = try readableLegacyFile(handle: handle)
+        guard file.contentType == .text else {
+            throw BASICError.runtime("Bad file mode")
+        }
         let raw = file.content.rawString
         guard file.position < raw.count else {
             legacyFiles[handle] = file
@@ -3989,16 +4416,24 @@ public final class BASICInterpreter {
         var fields: [String] = []
         var current = ""
         var inQuotes = false
-        var iterator = line.makeIterator()
-        while let character = iterator.next() {
+        let characters = Array(line)
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
             if character == "\"" {
-                inQuotes.toggle()
+                if inQuotes, index + 1 < characters.count, characters[index + 1] == "\"" {
+                    current.append("\"")
+                    index += 1
+                } else {
+                    inQuotes.toggle()
+                }
             } else if character == "," && !inQuotes {
                 fields.append(current.trimmingCharacters(in: .whitespaces))
                 current = ""
             } else {
                 current.append(character)
             }
+            index += 1
         }
         fields.append(current.trimmingCharacters(in: .whitespaces))
         return fields
@@ -4094,7 +4529,7 @@ public final class BASICInterpreter {
         guard let file = legacyFiles[handle], file.isOpen else {
             throw BASICError.runtime("Bad file number")
         }
-        guard file.access == .read else {
+        guard file.access == .read || file.access == .both else {
             throw BASICError.runtime("Bad file mode")
         }
         return file
@@ -4104,7 +4539,7 @@ public final class BASICInterpreter {
         guard let file = legacyFiles[handle], file.isOpen else {
             throw BASICError.runtime("Bad file number")
         }
-        guard file.access == .write else {
+        guard file.access == .write || file.access == .both else {
             throw BASICError.runtime("Bad file mode")
         }
         return file
@@ -4116,6 +4551,65 @@ public final class BASICInterpreter {
             throw BASICError.runtime("Bad file number")
         }
         return handle
+    }
+
+    private func legacyFileLength(_ expression: Expression) throws -> Int {
+        let handle = try legacyFileHandle(expression)
+        guard let file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        return file.content.byteCount
+    }
+
+    private func legacyFileLocation(handle: Int) throws -> Int {
+        guard let file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        if file.legacyMode == .random, let recordLength = file.recordLength, recordLength > 0 {
+            return file.position / recordLength
+        }
+        return file.position
+    }
+
+    private func legacyFileSeekPosition(handle: Int) throws -> Int {
+        guard let file = legacyFiles[handle], file.isOpen else {
+            throw BASICError.runtime("Bad file number")
+        }
+        if file.legacyMode == .random, let recordLength = file.recordLength, recordLength > 0 {
+            return file.position / recordLength + 1
+        }
+        return file.position + 1
+    }
+
+    private func littleEndianData(_ value: UInt32) -> Data {
+        Data((0..<4).map { UInt8(truncatingIfNeeded: value >> UInt32($0 * 8)) })
+    }
+
+    private func littleEndianData(_ value: UInt64) -> Data {
+        Data((0..<8).map { UInt8(truncatingIfNeeded: value >> UInt64($0 * 8)) })
+    }
+
+    private func conversionData(name: String, arguments: [Expression], count: Int) throws -> Data {
+        try requireArgumentCount(name, arguments, 1)
+        guard let value = try evaluate(arguments[0]).string else {
+            throw BASICError.runtime("\(name) expects a string")
+        }
+        guard value.byteCount >= count else {
+            throw BASICError.runtime("\(name) requires at least \(count) bytes")
+        }
+        return Data(value.rawData.prefix(count))
+    }
+
+    private func littleEndianUInt32(_ data: Data) -> UInt32 {
+        data.prefix(4).enumerated().reduce(into: UInt32(0)) { value, byte in
+            value |= UInt32(byte.element) << UInt32(byte.offset * 8)
+        }
+    }
+
+    private func littleEndianUInt64(_ data: Data) -> UInt64 {
+        data.prefix(8).enumerated().reduce(into: UInt64(0)) { value, byte in
+            value |= UInt64(byte.element) << UInt64(byte.offset * 8)
+        }
     }
 
     private func legacyFileHost() throws -> BASICFileHost {
@@ -5147,12 +5641,31 @@ public final class BASICInterpreter {
                 defaultValue.map(visit)
                 visit(target, capturesBase: false)
                 exitTarget.map { visit($0, capturesBase: false) }
-            case .openFile(let path, _, let number):
+            case .openFile(let path, _, let number, let recordLength):
                 visit(path)
                 visit(number)
+                recordLength.map(visit)
             case .getFile(let number, let targets), .inputFile(let number, let targets):
                 visit(number)
                 targets.forEach { visit($0, capturesBase: false) }
+            case .getRecordFile(let number, let record):
+                visit(number)
+                record.map(visit)
+            case .writeFile(let number, let values):
+                visit(number)
+                values.forEach(visit)
+            case .fieldFile(let number, let fields):
+                visit(number)
+                fields.forEach {
+                    visit($0.width)
+                    append($0.variable)
+                }
+            case .setFieldString(let target, let value, _):
+                visit(target, capturesBase: false)
+                visit(value)
+            case .seekFile(let number, let position):
+                visit(number)
+                visit(position)
             case .resetFile(let number):
                 visit(number)
             case .lineInputFile(let number, let target):

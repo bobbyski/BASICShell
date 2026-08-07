@@ -145,6 +145,10 @@ public protocol BASICFileHost: BASICHost {
     func loadTextFile(path: String) throws -> String
     /// Saves a UTF-8 text file.
     func saveTextFile(path: String, text: String) throws
+    /// Loads a file without text decoding.
+    func loadFileData(path: String) throws -> Data
+    /// Saves a file without text encoding.
+    func saveFileData(path: String, data: Data) throws
     /// Returns whether a path exists.
     func fileExists(path: String) throws -> Bool
     /// Returns the BASIC working directory.
@@ -155,6 +159,32 @@ public protocol BASICFileHost: BASICHost {
     func listFiles() throws -> [String]
     /// Lists files in a specific directory path.
     func listFiles(path: String) throws -> [String]
+    /// Lists the immediate children of a directory.
+    func listDirectory(path: String) throws -> [String]
+    /// Returns whether a path is a directory.
+    func isDirectory(path: String) throws -> Bool
+    /// Creates one directory, including missing parent directories.
+    func createDirectory(path: String) throws
+    /// Removes a file or empty directory.
+    func removePath(path: String) throws
+    /// Renames or moves a file or directory.
+    func renamePath(from source: String, to destination: String) throws
+}
+
+func validatedBASICFilePath(_ path: String) throws -> String {
+    let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    if let colon = normalized.firstIndex(of: ":") {
+        let device = String(normalized[..<colon])
+        let numberedDevice = { (prefix: String) in
+            guard device.hasPrefix(prefix) else { return false }
+            let suffix = device.dropFirst(prefix.count)
+            return suffix.isEmpty || suffix.allSatisfy(\.isNumber)
+        }
+        if device == "KYBD" || device == "SCRN" || numberedDevice("COM") || numberedDevice("LPT") {
+            throw BASICError.runtime("Unsupported file device")
+        }
+    }
+    return path
 }
 
 /// A host-provided HTTP response returned by asynchronous network operations.
@@ -821,6 +851,16 @@ public extension BASICFileHost {
         throw BASICError.runtime("SAVE is not supported by this host")
     }
 
+    /// Default implementation for hosts that expose text files only.
+    func loadFileData(path: String) throws -> Data {
+        throw BASICError.runtime("Binary file input is not supported by this host")
+    }
+
+    /// Default implementation for hosts that expose text files only.
+    func saveFileData(path: String, data: Data) throws {
+        throw BASICError.runtime("Binary file output is not supported by this host")
+    }
+
     /// Default implementation for hosts that do not expose file existence.
     func fileExists(path: String) throws -> Bool {
         false
@@ -846,6 +886,31 @@ public extension BASICFileHost {
     /// Default implementation for hosts that do not support directory imports.
     func listFiles(path: String) throws -> [String] {
         throw BASICError.runtime("Directory IMPORT is not supported by this host")
+    }
+
+    /// Default implementation for hosts that do not expose directory contents.
+    func listDirectory(path: String) throws -> [String] {
+        throw BASICError.runtime("Directory listing is not supported by this host")
+    }
+
+    /// Default implementation for hosts that do not expose path types.
+    func isDirectory(path: String) throws -> Bool {
+        false
+    }
+
+    /// Default implementation for hosts that do not allow directory creation.
+    func createDirectory(path: String) throws {
+        throw BASICError.runtime("Directory creation is not supported by this host")
+    }
+
+    /// Default implementation for hosts that do not allow removal.
+    func removePath(path: String) throws {
+        throw BASICError.runtime("File removal is not supported by this host")
+    }
+
+    /// Default implementation for hosts that do not allow renaming.
+    func renamePath(from source: String, to destination: String) throws {
+        throw BASICError.runtime("File rename is not supported by this host")
     }
 }
 

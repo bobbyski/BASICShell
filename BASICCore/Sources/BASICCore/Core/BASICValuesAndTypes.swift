@@ -20,12 +20,8 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         }
     }
 
-    private init(data: Data) {
-        if data.contains(0) {
-            self.storage = .data(data)
-        } else {
-            self.storage = .text(String(decoding: data, as: UTF8.self))
-        }
+    init(rawData data: Data) {
+        self.storage = .data(data)
     }
 
     /// Display text for the string, omitting embedded NUL bytes from data-backed values.
@@ -68,7 +64,7 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         case (.text(let left), .text(let right)):
             return BASICString(left + right)
         default:
-            return BASICString(data: rawData + other.rawData)
+            return BASICString(rawData: rawData + other.rawData)
         }
     }
 
@@ -76,13 +72,7 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         guard (0...255).contains(code) else {
             throw BASICError.runtime("CHR$ code must be between 0 and 255")
         }
-        if code == 0 {
-            return BASICString(data: Data([0]))
-        }
-        guard let scalar = UnicodeScalar(code) else {
-            throw BASICError.runtime("Invalid CHR$ code \(code)")
-        }
-        return BASICString(String(Character(scalar)))
+        return BASICString(rawData: Data([UInt8(code)]))
     }
 }
 
@@ -263,15 +253,26 @@ enum BASICLegacyFileMode: String, Equatable {
     case input = "INPUT"
     case output = "OUTPUT"
     case append = "APPEND"
+    case binary = "BINARY"
+    case random = "RANDOM"
 }
 
 struct BASICOpenFile: Equatable {
     var path: String?
     var access: BASICFileAccess?
     var contentType: BASICFileContentType?
+    var legacyMode: BASICLegacyFileMode?
     var isOpen = false
     var content = BASICString("")
     var position = 0
+    var recordLength: Int?
+    var fields: [BASICRandomField] = []
+    var lastError: String?
+}
+
+struct BASICRandomField: Equatable {
+    let width: Int
+    let variable: VariableName
 }
 
 struct BASICRandomGenerator {
@@ -327,6 +328,32 @@ public struct BASICVariableSnapshot: Identifiable, Equatable, Sendable {
     public let scope: BASICVariableScope
     /// Nested children for arrays, dictionaries, records, and objects.
     public let children: [BASICVariableSnapshot]
+}
+
+/// A debugger-friendly snapshot of one modern or numbered file handle.
+public struct BASICFileSnapshot: Identifiable, Equatable, Sendable {
+    /// Stable identifier for debugger clients.
+    public let id: String
+    /// BASIC-facing reference such as `File(1)` or `#2`.
+    public let reference: String
+    /// Attached path, or an empty string for an unbound modern File object.
+    public let path: String
+    /// Access mode such as READ, WRITE, or BOTH.
+    public let access: String
+    /// Content or legacy mode such as TEXT, RAW, JSON, or RANDOM.
+    public let type: String
+    /// Current zero-based stream position.
+    public let position: Int
+    /// Current size in bytes.
+    public let size: Int
+    /// Whether the current position is at or beyond the end of the file.
+    public let isAtEOF: Bool
+    /// Whether the handle is open.
+    public let isOpen: Bool
+    /// Fixed record length for RANDOM files.
+    public let recordLength: Int?
+    /// Most recent operation error retained for this handle.
+    public let lastError: String?
 }
 
 /// A debugger snapshot of one active call stack frame.

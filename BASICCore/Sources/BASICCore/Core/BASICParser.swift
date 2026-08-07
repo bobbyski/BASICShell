@@ -132,6 +132,17 @@ struct Parser {
             }
             return .printFile(number: number, parts: try parsePrintParts())
         }
+        if matchIdentifier("WRITE#") || (matchIdentifier("WRITE") && match(.hash)) {
+            let number = try parseFileNumber(hashAlreadyConsumed: true)
+            _ = match(.comma)
+            var values: [Expression] = []
+            if !isStatementEnd {
+                repeat {
+                    values.append(try parseExpression())
+                } while match(.comma)
+            }
+            return .writeFile(number: number, values: values)
+        }
         if matchIdentifier("IMPORT") {
             guard case .string(let path) = advance() else { throw syntax("Expected import path") }
             return .importDirective(path)
@@ -339,8 +350,48 @@ struct Parser {
         }
         if matchIdentifier("GET") {
             let number = try parseFileNumber(hashAlreadyConsumed: match(.hash))
-            guard match(.comma) else { throw syntax("Expected , after file number") }
+            guard match(.comma) else {
+                return .getRecordFile(number: number, record: nil)
+            }
+            if isStatementEnd {
+                return .getRecordFile(number: number, record: nil)
+            }
+            let argumentStart = current
+            if let record = try? parseExpression(), isStatementEnd, isLikelyRecordExpression(record) {
+                return .getRecordFile(number: number, record: record)
+            }
+            current = argumentStart
             return .getFile(number: number, targets: try parseFileTargets())
+        }
+        if matchIdentifier("FIELD") {
+            let number = try parseFileNumber(hashAlreadyConsumed: match(.hash))
+            guard match(.comma) else { throw syntax("Expected , after file number") }
+            var fields: [BASICLegacyFieldSpec] = []
+            repeat {
+                let width = try parseExpression()
+                guard matchIdentifier("AS") else { throw syntax("Expected AS in FIELD") }
+                let variable = try consumeVariableName("Expected string variable in FIELD")
+                fields.append(BASICLegacyFieldSpec(width: width, variable: variable))
+            } while match(.comma)
+            return .fieldFile(number: number, fields: fields)
+        }
+        let fieldAlignment: Bool?
+        if matchIdentifier("LSET") {
+            fieldAlignment = false
+        } else if matchIdentifier("RSET") {
+            fieldAlignment = true
+        } else {
+            fieldAlignment = nil
+        }
+        if let rightAligned = fieldAlignment {
+            let target = try parseFileTarget()
+            guard match(.equals) else { throw syntax("Expected =") }
+            return .setFieldString(target: target, value: try parseExpression(), rightAligned: rightAligned)
+        }
+        if matchIdentifier("SEEK") {
+            let number = try parseFileNumber(hashAlreadyConsumed: match(.hash))
+            guard match(.comma) else { throw syntax("Expected , after file number") }
+            return .seekFile(number: number, position: try parseExpression())
         }
         if matchIdentifier("RESET") {
             return .resetFile(try parseFileNumber(hashAlreadyConsumed: match(.hash)))
@@ -500,6 +551,9 @@ struct Parser {
             let elseAction = matchIdentifier("ELSE") ? try parseConditionalAction(stoppingAtElse: false) : nil
             return .ifThen(condition, thenAction, elseAction)
         }
+        if let statement = try parseSharedFileStatement() {
+            return statement
+        }
         if matchIdentifier("STOP") {
             return .end
         }
@@ -525,6 +579,42 @@ struct Parser {
             throw syntax("Unexpected character #")
         }
         throw syntax("Unknown statement")
+    }
+
+    private mutating func parseSharedFileStatement() throws -> Statement? {
+        let start = current
+        guard matchIdentifier("FILE"), match(.dot) else {
+            current = start
+            return nil
+        }
+        let column = tokens[current].column
+        let methodName = try consumeIdentifier("Expected shared File method")
+        let argumentCount: Int
+        switch methodName.uppercased() {
+        case "CHDIR", "MKDIR", "RM":
+            argumentCount = 1
+        case "RENAME", "WRITETEXT", "WRITEBYTES", "APPENDBYTES":
+            argumentCount = 2
+        default:
+            current = start
+            return nil
+        }
+        guard peek != .leftParen else {
+            current = start
+            return nil
+        }
+        var arguments: [Expression] = []
+        for index in 0..<argumentCount {
+            if index > 0, !match(.comma) {
+                throw syntax("Expected , in File.\(methodName)")
+            }
+            arguments.append(try parseExpression())
+        }
+        return .expression(.methodCall(
+            VariableReference(base: VariableName(name: "File", column: column)),
+            VariableName(name: methodName, column: column),
+            arguments
+        ))
     }
 
     private func standaloneDottedExpression(_ expression: Expression) -> Expression {
@@ -776,14 +866,38 @@ struct Parser {
 
     private mutating func parseOpenFile() throws -> Statement {
         let path = try parseExpression()
-        guard matchIdentifier("FOR") else { throw syntax("Expected FOR in OPEN") }
-        let modeName = try consumeIdentifier("Expected INPUT, OUTPUT, or APPEND")
-        guard let mode = BASICLegacyFileMode(rawValue: modeName.uppercased()) else {
-            throw syntax("Expected INPUT, OUTPUT, or APPEND")
+        let mode: BASICLegacyFileMode
+        if matchIdentifier("FOR") {
+            let modeName = try consumeIdentifier("Expected INPUT, OUTPUT, APPEND, BINARY, or RANDOM")
+            guard let explicitMode = BASICLegacyFileMode(rawValue: modeName.uppercased()) else {
+                throw syntax("Expected INPUT, OUTPUT, APPEND, BINARY, or RANDOM")
+            }
+            mode = explicitMode
+        } else {
+            mode = .random
         }
         guard matchIdentifier("AS") else { throw syntax("Expected AS in OPEN") }
         let hashAlreadyConsumed = match(.hash)
-        return .openFile(path: path, mode: mode, number: try parseFileNumber(hashAlreadyConsumed: hashAlreadyConsumed))
+        let number = try parseFileNumber(hashAlreadyConsumed: hashAlreadyConsumed)
+        let recordLength: Expression?
+        if matchIdentifier("LEN") {
+            guard match(.equals) else { throw syntax("Expected = after LEN") }
+            recordLength = try parseExpression()
+        } else {
+            recordLength = nil
+        }
+        return .openFile(path: path, mode: mode, number: number, recordLength: recordLength)
+    }
+
+    private func isLikelyRecordExpression(_ expression: Expression) -> Bool {
+        switch expression {
+        case .variable(let name):
+            return !name.name.hasSuffix("$")
+        case .variableReference(let reference):
+            return !reference.base.name.hasSuffix("$")
+        default:
+            return true
+        }
     }
 
     private mutating func parseFileNumber(hashAlreadyConsumed: Bool) throws -> Expression {

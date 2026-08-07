@@ -15,6 +15,7 @@ struct DebugPane: View {
     @State private var isCallStackExpanded = true
     @State private var isLocalsExpanded = false
     @State private var isGlobalsExpanded = false
+    @State private var isFilesExpanded = true
     @State private var codePaneHeight: CGFloat?
     @State private var dragStartCodePaneHeight: CGFloat?
 
@@ -85,6 +86,10 @@ struct DebugPane: View {
 
                             DisclosureGroup("Globals", isExpanded: $isGlobalsExpanded) {
                                 variableList(model.debuggerGlobalVariables, emptyText: "No globals are available.")
+                            }
+
+                            DisclosureGroup("Files", isExpanded: $isFilesExpanded) {
+                                fileList(model.debuggerFiles)
                             }
                         }
                         .padding([.horizontal, .bottom], 12)
@@ -534,6 +539,58 @@ struct DebugPane: View {
                 }
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func fileList(_ files: [BASICFileSnapshot]) -> some View {
+        if files.isEmpty {
+            Text("No file handles are available.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(files) { file in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(file.reference)
+                                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                            Text(file.isOpen ? "Open" : "Closed")
+                                .font(.caption)
+                                .foregroundStyle(file.isOpen ? Color.green : Color.secondary)
+                            Text([file.access, file.type].filter { !$0.isEmpty }.joined(separator: " / "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Text("\(file.position) / \(file.size)")
+                                .font(.system(.caption, design: .monospaced))
+                        }
+                        Text(file.path.isEmpty ? "No path" : file.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(file.path.isEmpty ? Color.secondary : Color.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        HStack(spacing: 8) {
+                            if file.isAtEOF {
+                                Text("EOF")
+                            }
+                            if let recordLength = file.recordLength {
+                                Text("Record length \(recordLength)")
+                            }
+                            if let error = file.lastError, !error.isEmpty {
+                                Text(error)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 6)
+                    Divider()
+                }
+            }
         }
     }
 

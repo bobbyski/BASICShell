@@ -204,6 +204,10 @@ final class BASICRuntime {
         return defaultValue(for: inferredType(name: variable.name, value: nil))
     }
 
+    func hasVariable(_ variable: VariableName) -> Bool {
+        binding(for: variable.normalized) != nil
+    }
+
     func declaredType(for reference: VariableReference) -> BASICType? {
         binding(for: reference.base.normalized)?.type
     }
@@ -391,6 +395,27 @@ final class BASICRuntime {
         return .systemObject("File", id)
     }
 
+    var fileSnapshots: [BASICFileSnapshot] {
+        fileObjects.keys.sorted().compactMap { id in
+            guard let file = fileObjects[id] else { return nil }
+            guard file.isOpen || file.path != nil || file.lastError != nil else { return nil }
+            let logicalSize = file.contentType == .raw ? file.content.byteCount : file.content.characterCount
+            return BASICFileSnapshot(
+                id: "modern:\(id)",
+                reference: "File(\(id))",
+                path: file.path ?? "",
+                access: file.access?.rawValue ?? "",
+                type: file.contentType?.rawValue ?? "",
+                position: file.position,
+                size: file.content.byteCount,
+                isAtEOF: file.position >= logicalSize,
+                isOpen: file.isOpen,
+                recordLength: file.recordLength,
+                lastError: file.lastError
+            )
+        }
+    }
+
     func vectorTerminalObject() -> BASICValue {
         let id = nextVectorTerminalObjectID
         nextVectorTerminalObjectID += 1
@@ -484,7 +509,14 @@ final class BASICRuntime {
     ) throws -> BASICValue {
         switch typeName.uppercased() {
         case "FILE":
-            return try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
+            do {
+                let value = try callFileMethod(id: id, method: method, arguments: arguments, fileHost: fileHost, jsonDecoder: jsonDecoder, jsonEncoder: jsonEncoder)
+                fileObjects[id]?.lastError = nil
+                return value
+            } catch {
+                fileObjects[id]?.lastError = String(describing: error)
+                throw error
+            }
         case "VECTORTERMINAL", "VTG":
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
@@ -520,6 +552,31 @@ final class BASICRuntime {
 
     private func systemObjectProperty(typeName: String, id: Int, property: String) throws -> BASICValue {
         switch typeName.uppercased() {
+        case "FILE":
+            guard let file = fileObjects[id] else {
+                throw BASICError.runtime("Bad file object")
+            }
+            switch property.uppercased() {
+            case "PATH", "PATH$":
+                return .string(BASICString(file.path ?? ""))
+            case "ACCESS", "ACCESS$":
+                return .string(BASICString(file.access?.rawValue ?? ""))
+            case "TYPE", "TYPE$":
+                return .string(BASICString(file.contentType?.rawValue ?? ""))
+            case "OPEN", "ISOPEN":
+                return .boolean(file.isOpen)
+            case "POSITION":
+                return .number(Double(file.position))
+            case "EOF":
+                let size = file.contentType == .raw ? file.content.byteCount : file.content.characterCount
+                return .boolean(file.position >= size)
+            case "SIZE":
+                return .number(Double(file.content.byteCount))
+            case "ERROR", "ERROR$":
+                return .string(BASICString(file.lastError ?? ""))
+            default:
+                throw BASICError.runtime("\(typeName) has no property \(property)")
+            }
         case "SECONDSTIMER":
             guard let timer = timerObjects[id] else {
                 throw BASICError.runtime("Timer is not defined")
@@ -1316,12 +1373,20 @@ final class BASICRuntime {
                 throw BASICError.runtime("File Not Found")
             }
             let initialContent: BASICString
-            if exists, access != .write || contentType == .json && access == .read {
-                initialContent = BASICString(try host.loadTextFile(path: path))
+            if exists, access != .write {
+                if contentType == .raw {
+                    initialContent = BASICString(rawData: try host.loadFileData(path: path))
+                } else {
+                    initialContent = BASICString(try host.loadTextFile(path: path))
+                }
             } else {
                 initialContent = BASICString("")
                 if access == .write || access == .both {
-                    try host.saveTextFile(path: path, text: "")
+                    if contentType == .raw {
+                        try host.saveFileData(path: path, data: Data())
+                    } else {
+                        try host.saveTextFile(path: path, text: "")
+                    }
                 }
             }
             file = BASICOpenFile(path: path, access: access, contentType: contentType, isOpen: true, content: initialContent, position: 0)
@@ -1331,11 +1396,28 @@ final class BASICRuntime {
             try requireOpen()
             try requireAccess([.read, .both])
             guard file.contentType != .json else { throw BASICError.runtime("Bad file mode") }
+            if file.contentType == .raw {
+                let data = file.content.rawData
+                let maxCount: Int
+                if arguments.isEmpty {
+                    maxCount = data.count - min(file.position, data.count)
+                } else {
+                    guard arguments.count == 1 else { throw BASICError.runtime("read expects 0 or 1 arguments") }
+                    maxCount = max(0, try fileInteger(from: arguments[0]))
+                }
+                let start = min(file.position, data.count)
+                let end = min(data.count, start + maxCount)
+                let result = data.subdata(in: start..<end)
+                file.position = end
+                fileObjects[id] = file
+                return .string(BASICString(rawData: result))
+            }
             let raw = file.content.rawString
-            let remaining = String(raw.dropFirst(file.position))
+            let start = raw.index(raw.startIndex, offsetBy: min(file.position, raw.count))
+            let remaining = raw[start...]
             let result: String
             if arguments.isEmpty {
-                result = remaining
+                result = String(remaining)
                 file.position = raw.count
             } else {
                 guard arguments.count == 1 else { throw BASICError.runtime("read expects 0 or 1 arguments") }
@@ -1360,9 +1442,23 @@ final class BASICRuntime {
                 throw BASICError.runtime("write expects a string")
             }
             let path = try openPath(file)
-            file.content = file.content.concatenating(text)
-            file.position = file.content.rawString.count
-            try requireHost().saveTextFile(path: path, text: file.content.rawString)
+            if file.contentType == .raw {
+                var data = file.content.rawData
+                let start = min(file.position, data.count)
+                let end = min(data.count, start + text.rawData.count)
+                data.replaceSubrange(start..<end, with: text.rawData)
+                file.content = BASICString(rawData: data)
+                file.position = start + text.rawData.count
+                try requireHost().saveFileData(path: path, data: data)
+            } else {
+                var raw = file.content.rawString
+                let start = raw.index(raw.startIndex, offsetBy: min(file.position, raw.count))
+                let end = raw.index(start, offsetBy: min(text.characterCount, raw.distance(from: start, to: raw.endIndex)))
+                raw.replaceSubrange(start..<end, with: text.rawString)
+                file.content = BASICString(raw)
+                file.position = min(file.position, raw.count) + text.characterCount
+                try requireHost().saveTextFile(path: path, text: raw)
+            }
             fileObjects[id] = file
             return .empty
         case "WRITEJSON":
@@ -1383,6 +1479,15 @@ final class BASICRuntime {
             try requireOpen()
             guard arguments.isEmpty else { throw BASICError.runtime("size expects 0 arguments") }
             return .number(Double(file.content.byteCount))
+        case "PATH", "PATH$":
+            guard arguments.isEmpty else { throw BASICError.runtime("path$ expects 0 arguments") }
+            return .string(BASICString(file.path ?? ""))
+        case "ACCESS", "ACCESS$":
+            guard arguments.isEmpty else { throw BASICError.runtime("access$ expects 0 arguments") }
+            return .string(BASICString(file.access?.rawValue ?? ""))
+        case "TYPE", "TYPE$":
+            guard arguments.isEmpty else { throw BASICError.runtime("type$ expects 0 arguments") }
+            return .string(BASICString(file.contentType?.rawValue ?? ""))
         case "CLOSE":
             guard arguments.isEmpty else { throw BASICError.runtime("close expects 0 arguments") }
             file.isOpen = false
@@ -1400,7 +1505,7 @@ final class BASICRuntime {
 
     private func filePath(from value: BASICValue) throws -> String {
         guard let string = value.string else { throw BASICError.runtime("Expected a string") }
-        return string.description
+        return try validatedBASICFilePath(string.description)
     }
 
     private func fileInteger(from value: BASICValue) throws -> Int {

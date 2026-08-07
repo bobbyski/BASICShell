@@ -15,3 +15,5 @@ open "a.txt" for output as #1
 open "b.txt" for output as #2
 close
 ```
+
+Modern File objects use `file.close` or `file.close()`. Closing retains path and summary information for the debugger but rejects further I/O until the object is opened again.

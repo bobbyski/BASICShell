@@ -1706,6 +1706,20 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
     }
 
+    func loadFileData(path: String) throws -> Data {
+        do {
+            return try Data(contentsOf: URL(fileURLWithPath: expandedPath(path)))
+        } catch {
+            guard let url = bundledDemoURL(path: path) else { throw error }
+            return try Data(contentsOf: url)
+        }
+    }
+
+    func saveFileData(path: String, data: Data) throws {
+        try ensureParentDirectory(for: path)
+        try data.write(to: URL(fileURLWithPath: expandedPath(path)), options: .atomic)
+    }
+
     func fileExists(path: String) throws -> Bool {
         FileManager.default.fileExists(atPath: expandedPath(path))
     }
@@ -1763,6 +1777,47 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
             return []
         }
         return bundledFiles
+    }
+
+    func listDirectory(path: String) throws -> [String] {
+        try FileManager.default
+            .contentsOfDirectory(atPath: expandedPath(path))
+            .filter { !$0.hasPrefix(".") }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func isDirectory(path: String) throws -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expandedPath(path), isDirectory: &isDirectory) else {
+            return false
+        }
+        return isDirectory.boolValue
+    }
+
+    func createDirectory(path: String) throws {
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: expandedPath(path), isDirectory: true),
+            withIntermediateDirectories: true
+        )
+    }
+
+    func removePath(path: String) throws {
+        let resolvedPath = expandedPath(path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
+            throw BASICError.runtime("File Not Found")
+        }
+        if isDirectory.boolValue {
+            guard try FileManager.default.contentsOfDirectory(atPath: resolvedPath).isEmpty else {
+                throw BASICError.runtime("Directory not empty")
+            }
+        }
+        try FileManager.default.removeItem(atPath: resolvedPath)
+    }
+
+    func renamePath(from source: String, to destination: String) throws {
+        try ensureParentDirectory(for: destination)
+        try FileManager.default.moveItem(atPath: expandedPath(source), toPath: expandedPath(destination))
     }
 
     func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {

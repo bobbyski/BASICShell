@@ -5075,6 +5075,20 @@ struct BASICCoreTests {
         ])
     }
 
+    @Test("Built-in File class cannot be redefined")
+    func builtInFileClassCannotBeRedefined() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        class File
+        end class
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Cannot redefine built-in class FILE"])
+    }
+
     @Test("Modern File class reports create and read errors")
     func modernFileClassReportsCreateAndReadErrors() {
         let existingHost = TestHost()
@@ -5093,6 +5107,246 @@ struct BASICCoreTests {
         """)
         missingSession.submit("run")
         #expect(missingHost.output == ["Runtime error: File Not Found"])
+    }
+
+    @Test("Modern File RAW mode preserves bytes and reports metadata")
+    func modernFileRawModePreservesBytesAndReportsMetadata() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let output = File("bytes.bin", WRITE, RAW, true)
+        output.write(chr$(65) + chr$(0) + chr$(255))
+        print output.size()
+        print output.path$()
+        print output.access$()
+        print output.type$()
+        output.close
+
+        let input = File("bytes.bin", READ, RAW, false)
+        let copy = File("copy.bin", WRITE, RAW, true)
+        copy.write(input.read(2))
+        copy.write(input.read())
+        input.close
+        copy.close
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["3", "bytes.bin", "WRITE", "RAW"])
+        #expect(host.fileData["bytes.bin"] == Data([65, 0, 255]))
+        #expect(host.fileData["copy.bin"] == Data([65, 0, 255]))
+    }
+
+    @Test("Modern File BOTH mode uses character positions and byte sizes")
+    func modernFileBothModeUsesCharacterPositionsAndByteSizes() throws {
+        let host = TestHost()
+        host.files["unicode.txt"] = "Aé🙂Z"
+        host.fileData["unicode.txt"] = Data("Aé🙂Z".utf8)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let file = File("unicode.txt", BOTH, TEXT, false)
+        print file.read(2)
+        file.write("XY")
+        print file.size()
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Aé", "5"])
+        #expect(host.files["unicode.txt"] == "AéXY")
+        let snapshot = try #require(session.debugFiles.first { $0.path == "unicode.txt" })
+        #expect(snapshot.position == 4)
+        #expect(snapshot.size == 5)
+        #expect(snapshot.isAtEOF)
+    }
+
+    @Test("Modern File BOTH JSON reads then atomically replaces the document")
+    func modernFileBothJSONReadsThenReplacesDocument() {
+        let host = TestHost()
+        host.files["state.json"] = "{\"count\":1}"
+        host.fileData["state.json"] = Data("{\"count\":1}".utf8)
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let file = File("state.json", BOTH, JSON, false)
+        let payload as variant = file.json()
+        payload("count") = 2
+        file.writeJson(payload, false)
+        file.close
+
+        let check = File("state.json", READ, JSON, false)
+        let restored as variant = check.json()
+        print restored("count")
+        check.close
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["2"])
+        #expect(host.files["state.json"] == "{\"count\":2}")
+    }
+
+    @Test("Modern File rejects opening an already open object")
+    func modernFileRejectsOpeningAnAlreadyOpenObject() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let file = File("first.txt", WRITE, TEXT, false)
+        file.open("second.txt", WRITE, TEXT, false)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: File Already Open"])
+        #expect(host.files["first.txt"] == "")
+        #expect(host.files["second.txt"] == nil)
+    }
+
+    @Test("Shared File text and byte helpers preserve their respective representations")
+    func sharedFileTextAndByteHelpersPreserveRepresentations() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        File.WriteText "note.txt", "héllo"
+        print File.ReadText$("note.txt")
+        File.WriteBytes "bytes.bin", chr$(65) + chr$(0)
+        File.AppendBytes "bytes.bin", chr$(255)
+        payload$ = File.ReadBytes$("bytes.bin")
+        File.WriteBytes "copy.bin", payload$
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["héllo"])
+        #expect(host.fileData["bytes.bin"] == Data([65, 0, 255]))
+        #expect(host.fileData["copy.bin"] == Data([65, 0, 255]))
+    }
+
+    @Test("Shared File methods manage directories paths and JSON")
+    func sharedFileMethodsManageDirectoriesPathsAndJSON() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        File.Mkdir "workspace"
+        print File.IsDir("workspace")
+        File.WriteJson("workspace/config.json", FromJsonString('{"ready":true}', true), false)
+        let names as variant = File.Files$("workspace")
+        print len(names)
+        print names(0)
+        File.Rename "workspace/config.json", "workspace/settings.json"
+        print File.Exists("workspace/config.json")
+        print File.Exists("workspace/settings.json")
+        let payload = File.ReadJson("workspace/settings.json")
+        print payload("ready")
+        File.Rm "workspace/settings.json"
+        File.Rm "workspace"
+        print File.Exists("workspace")
+        print File.Cwd$()
+        """)
+        session.submit("run")
+
+        #expect(host.output == [
+            "TRUE",
+            "1",
+            "config.json",
+            "FALSE",
+            "TRUE",
+            "TRUE",
+            "FALSE",
+            "."
+        ])
+    }
+
+    @Test("File Files returns sorted immediate directory entries")
+    func fileFilesReturnsSortedImmediateDirectoryEntries() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        File.Mkdir "workspace"
+        File.Mkdir "workspace/sub"
+        File.WriteText "workspace/z.txt", "z"
+        File.WriteText "workspace/a.txt", "a"
+        File.WriteText "workspace/sub/deep.txt", "deep"
+        let names as variant = File.Files$("workspace")
+        print len(names)
+        print names(0)
+        print names(1)
+        print names(2)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["3", "a.txt", "sub", "z.txt"])
+    }
+
+    @Test("File Rm refuses nonempty directories")
+    func fileRmRefusesNonemptyDirectories() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        File.Mkdir "workspace"
+        File.WriteText "workspace/keep.txt", "keep"
+        File.Rm "workspace"
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Directory not empty"])
+        #expect(host.directories.contains("workspace"))
+        #expect(host.files["workspace/keep.txt"] == "keep")
+    }
+
+    @Test("File APIs preserve host policy rejection")
+    func fileAPIsPreserveHostPolicyRejection() {
+        let host = TestHost()
+        host.deniedFilePaths.insert("blocked.txt")
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        let file = File("blocked.txt", WRITE, TEXT, false)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["Runtime error: Permission denied"])
+        #expect(host.files["blocked.txt"] == nil)
+    }
+
+    @Test("File ChDir controls relative path resolution")
+    func fileChDirControlsRelativePathResolution() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        File.Mkdir "work"
+        File.ChDir "work"
+        File.WriteText "relative.txt", "inside"
+        print File.Cwd$()
+        print File.ReadText$("relative.txt")
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["work", "inside"])
+        #expect(host.currentDirectory == "work")
+        #expect(host.files["work/relative.txt"] == "inside")
+    }
+
+    @Test("Known legacy device paths are rejected until device support exists")
+    func knownLegacyDevicePathsAreRejected() {
+        let modernHost = TestHost()
+        let modernSession = BASICSession(host: modernHost)
+        modernSession.program.loadSource("""
+        let device = File("COM1:9600,N,8,1", WRITE, RAW, false)
+        """)
+        modernSession.submit("run")
+        #expect(modernHost.output == ["Runtime error: Unsupported file device"])
+
+        let legacyHost = TestHost()
+        let legacySession = BASICSession(host: legacyHost)
+        legacySession.program.loadSource("""
+        open "LPT1:" for output as #1
+        """)
+        legacySession.submit("run")
+        #expect(legacyHost.output == ["Runtime error: Unsupported file device"])
     }
 
     @Test("Legacy sequential file statements write read append and report EOF")
@@ -5155,6 +5409,205 @@ struct BASICCoreTests {
         session.submit("run")
 
         #expect(host.output == ["AB", "CDE", "FALSE", "F", "TRUE"])
+    }
+
+    @Test("WRITE hash round trips quoted comma separated values through INPUT hash")
+    func writeFileRoundTripsMachineReadableValues() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        open "values.csv" for output as #1
+        write #1, "ADA, LOVELACE", 36, true, 'SHE SAID "HI"'
+        close #1
+
+        dim active as boolean
+        open "values.csv" for input as #1
+        input #1, name$, age, active, note$
+        close #1
+        print name$
+        print age
+        print active
+        print note$
+        """)
+        session.submit("run")
+
+        #expect(host.files["values.csv"] == "\"ADA, LOVELACE\",36,TRUE,\"SHE SAID \"\"HI\"\"\"\n")
+        #expect(host.output == ["ADA, LOVELACE", "36", "TRUE", "SHE SAID \"HI\""])
+    }
+
+    @Test("Binary OPEN LOF and INPUT string preserve exact bytes")
+    func binaryOpenAndInputStringPreserveExactBytes() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        host.fileData["source.bin"] = Data([65, 0, 66, 13, 10, 255])
+
+        session.program.loadSource("""
+        open "source.bin" for binary as #1
+        print lof(1)
+        payload$ = input$(lof(1), 1)
+        print eof(1)
+        close #1
+
+        dim output as File
+        output = File("copy.bin", WRITE, RAW, false)
+        output.write(payload$)
+        print output.size()
+        output.close
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["6", "TRUE", "6"])
+        #expect(host.fileData["copy.bin"] == Data([65, 0, 66, 13, 10, 255]))
+    }
+
+    @Test("Random files support FIELD alignment records positions and numeric conversions")
+    func randomFilesSupportFixedRecordsAndNumericConversions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        open "people.dat" as #1 len = 12
+        field #1, 8 as name$, 4 as code$
+        lset name$ = "ADA"
+        rset code$ = "7"
+        put #1, 1
+        lset name$ = "GRACE"
+        rset code$ = "12"
+        put #1, 2
+
+        get #1, 1
+        print "["; name$; "]["; code$; "]"
+        print lof(1)
+        print loc(1)
+        print seek(1)
+        close #1
+
+        print cvi(mki$(-1234))
+        print cvs(mks$(12.5))
+        print cvd(mkd$(42.25))
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["[ADA     ][   7]", "24", "1", "2", "-1234", "12.5", "42.25"])
+        #expect(host.fileData["people.dat"] == Data("ADA        7GRACE     12".utf8))
+    }
+
+    @Test("Random files reject invalid record layouts and text operations reject binary mode")
+    func legacyFileModesRejectInvalidOperations() {
+        let lengthHost = TestHost()
+        let lengthSession = BASICSession(host: lengthHost)
+        lengthSession.program.loadSource("""
+        open "bad.dat" as #1 len = 0
+        """)
+        lengthSession.submit("run")
+        #expect(lengthHost.output == ["Runtime error: Bad record length"])
+
+        let fieldHost = TestHost()
+        let fieldSession = BASICSession(host: fieldHost)
+        fieldSession.program.loadSource("""
+        open "bad.dat" as #1 len = 4
+        field #1, 5 as value$
+        """)
+        fieldSession.submit("run")
+        #expect(fieldHost.output == ["Runtime error: FIELD overflow"])
+
+        let binaryHost = TestHost()
+        let binarySession = BASICSession(host: binaryHost)
+        binarySession.program.loadSource("""
+        open "bad.dat" for binary as #1
+        print #1, "text"
+        """)
+        binarySession.submit("run")
+        #expect(binaryHost.output == ["Runtime error: Bad file mode"])
+    }
+
+    @Test("Debugger file snapshots expose modern and numbered file state")
+    func debuggerFileSnapshotsExposeFileState() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        ])
+        session.program.loadSource("""
+        dim modern as File
+        modern = File("modern.txt", WRITE, TEXT, false)
+        modern.write("hello")
+        open "records.dat" as #2 len = 8
+        print "pause"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 5, statementNumber: 0))
+        }
+
+        let modern = try #require(session.debugFiles.first { $0.path == "modern.txt" })
+        #expect(modern.path == "modern.txt")
+        #expect(modern.access == "WRITE")
+        #expect(modern.type == "TEXT")
+        #expect(modern.position == 5)
+        #expect(modern.size == 5)
+        #expect(modern.isAtEOF)
+        #expect(modern.isOpen)
+
+        let numbered = try #require(session.debugFiles.first { $0.reference == "#2" })
+        #expect(numbered.path == "records.dat")
+        #expect(numbered.access == "BOTH")
+        #expect(numbered.type == "RANDOM")
+        #expect(numbered.recordLength == 8)
+        #expect(numbered.isOpen)
+
+        session.submit("OPENFILES")
+        #expect(host.output.first == "REF       STATE   ACCESS TYPE     POSITION SIZE PATH")
+        #expect(host.output.contains { $0.contains("File(") && $0.contains("modern.txt") })
+        #expect(host.output.contains { $0.contains("#2") && $0.contains("records.dat") && $0.contains("LEN=8") })
+    }
+
+    @Test("Modern File snapshots retain the last operation error")
+    func modernFileSnapshotsRetainLastError() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.submit("dim f as File")
+        session.submit("f = File()")
+        session.submit("print f.read()")
+
+        #expect(host.output == ["Runtime error: File is not open"])
+        #expect(session.debugFiles.count == 1)
+        #expect(session.debugFiles[0].lastError?.contains("File is not open") == true)
+    }
+
+    @Test("Legacy file snapshots retain trapped operation errors")
+    func legacyFileSnapshotsRetainTrappedErrors() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        control.setBreakpoints([
+            BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+        ])
+        session.program.loadSource("""
+        open "bytes.bin" for binary as #1
+        on error goto Handler
+        print #1, "not allowed"
+        end
+        Handler:
+        print "handled"
+        """)
+
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint in error handler")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))
+        }
+
+        let snapshot = try #require(session.debugFiles.first { $0.reference == "#1" })
+        #expect(snapshot.lastError?.contains("Bad file mode") == true)
+        #expect(snapshot.isOpen)
     }
 
     @Test("INPUT$ reads keyboard characters")
@@ -8000,6 +8453,9 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
     var keys: [String] = []
     var commandHistory: [String] = []
     var files: [String: String] = [:]
+    var fileData: [String: Data] = [:]
+    var deniedFilePaths: Set<String> = []
+    var directories: Set<String> = ["."]
     var httpRequests: [String] = []
     var httpResponses: [String: BASICHTTPResponse] = [:]
     var httpErrors: [String: String] = [:]
@@ -8112,15 +8568,37 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
     }
 
     func loadTextFile(path: String) throws -> String {
-        files[resolvedPath(path)] ?? ""
+        try requireFileAccess(path)
+        return files[resolvedPath(path)] ?? ""
     }
 
     func saveTextFile(path: String, text: String) throws {
-        files[resolvedPath(path)] = text
+        try requireFileAccess(path)
+        let resolved = resolvedPath(path)
+        files[resolved] = text
+        fileData[resolved] = Data(text.utf8)
+    }
+
+    func loadFileData(path: String) throws -> Data {
+        try requireFileAccess(path)
+        let resolved = resolvedPath(path)
+        if let data = fileData[resolved] {
+            return data
+        }
+        return Data((files[resolved] ?? "").utf8)
+    }
+
+    func saveFileData(path: String, data: Data) throws {
+        try requireFileAccess(path)
+        let resolved = resolvedPath(path)
+        fileData[resolved] = data
+        files[resolved] = String(decoding: data, as: UTF8.self)
     }
 
     func fileExists(path: String) throws -> Bool {
-        files[resolvedPath(path)] != nil
+        try requireFileAccess(path)
+        let resolved = resolvedPath(path)
+        return files[resolved] != nil || fileData[resolved] != nil || directories.contains(resolved)
     }
 
     func currentDirectoryPath() throws -> String {
@@ -8148,6 +8626,64 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
             .sorted()
     }
 
+    func listDirectory(path: String) throws -> [String] {
+        let resolved = resolvedPath(path)
+        let prefix = resolved == "." ? "" : resolved.trimmingCharacters(in: CharacterSet(charactersIn: "/\\")) + "/"
+        let fileNames = Set((Set(files.keys).union(fileData.keys)).compactMap { candidate -> String? in
+            guard candidate.hasPrefix(prefix) else { return nil }
+            let remainder = String(candidate.dropFirst(prefix.count))
+            guard !remainder.isEmpty else { return nil }
+            return remainder.split(separator: "/").first.map(String.init)
+        })
+        let directoryNames = Set(directories.compactMap { candidate -> String? in
+            guard candidate != resolved, candidate.hasPrefix(prefix) else { return nil }
+            let remainder = String(candidate.dropFirst(prefix.count))
+            guard !remainder.isEmpty else { return nil }
+            return remainder.split(separator: "/").first.map(String.init)
+        })
+        return fileNames.union(directoryNames).sorted()
+    }
+
+    func isDirectory(path: String) throws -> Bool {
+        directories.contains(resolvedPath(path))
+    }
+
+    func createDirectory(path: String) throws {
+        directories.insert(resolvedPath(path))
+    }
+
+    func removePath(path: String) throws {
+        let resolved = resolvedPath(path)
+        if directories.contains(resolved) {
+            let prefix = resolved + "/"
+            guard !files.keys.contains(where: { $0.hasPrefix(prefix) }),
+                  !fileData.keys.contains(where: { $0.hasPrefix(prefix) }),
+                  !directories.contains(where: { $0 != resolved && $0.hasPrefix(prefix) }) else {
+                throw BASICError.runtime("Directory not empty")
+            }
+            directories.remove(resolved)
+            return
+        }
+        guard files.removeValue(forKey: resolved) != nil || fileData.removeValue(forKey: resolved) != nil else {
+            throw BASICError.runtime("File Not Found")
+        }
+        fileData.removeValue(forKey: resolved)
+    }
+
+    func renamePath(from source: String, to destination: String) throws {
+        let sourcePath = resolvedPath(source)
+        let destinationPath = resolvedPath(destination)
+        if let text = files.removeValue(forKey: sourcePath) {
+            files[destinationPath] = text
+        }
+        if let data = fileData.removeValue(forKey: sourcePath) {
+            fileData[destinationPath] = data
+        }
+        if directories.remove(sourcePath) != nil {
+            directories.insert(destinationPath)
+        }
+    }
+
     func httpGet(url: String) async throws -> BASICHTTPResponse {
         httpRequests.append(url)
         if let message = httpErrors[url] {
@@ -8164,6 +8700,12 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
             return path
         }
         return currentDirectory + "/" + path
+    }
+
+    private func requireFileAccess(_ path: String) throws {
+        guard !deniedFilePaths.contains(resolvedPath(path)) else {
+            throw BASICError.runtime("Permission denied")
+        }
     }
 
     func runSystemCommand(_ command: String) throws -> String {

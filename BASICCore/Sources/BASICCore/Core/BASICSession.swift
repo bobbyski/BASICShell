@@ -298,6 +298,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 return true
             }
 
+            if trimmed.caseInsensitiveCompare("OPENFILES") == .orderedSame {
+                printOpenFiles()
+                return true
+            }
+
             if let exportCommand = try Self.exportCommand(from: trimmed) {
                 let value: BASICValue
                 if let explicitValue = exportCommand.value {
@@ -425,7 +430,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 stopAllTimers()
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, JOBS, WAIT, KILL, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, OPENFILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, JOBS, WAIT, KILL, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, EXPORT, SYSTEM, EXEC, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             default:
                 if Self.interactiveBlockBalance(in: trimmed) > 0 {
@@ -451,6 +456,32 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
 
         return true
+    }
+
+    private func printOpenFiles() {
+        let files = debugFiles
+        guard !files.isEmpty else {
+            host.printLine("No file handles.")
+            return
+        }
+        host.printLine("REF       STATE   ACCESS TYPE     POSITION SIZE PATH")
+        for file in files {
+            let reference = file.reference.padding(toLength: 9, withPad: " ", startingAt: 0)
+            let state = (file.isOpen ? "OPEN" : "CLOSED").padding(toLength: 8, withPad: " ", startingAt: 0)
+            let access = file.access.padding(toLength: 7, withPad: " ", startingAt: 0)
+            let type = file.type.padding(toLength: 8, withPad: " ", startingAt: 0)
+            var details = "\(reference) \(state) \(access) \(type) \(file.position) \(file.size) \(file.path)"
+            if let recordLength = file.recordLength {
+                details += " LEN=\(recordLength)"
+            }
+            if file.isAtEOF {
+                details += " EOF"
+            }
+            host.printLine(details)
+            if let error = file.lastError, !error.isEmpty {
+                host.printLine("          ERROR \(error)")
+            }
+        }
     }
 
     private func runShellModeFallback(command: String) -> Bool {
@@ -1409,6 +1440,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Global variables visible to the program.
     public var debugGlobalVariables: [BASICVariableSnapshot] {
         activeInterpreter?.debugGlobalVariables ?? runtime.globalSnapshots()
+    }
+
+    /// Modern File objects and numbered files visible to the active debugger.
+    public var debugFiles: [BASICFileSnapshot] {
+        activeInterpreter?.debugFiles ?? runtime.fileSnapshots
     }
 
     /// Parses and validates the current program without running it.
