@@ -2407,30 +2407,50 @@ public final class BASICInterpreter {
         case "MID$":
             return try intrinsicMid(arguments: arguments)
         case "MKI$":
-            let value = try singleIntegerArgument(name: name.name, arguments: arguments)
-            guard (Int(Int16.min)...Int(Int16.max)).contains(value) else {
-                throw BASICError.runtime("Overflow")
-            }
-            let bits = UInt16(bitPattern: Int16(value))
-            return .string(BASICString(rawData: Data([
-                UInt8(bits & 0xff), UInt8((bits >> 8) & 0xff)
-            ])))
+            let conversion = try integerEncodingArguments(name: name.name, arguments: arguments)
+            return .string(BASICString(rawData: signedIntegerData(
+                conversion.value,
+                width: conversion.width,
+                order: conversion.order
+            )))
         case "MKS$":
-            let bits = Float(try singleNumericArgument(name: name.name, arguments: arguments)).bitPattern
-            return .string(BASICString(rawData: littleEndianData(bits)))
+            let conversion = try floatingEncodingArguments(name: name.name, arguments: arguments)
+            let bits = Float(conversion.value).bitPattern
+            return .string(BASICString(rawData: binaryData(UInt64(bits), byteCount: 4, order: conversion.order)))
         case "MKD$":
-            let bits = try singleNumericArgument(name: name.name, arguments: arguments).bitPattern
-            return .string(BASICString(rawData: littleEndianData(bits)))
+            let conversion = try floatingEncodingArguments(name: name.name, arguments: arguments)
+            return .string(BASICString(rawData: binaryData(
+                conversion.value.bitPattern,
+                byteCount: 8,
+                order: conversion.order
+            )))
         case "CVI":
-            let data = try conversionData(name: name.name, arguments: arguments, count: 2)
-            let bits = UInt16(data[0]) | UInt16(data[1]) << 8
-            return .number(Double(Int16(bitPattern: bits)))
+            let conversion = try integerDecodingArguments(name: name.name, arguments: arguments)
+            let bits = binaryUInt(conversion.data, order: conversion.order)
+            switch conversion.width {
+            case 16:
+                return .number(Double(Int16(bitPattern: UInt16(truncatingIfNeeded: bits))))
+            case 32:
+                return .number(Double(Int32(bitPattern: UInt32(truncatingIfNeeded: bits))))
+            case 64:
+                let signed = Int64(bitPattern: bits)
+                let number = Double(signed)
+                guard Int64(exactly: number) == signed else {
+                    throw BASICError.runtime("CVI 64-bit value cannot be represented exactly")
+                }
+                return .number(number)
+            default:
+                throw BASICError.runtime("CVI width must be 16, 32, or 64")
+            }
         case "CVS":
-            let data = try conversionData(name: name.name, arguments: arguments, count: 4)
-            return .number(Double(Float(bitPattern: littleEndianUInt32(data))))
+            let conversion = try floatingDecodingArguments(name: name.name, arguments: arguments, byteCount: 4)
+            return .number(Double(Float(bitPattern: UInt32(truncatingIfNeeded: binaryUInt(
+                conversion.data,
+                order: conversion.order
+            )))))
         case "CVD":
-            let data = try conversionData(name: name.name, arguments: arguments, count: 8)
-            return .number(Double(bitPattern: littleEndianUInt64(data)))
+            let conversion = try floatingDecodingArguments(name: name.name, arguments: arguments, byteCount: 8)
+            return .number(Double(bitPattern: binaryUInt(conversion.data, order: conversion.order)))
         case "POS":
             try requireArgumentCount(name.name, arguments, 1)
             return .number(Double(outputColumn + 1))
@@ -4581,17 +4601,118 @@ public final class BASICInterpreter {
         return file.position + 1
     }
 
-    private func littleEndianData(_ value: UInt32) -> Data {
-        Data((0..<4).map { UInt8(truncatingIfNeeded: value >> UInt32($0 * 8)) })
+    private enum BinaryByteOrder {
+        case little
+        case big
     }
 
-    private func littleEndianData(_ value: UInt64) -> Data {
-        Data((0..<8).map { UInt8(truncatingIfNeeded: value >> UInt64($0 * 8)) })
+    private func integerEncodingArguments(
+        name: String,
+        arguments: [Expression]
+    ) throws -> (value: Int64, width: Int, order: BinaryByteOrder) {
+        guard (1...3).contains(arguments.count) else {
+            throw BASICError.runtime("\(name) expects 1 to 3 arguments")
+        }
+        let number = try numeric(try evaluate(arguments[0]))
+        guard number.isFinite, number.rounded() == number, let value = Int64(exactly: number) else {
+            throw BASICError.runtime("Overflow")
+        }
+        let width = try binaryIntegerWidth(name: name, arguments: arguments, index: 1)
+        switch width {
+        case 16 where value < Int64(Int16.min) || value > Int64(Int16.max),
+             32 where value < Int64(Int32.min) || value > Int64(Int32.max):
+            throw BASICError.runtime("Overflow")
+        default:
+            break
+        }
+        return (value, width, try binaryByteOrder(name: name, arguments: arguments, index: 2))
     }
 
-    private func conversionData(name: String, arguments: [Expression], count: Int) throws -> Data {
-        try requireArgumentCount(name, arguments, 1)
-        guard let value = try evaluate(arguments[0]).string else {
+    private func integerDecodingArguments(
+        name: String,
+        arguments: [Expression]
+    ) throws -> (data: Data, width: Int, order: BinaryByteOrder) {
+        guard (1...3).contains(arguments.count) else {
+            throw BASICError.runtime("\(name) expects 1 to 3 arguments")
+        }
+        let width = try binaryIntegerWidth(name: name, arguments: arguments, index: 1)
+        return (
+            try conversionData(name: name, expression: arguments[0], count: width / 8),
+            width,
+            try binaryByteOrder(name: name, arguments: arguments, index: 2)
+        )
+    }
+
+    private func floatingEncodingArguments(
+        name: String,
+        arguments: [Expression]
+    ) throws -> (value: Double, order: BinaryByteOrder) {
+        guard (1...2).contains(arguments.count) else {
+            throw BASICError.runtime("\(name) expects 1 or 2 arguments")
+        }
+        return (
+            try numeric(try evaluate(arguments[0])),
+            try binaryByteOrder(name: name, arguments: arguments, index: 1)
+        )
+    }
+
+    private func floatingDecodingArguments(
+        name: String,
+        arguments: [Expression],
+        byteCount: Int
+    ) throws -> (data: Data, order: BinaryByteOrder) {
+        guard (1...2).contains(arguments.count) else {
+            throw BASICError.runtime("\(name) expects 1 or 2 arguments")
+        }
+        return (
+            try conversionData(name: name, expression: arguments[0], count: byteCount),
+            try binaryByteOrder(name: name, arguments: arguments, index: 1)
+        )
+    }
+
+    private func binaryIntegerWidth(name: String, arguments: [Expression], index: Int) throws -> Int {
+        guard arguments.indices.contains(index) else { return 16 }
+        let width = try integer(arguments[index])
+        guard width == 16 || width == 32 || width == 64 else {
+            throw BASICError.runtime("\(name) width must be 16, 32, or 64")
+        }
+        return width
+    }
+
+    private func binaryByteOrder(name: String, arguments: [Expression], index: Int) throws -> BinaryByteOrder {
+        guard arguments.indices.contains(index) else { return nativeBinaryByteOrder }
+        guard let value = try evaluate(arguments[index]).string else {
+            throw BASICError.runtime("\(name) byte order must be NATIVE, LITTLE, or BIG")
+        }
+        switch value.description.uppercased() {
+        case "NATIVE": return nativeBinaryByteOrder
+        case "LITTLE": return .little
+        case "BIG": return .big
+        default:
+            throw BASICError.runtime("\(name) byte order must be NATIVE, LITTLE, or BIG")
+        }
+    }
+
+    private var nativeBinaryByteOrder: BinaryByteOrder {
+        var marker: UInt16 = 1
+        return withUnsafeBytes(of: &marker) { bytes in
+            bytes[0] == 1 ? .little : .big
+        }
+    }
+
+    private func signedIntegerData(_ value: Int64, width: Int, order: BinaryByteOrder) -> Data {
+        binaryData(UInt64(bitPattern: value), byteCount: width / 8, order: order)
+    }
+
+    private func binaryData(_ value: UInt64, byteCount: Int, order: BinaryByteOrder) -> Data {
+        let littleEndianBytes = (0..<byteCount).map {
+            UInt8(truncatingIfNeeded: value >> UInt64($0 * 8))
+        }
+        return Data(order == .little ? littleEndianBytes : littleEndianBytes.reversed())
+    }
+
+    private func conversionData(name: String, expression: Expression, count: Int) throws -> Data {
+        guard let value = try evaluate(expression).string else {
             throw BASICError.runtime("\(name) expects a string")
         }
         guard value.byteCount >= count else {
@@ -4600,14 +4721,9 @@ public final class BASICInterpreter {
         return Data(value.rawData.prefix(count))
     }
 
-    private func littleEndianUInt32(_ data: Data) -> UInt32 {
-        data.prefix(4).enumerated().reduce(into: UInt32(0)) { value, byte in
-            value |= UInt32(byte.element) << UInt32(byte.offset * 8)
-        }
-    }
-
-    private func littleEndianUInt64(_ data: Data) -> UInt64 {
-        data.prefix(8).enumerated().reduce(into: UInt64(0)) { value, byte in
+    private func binaryUInt(_ data: Data, order: BinaryByteOrder) -> UInt64 {
+        let bytes = order == .little ? Array(data) : Array(data.reversed())
+        return bytes.enumerated().reduce(into: UInt64(0)) { value, byte in
             value |= UInt64(byte.element) << UInt64(byte.offset * 8)
         }
     }
@@ -5723,7 +5839,7 @@ public final class BASICInterpreter {
 
     private func builtInConstant(named normalized: String) -> BASICValue? {
         switch normalized {
-        case "READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON":
+        case "READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON", "NATIVE", "LITTLE", "BIG":
             return .string(BASICString(normalized))
         default:
             return nil

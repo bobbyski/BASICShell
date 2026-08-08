@@ -5493,6 +5493,75 @@ struct BASICCoreTests {
         #expect(host.fileData["people.dat"] == Data("ADA        7GRACE     12".utf8))
     }
 
+    @Test("Extended integer conversions preserve width signed values and byte order in random files")
+    func extendedIntegerConversionsRoundTripThroughRandomFiles() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        open "integers.dat" as #1 len = 14
+        field #1, 2 as int16Bytes$, 4 as int32Bytes$, 8 as int64Bytes$
+        lset int16Bytes$ = mki$(-1234, 16, little)
+        lset int32Bytes$ = mki$(2000000000, 32, big)
+        lset int64Bytes$ = mki$(5000000000, 64, little)
+        put #1, 1
+
+        lset int16Bytes$ = ""
+        lset int32Bytes$ = ""
+        lset int64Bytes$ = ""
+        get #1, 1
+        print cvi(int16Bytes$, 16, little)
+        print cvi(int32Bytes$, 32, big)
+        print cvi(int64Bytes$, 64, little)
+        close #1
+
+        print len(mki$(1, 16, native))
+        print len(mki$(1, 32, native))
+        print len(mki$(1, 64, native))
+        print cvs(mks$(12.5, big), big)
+        print cvd(mkd$(42.25, big), big)
+        """)
+        session.submit("run")
+
+        #expect(host.output == ["-1234", "2000000000", "5000000000", "2", "4", "8", "12.5", "42.25"])
+        #expect(host.fileData["integers.dat"] == Data([
+            0x2e, 0xfb,
+            0x77, 0x35, 0x94, 0x00,
+            0x00, 0xf2, 0x05, 0x2a, 0x01, 0x00, 0x00, 0x00
+        ]))
+    }
+
+    @Test("Extended integer conversions reject invalid widths byte orders and overflow")
+    func extendedIntegerConversionsValidateArguments() {
+        let widthHost = TestHost()
+        let widthSession = BASICSession(host: widthHost)
+        widthSession.program.loadSource("print len(mki$(1, 24))")
+        widthSession.submit("run")
+        #expect(widthHost.output == ["Runtime error: mki$ width must be 16, 32, or 64"])
+
+        let orderHost = TestHost()
+        let orderSession = BASICSession(host: orderHost)
+        orderSession.program.loadSource("print cvi(mki$(1), 16, \"SIDEWAYS\")")
+        orderSession.submit("run")
+        #expect(orderHost.output == ["Runtime error: cvi byte order must be NATIVE, LITTLE, or BIG"])
+
+        let overflowHost = TestHost()
+        let overflowSession = BASICSession(host: overflowHost)
+        overflowSession.program.loadSource("print len(mki$(32768))")
+        overflowSession.submit("run")
+        #expect(overflowHost.output == ["Runtime error: Overflow"])
+
+        let precisionHost = TestHost()
+        let precisionSession = BASICSession(host: precisionHost)
+        precisionSession.program.loadSource("""
+        maxBytes$ = chr$(255) + chr$(255) + chr$(255) + chr$(255)
+        maxBytes$ = maxBytes$ + chr$(255) + chr$(255) + chr$(255) + chr$(127)
+        print cvi(maxBytes$, 64, little)
+        """)
+        precisionSession.submit("run")
+        #expect(precisionHost.output == ["Runtime error: CVI 64-bit value cannot be represented exactly"])
+    }
+
     @Test("Random files reject invalid record layouts and text operations reject binary mode")
     func legacyFileModesRejectInvalidOperations() {
         let lengthHost = TestHost()

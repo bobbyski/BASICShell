@@ -31,13 +31,18 @@ close #1
 
 ## Numeric Byte Conversions
 
-The conversion functions use little-endian byte order:
+Integer conversions support signed 16-, 32-, and 64-bit fields. Byte order may be `NATIVE`, `LITTLE`, or `BIG`:
 
 | Encode | Decode | Size |
 |---|---|---:|
 | `MKI$(integer)` | `CVI(bytes$)` | 2 bytes |
-| `MKS$(number)` | `CVS(bytes$)` | 4-byte IEEE single |
-| `MKD$(number)` | `CVD(bytes$)` | 8-byte IEEE double |
+| `MKI$(integer, 16, order)` | `CVI(bytes$, 16, order)` | 2 bytes |
+| `MKI$(integer, 32, order)` | `CVI(bytes$, 32, order)` | 4 bytes |
+| `MKI$(integer, 64, order)` | `CVI(bytes$, 64, order)` | 8 bytes |
+| `MKS$(number, order)` | `CVS(bytes$, order)` | 4-byte IEEE single |
+| `MKD$(number, order)` | `CVD(bytes$, order)` | 8-byte IEEE double |
+
+Omitting width and order preserves the classic 16-bit native-order integer form. Because BASIC currently stores numbers as double-precision values, 64-bit file integers must remain in the exactly representable range from `-9007199254740992` through `9007199254740992`; decoding an inexact value reports a runtime error instead of silently changing it.
 
 ```basic
 field #1, 20 as name$, 2 as ageBytes$
@@ -47,6 +52,16 @@ put #1, 1
 
 get #1, 1
 print cvi(ageBytes$)
+```
+
+```basic
+open "ids.dat" as #1 len = 8
+field #1, 8 as idBytes$
+lset idBytes$ = mki$(5000000000, 64, little)
+put #1, 1
+get #1, 1
+print cvi(idBytes$, 64, little)
+close #1
 ```
 
 Physical device names such as `COM1:`, `LPT1:`, `KYBD:`, and `SCRN:` are not part of the current file implementation. Attempts to open them fail with `Runtime error: Unsupported file device`.
