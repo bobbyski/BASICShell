@@ -4,6 +4,10 @@ import Darwin
 #endif
 
 final class BASICRuntime {
+    struct HTTPClientState {
+        var baseURL: String
+        var headers: [String: String] = [:]
+    }
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
@@ -28,20 +32,24 @@ final class BASICRuntime {
     var lastErrorMessage = ""
     private var fileObjects: [Int: BASICOpenFile] = [:]
     private var timerObjects: [Int: BASICSecondsTimer] = [:]
+    private var httpClientObjects: [Int: HTTPClientState] = [:]
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
     private var nextTimerObjectID = 1
+    private var nextHTTPClientObjectID = 1
 
     func resetForRun() {
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()
         timerObjects.removeAll()
+        httpClientObjects.removeAll()
         eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
         nextTimerObjectID = 1
+        nextHTTPClientObjectID = 1
         clearLastError()
     }
 
@@ -380,7 +388,7 @@ final class BASICRuntime {
 
     static func isBuiltInClass(_ name: String) -> Bool {
         switch name.uppercased() {
-        case "FILE", "VECTORTERMINAL", "VTG", "SECONDSTIMER",
+        case "FILE", "HTTPCLIENT", "VECTORTERMINAL", "VTG", "SECONDSTIMER",
             "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
             return true
         default:
@@ -393,6 +401,20 @@ final class BASICRuntime {
         nextFileObjectID += 1
         fileObjects[id] = BASICOpenFile(isOpen: isOpen)
         return .systemObject("File", id)
+    }
+
+    func httpClientObject(baseURL: String) -> BASICValue {
+        let id = nextHTTPClientObjectID
+        nextHTTPClientObjectID += 1
+        httpClientObjects[id] = HTTPClientState(baseURL: baseURL)
+        return .systemObject("HttpClient", id)
+    }
+
+    func httpClientState(id: Int) throws -> HTTPClientState {
+        guard let client = httpClientObjects[id] else {
+            throw BASICError.runtime("Bad HttpClient object")
+        }
+        return client
     }
 
     var fileSnapshots: [BASICFileSnapshot] {
@@ -521,6 +543,17 @@ final class BASICRuntime {
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
+        case "HTTPCLIENT":
+            guard method.uppercased() == "HEADER", arguments.count == 2,
+                  let name = arguments[0].string, let value = arguments[1].string else {
+                throw BASICError.runtime("HttpClient.header expects 2 string arguments")
+            }
+            guard var client = httpClientObjects[id] else {
+                throw BASICError.runtime("Bad HttpClient object")
+            }
+            client.headers[name.description] = value.description
+            httpClientObjects[id] = client
+            return .empty
         default:
             throw BASICError.runtime("\(typeName) has no method \(method)")
         }

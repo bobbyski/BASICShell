@@ -207,10 +207,32 @@ public struct BASICHTTPResponse: Equatable, Sendable {
     }
 }
 
+/// A host-neutral HTTP request used by the object-oriented BASIC client API.
+public struct BASICHTTPRequest: Equatable, Sendable {
+    public let method: String
+    public let url: String
+    public let headers: [String: String]
+    public let body: String?
+
+    public init(method: String, url: String, headers: [String: String] = [:], body: String? = nil) {
+        self.method = method.uppercased()
+        self.url = url
+        self.headers = headers
+        self.body = body
+    }
+}
+
 /// Host interface for asynchronous network operations.
 public protocol BASICNetworkHost: BASICHost {
-    /// Performs an HTTP GET without blocking the serialized BASIC runtime lane.
-    func httpGet(url: String) async throws -> BASICHTTPResponse
+    /// Performs an HTTP request without blocking the serialized BASIC runtime lane.
+    func http(_ request: BASICHTTPRequest) async throws -> BASICHTTPResponse
+}
+
+public extension BASICNetworkHost {
+    /// Compatibility entry point used by HTTPGETASYNC.
+    func httpGet(url: String) async throws -> BASICHTTPResponse {
+        try await http(BASICHTTPRequest(method: "GET", url: url))
+    }
 }
 
 /// Host interface for SYSTEM and SYSTEM$ command execution.

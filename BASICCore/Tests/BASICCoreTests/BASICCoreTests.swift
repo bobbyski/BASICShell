@@ -3804,6 +3804,53 @@ struct BASICCoreTests {
         #expect(session.debugTasks.contains { $0.name == "HTTPGETASYNC" && $0.state == .failed })
     }
 
+    @Test("HttpClient expands dictionary URL templates and sends default headers")
+    func httpClientExpandsTemplatesAndHeaders() throws {
+        let host = TestHost()
+        host.httpResponses["https://api.weather.test/points/35.7796,-78.6382"] = BASICHTTPResponse(
+            url: "https://api.weather.test/points/35.7796,-78.6382",
+            statusCode: 200,
+            body: "{}"
+        )
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        let client = HttpClient("https://api.weather.test")
+        client.header("User-Agent", "AIBasicWeather/0.1")
+        dim substitutions as dictionary
+        substitutions("latitude") = 35.7796
+        substitutions("longitude") = -78.6382
+        response = await client.get("/points/{latitude},{longitude}", substitutions)
+        print response("STATUS"), response("OK"), response("BODY")
+        """)
+
+        try session.runProgram()
+
+        #expect(host.output == ["200           TRUE          {}"])
+        #expect(host.structuredHTTPRequests == [BASICHTTPRequest(
+            method: "GET",
+            url: "https://api.weather.test/points/35.7796,-78.6382",
+            headers: ["User-Agent": "AIBasicWeather/0.1"]
+        )])
+        #expect(session.debugTasks.contains { $0.name == "HttpClient.get" && $0.state == .completed })
+    }
+
+    @Test("HttpClient reports unresolved URL template substitutions")
+    func httpClientReportsUnresolvedTemplateSubstitutions() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        let client = HttpClient("https://example.test")
+        dim substitutions as dictionary
+        substitutions("latitude") = 1
+        response = client.get("/points/{latitude},{longitude}", substitutions)
+        """)
+
+        session.submit("RUN")
+
+        #expect(host.output == ["Runtime error: URL template has an unresolved substitution"])
+        #expect(host.structuredHTTPRequests.isEmpty)
+    }
+
     @Test("ASYNC FUNCTION calls produce awaitable task handles")
     func asyncFunctionCallsProduceAwaitableTaskHandles() throws {
         let host = TestHost()
@@ -8526,6 +8573,7 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
     var deniedFilePaths: Set<String> = []
     var directories: Set<String> = ["."]
     var httpRequests: [String] = []
+    var structuredHTTPRequests: [BASICHTTPRequest] = []
     var httpResponses: [String: BASICHTTPResponse] = [:]
     var httpErrors: [String: String] = [:]
     var currentDirectory = "."
@@ -8753,13 +8801,14 @@ private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost
         }
     }
 
-    func httpGet(url: String) async throws -> BASICHTTPResponse {
-        httpRequests.append(url)
-        if let message = httpErrors[url] {
+    func http(_ request: BASICHTTPRequest) async throws -> BASICHTTPResponse {
+        structuredHTTPRequests.append(request)
+        httpRequests.append(request.url)
+        if let message = httpErrors[request.url] {
             throw BASICError.runtime(message)
         }
-        guard let response = httpResponses[url] else {
-            throw BASICError.runtime("No test HTTP response for \(url)")
+        guard let response = httpResponses[request.url] else {
+            throw BASICError.runtime("No test HTTP response for \(request.url)")
         }
         return response
     }

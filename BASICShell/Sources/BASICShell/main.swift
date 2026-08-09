@@ -1745,21 +1745,25 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    func httpGet(url: String) async throws -> BASICHTTPResponse {
-        guard let requestURL = URL(string: url),
+    func http(_ request: BASICHTTPRequest) async throws -> BASICHTTPResponse {
+        guard let requestURL = URL(string: request.url),
               let scheme = requestURL.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {
-            throw BASICError.runtime("HTTPGETASYNC requires an http or https URL")
+            throw BASICError.runtime("HTTP request requires an http or https URL")
         }
-        let (data, response) = try await URLSession.shared.data(from: requestURL)
+        var urlRequest = URLRequest(url: requestURL)
+        urlRequest.httpMethod = request.method
+        request.headers.forEach { urlRequest.setValue($0.value, forHTTPHeaderField: $0.key) }
+        urlRequest.httpBody = request.body.map { Data($0.utf8) }
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw BASICError.runtime("HTTPGETASYNC did not receive an HTTP response")
+            throw BASICError.runtime("HTTP request did not receive an HTTP response")
         }
         let headers = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             result[String(describing: entry.key)] = String(describing: entry.value)
         }
         return BASICHTTPResponse(
-            url: httpResponse.url?.absoluteString ?? url,
+            url: httpResponse.url?.absoluteString ?? request.url,
             statusCode: httpResponse.statusCode,
             body: String(decoding: data, as: UTF8.self),
             headers: headers

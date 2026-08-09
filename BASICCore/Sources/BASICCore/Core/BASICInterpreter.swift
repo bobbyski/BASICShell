@@ -2813,6 +2813,9 @@ public final class BASICInterpreter {
             accessClassName: currentClassContext
         )
         if case .systemObject(let typeName, let id) = receiverValue {
+            if typeName.uppercased() == "HTTPCLIENT", method.normalized == "GET" {
+                return try callHTTPClientGet(id: id, arguments: arguments)
+            }
             return try runtime.callSystemObjectMethod(
                 typeName: typeName,
                 id: id,
@@ -5313,6 +5316,9 @@ public final class BASICInterpreter {
             if name.normalized == "FILE" {
                 return try constructFile(arguments: arguments)
             }
+            if name.normalized == "HTTPCLIENT" {
+                return try constructHTTPClient(arguments: arguments)
+            }
             if name.normalized == "VECTORTERMINAL" || name.normalized == "VTG" {
                 return try constructVectorTerminal(arguments: arguments)
             }
@@ -5334,6 +5340,9 @@ public final class BASICInterpreter {
         case .newObject(let className, let arguments):
             if className.uppercased() == "FILE" {
                 return try constructFile(arguments: arguments)
+            }
+            if className.uppercased() == "HTTPCLIENT" {
+                return try constructHTTPClient(arguments: arguments)
             }
             if className.uppercased() == "VECTORTERMINAL" || className.uppercased() == "VTG" {
                 return try constructVectorTerminal(arguments: arguments)
@@ -5864,6 +5873,104 @@ public final class BASICInterpreter {
             )
         }
         return file
+    }
+
+    private func constructHTTPClient(arguments: [Expression]) throws -> BASICValue {
+        guard arguments.count == 1 else {
+            throw BASICError.runtime("HttpClient expects 1 argument")
+        }
+        let baseURL = try string(arguments[0])
+        guard let url = URL(string: baseURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw BASICError.runtime("HttpClient requires an http or https base URL")
+        }
+        return runtime.httpClientObject(baseURL: baseURL)
+    }
+
+    private func callHTTPClientGet(id: Int, arguments: [Expression]) throws -> BASICValue {
+        guard arguments.count == 1 || arguments.count == 2 else {
+            throw BASICError.runtime("HttpClient.get expects a path and optional substitutions dictionary")
+        }
+        guard let taskScheduler else {
+            throw BASICError.runtime("HttpClient.get requires a running BASIC session")
+        }
+        guard let networkHost = host as? BASICNetworkHost else {
+            throw BASICError.runtime("HTTP is not supported by this host")
+        }
+        let client = try runtime.httpClientState(id: id)
+        var path = try string(arguments[0])
+        if arguments.count == 2 {
+            let substitutions = try evaluate(arguments[1])
+            guard case .dictionary(let dictionary) = substitutions else {
+                throw BASICError.runtime("HttpClient.get substitutions must be a dictionary")
+            }
+            path = try substituteURLTemplate(path, values: dictionary.values)
+        } else if path.contains("{") || path.contains("}") {
+            throw BASICError.runtime("HttpClient.get URL template requires a substitutions dictionary")
+        }
+        let requestURL = try resolvedHTTPURL(baseURL: client.baseURL, path: path)
+        let request = BASICHTTPRequest(method: "GET", url: requestURL, headers: client.headers)
+        let hostReference = BASICHostReference(host: networkHost)
+        let handle = taskScheduler.startHostOperationTaskWithResult(
+            name: "HttpClient.get",
+            parentID: task?.id ?? taskScheduler.currentTask?.id,
+            operation: "http-get"
+        ) {
+            guard let host = hostReference.host as? BASICNetworkHost else {
+                throw BASICError.runtime("HTTP host became unavailable")
+            }
+            let response = try await host.http(request)
+            let headers = response.headers.reduce(into: [String: BASICValue]()) { result, entry in
+                result[entry.key] = .string(BASICString(entry.value))
+            }
+            return .dictionary(BASICDictionary(values: [
+                "BODY": .string(BASICString(response.body)),
+                "HEADERS": .dictionary(BASICDictionary(values: headers)),
+                "OK": .boolean((200..<300).contains(response.statusCode)),
+                "STATUS": .number(Double(response.statusCode)),
+                "URL": .string(BASICString(response.url))
+            ]))
+        }
+        return .task(handle)
+    }
+
+    private func substituteURLTemplate(_ template: String, values: [String: BASICValue]) throws -> String {
+        var result = template
+        for (key, value) in values {
+            let text: String
+            switch value {
+            case .string(let string): text = string.description
+            case .number(let number):
+                if number.rounded() == number,
+                   number >= Double(Int64.min), number <= Double(Int64.max) {
+                    text = String(Int64(number))
+                } else {
+                    text = String(number)
+                }
+            case .boolean(let boolean): text = boolean ? "true" : "false"
+            default: throw BASICError.runtime("URL substitution {\(key)} must be a scalar value")
+            }
+            let encoded = text.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? text
+            result = result.replacingOccurrences(of: "{\(key)}", with: encoded)
+        }
+        if result.contains("{") || result.contains("}") {
+            throw BASICError.runtime("URL template has an unresolved substitution")
+        }
+        return result
+    }
+
+    private func resolvedHTTPURL(baseURL: String, path: String) throws -> String {
+        if let absolute = URL(string: path), absolute.scheme != nil {
+            guard absolute.scheme?.lowercased() == "http" || absolute.scheme?.lowercased() == "https" else {
+                throw BASICError.runtime("HTTP URL requires an http or https scheme")
+            }
+            return absolute.absoluteString
+        }
+        guard let base = URL(string: baseURL), let resolved = URL(string: path, relativeTo: base)?.absoluteURL else {
+            throw BASICError.runtime("Invalid HTTP URL")
+        }
+        return resolved.absoluteString
     }
 
     private func constructVectorTerminal(arguments: [Expression]) throws -> BASICValue {
