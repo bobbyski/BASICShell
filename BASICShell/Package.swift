@@ -7,7 +7,7 @@ let package = Package(
     platforms: [.macOS("16.0")],
     dependencies: [
         .package(path: "../BASICCore"),
-        .package(url: "https://github.com/migueldeicaza/TermKit", branch: "main"),
+        .package(path: "../../../frameworks/UILess/Code/TUIKit"),
         .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6")
     ],
     targets: [
@@ -15,7 +15,7 @@ let package = Package(
             name: "BASICShell",
             dependencies: [
                 "BASICCore",
-                "TermKit",
+                "TUIKit",
                 "VectorTerminalSDK"
             ],
             resources: [

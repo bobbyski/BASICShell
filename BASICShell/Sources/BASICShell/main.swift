@@ -3,10 +3,6 @@ import Darwin
 import Foundation
 @preconcurrency import VectorTerminalSDK
 
-if runBASICShellIntegratedEditorIfRequested(arguments: CommandLine.arguments) {
-    exit(0)
-}
-
 nonisolated(unsafe) private var shellInterruptWriteFD: Int32 = -1
 
 func ignoringTerminalOutputStop(_ operation: () -> Int32) -> Int32 {
@@ -3446,157 +3442,36 @@ func drainSessionEventLoop() {
 }
 
 @MainActor
-func restoreShellTerminalAfterEditor() {
-    ShellEventTrace.shared.write("editor-terminal-restore start")
-    let fd = STDIN_FILENO
-    if isatty(fd) == 1 {
-        var settings = termios()
-        if tcgetattr(fd, &settings) == 0 {
-            settings.c_iflag |= tcflag_t(BRKINT | ICRNL | IXON)
-            settings.c_iflag &= ~tcflag_t(INLCR | IGNCR)
-            settings.c_oflag |= tcflag_t(OPOST | ONLCR)
-            settings.c_lflag |= tcflag_t(ICANON | ECHO | ECHOE | ECHOK | ISIG | IEXTEN)
-            settings.c_lflag &= ~tcflag_t(ECHONL)
-            settings.c_cc.16 = 1
-            settings.c_cc.17 = 0
-            _ = tcsetattr(fd, TCSANOW, &settings)
-            _ = tcflush(fd, TCIFLUSH)
-        }
+func runIntegratedEditor() {
+    let listing = session.program.listing()
+
+    // Committing is the *caller's* job because only the caller has the session.
+    // The editor reports whatever comes back in its status line, so a program
+    // that does not parse is visible while it can still be fixed — the shell's
+    // transcript is behind the alternate screen and would not be read until
+    // after the editor closed.
+    let edited = BASICProgramEditor.edit(text: listing, label: "<program>") { buffer in
+        session.program.loadSource(buffer)
+        guard let diagnostic = session.diagnostics().first else { return nil }
+        return "Line \(diagnostic.lineNumber), column \(diagnostic.column + 1): \(diagnostic.message)"
     }
-    Swift.print(
-        "\u{001B}[0m" +
-        "\u{001B}[?1049l" +
-        "\u{001B}[?25h" +
-        "\u{001B}[?1000l" +
-        "\u{001B}[?1002l" +
-        "\u{001B}[?1003l" +
-        "\u{001B}[?1006l",
-        terminator: ""
-    )
-    fflush(stdout)
-    Swift.print("")
-    fflush(stdout)
-    ShellEventTrace.shared.write("editor-terminal-restore end")
-}
 
-@MainActor
-func runTermKitEditor() {
-    let temporaryURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("BASICShell-EDIT-\(UUID().uuidString).bas")
+    ShellEventTrace.shared.write("editor-return edited=\(edited != nil)")
 
-    do {
-        try session.program.listing().write(to: temporaryURL, atomically: true, encoding: .utf8)
-    } catch {
-        host.printLine("Unable to prepare editor buffer: \(error.localizedDescription)")
+    guard let edited else {
+        host.printLine("The editor could not start.")
         return
     }
 
-    defer {
-        try? FileManager.default.removeItem(at: temporaryURL)
-    }
-
-    let result = runIntegratedEditorProcess(
-        executablePath: CommandLine.arguments[0],
-        bufferPath: temporaryURL.path,
-        foregroundProcessRegistry: foregroundProcessRegistry
-    )
-    ShellEventTrace.shared.write("editor-return status=\(result)")
-    restoreShellTerminalAfterEditor()
-    guard result == 0 else {
-        host.printLine("Editor exited with status \(result).")
-        return
-    }
-
-    do {
-        session.program.loadSource(try String(contentsOf: temporaryURL, encoding: .utf8))
-    } catch let error as BASICError {
-        host.printLine(error.description)
-    } catch {
-        host.printLine("Unable to load edited program: \(error.localizedDescription)")
-    }
+    // Loaded again on the way out, unconditionally. The user may have left
+    // without pressing ^S, and `^X` deliberately keeps the buffer rather than
+    // discarding it — so what they were last looking at is what RUN should run.
+    session.program.loadSource(edited)
+    _ = printDiagnosticsIfNeeded()
 }
 
 func shellQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-}
-
-func runIntegratedEditorProcess(
-    executablePath: String,
-    bufferPath: String,
-    foregroundProcessRegistry: ShellForegroundProcessRegistry? = nil
-) -> Int32 {
-    var pid = pid_t()
-    var arguments: [UnsafeMutablePointer<CChar>?] = [
-        strdup(executablePath),
-        strdup(integratedEditorFlag),
-        strdup(bufferPath),
-        nil
-    ]
-    defer {
-        for argument in arguments where argument != nil {
-            free(argument)
-        }
-    }
-
-    var attributes: posix_spawnattr_t?
-    let hasAttributes = posix_spawnattr_init(&attributes) == 0
-    if hasAttributes {
-        let flags = Int16(POSIX_SPAWN_SETPGROUP)
-        _ = posix_spawnattr_setflags(&attributes, flags)
-        _ = posix_spawnattr_setpgroup(&attributes, 0)
-    }
-    defer {
-        if hasAttributes {
-            posix_spawnattr_destroy(&attributes)
-        }
-    }
-
-    let spawnStatus: Int32
-    ShellEventTrace.shared.write("editor-spawn path=\(executablePath) buffer=\(bufferPath)")
-    if hasAttributes {
-        spawnStatus = withUnsafePointer(to: &attributes) { attributesPointer in
-            posix_spawnp(&pid, executablePath, nil, attributesPointer, &arguments, environ)
-        }
-    } else {
-        spawnStatus = posix_spawnp(&pid, executablePath, nil, nil, &arguments, environ)
-    }
-    guard spawnStatus == 0 else {
-        ShellEventTrace.shared.write("editor-spawn-failed status=\(spawnStatus)")
-        return spawnStatus
-    }
-    ShellEventTrace.shared.write("editor-spawned pid=\(pid)")
-
-    let process = BASICForegroundProcessSnapshot(
-        processID: pid,
-        processGroupID: pid,
-        command: "EDIT"
-    )
-    foregroundProcessRegistry?.foregroundProcessStarted(process)
-    let terminalFD = STDIN_FILENO
-    let previousProcessGroup = isatty(terminalFD) == 1 ? tcgetpgrp(terminalFD) : -1
-    let ownsTerminal = previousProcessGroup >= 0 && tcsetpgrp(terminalFD, pid) == 0
-    defer {
-        foregroundProcessRegistry?.foregroundProcessEnded(process)
-        if ownsTerminal {
-            _ = ignoringTerminalOutputStop {
-                tcsetpgrp(terminalFD, previousProcessGroup)
-            }
-        }
-    }
-
-    var waitStatus: Int32 = 0
-    while waitpid(pid, &waitStatus, 0) < 0 {
-        if errno == EINTR {
-            continue
-        }
-        ShellEventTrace.shared.write("editor-wait-failed errno=\(errno)")
-        return errno
-    }
-    ShellEventTrace.shared.write("editor-wait status=\(waitStatus)")
-    if waitStatus & 0x7f == 0 {
-        return (waitStatus >> 8) & 0xff
-    }
-    return 128 + (waitStatus & 0x7f)
 }
 
 @MainActor
@@ -4030,7 +3905,7 @@ while true {
         continue
     }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
-        runTermKitEditor()
+        runIntegratedEditor()
         drainSessionEventLoop()
         continue
     }

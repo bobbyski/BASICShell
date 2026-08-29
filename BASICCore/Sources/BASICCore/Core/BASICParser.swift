@@ -1887,7 +1887,11 @@ struct Parser {
         }
     }
 
-    private static let statementKeywords: Set<String> = [
+    // Internal so ``BASICKeywordTests`` can assert that every word the parser
+    // dispatches on is one ``BASICKeywords`` knows. That test is what keeps the
+    // vocabulary current: a new statement keyword cannot land without the
+    // highlighters and completion hearing about it.
+    static let statementKeywords: Set<String> = [
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "PIPE", "JOIN", "CANCEL", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",

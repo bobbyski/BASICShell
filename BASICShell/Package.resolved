@@ -1,67 +1,22 @@
 {
-  "originHash" : "672f3c8aeb5f3ba1cf4421b32231c1060e4de99da54bbd57cc912225ddb48aff",
+  "originHash" : "451fdcfa0b9d4cdef18ff683b544486f51e55cf5110d5ae3146b85e56a89bc54",
   "pins" : [
     {
-      "identity" : "swift-argument-parser",
+      "identity" : "richswift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-argument-parser",
+      "location" : "https://github.com/bobbyski/RichSwift.git",
       "state" : {
-        "revision" : "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b",
-        "version" : "1.7.1"
+        "revision" : "14142ead047b563f95e177bf524e061fd2c1276e",
+        "version" : "0.1.0"
       }
     },
     {
-      "identity" : "swift-cmark",
+      "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swiftlang/swift-cmark.git",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
-        "revision" : "5d9bdaa4228b381639fff09403e39a04926e2dbe",
-        "version" : "0.7.1"
-      }
-    },
-    {
-      "identity" : "swift-log",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-log.git",
-      "state" : {
-        "revision" : "5073617dac96330a486245e4c0179cb0a6fd2256",
-        "version" : "1.12.0"
-      }
-    },
-    {
-      "identity" : "swift-markdown",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-markdown",
-      "state" : {
-        "revision" : "7d9a5ce307528578dfa777d505496bd5f544ad94",
-        "version" : "0.7.3"
-      }
-    },
-    {
-      "identity" : "swiftterm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm.git",
-      "state" : {
-        "revision" : "8e7a1e154f470e19c709a00a8768df348ba5fc43",
-        "version" : "1.13.0"
-      }
-    },
-    {
-      "identity" : "termkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/TermKit",
-      "state" : {
-        "branch" : "main",
-        "revision" : "2cdfc96f9c524251ae1f517a440f28150182b7c2"
-      }
-    },
-    {
-      "identity" : "textbufferkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/TextBufferKit.git",
-      "state" : {
-        "revision" : "7f3ed5b1d7288de34ad853544d802647be11cfcf",
-        "version" : "0.3.0"
+        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version" : "603.0.2"
       }
     },
     {

@@ -8557,7 +8557,9 @@ struct BASICCoreTests {
     }
 }
 
-private final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
+// Not private: BASICKeywordTests needs a host too, and a second one written to
+// satisfy the same dozen protocols would be a copy that drifts.
+final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false

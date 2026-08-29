@@ -245,13 +245,12 @@ public final class BASICProgram: @unchecked Sendable {
     private static let ansiComment = "\u{001B}[38;5;71m"
     private static let ansiNumber = "\u{001B}[38;5;141m"
 
-    private static let listingKeywords: Set<String> = [
-        "AS", "ASYNC", "AWAIT", "BACKGROUND", "CANCEL", "CASE", "CLASS", "CLOSE", "COLOR", "DATA", "DIM", "ELSE", "ELSEIF",
-        "END", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB", "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE",
-        "JOIN", "LET", "LINE", "LIST", "LOCAL", "LOG", "MODULE", "NEXT", "ON", "OPEN", "OPTION", "PRINT",
-        "PRIVATE", "PROTECTED", "PUBLIC", "READ", "REM", "RESTORE", "RETURN", "RUN", "SAVE", "SELECT",
-        "STEP", "SYSTEM", "TASK", "TASKERROR$", "TASKSTATUS$", "THEN", "TO", "TYPE", "USING", "VIRTUAL", "VOID", "YIELD"
-    ]
+    // The whole vocabulary, not a 58-word subset of it. `LIST` used to print
+    // `CLS`, `OPEN`, `PSET` and every builtin in the plain-text colour while
+    // colouring `PRINT` — which reads as though the interpreter did not know
+    // its own language.
+    private static let listingKeywords: Set<String> = BASICKeywords.all
+
 
     private static let lineReferenceKeywords: Set<String> = [
         "GOTO", "GOSUB", "THEN", "ELSE", "RESTORE", "RESUME", "RETURN", "RUN", "ERL"

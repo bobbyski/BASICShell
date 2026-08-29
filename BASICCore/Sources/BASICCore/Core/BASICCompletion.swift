@@ -20,14 +20,14 @@ public enum BASICCompletionEngine {
         "unalias", "unsetenv", "wait", "which"
     ]
 
-    public static let basicKeywordWords = [
-        "ASYNC", "AWAIT", "BACKGROUND", "CALL", "CANCEL", "CASE", "CLASS", "COLOR", "DATA", "DEF", "DIM", "DO",
-        "ELSE", "ELSEIF", "END", "ERROR", "EXIT", "FOR", "FUNCTION", "GLOBAL", "GOSUB",
-        "GOTO", "IF", "IMPORT", "INPUT", "INTERFACE", "JOIN", "LABEL", "LET", "LINE",
-        "LOCAL", "LOOP", "NEXT", "ON", "OPTION", "PRINT", "READ", "REM", "RESTORE",
-        "HTTPCLIENT", "HTTPGETASYNC", "READFILEASYNC", "RETURN", "SELECT", "SLEEP", "STEP", "SYSTEM", "TASK", "TASKERROR$", "TASKSTATUS$", "THEN", "TO", "TYPE", "WEND", "WRITEFILEASYNC",
-        "WHILE", "YIELD"
-    ]
+    /// Every word the language knows, for tab-completion.
+    ///
+    /// Derived from ``BASICKeywords`` rather than listed here. The list this
+    /// replaced offered `WHILE`, `WEND`, `DO`, `LOOP` and `SLEEP` as
+    /// statements — none of which parse — while omitting `CLS`, `OPEN`,
+    /// `LOCATE`, every graphics word and all 72 builtins.
+    public static let basicKeywordWords = BASICKeywords.sortedWords
+
 
     public static func context(buffer: String, cursor: Int) -> BASICCompletionContext {
         let prefix = String(buffer.prefix(cursor))

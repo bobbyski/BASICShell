@@ -2247,7 +2247,10 @@ public final class BASICInterpreter {
         return nil
     }
 
-    private static let intrinsicFunctionNames: Set<String> = [
+    // Internal rather than private so ``BASICKeywords`` can *be* this set
+    // rather than keep a copy of it — a builtin added here is highlighted and
+    // completed without anyone touching a second list.
+    static let intrinsicFunctionNames: Set<String> = [
         "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",

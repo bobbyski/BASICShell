@@ -234,6 +234,22 @@ struct MonacoEditor: NSViewRepresentable {
         }
     }
 
+    /// One Monarch keyword array, from the shared vocabulary.
+    ///
+    /// These six arrays used to be written out by hand here, and had drifted
+    /// badly: they advertised `WHILE`, `WEND`, `DO`, `LOOP`, `BREAK`,
+    /// `CONTINUE`, `CONST` and `DECLARE`, none of which this language
+    /// implements, while knowing nothing of `ASYNC`, `AWAIT`, `TASK`,
+    /// `CANCEL`, `JOIN` or any of the async builtins — so Studio could not
+    /// colour the async features at all. They are generated now, and
+    /// ``BASICKeywords`` is the only place a word is written down.
+    ///
+    /// Sorted so a diff of the generated page is readable, and quoted through
+    /// `json` so a word containing a `$` cannot break out of the literal.
+    private static func monarchArray(_ words: Set<String>) -> String {
+        "[" + words.sorted().map { "\"\($0)\"" }.joined(separator: ", ") + "]"
+    }
+
     private static let html = """
     <!doctype html>
     <html>
@@ -613,63 +629,13 @@ struct MonacoEditor: NSViewRepresentable {
           monaco.languages.register({ id: "aibasic" });
           monaco.languages.setMonarchTokensProvider("aibasic", {
             ignoreCase: true,
-            controlKeywords: [
-              "BREAK", "CASE", "CONTINUE", "DO", "ELSE", "ELSEIF", "END", "ERROR", "EXIT",
-              "FOR", "GOSUB", "GOTO", "IF", "LOOP", "NEXT", "ON", "RESUME", "RETURN",
-              "SELECT", "STEP", "STOP", "THEN", "TO", "UNTIL", "WEND", "WHILE", "YIELD"
-            ],
-            declarationKeywords: [
-              "AS", "CLASS", "CONST", "DATA", "DECLARE", "DEFAULT", "DIM", "FUNCTION",
-              "GLOBAL", "IMPLEMENTS", "IMPORT", "INHERITS", "INTERFACE", "JSON", "LABEL",
-              "LET", "LOCAL", "ME", "META", "MODULE", "NAME", "OPTION", "OVERRIDES",
-              "PRIVATE", "PROTECTED", "PUBLIC", "READ", "RECORD", "RESTORE", "SHARED",
-              "TYPE", "VIRTUAL"
-            ],
-            ioKeywords: [
-              "CD", "CLEAR", "CLOSE", "EDIT", "FIELD", "FILES", "GET", "HELP", "INPUT",
-              "LINE", "LIST", "LOAD", "LOG", "LSET", "NEW", "OPEN", "PRINT", "PROMPT",
-              "PUT", "RANDOMIZE", "RSET", "RUN", "SAVE", "SYSTEM"
-            ],
-            graphicsKeywords: [
-              "CIRCLE", "CLS", "COLOR", "DRAW", "LOCATE", "PAINT", "POINT", "PRESET",
-              "PSET", "SCREEN"
-            ],
-            typeKeywords: [
-              "BIG", "BOOLEAN", "BOTH", "DICTIONARY", "DOUBLE", "EMPTY", "FALSE", "FILE",
-              "INTEGER", "JSON", "LITTLE", "NATIVE", "NULL", "RAW", "READ", "SINGLE",
-              "STRING", "TEXT", "TRUE", "VARIANT", "VOID", "WRITE"
-            ],
-            builtinFunctions: [
-              "ABS", "ASC", "ATN", "BINARY$", "CHR$", "CINT", "COS", "CURRENTDIR$",
-              "CVD", "CVI", "CVS", "EXP", "FIX", "FROMJSONSTRING", "INKEY$", "INPUT$",
-              "INSTR", "INT", "LEFT$", "LEN", "LOF", "LOG", "MID$", "MKD$", "MKI$",
-              "MKS$", "POINT", "RIGHT$", "RND", "SGN", "SIN", "SPACE$", "SPC", "SQR",
-              "STR$", "STRING$", "SYSTEM$", "TAB", "TAN", "TOJSONSTRING", "USING$", "VAL"
-            ],
-            tokenizer: {
-              root: [
-                [/^\\s*#!.*$/, "comment.extension.aibasic"],
-                [/^\\s*#.*$/, "comment.extension.aibasic"],
-                [/"/, { token: "string.quote.aibasic", next: "@string" }],
-                [/\\/\\/.*$/, "comment.extension.aibasic"],
-                [/'.*$/, "comment.basic.aibasic"],
-                [/\\bREM\\b.*$/, "comment.basic.aibasic"],
-                [/^\\s*\\d+\\b/, "number.line.aibasic"],
-                [/\\b\\d+(\\.\\d+)?\\b/, "number"],
-                [/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*:/, "identifier.label.aibasic"],
-                [/[A-Za-z_][A-Za-z0-9_]*\\$?/, {
-                  cases: {
-                    "@controlKeywords": "keyword.control.aibasic",
-                    "@declarationKeywords": "keyword.declaration.aibasic",
-                    "@ioKeywords": "keyword.io.aibasic",
-                    "@graphicsKeywords": "keyword.graphics.aibasic",
-                    "@typeKeywords": "keyword.type.aibasic",
-                    "@builtinFunctions": "predefined.aibasic",
-                    "@default": "identifier"
-                  }
-                }],
-                [/[<>]=?|=|\\+|-|\\*|\\//, "operator"],
-                [/[(),.:;]/, "delimiter"]
+            controlKeywords: \(monarchArray(BASICKeywords.control)),
+            optionKeywords: \(monarchArray(BASICKeywords.options)),
+            declarationKeywords: \(monarchArray(BASICKeywords.declaration)),
+            ioKeywords: \(monarchArray(BASICKeywords.io)),
+            graphicsKeywords: \(monarchArray(BASICKeywords.graphics)),
+            typeKeywords: \(monarchArray(BASICKeywords.types)),
+            builtinFunctions: \(monarchArray(BASICKeywords.functions))
               ],
               string: [
                 [/""/, "string.escape.aibasic"],
