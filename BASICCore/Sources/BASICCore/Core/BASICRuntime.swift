@@ -572,7 +572,8 @@ final class BASICRuntime {
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
         case "TUIAPP", "TUIWINDOW", "TUISTACK", "TUIBUTTON", "TUILABEL", "TUIFIELD",
-            "TUILIST":
+            "TUILIST", "TUITABLE", "TUICHECK", "TUITEXT", "TUIGAUGE", "TUIMENU",
+            "TUIDIALOG":
             return try callTUIMethod(
                 typeName: typeName,
                 id: id,

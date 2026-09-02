@@ -87,8 +87,18 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
     /// registry it reads is main-actor isolated.
     @MainActor
     func invoke(handlerFor id: Int) {
-        guard let handler = BASICTUIRegistry.shared.handlers[id],
-              let invoke = invokeHandler else { return }
+        guard let handler = BASICTUIRegistry.shared.handlers[id] else { return }
+        invoke(handlerNamed: handler)
+    }
+
+    /// Calls a BASIC handler by name.
+    ///
+    /// Menu items and dialog buttons are not handles a program holds — they are
+    /// built and named in one call — so they carry their handler's name rather
+    /// than an id to look it up by.
+    @MainActor
+    func invoke(handlerNamed handler: String) {
+        guard let invoke = invokeHandler else { return }
         do {
             try invoke(handler)
         } catch let error as BASICError {

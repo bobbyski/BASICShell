@@ -62,6 +62,20 @@ final class BASICTUIRegistry {
     var apps: [Int: App] = [:]
     /// Windows by handle.
     var windows: [Int: Window] = [:]
+    /// Menu bars by handle. Not views a program adds to a stack — a bar is
+    /// attached to a window and lays itself across the top.
+    var menus: [Int: MenuBar] = [:]
+    /// What each dialog will be, when it is shown.
+    ///
+    /// A description rather than a `Dialog`, because TUIKit takes a dialog's
+    /// message at construction and offers no setter — so the real object cannot
+    /// exist until the program has finished saying what it wants, which is at
+    /// `show`. The same reason `TUIApp` holds no `App` until `run`.
+    var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// The menu a `TUIMenu` is currently building items into.
+    var openMenus: [Int: Menu] = [:]
+    /// Windows that have a menu bar, and so have one row less to give.
+    var windowsWithMenuBars: Set<Int> = []
     /// The BASIC function each control calls, by handle.
     var handlers: [Int: String] = [:]
     /// The first control that can take focus, per window, in the order the
@@ -90,12 +104,23 @@ final class BASICTUIRegistry {
     /// showed, and the handles are dead the moment the app stops.
     func releaseAll() {
         pendingFirstResponder = nil
+        windowsWithMenuBars.removeAll()
         views.removeAll()
+        menus.removeAll()
+        dialogs.removeAll()
+        openMenus.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
         kinds.removeAll()
     }
+}
+
+/// What a `TUIDialog` will be when it is shown.
+struct BASICTUIDialogSpec {
+    var title: String
+    var message: String = ""
+    var buttons: [(title: String, handler: String?)] = []
 }
 
 /// Runs `body` on the main actor, from wherever the interpreter happens to be.
@@ -182,6 +207,29 @@ extension BASICRuntime {
             case "TUILIST":
                 registry.views[id] = ListView()
 
+            case "TUITABLE":
+                // Columns arrive later, through `column`. TableView wants them
+                // at construction, so it starts with one placeholder that the
+                // first `column` call replaces — a table with no columns at all
+                // draws nothing and looks like a failure to build.
+                registry.views[id] = TableView(columns: [])
+
+            case "TUICHECK":
+                registry.views[id] = Checkbox(title)
+
+            case "TUITEXT":
+                registry.views[id] = TextView(text: title)
+
+            case "TUIGAUGE":
+                registry.views[id] = Gauge(value: 0, in: 0...100)
+
+            case "TUIMENU":
+                // The bar, not a menu: a program adds menus to it by title.
+                registry.menus[id] = MenuBar()
+
+            case "TUIDIALOG":
+                registry.dialogs[id] = BASICTUIDialogSpec(title: title)
+
             default:
                 throw BASICError.runtime("Unknown TUI class \(typeName)")
             }
@@ -230,8 +278,27 @@ extension BASICRuntime {
             switch name {
             case "ADD":
                 guard let first = arguments.first,
-                      case .systemObject(_, let childID) = first,
-                      let child = registry.views[childID] else {
+                      case .systemObject(_, let childID) = first else {
+                    throw BASICError.runtime("\(typeName).add expects a TUI view")
+                }
+                // A menu bar is attached, not stacked: it anchors itself across
+                // the top of the window rather than taking a place in a column.
+                // Checked before the view lookup below, because a bar is not in
+                // the view table and would be rejected as "not a TUI view".
+                if let window = registry.windows[id], let bar = registry.menus[childID] {
+                    bar.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, height: 1)
+                    window.addSubview(bar)
+                    registry.windowsWithMenuBars.insert(id)
+                    // Anything already filling the window is covering the bar.
+                    // Push it down a row rather than leaving a menu that is
+                    // drawn and then painted over — which looks like a menu bar
+                    // that does not work.
+                    for existing in window.subviews where existing !== bar {
+                        existing.anchors = AnchorSet(leading: 0, trailing: 0, top: 1, bottom: 0)
+                    }
+                    return .empty
+                }
+                guard let child = registry.views[childID] else {
                     throw BASICError.runtime("\(typeName).add expects a TUI view")
                 }
                 if let window = registry.windows[id] {
@@ -239,7 +306,10 @@ extension BASICRuntime {
                     // view added with no anchors gets zero size and the window
                     // comes up blank — which looks like the app failing to
                     // start rather than a layout that was never given.
-                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                    //
+                    // One row down when there is a menu bar, which owns the top.
+                    let top = registry.windowsWithMenuBars.contains(id) ? 1 : 0
+                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: top, bottom: 0)
                     window.addSubview(child)
                 } else {
                     let parent = try view()
@@ -266,6 +336,118 @@ extension BASICRuntime {
                 }
                 return .empty
 
+            case "COLUMN":
+                guard let table = try view() as? TableView else {
+                    throw BASICError.runtime("\(typeName) has no columns")
+                }
+                guard let heading = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).column expects a title")
+                }
+                table.columns.append(TableColumn(heading))
+                return .empty
+
+            case "ADDROW":
+                guard let table = try view() as? TableView else {
+                    throw BASICError.runtime("\(typeName) has no rows")
+                }
+                // Short rows are padded rather than refused, as RichTable does:
+                // a table gaining a column should not turn every existing
+                // addrow into a runtime error halfway through a program.
+                var row = arguments.map { $0.string?.description ?? Self.tuiPlain($0) }
+                while row.count < table.columns.count { row.append("") }
+                table.rows.append(row)
+                return .empty
+
+            case "MENU":
+                guard let bar = registry.menus[id] else {
+                    throw BASICError.runtime("\(typeName) is not a menu bar")
+                }
+                guard let heading = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).menu expects a title")
+                }
+                let menu = Menu(heading)
+                bar.addMenu(menu)
+                // Items go into the menu most recently opened, so a program
+                // reads top to bottom: menu "File", item, item, menu "Edit".
+                registry.openMenus[id] = menu
+                return .empty
+
+            case "ITEM":
+                guard let menu = registry.openMenus[id] else {
+                    throw BASICError.runtime("\(typeName).item needs a menu — call menu first")
+                }
+                guard let label = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).item expects a title")
+                }
+                let handler = arguments.count > 1
+                    ? arguments[1].string?.description
+                    : nil
+                _ = menu.addItem(label) {
+                    guard let handler else { return }
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+                return .empty
+
+            case "SEPARATOR":
+                guard let menu = registry.openMenus[id] else {
+                    throw BASICError.runtime("\(typeName).separator needs a menu")
+                }
+                menu.addSeparator()
+                return .empty
+
+            case "MESSAGE":
+                guard let dialog = registry.dialogs[id] else {
+                    throw BASICError.runtime("\(typeName) is not a dialog")
+                }
+                guard let body = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).message expects text")
+                }
+                registry.dialogs[id]?.message = body
+                _ = dialog
+                return .empty
+
+            case "ADDBUTTON":
+                guard let dialog = registry.dialogs[id] else {
+                    throw BASICError.runtime("\(typeName) is not a dialog")
+                }
+                guard let label = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).addbutton expects a title")
+                }
+                let handler = arguments.count > 1 ? arguments[1].string?.description : nil
+                registry.dialogs[id]?.buttons.append((title: label, handler: handler))
+                _ = dialog
+                return .empty
+
+            case "CHECKED":
+                guard let box = try view() as? Checkbox else {
+                    throw BASICError.runtime("\(typeName) has nothing to check")
+                }
+                // With an argument it sets; without one it reads. A program
+                // asking "is it ticked?" and a program ticking it are the same
+                // word in BASIC, and splitting them into `checked` and
+                // `setchecked` buys nothing.
+                if let wanted = arguments.first {
+                    box.setChecked(wanted.truthy)
+                    return .empty
+                }
+                return .boolean(box.isChecked)
+
+            case "ONTOGGLE":
+                guard let box = try view() as? Checkbox else {
+                    throw BASICError.runtime("\(typeName) has nothing to toggle")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).ontoggle expects a handler name")
+                }
+                registry.handlers[id] = handler
+                if registry.pendingFirstResponder == nil {
+                    registry.pendingFirstResponder = box
+                }
+                box.onChange = { _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                }
+                return .empty
+
             case "ADDITEM":
                 guard let list = try view() as? ListView else {
                     throw BASICError.runtime("\(typeName) is not a list")
@@ -277,6 +459,9 @@ extension BASICRuntime {
                 return .empty
 
             case "SELECTED":
+                if let table = try? view() as? TableView {
+                    return .number(Double(table.selectedIndex ?? -1))
+                }
                 guard let list = try view() as? ListView else {
                     throw BASICError.runtime("\(typeName) is not a list")
                 }
@@ -295,19 +480,42 @@ extension BASICRuntime {
                 return .string(BASICString(list.items[index]))
 
             case "VALUE$", "VALUE":
+                if let gauge = try? view() as? Gauge {
+                    if let wanted = arguments.first?.number {
+                        gauge.setValue(wanted)
+                        return .empty
+                    }
+                    return .number(gauge.value)
+                }
+                if let editor = try? view() as? TextView {
+                    if let wanted = arguments.first?.string?.description {
+                        editor.setText(wanted)
+                        return .empty
+                    }
+                    return .string(BASICString(editor.text))
+                }
                 guard let field = try view() as? TextField else {
                     throw BASICError.runtime("\(typeName) has no value to read")
                 }
                 return .string(BASICString(field.text))
 
             case "ONSELECT":
-                guard let list = try view() as? ListView else {
-                    throw BASICError.runtime("\(typeName) has no selection to handle")
-                }
                 guard let handler = arguments.first?.string?.description else {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
                 registry.handlers[id] = handler
+                if let table = try? view() as? TableView {
+                    if registry.pendingFirstResponder == nil {
+                        registry.pendingFirstResponder = table
+                    }
+                    table.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
+                guard let list = try view() as? ListView else {
+                    throw BASICError.runtime("\(typeName) has no selection to handle")
+                }
                 if registry.pendingFirstResponder == nil {
                     registry.pendingFirstResponder = list
                 }
@@ -357,6 +565,39 @@ extension BASICRuntime {
                 }
                 return .empty
 
+            case "SHOW":
+                guard let app = registry.apps[id] else {
+                    throw BASICError.runtime("\(typeName) is not an application")
+                }
+                guard case .systemObject(_, let dialogID)? = arguments.first,
+                      let spec = registry.dialogs[dialogID] else {
+                    throw BASICError.runtime("\(typeName).show expects a dialog")
+                }
+                let dialog = Dialog(title: spec.title, message: spec.message)
+                for (index, button) in spec.buttons.enumerated() {
+                    // The first button added is the default, and so the one
+                    // with focus. Without a default nothing in the dialog is
+                    // focused, Enter does nothing, and the dialog looks frozen —
+                    // which is exactly how it first behaved.
+                    _ = dialog.addButton(button.title, isDefault: index == 0) {
+                        guard let handler = button.handler else { return }
+                        BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                    }
+                }
+                // `addButton` calls the action and *then* `onDismiss`, so
+                // confirming and cancelling both land here and neither leaves a
+                // window behind.
+                dialog.onDismiss = { [weak app, weak dialog] in
+                    if let app, let dialog { app.dismiss(dialog) }
+                }
+                // Sized twice, as TUIKit's own document controller does: once
+                // before it is placed, once after, when the desktop has given
+                // it a frame to be measured against.
+                dialog.sizeToFit(in: app.desktop.bounds.size)
+                app.present(dialog)
+                dialog.sizeToFit(in: app.desktop.bounds.size)
+                return .empty
+
             case "STOP":
                 guard let app = registry.apps[id] else {
                     throw BASICError.runtime("\(typeName) is not an application")
@@ -392,5 +633,21 @@ extension BASICRuntime {
             throw failure
         }
         return .empty
+    }
+}
+
+extension BASICRuntime {
+    /// A non-string BASIC value as a table cell.
+    ///
+    /// Numbers reach `addrow` constantly — a row of counts is the ordinary
+    /// case — and refusing them would make every call site wrap in `STR$`.
+    static func tuiPlain(_ value: BASICValue) -> String {
+        if let number = value.number {
+            return number == number.rounded() && abs(number) < 1e15
+                ? String(Int(number))
+                : String(number)
+        }
+        if case .boolean(let flag) = value { return flag ? "True" : "False" }
+        return ""
     }
 }
