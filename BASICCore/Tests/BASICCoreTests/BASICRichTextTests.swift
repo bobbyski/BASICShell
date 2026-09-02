@@ -131,6 +131,62 @@ struct BASICRichTextTests {
         }
     }
 
+    /// The reason `RichSyntax` does not hand BASIC to RichSwift.
+    ///
+    /// `RichSwift.Syntax` keys its keywords off a private dictionary and falls
+    /// back to **Swift's** for any language it does not know, so
+    /// `Syntax(code, language: "basic")` colours `class` and `func` while
+    /// leaving `PRINT` plain. BASIC is tokenized by `BASICSyntaxTokenizer`
+    /// instead, which reads `BASICKeywords`.
+    @Test("BASIC syntax is coloured as BASIC, not as Swift")
+    func basicIsNotColouredAsSwift() {
+        let rendered = output("""
+        let s = RichSyntax()
+        print s.render$("PRINT func guard", "basic")
+        """).joined()
+        // PRINT is a BASIC keyword and must be coloured. `func` and `guard` are
+        // Swift's and not BASIC's — note `class` would be a poor test, because
+        // it happens to be a keyword in both.
+        let keyword = "\u{001B}[38;5;39m"
+        #expect(rendered.contains(keyword + "PRINT"))
+        #expect(!rendered.contains(keyword + "func"))
+        #expect(!rendered.contains(keyword + "guard"))
+    }
+
+    @Test("syntax colour matches what LIST prints")
+    func syntaxMatchesListing() {
+        let rendered = output("""
+        let s = RichSyntax()
+        print s.render$("10 REM note", "basic")
+        """).joined()
+        #expect(rendered.contains("\u{001B}[38;5;141m10"))       // number
+        #expect(rendered.contains("\u{001B}[38;5;71mREM note"))  // comment
+    }
+
+    @Test("line numbers are off unless asked for")
+    func lineNumbersAreOptional() {
+        let plain = output("""
+        let s = RichSyntax()
+        s.ansi(0)
+        print s.render$("PRINT 1", "basic")
+        """).joined()
+        #expect(plain == "PRINT 1")
+    }
+
+    @Test("a progress bar carries its label")
+    func progressRenders() {
+        let rendered = output("""
+        let g = RichProgress()
+        g.ansi(0)
+        g.label("Building")
+        g.total(10)
+        g.value(5)
+        print g.render$()
+        """).joined()
+        #expect(rendered.hasPrefix("Building "))
+        #expect(rendered.count > "Building ".count)
+    }
+
     @Test("an unknown method is reported by name")
     func unknownMethodIsNamed() {
         let host = TestHost()

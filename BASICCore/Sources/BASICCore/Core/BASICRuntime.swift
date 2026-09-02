@@ -569,7 +569,8 @@ final class BASICRuntime {
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
-        case "RICHTEXT", "RICHMARKDOWN", "RICHTABLE", "RICHPANEL":
+        case "RICHTEXT", "RICHMARKDOWN", "RICHTABLE", "RICHPANEL", "RICHSYNTAX",
+            "RICHPROGRESS":
             return try callRichMethod(
                 typeName: typeName, id: id, method: method, arguments: arguments
             )

@@ -132,7 +132,8 @@ public enum BASICKeywords {
     /// interpreter still answers to it.
     public static let pseudoClasses: Set<String> = [
         "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
-        "RICHTEXT", "SECONDSTIMER", "VECTORTERMINAL", "VTG",
+        "RICHPROGRESS", "RICHSYNTAX", "RICHTEXT", "SECONDSTIMER",
+        "VECTORTERMINAL", "VTG",
     ]
 
     /// Words reserved only in a modifier or `OPTION` position.

@@ -6012,6 +6012,8 @@ public final class BASICInterpreter {
         "RICHMARKDOWN": "RichMarkdown",
         "RICHTABLE": "RichTable",
         "RICHPANEL": "RichPanel",
+        "RICHSYNTAX": "RichSyntax",
+        "RICHPROGRESS": "RichProgress",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {

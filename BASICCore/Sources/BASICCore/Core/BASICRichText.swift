@@ -41,6 +41,13 @@ struct BASICRichObject {
     var width: Int = 80
     /// Whether ANSI colour is emitted.
     var isColored: Bool = true
+    /// Whether a syntax render shows line numbers.
+    var showsLineNumbers: Bool = false
+    /// Progress: how far along, and out of what.
+    var value: Double = 0
+    var total: Double = 100
+    /// Progress: the label shown beside the bar.
+    var label: String = ""
 }
 
 extension BASICRuntime {
@@ -143,6 +150,28 @@ extension BASICRuntime {
             object.rows.removeAll()
             return .empty
 
+        case "LINENUMBERS":
+            object.showsLineNumbers = arguments.first?.truthy ?? true
+            return .empty
+
+        case "VALUE":
+            guard let number = arguments.first?.number else {
+                throw BASICError.runtime("\(typeName).value expects a number")
+            }
+            object.value = number
+            return .empty
+
+        case "TOTAL":
+            guard let number = arguments.first?.number, number > 0 else {
+                throw BASICError.runtime("\(typeName).total expects a positive number")
+            }
+            object.total = number
+            return .empty
+
+        case "LABEL":
+            object.label = try text(0, "a label")
+            return .empty
+
         case "RENDER$", "RENDER":
             return .string(BASICString(try renderRich(typeName, object, arguments, method)))
 
@@ -199,6 +228,25 @@ extension BASICRuntime {
             return Panel(body as any RichRenderable, title: argument(1) ?? object.title)
                 .render(in: context)
 
+        case "RICHSYNTAX":
+            guard let code = argument(0) else {
+                throw BASICError.runtime("RichSyntax.render$ expects source text")
+            }
+            let language = argument(1) ?? "basic"
+            return Self.renderSyntax(
+                code, language: language, object: object, context: context
+            )
+
+        case "RICHPROGRESS":
+            // The label rides in front of the bar rather than inside it:
+            // RichSwift's ProgressBar draws only the bar, and a progress line
+            // with no idea what it is measuring is not much use.
+            let bar = ProgressBar(
+                completed: object.value, total: object.total,
+                width: max(1, object.width - object.label.count - 1)
+            ).render(in: context)
+            return object.label.isEmpty ? bar : object.label + " " + bar
+
         case "RICHTEXT":
             guard let body = argument(0) else {
                 throw BASICError.runtime("RichText.render$ expects text")
@@ -226,5 +274,83 @@ extension BASICRuntime {
             return flag ? "True" : "False"
         }
         return ""
+    }
+}
+
+// MARK: - Syntax
+
+extension BASICRuntime {
+
+    /// ANSI for one BASIC token, matching what `LIST` already prints.
+    ///
+    /// Same palette, deliberately: a program shown by `LIST`, in the shell's
+    /// editor, in Studio, and through `RichSyntax` should look like one
+    /// language rather than four opinions about it.
+    private static func ansi(for token: BASICSyntaxToken) -> String {
+        switch token {
+        case .statement, .typeName: return "\u{001B}[38;5;39m"
+        case .function: return "\u{001B}[38;5;222m"
+        case .label: return "\u{001B}[38;5;80m"
+        case .string: return "\u{001B}[38;5;215m"
+        case .comment: return "\u{001B}[38;5;71m"
+        case .number: return "\u{001B}[38;5;141m"
+        }
+    }
+
+    /// Renders source with syntax colour.
+    ///
+    /// **BASIC does not go through RichSwift.** `RichSwift.Syntax` keys its
+    /// keywords off a private dictionary and falls back to *Swift's* for any
+    /// language it does not know — so `Syntax(code, language: "basic")` would
+    /// colour `LET` and `PRINT` as plain text while lighting up `class` and
+    /// `func`. BASIC is tokenized by ``BASICSyntaxTokenizer``, which reads
+    /// ``BASICKeywords``, so it agrees with `LIST` and both editors.
+    ///
+    /// Every other language passes through to RichSwift unchanged.
+    static func renderSyntax(
+        _ code: String,
+        language: String,
+        object: BASICRichObject,
+        context: RenderContext
+    ) -> String {
+        let isBASIC = ["basic", "bas", "aibasic"].contains(language.lowercased())
+        guard isBASIC else {
+            return Syntax(code, language: language, lineNumbers: object.showsLineNumbers)
+                .render(in: context)
+        }
+
+        let lines = code.components(separatedBy: "\n")
+        let gutterWidth = String(lines.count).count
+        return lines.enumerated().map { index, line in
+            let body = object.isColored ? colored(line) : line
+            guard object.showsLineNumbers else { return body }
+            let number = String(index + 1)
+            let padding = String(repeating: " ", count: max(0, gutterWidth - number.count))
+            return padding + number + " │ " + body
+        }.joined(separator: "\n")
+    }
+
+    /// One line, with escapes around each span.
+    ///
+    /// Walks the spans in order and copies the gaps between them verbatim, so
+    /// text the tokenizer said nothing about survives exactly — which is most
+    /// of a line, and all of a variable name.
+    private static func colored(_ line: String) -> String {
+        let characters = Array(line)
+        let reset = "\u{001B}[0m"
+        var output = ""
+        var index = 0
+        for span in BASICSyntaxTokenizer.spans(in: line) {
+            guard span.start >= index, span.start + span.length <= characters.count else { continue }
+            output += String(characters[index..<span.start])
+            output += ansi(for: span.token)
+            output += String(characters[span.start..<(span.start + span.length)])
+            output += reset
+            index = span.start + span.length
+        }
+        if index < characters.count {
+            output += String(characters[index...])
+        }
+        return output
     }
 }
