@@ -31,6 +31,7 @@
 //  it was afterwards: scrollback intact, prompt in place, nothing scrolled away.
 //
 
+import BASICCore
 import Foundation
 import TUIKit
 
@@ -126,6 +127,20 @@ enum MainActorBridge {
 /// The editor `EDIT` opens on the current program.
 enum BASICProgramEditor {
 
+    /// What the editor was left holding.
+    ///
+    /// The distinction matters and used to be missing. `EDIT` opens the
+    /// program, but the File menu can open `~/.BASICrc` — and when it has, the
+    /// buffer is a *file*, not the program. Returning a bare string made those
+    /// indistinguishable, so leaving the editor after reading an rc file loaded
+    /// the rc into the program, silently replacing it.
+    struct Outcome {
+        /// The text the user left behind.
+        let text: String
+        /// The file it belongs to, or `nil` when it is still the program.
+        let path: String?
+    }
+
     /// Edits `text` and returns what the user left in the buffer, or `nil` if
     /// the editor could not start.
     ///
@@ -142,7 +157,7 @@ enum BASICProgramEditor {
         text: String,
         label: String,
         commit: @escaping @MainActor (String) -> String?
-    ) -> String? {
+    ) -> Outcome? {
         MainActorBridge.lendingTerminal {
             MainActorBridge.runBlocking {
                 await present(text: text, label: label, commit: commit, on: ANSIDriver())
@@ -162,7 +177,7 @@ enum BASICProgramEditor {
         label: String,
         commit: @escaping @MainActor (String) -> String?,
         on driver: any TerminalDriver
-    ) async -> String? {
+    ) async -> Outcome? {
         let app = App(driver: driver)
         app.applyTheme(.modernTurbo)
         // `^C` is the editor's *copy* key, and `SyntaxTextView` only consumes it
@@ -174,7 +189,7 @@ enum BASICProgramEditor {
         let window = Window()
         window.fillsScreen = true
 
-        var accepted: String?
+        var accepted: Outcome?
 
         // What a save last agreed on, which is what "modified" is measured
         // against. A `let` baseline would mean a freshly opened program read as
@@ -235,13 +250,22 @@ enum BASICProgramEditor {
         /// `^S` has to be readable *here*.
         @discardableResult
         func save() -> Bool {
+            // Where `^S` goes depends on what is open, because the editor has
+            // two kinds of buffer and one save key. Editing the program, it
+            // commits to the program; editing `~/.BASICrc`, it writes the file.
+            // A single fixed meaning would be wrong half the time — and wrong
+            // in the direction of loading a config file into the user's
+            // program.
+            if let path {
+                return write(to: path)
+            }
             if let problem = commit(text.text) {
                 message.text = problem
                 return false
             }
             baseline = text.text
             refreshTitle()
-            message.text = "saved"
+            message.text = "saved to program"
             return true
         }
 
@@ -249,7 +273,7 @@ enum BASICProgramEditor {
         /// discarded — the shell is not a place where closing a window throws
         /// work away, and `RUN` should execute what was just typed.
         func quit() {
-            accepted = text.text
+            accepted = Outcome(text: text.text, path: path)
             app.stop()
         }
 
@@ -315,6 +339,34 @@ enum BASICProgramEditor {
             _ = window.makeFirstResponder(text)
         }
 
+        /// Asks where to write, then writes there.
+        ///
+        /// Arriving with the current name filled in makes "save a copy next to
+        /// it" one keystroke rather than retyping what is already known.
+        func saveAs() {
+            let dialog = FileDialog(mode: .save, root: startingDirectory)
+            if let path {
+                dialog.suggestedName = (path as NSString).lastPathComponent
+            }
+            dialog.onConfirm = { write(to: $0) }
+            present(dialog)
+        }
+
+        /// Puts the program back in the buffer after a file has been open.
+        ///
+        /// Without this, opening `~/.BASICrc` is a one-way door: `^S` writes the
+        /// file, `^X` leaves, and the only route back to the program is to open
+        /// the editor again. The program text is the one this editor was handed,
+        /// which is what `EDIT` showed on the way in.
+        func returnToProgram() {
+            text.setText(original)
+            baseline = original
+            path = nil
+            refreshTitle()
+            message.text = "editing the program"
+            _ = window.makeFirstResponder(text)
+        }
+
         /// Where a file dialog should start: beside the file being edited, or in
         /// the working directory when there is not one yet.
         var startingDirectory: String {
@@ -327,14 +379,28 @@ enum BASICProgramEditor {
         /// Writes the buffer to a file. Separate from `save`, which commits to
         /// the *program* — the two are different destinations and `EDIT` is
         /// about the program, so the file is the one that has to say so.
-        func write(to destination: String) {
+        @discardableResult
+        func write(to destination: String) -> Bool {
             do {
+                // The directory may not exist — `~/.BASICprofile` is offered by
+                // name on machines that have never had one, and a save that
+                // could not finish the job the open started would make that
+                // menu entry pointless.
+                let directory = (destination as NSString).deletingLastPathComponent
+                if !directory.isEmpty {
+                    try FileManager.default.createDirectory(
+                        atPath: directory, withIntermediateDirectories: true
+                    )
+                }
                 try text.text.write(toFile: destination, atomically: true, encoding: .utf8)
                 path = destination
+                baseline = text.text
                 refreshTitle()
                 message.text = "wrote \((destination as NSString).lastPathComponent)"
+                return true
             } catch {
                 message.text = "cannot write \((destination as NSString).lastPathComponent)"
+                return false
             }
         }
 
@@ -350,10 +416,11 @@ enum BASICProgramEditor {
         // to every visible view *before* the focused one — so a focused text
         // view does not swallow them as ordinary characters.
         fileMenu.addItem(
-            "&Save to Program", keyEquivalent: KeyInput(key: .character("s"), modifiers: .control)
+            "&Save", keyEquivalent: KeyInput(key: .character("s"), modifiers: .control)
         ) {
             save()
         }
+        fileMenu.addItem("Save &As…") { saveAs() }
         fileMenu.addSeparator()
         fileMenu.addItem("&Open File…") {
             ifNothingWouldBeLost {
@@ -362,15 +429,24 @@ enum BASICProgramEditor {
                 present(dialog)
             }
         }
-        fileMenu.addItem("&Write to File…") {
-            let dialog = FileDialog(mode: .save, root: startingDirectory)
-            // Arriving with the current name filled in makes "save a copy next
-            // to it" one keystroke rather than retyping what is already known.
-            if let path {
-                dialog.suggestedName = (path as NSString).lastPathComponent
-            }
-            dialog.onConfirm = { write(to: $0) }
-            present(dialog)
+        fileMenu.addItem("&Back to Program") {
+            ifNothingWouldBeLost { returnToProgram() }
+        }
+        fileMenu.addSeparator()
+        // The three files a shell user edits more than any other, and the three
+        // hardest to reach through a browser: all of them are dot-files or live
+        // under Application Support. They open by name, and they open even when
+        // they do not exist yet — with the path already set, so `^S` creates
+        // the file. Sending someone to a file browser to find a dot-file they
+        // have never opened is a worse answer than a menu item.
+        fileMenu.addItem("Open .BASIC&rc") {
+            ifNothingWouldBeLost { open(ShellStartupFiles.interactive) }
+        }
+        fileMenu.addItem("Open .BASIC&profile") {
+            ifNothingWouldBeLost { open(ShellStartupFiles.login) }
+        }
+        fileMenu.addItem("Open prompt se&ttings") {
+            ifNothingWouldBeLost { open(BASICPromptTemplateStore.settingsURL.path) }
         }
         fileMenu.addSeparator()
         fileMenu.addItem(

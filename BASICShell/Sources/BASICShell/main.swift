@@ -3484,10 +3484,20 @@ func runIntegratedEditor() {
         return
     }
 
+    // Only when the buffer is still the *program*. The File menu can open
+    // `~/.BASICrc`, and loading a startup file into the program on the way out
+    // would silently replace whatever the user was working on with their shell
+    // configuration — which is exactly what happened before `Outcome` carried
+    // the path.
+    guard edited.path == nil else {
+        host.printLine("Edited \(edited.path!) — the program is unchanged.")
+        return
+    }
+
     // Loaded again on the way out, unconditionally. The user may have left
     // without pressing ^S, and `^X` deliberately keeps the buffer rather than
     // discarding it — so what they were last looking at is what RUN should run.
-    session.program.loadSource(edited)
+    session.program.loadSource(edited.text)
     _ = printDiagnosticsIfNeeded()
 }
 
