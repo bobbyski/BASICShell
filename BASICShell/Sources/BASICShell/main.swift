@@ -3405,6 +3405,27 @@ do {
     exit(1)
 }
 
+// Startup-file flags, taken only from the *front* of the argument list.
+//
+// Consuming them anywhere would eat a `--no-rc` meant for the script being run;
+// a shell's own options come before the script name, and stopping at the first
+// thing that is not one of ours is what keeps the two apart.
+var loadsStartupFiles = true
+// The Unix convention, older than any of this: a login shell is exec'd with a
+// leading `-` on argv[0]. `--login` is for saying so by hand.
+var isLoginShell = CommandLine.arguments.first?.hasPrefix("-") ?? false
+while let first = arguments.first {
+    if first == "--no-rc" {
+        loadsStartupFiles = false
+        arguments.removeFirst()
+    } else if first == "--login" || first == "-l" {
+        isLoginShell = true
+        arguments.removeFirst()
+    } else {
+        break
+    }
+}
+
 let foregroundProcessRegistry = ShellForegroundProcessRegistry()
 let host = ConsoleHost(graphicsPolicy: graphicsPolicy, foregroundProcessRegistry: foregroundProcessRegistry)
 defer {
@@ -3864,6 +3885,118 @@ func printDiagnosticsIfNeeded() -> Bool {
     return true
 }
 
+// MARK: - Startup files
+//
+// The policy is SHELL.md 6.3's, not a new one:
+//
+//   1. the global config first, when present;
+//   2. an interactive non-login shell reads `~/.BASICrc`;
+//   3. a login shell reads `~/.BASICprofile`;
+//   4. a script reads neither — scripts should be reproducible, and this file
+//      gets that for free by running after the script branch has already
+//      exited.
+//
+// ## Line by line, through `submit`
+//
+// Not `loadSource` and `RUN`. A startup file is fed to the session one line at
+// a time through exactly the path a typed line takes, which is what makes
+// `alias ll='ls -la'` work in it — `alias` is a command the session recognises
+// when a person types it, not a BASIC statement the parser knows, so an rc read
+// as a *program* cannot contain one. That was the first thing tried and the
+// reason this is not that. Multi-line blocks still work: the session buffers
+// `FOR`/`NEXT` across submissions the same way it does at the prompt.
+
+/// The startup file paths, so nothing has to spell one twice.
+enum ShellStartupFiles {
+    /// Read by every shell, before anything user-specific.
+    static let global = "/etc/BASICrc"
+    /// An interactive non-login shell's file.
+    static var interactive: String { home + "/.BASICrc" }
+    /// A login shell's file.
+    static var login: String { home + "/.BASICprofile" }
+
+    /// `$HOME` when it is set, and the passwd entry when it is not.
+    ///
+    /// `homeDirectoryForCurrentUser` alone reads the passwd entry and ignores
+    /// the environment, which is wrong for a shell: `HOME=/tmp/sandbox
+    /// basicshell` is a thing people do, every other shell honours it, and a
+    /// startup-file mechanism that cannot be pointed somewhere else is also one
+    /// that cannot be tested.
+    ///
+    /// Note this is *not* what `~` expands to elsewhere in the shell, which
+    /// goes through `homeDirectoryForCurrentUser` and so ignores `$HOME`. The
+    /// two agree in every ordinary session; making them agree in the odd one is
+    /// a change to path expansion everywhere, which is not this feature's to
+    /// make.
+    private static var home: String {
+        if let fromEnvironment = ProcessInfo.processInfo.environment["HOME"],
+           !fromEnvironment.isEmpty {
+            return fromEnvironment
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+}
+
+/// Runs one startup file if it is there, returning false if it asked the shell
+/// to exit.
+///
+/// A missing file is the normal case, not an error: nobody has a
+/// `/etc/BASICrc`, and most people will never write a `.BASICprofile`.
+@MainActor
+@discardableResult
+func runStartupFile(atPath path: String) -> Bool {
+    guard FileManager.default.fileExists(atPath: path) else { return true }
+
+    let text: String
+    do {
+        text = try String(contentsOfFile: path, encoding: .utf8)
+    } catch {
+        // Worth a word, unlike a missing file: something is there and could not
+        // be read, which is a permissions problem the user can fix.
+        host.printLine("\(path): cannot be read — \(error.localizedDescription)")
+        return true
+    }
+
+    ShellEventTrace.shared.write("startup-file begin path=\(path)")
+    defer { ShellEventTrace.shared.write("startup-file end path=\(path)") }
+
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        // The prompt template is deliberately *not* persisted here, unlike at
+        // the prompt. A `PROMPT` in an rc describes what this shell should look
+        // like, and saving it would write the rc's choice into the store as
+        // though the user had set it by hand — where it would outlive the line
+        // that caused it and survive deleting the rc.
+        let shouldContinue = session.submit(String(line))
+        drainSessionEventLoop()
+        if !shouldContinue {
+            return false
+        }
+    }
+
+    if session.isAwaitingBlockCompletion {
+        // Otherwise the user's first typed line silently becomes the body of a
+        // block their rc left open, at a continuation prompt they did not ask
+        // for and cannot explain.
+        host.printLine("\(path): ends inside an unfinished block — discarding it.")
+        session.cancelPendingBlock()
+    }
+
+    return true
+}
+
+/// Runs the startup files this shell is entitled to, in order.
+@MainActor
+func runStartupFiles(isLoginShell: Bool) -> Bool {
+    guard runStartupFile(atPath: ShellStartupFiles.global) else { return false }
+    // A login shell reads the profile *instead of* the rc, as SHELL.md 6.3
+    // specifies — the bash arrangement, where the profile is expected to pull
+    // the rc in if it wants it. Note that it currently has no way to: there is
+    // no `SOURCE` command yet, so a login shell gets the profile and nothing
+    // else.
+    return runStartupFile(atPath: isLoginShell ? ShellStartupFiles.login
+                                              : ShellStartupFiles.interactive)
+}
+
 if arguments.first == "--cls" {
     host.clearEverything()
     finish(0)
@@ -3892,6 +4025,13 @@ if let scriptPath = arguments.first {
 
 print("BASICShell")
 print("Type HELP for commands. Type QUIT to exit.")
+
+// After the banner, so an rc that greets the user appears below it, and after
+// the script branch above, which has already exited — that is what implements
+// "a script reads neither".
+if loadsStartupFiles, !runStartupFiles(isLoginShell: isLoginShell) {
+    finish(Int32(session.requestedExitStatus))
+}
 
 var shellExitCode: Int32 = 0
 while true {

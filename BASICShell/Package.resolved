@@ -2,30 +2,12 @@
   "originHash" : "451fdcfa0b9d4cdef18ff683b544486f51e55cf5110d5ae3146b85e56a89bc54",
   "pins" : [
     {
-      "identity" : "richswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bobbyski/RichSwift.git",
-      "state" : {
-        "revision" : "14142ead047b563f95e177bf524e061fd2c1276e",
-        "version" : "0.1.0"
-      }
-    },
-    {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
         "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
         "version" : "603.0.2"
-      }
-    },
-    {
-      "identity" : "vectorterminalsdk",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bobbyski/VectorTerminalSDK.git",
-      "state" : {
-        "revision" : "d1747e6acbd704237d29762e003362d4e94eda94",
-        "version" : "1.5.6"
       }
     }
   ],

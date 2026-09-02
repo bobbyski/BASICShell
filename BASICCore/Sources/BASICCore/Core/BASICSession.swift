@@ -100,6 +100,27 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return renderedPrompt()
     }
 
+    /// Whether a multi-line block is still open, so the next submitted line
+    /// continues it rather than starting something new.
+    ///
+    /// A startup file that ends inside an unfinished `FOR` or `IF` would
+    /// otherwise leave the session waiting: the user's first typed line would
+    /// be swallowed as the body of a block they never opened, and the prompt
+    /// would be the continuation prompt for no visible reason.
+    public var isAwaitingBlockCompletion: Bool {
+        !pendingInteractiveLines.isEmpty
+    }
+
+    /// Throws away a half-typed block.
+    ///
+    /// The same thing a lone `.` does at the prompt, reachable by a caller that
+    /// is not a person typing — a startup-file loader that has run out of file
+    /// with a block still open.
+    public func cancelPendingBlock() {
+        pendingInteractiveLines.removeAll()
+        pendingContinuationPrompt = Self.continuationPrompt
+    }
+
     /// Enables fallback to external shell-style command execution after direct BASIC command failures.
     public var shellModeEnabled: Bool {
         get { runtime.shellModeEnabled }
