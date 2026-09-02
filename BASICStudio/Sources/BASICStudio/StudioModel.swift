@@ -1,4 +1,5 @@
 import BASICCore
+import TUIKit
 import AppKit
 import CoreText
 import GameController
@@ -1552,6 +1553,38 @@ final class StudioModel: ObservableObject {
 }
 
 extension StudioModel: StudioDebuggerInterface {}
+
+// MARK: - TUI presentation
+//
+// TUIKIT_PLAN.md phase 5. The binding — controls, event routing, the handle
+// table — is all in BASICCore, so the only thing Studio owes it is a
+// `TerminalDriver`: somewhere for the cells to go.
+//
+// **Not built yet, and this returns nil deliberately.** A TUI program in Studio
+// therefore fails with the binding's own message ("This host has no surface to
+// draw a TUI application on") rather than opening a window that never appears.
+//
+// The seam for the real thing, found and written down so the work is short:
+//
+//   * **Out.** `SwiftTermGraphicsConsole` feeds SwiftTerm by diffing
+//     `consoleText` and calling `terminal.feed(text:)` with what is new, so a
+//     driver's `present` is `ANSIEncoder.encode(buffer)` +
+//     `ANSIEncoder.frame(lines:previous:)` — both public in TUIKit, and exactly
+//     what `ANSIDriver` itself uses — appended through `appendConsole`. No new
+//     encoder, and only diffs go across.
+//   * **In.** `handleProgramKeyEvent` already turns `NSEvent`s into
+//     `TerminalInputOperation`s; `inputStream()` needs those bridged to
+//     `AsyncStream<TerminalInput>`.
+//   * **Size.** `renderedScreenSize` on the console view.
+//
+// What stopped it being written here is that the input half cannot be tested
+// without running the app, and a plausible-but-wrong 200 lines of AppKit glue
+// is worse than an honest nil.
+extension StudioModel: BASICTUIPresentationHost {
+    nonisolated func makeTUIDriver() -> (any TerminalDriver)? {
+        nil
+    }
+}
 
 extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICMainActorHost {
     nonisolated var usesColoredListing: Bool { true }

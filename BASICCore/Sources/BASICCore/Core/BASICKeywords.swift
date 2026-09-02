@@ -139,6 +139,23 @@ public enum BASICKeywords {
         "VECTORTERMINAL", "VTG",
     ]
 
+    /// Names the language answers to itself, whatever a program assigns.
+    ///
+    /// `STATUS` and `ERRORLEVEL` read back the last command's exit status;
+    /// `CURRENT_TASK$` and friends report execution context. They are not
+    /// keywords in any grammatical sense — a program may write
+    /// `GLOBAL status = 5` and it will appear to work — but the *read* is
+    /// intercepted, so it prints 0.
+    ///
+    /// That silent shadowing is the least obvious trap in the language, and it
+    /// was found by a demo picking `status` as a variable name. Listing them
+    /// here does not fix it; it makes them highlight and complete, so they at
+    /// least look reserved before someone chooses one.
+    public static let pseudoVariables: Set<String> = [
+        "CURRENT_FUNCTION$", "CURRENT_TASK$", "CURRENT_THREAD$", "ERRORLEVEL",
+        "STATUS",
+    ]
+
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
         "AIBASIC", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
@@ -159,7 +176,8 @@ public enum BASICKeywords {
     /// Every word in the language.
     public static let all: Set<String> =
         control.union(declaration).union(io).union(graphics)
-            .union(types).union(pseudoClasses).union(options).union(functions)
+            .union(types).union(pseudoClasses).union(pseudoVariables)
+            .union(options).union(functions)
 
     /// Every word, ordered — for completion menus and anything else that shows
     /// them to a person.
@@ -192,6 +210,7 @@ public enum BASICKeywords {
             (graphics, .graphics),
             (types, .type),
             (pseudoClasses, .type),
+            (pseudoVariables, .function),
             (options, .option),
             (functions, .function),
         ] {

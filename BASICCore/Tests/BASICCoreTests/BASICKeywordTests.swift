@@ -110,6 +110,27 @@ struct BASICKeywordTests {
         }
     }
 
+    /// Every listed pseudo-variable really is reserved.
+    ///
+    /// Proved by assigning to one and reading it back, not by comparing lists.
+    /// `STATUS` and `ERRORLEVEL` intercept the *read*, so a program that says
+    /// `GLOBAL status = 5` and prints it gets 0 — the assignment appears to
+    /// work and the value never arrives. That is worth a regression test
+    /// precisely because nothing about it looks wrong at the call site.
+    @Test("assigning to a reserved pseudo-variable does not change what it reads")
+    func pseudoVariablesAreReserved() {
+        for name in ["STATUS", "ERRORLEVEL"] {
+            let host = TestHost()
+            let session = BASICSession(host: host)
+            session.program.loadSource("GLOBAL \(name) = 5\nPRINT \(name)")
+            session.submit("RUN")
+            #expect(
+                host.output != ["5"],
+                "\(name) is listed as reserved but behaved like an ordinary variable"
+            )
+        }
+    }
+
     /// Nothing the language does not implement is advertised.
     ///
     /// A regression guard with names on it. Each of these was in the old

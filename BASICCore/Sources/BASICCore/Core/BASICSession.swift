@@ -1401,28 +1401,36 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             throw BASICError.runtime("Program is already running")
         }
 
-        // The main thread waits by *pumping*, not by blocking.
+        // The main thread waits by *pumping*, but only when something has
+        // asked it to.
         //
-        // A plain `finished.wait()` here parks the main thread for the whole
-        // run, which parks the main actor with it — and TUIKit is main-actor
-        // isolated, so a program that puts up a window deadlocked: the worker
-        // asked the main actor to build an App, and the main thread was sitting
-        // in this semaphore waiting for that same worker.
+        // A plain `finished.wait()` parks the main thread for the whole run,
+        // and the main actor with it — so a program that puts up a TUIKit
+        // window deadlocked: the worker asked the main actor to build an App,
+        // and the main thread was in this semaphore waiting for that same
+        // worker.
         //
-        // Polling with a short timeout and servicing the run loop between
-        // polls costs nothing when no main-actor work exists — the loop returns
-        // immediately with nothing to do — and is what lets a BASIC program
-        // drive a `@MainActor` toolkit at all.
+        // Pumping *unconditionally* fixed that and broke something else. The
+        // run loop delivers main-queue work mid-run, which changed async
+        // cancellation timing enough to make "Foreground Stop or Ctrl-C
+        // cancels the complete async task tree" fail about one full-suite run
+        // in three. Measured both ways before believing it.
         //
-        // Off the main thread there is no run loop to pump and no main actor to
-        // starve, so the original wait is still right there.
+        // So the pump is gated on ``BASICMainActorPump``, which nothing sets
+        // until a program first touches a main-actor object. A program that
+        // never does is timed exactly as it was: this loop polls the semaphore
+        // and runs nothing else, which costs 5ms of granularity on completion
+        // and changes no ordering.
         if Thread.isMainThread {
             while finished.wait(timeout: .now() + 0.005) == .timedOut {
-                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                if BASICMainActorPump.isRequested {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                }
             }
         } else {
             finished.wait()
         }
+
         switch resultBox.result {
         case .success:
             return

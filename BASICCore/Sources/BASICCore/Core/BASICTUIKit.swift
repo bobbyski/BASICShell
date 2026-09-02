@@ -141,6 +141,10 @@ func withTUIRegistry<Value: Sendable>(
     if Thread.isMainThread {
         return try MainActor.assumeIsolated { try body(BASICTUIRegistry.shared) }
     }
+    // The main thread is waiting for this worker and will not service the main
+    // actor until it is told to. Asked for before posting, or the Task below
+    // would never run.
+    BASICMainActorPump.request()
     let box = BASICTUIResultBox<Value>()
     let finished = DispatchSemaphore(value: 0)
     Task { @MainActor in
@@ -480,6 +484,24 @@ extension BASICRuntime {
                 return .string(BASICString(list.items[index]))
 
             case "VALUE$", "VALUE":
+                // A label reads too. It has no *input*, but "what does it say
+                // now?" is the obvious question to ask one after a handler has
+                // been changing it, and refusing meant a handler that read a
+                // label threw mid-frame — parking the error and never reaching
+                // `app.stop()`, so the program hung instead of quitting.
+                if let label = try? view() as? Label {
+                    if let wanted = arguments.first?.string?.description {
+                        label.text = wanted
+                        return .empty
+                    }
+                    return .string(BASICString(label.text))
+                }
+                if let button = try? view() as? Button {
+                    return .string(BASICString(button.title))
+                }
+                if let box = try? view() as? Checkbox {
+                    return .boolean(box.isChecked)
+                }
                 if let gauge = try? view() as? Gauge {
                     if let wanted = arguments.first?.number {
                         gauge.setValue(wanted)
