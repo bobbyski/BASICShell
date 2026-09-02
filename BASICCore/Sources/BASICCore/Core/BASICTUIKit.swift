@@ -176,6 +176,12 @@ extension BASICRuntime {
             case "TUILABEL":
                 registry.views[id] = Label(title)
 
+            case "TUIFIELD":
+                registry.views[id] = TextField(placeholder: title)
+
+            case "TUILIST":
+                registry.views[id] = ListView()
+
             default:
                 throw BASICError.runtime("Unknown TUI class \(typeName)")
             }
@@ -223,7 +229,8 @@ extension BASICRuntime {
 
             switch name {
             case "ADD":
-                guard case .systemObject(_, let childID) = arguments.first,
+                guard let first = arguments.first,
+                      case .systemObject(_, let childID) = first,
                       let child = registry.views[childID] else {
                     throw BASICError.runtime("\(typeName).add expects a TUI view")
                 }
@@ -253,6 +260,75 @@ extension BASICRuntime {
                     label.text = value
                 } else if let button = try? view() as? Button {
                     button.title = value
+                } else if let field = try? view() as? TextField {
+                    // `text` is private(set); `setText` is the door.
+                    field.setText(value)
+                }
+                return .empty
+
+            case "ADDITEM":
+                guard let list = try view() as? ListView else {
+                    throw BASICError.runtime("\(typeName) is not a list")
+                }
+                guard let value = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).additem expects a string")
+                }
+                list.items.append(value)
+                return .empty
+
+            case "SELECTED":
+                guard let list = try view() as? ListView else {
+                    throw BASICError.runtime("\(typeName) is not a list")
+                }
+                // -1 rather than an error when nothing is selected: a program
+                // asking "which row?" before the user has touched anything is
+                // the ordinary case, not a mistake.
+                return .number(Double(list.selectedIndex ?? -1))
+
+            case "SELECTEDTEXT$", "SELECTEDTEXT":
+                guard let list = try view() as? ListView else {
+                    throw BASICError.runtime("\(typeName) is not a list")
+                }
+                guard let index = list.selectedIndex, list.items.indices.contains(index) else {
+                    return .string(BASICString(""))
+                }
+                return .string(BASICString(list.items[index]))
+
+            case "VALUE$", "VALUE":
+                guard let field = try view() as? TextField else {
+                    throw BASICError.runtime("\(typeName) has no value to read")
+                }
+                return .string(BASICString(field.text))
+
+            case "ONSELECT":
+                guard let list = try view() as? ListView else {
+                    throw BASICError.runtime("\(typeName) has no selection to handle")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onselect expects a handler name")
+                }
+                registry.handlers[id] = handler
+                if registry.pendingFirstResponder == nil {
+                    registry.pendingFirstResponder = list
+                }
+                list.onSelectionChanged = { _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                }
+                return .empty
+
+            case "ONCHANGE":
+                guard let field = try view() as? TextField else {
+                    throw BASICError.runtime("\(typeName) has no text to handle")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onchange expects a handler name")
+                }
+                registry.handlers[id] = handler
+                if registry.pendingFirstResponder == nil {
+                    registry.pendingFirstResponder = field
+                }
+                field.onChanged = { _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
                 return .empty
 

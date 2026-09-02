@@ -133,7 +133,8 @@ public enum BASICKeywords {
     public static let pseudoClasses: Set<String> = [
         "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
         "RICHPROGRESS", "RICHSYNTAX", "RICHTEXT", "SECONDSTIMER",
-        "TUIAPP", "TUIBUTTON", "TUILABEL", "TUISTACK", "TUIWINDOW",
+        "TUIAPP", "TUIBUTTON", "TUIFIELD", "TUILABEL", "TUILIST", "TUISTACK",
+        "TUIWINDOW",
         "VECTORTERMINAL", "VTG",
     ]
 
