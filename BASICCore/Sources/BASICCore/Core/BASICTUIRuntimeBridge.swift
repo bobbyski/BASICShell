@@ -1,0 +1,185 @@
+//
+//  BASICTUIRuntimeBridge.swift
+//  BASICCore
+//
+//  Running a `@MainActor async` TUIKit application from a synchronous,
+//  non-isolated interpreter — and carrying a BASIC error back out of a
+//  TUIKit callback.
+//
+
+import Foundation
+
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+import TUIKit
+
+/// The bridge between a running TUI application and the interpreter.
+///
+/// ## The deadlock this exists to avoid
+///
+/// The interpreter is synchronous and runs on the main thread. TUIKit's `App`
+/// is `@MainActor` and `async`. The obvious bridge —
+///
+/// ```swift
+///   Task { @MainActor in try await app.run(window) }
+///   semaphore.wait()          // ← hangs, every time
+/// ```
+///
+/// — cannot work: the semaphore blocks the main thread, the main actor's
+/// executor *is* the main thread, so the task it waits for can never be
+/// scheduled. It deadlocks silently.
+///
+/// It pumps the run loop instead. The main thread keeps servicing the main
+/// queue, which is where the main actor's work is enqueued, so the task runs
+/// and the loop exits when it finishes.
+///
+/// The same shape solved the same problem for the shell's editor
+/// (`BASICShellEditor.swift`); this is that bridge, moved where both hosts and
+/// the binding can reach it.
+final class BASICTUIRuntimeBridge: @unchecked Sendable {
+    static let shared = BASICTUIRuntimeBridge()
+    private init() {}
+
+    /// Calls a BASIC function by name. Set for the duration of `run`.
+    var invokeHandler: ((String) throws -> Void)?
+
+    private var failure: BASICError?
+
+    /// Records an error raised inside a control's handler.
+    ///
+    /// A handler cannot throw *through* TUIKit — it is called mid-frame from a
+    /// non-throwing closure, and there is nowhere for an error to go. So it is
+    /// parked here and re-thrown by `run`, which is the statement the program
+    /// is actually sitting on.
+    func fail(with error: BASICError) {
+        if failure == nil { failure = error }
+    }
+
+    /// Takes the parked error, if there is one.
+    func takeFailure() -> BASICError? {
+        defer { failure = nil }
+        return failure
+    }
+
+    /// Lends the terminal to a full-screen application and takes it back.
+    ///
+    /// TUIKit's driver sets `O_NONBLOCK` on standard input when it starts and
+    /// does not clear it when it stops. A shell's line editor saves and
+    /// restores `termios` around every read, but `termios` is not where that
+    /// flag lives — the next `read` would return `EAGAIN` forever, which reads
+    /// as end of input, and the session would end when the program did.
+    static func lendingTerminal<Value>(_ body: () throws -> Value) rethrows -> Value {
+        let descriptor = STDIN_FILENO
+        let saved = fcntl(descriptor, F_GETFL)
+        defer {
+            if saved >= 0 { _ = fcntl(descriptor, F_SETFL, saved) }
+        }
+        return try body()
+    }
+
+    /// Calls the BASIC handler wired to a control, parking any error.
+    ///
+    /// `@MainActor` because TUIKit calls it from a control mid-frame, and the
+    /// registry it reads is main-actor isolated.
+    @MainActor
+    func invoke(handlerFor id: Int) {
+        guard let handler = BASICTUIRegistry.shared.handlers[id],
+              let invoke = invokeHandler else { return }
+        do {
+            try invoke(handler)
+        } catch let error as BASICError {
+            fail(with: error)
+        } catch {
+            fail(with: .runtime("\(error)"))
+        }
+    }
+
+    /// Runs the application, blocking until it stops.
+    ///
+    /// Everything main-actor isolated happens inside: the `App` is built here
+    /// because TUIKit takes its driver at construction and offers no way to
+    /// swap it, and the driver is the host's answer rather than the binding's.
+    static func runBlocking(appID: Int, windowID: Int, host: any BASICTUIPresentationHost) throws {
+        // The driver is asked for out here, so the *host* — which is not
+        // Sendable — never has to cross an isolation boundary. `TerminalDriver`
+        // is Sendable, so the driver itself may.
+        guard let driver = host.makeTUIDriver() else {
+            throw BASICError.runtime("This host has no surface to draw a TUI application on")
+        }
+        return try lendingTerminal {
+            let box = Box()
+
+            // Building the App and starting its loop are main-actor work, and
+            // an ordinary `RUN` is on a worker lane — so this hops rather than
+            // assuming. The hop is safe because `runProgramSynchronously`
+            // leaves the main thread pumping its run loop instead of parked in
+            // a semaphore; without that, this would wait forever for a main
+            // actor that is blocked waiting for this very worker.
+            let started = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                let registry = BASICTUIRegistry.shared
+                guard let window = registry.windows[windowID],
+                      registry.kinds[appID]?.uppercased() == "TUIAPP" else {
+                    box.error = BASICError.runtime("TUIApp.run expects an application and a window")
+                    box.isFinished = true
+                    started.signal()
+                    return
+                }
+                let app = App(driver: driver)
+                // `^C` is a control's copy key in TUIKit, and an app that quits
+                // on it would lose a program's window to a mistimed keystroke.
+                app.stopsOnControlC = false
+                registry.apps[appID] = app
+
+                // Focus the first control that has a handler. Without this the
+                // window opens with nothing focused, the first keypress goes
+                // nowhere, and the program looks hung rather than waiting.
+                if let first = registry.pendingFirstResponder {
+                    _ = window.makeFirstResponder(first)
+                }
+                started.signal()
+
+                do {
+                    try await app.run(window)
+                } catch {
+                    box.error = error
+                }
+                box.isFinished = true
+            }
+            started.wait()
+
+            // Waiting for the application to finish. On the main thread this
+            // pumps; on a worker it blocks, because the main thread is already
+            // pumping on its behalf.
+            if Thread.isMainThread {
+                while !box.isFinished {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                }
+            } else {
+                while !box.isFinished {
+                    usleep(2000)
+                }
+            }
+
+            // Released when the app stops rather than left to accumulate: a
+            // program that shows a dialog in a loop would otherwise retain
+            // every window it ever built, and the handles are dead anyway.
+            try withTUIRegistry { $0.releaseAll() }
+
+            if let error = box.error {
+                if let basic = error as? BASICError { throw basic }
+                throw BASICError.runtime("TUI application failed: \(error)")
+            }
+        }
+    }
+
+    /// Result box, since the task's outcome has to cross an actor boundary.
+    private final class Box: @unchecked Sendable {
+        var isFinished = false
+        var error: Error?
+    }
+}

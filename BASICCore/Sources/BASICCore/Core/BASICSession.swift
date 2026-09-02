@@ -1400,7 +1400,29 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         guard accepted else {
             throw BASICError.runtime("Program is already running")
         }
-        finished.wait()
+
+        // The main thread waits by *pumping*, not by blocking.
+        //
+        // A plain `finished.wait()` here parks the main thread for the whole
+        // run, which parks the main actor with it — and TUIKit is main-actor
+        // isolated, so a program that puts up a window deadlocked: the worker
+        // asked the main actor to build an App, and the main thread was sitting
+        // in this semaphore waiting for that same worker.
+        //
+        // Polling with a short timeout and servicing the run loop between
+        // polls costs nothing when no main-actor work exists — the loop returns
+        // immediately with nothing to do — and is what lets a BASIC program
+        // drive a `@MainActor` toolkit at all.
+        //
+        // Off the main thread there is no run loop to pump and no main actor to
+        // starve, so the original wait is still right there.
+        if Thread.isMainThread {
+            while finished.wait(timeout: .now() + 0.005) == .timedOut {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+            }
+        } else {
+            finished.wait()
+        }
         switch resultBox.result {
         case .success:
             return

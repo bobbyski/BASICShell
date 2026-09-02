@@ -549,6 +549,8 @@ final class BASICRuntime {
         id: Int,
         method: String,
         arguments: [BASICValue],
+        tuiPresentationHost: (any BASICTUIPresentationHost)? = nil,
+        invokeHandler: @escaping (String) throws -> Void = { _ in },
         fileHost: BASICFileHost? = nil,
         vectorTerminalHost: BASICVectorTerminalHost? = nil,
         timerHost: BASICTimerHost? = nil,
@@ -569,6 +571,15 @@ final class BASICRuntime {
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
+        case "TUIAPP", "TUIWINDOW", "TUISTACK", "TUIBUTTON", "TUILABEL":
+            return try callTUIMethod(
+                typeName: typeName,
+                id: id,
+                method: method,
+                arguments: arguments,
+                presentationHost: tuiPresentationHost,
+                invokeHandler: invokeHandler
+            )
         case "RICHTEXT", "RICHMARKDOWN", "RICHTABLE", "RICHPANEL", "RICHSYNTAX",
             "RICHPROGRESS":
             return try callRichMethod(

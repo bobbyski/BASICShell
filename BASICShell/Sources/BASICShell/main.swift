@@ -1,5 +1,6 @@
 import BASICCore
 import Darwin
+import TUIKit
 import Foundation
 @preconcurrency import VectorTerminalSDK
 
@@ -3893,6 +3894,19 @@ func printDiagnosticsIfNeeded() -> Bool {
     }
 
     return true
+}
+
+// MARK: - TUI presentation
+
+/// The shell draws a TUI application on the real terminal.
+///
+/// The whole of what BASICShell has to supply for TUIKIT_PLAN.md's binding: the
+/// controls, the event routing and the handle table are all in BASICCore, so a
+/// program that puts up a window runs here and in Studio from one file.
+extension ConsoleHost: BASICTUIPresentationHost {
+    func makeTUIDriver() -> (any TerminalDriver)? {
+        ANSIDriver()
+    }
 }
 
 // MARK: - Startup files

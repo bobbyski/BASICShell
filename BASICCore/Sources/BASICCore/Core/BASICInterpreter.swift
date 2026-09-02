@@ -2824,6 +2824,14 @@ public final class BASICInterpreter {
                 id: id,
                 method: method.name,
                 arguments: try arguments.map(evaluate),
+                tuiPresentationHost: host as? BASICTUIPresentationHost,
+                // How a control gets back into the program. The runtime has no
+                // route to the interpreter, and calling a named function is the
+                // entire purpose of a button.
+                invokeHandler: { [weak self] handlerName in
+                    guard let self else { return }
+                    try self.callNamedHandler(handlerName)
+                },
                 fileHost: host as? BASICFileHost,
                 vectorTerminalHost: host as? BASICVectorTerminalHost,
                 timerHost: timerHost,
@@ -3296,6 +3304,27 @@ public final class BASICInterpreter {
         setExecutionControl(resumedControl)
         clearPausedDebugSnapshots()
         return true
+    }
+
+    /// Calls a BASIC function by name, for a TUI control's handler.
+    ///
+    /// Named functions, not closures: a BASIC closure captures by snapshot and
+    /// its writes do not escape, so a closure used as a button handler would
+    /// run and silently discard everything it did (TUIKIT_PLAN.md §2.1).
+    func callNamedHandler(_ name: String) throws {
+        guard let definition = functionDefinitions[name.uppercased()] else {
+            throw BASICError.runtime("No handler called \(name)")
+        }
+        guard !definition.isAsync else {
+            throw BASICError.runtime("Handler \(definition.displayName) must be synchronous")
+        }
+        _ = try callFunctionSynchronously(
+            definition: definition,
+            receiver: nil,
+            receiverClassName: nil,
+            argumentValues: [],
+            allowVoid: true
+        )
     }
 
     func dispatchEvent(selector: BASICEventSelector, data: BASICValue) throws {
@@ -5339,6 +5368,11 @@ public final class BASICInterpreter {
                 }
                 return runtime.richObject(typeName: richName)
             }
+            if let tuiName = Self.tuiClassNames[name.normalized] {
+                return try runtime.tuiObject(
+                    typeName: tuiName, arguments: try arguments.map(evaluate)
+                )
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -5371,6 +5405,11 @@ public final class BASICInterpreter {
                     throw BASICError.runtime("\(richName) takes no arguments")
                 }
                 return runtime.richObject(typeName: richName)
+            }
+            if let tuiName = Self.tuiClassNames[className.uppercased()] {
+                return try runtime.tuiObject(
+                    typeName: tuiName, arguments: try arguments.map(evaluate)
+                )
             }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
@@ -6014,6 +6053,15 @@ public final class BASICInterpreter {
         "RICHPANEL": "RichPanel",
         "RICHSYNTAX": "RichSyntax",
         "RICHPROGRESS": "RichProgress",
+    ]
+
+    /// The TUIKit pseudo classes, spelled as the runtime stores them.
+    static let tuiClassNames: [String: String] = [
+        "TUIAPP": "TUIApp",
+        "TUIWINDOW": "TUIWindow",
+        "TUISTACK": "TUIStack",
+        "TUIBUTTON": "TUIButton",
+        "TUILABEL": "TUILabel",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {
