@@ -111,6 +111,29 @@ public enum BASICKeywords {
         "VARIANT", "VOID",
     ]
 
+    /// The host-backed classes — the "pseudo classes" a program constructs with
+    /// `NEW`, or by calling the name, and then sends messages to:
+    ///
+    /// ```basic
+    /// let vtg = VectorTerminal()
+    /// vtg.rect("panel", 32, 48, 520, 260, "#22c55e", "#07111dcc", 2, 16, 1)
+    /// ```
+    ///
+    /// They are not user classes and never appear in `CLASS` definitions: the
+    /// interpreter recognises the name in `.newObject` and hands back a
+    /// `systemObject` the host implements.
+    ///
+    /// They were missing from this file until the vocabulary was audited for
+    /// TUIKIT_PLAN.md. That is instructive: the categories above were derived
+    /// from the parser's `matchIdentifier` calls, and a pseudo class is matched
+    /// by a string comparison in the `.newObject` switch instead — so a purely
+    /// mechanical derivation could not see them, and neither could the drift
+    /// test. `BASICKeywordTests` now constructs each of these to prove the
+    /// interpreter still answers to it.
+    public static let pseudoClasses: Set<String> = [
+        "FILE", "HTTPCLIENT", "SECONDSTIMER", "VECTORTERMINAL", "VTG",
+    ]
+
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
         "AIBASIC", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
@@ -131,7 +154,7 @@ public enum BASICKeywords {
     /// Every word in the language.
     public static let all: Set<String> =
         control.union(declaration).union(io).union(graphics)
-            .union(types).union(options).union(functions)
+            .union(types).union(pseudoClasses).union(options).union(functions)
 
     /// Every word, ordered — for completion menus and anything else that shows
     /// them to a person.
@@ -163,6 +186,7 @@ public enum BASICKeywords {
             (io, .io),
             (graphics, .graphics),
             (types, .type),
+            (pseudoClasses, .type),
             (options, .option),
             (functions, .function),
         ] {

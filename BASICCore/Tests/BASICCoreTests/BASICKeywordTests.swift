@@ -83,6 +83,33 @@ struct BASICKeywordTests {
         }
     }
 
+    /// Every pseudo class the vocabulary lists is one the interpreter builds.
+    ///
+    /// Proved by constructing each, not by comparing lists — the same reason
+    /// the type-name test declares a variable. A pseudo class is recognised by
+    /// a string comparison inside `.newObject`, which no derivation from the
+    /// parser can see, so this is the only thing standing between that switch
+    /// and the vocabulary.
+    ///
+    /// The assertion is narrow on purpose: constructing a `VectorTerminal` on a
+    /// host with no terminal may well fail, and that is not what is being
+    /// tested. "Unknown CLASS" is — it is what the interpreter says when the
+    /// name reached the bottom of the switch unrecognised.
+    @Test("every pseudo class in the vocabulary can be constructed")
+    func pseudoClassesAreConstructible() {
+        for name in BASICKeywords.pseudoClasses.sorted() {
+            let session = BASICSession(host: TestHost())
+            session.program.loadSource("LET Handle = \(name)()")
+            session.submit("RUN")
+            let complaints = (session.diagnostics().map { $0.message } + TestHost().output)
+                .filter { $0.contains("Unknown CLASS") }
+            #expect(
+                complaints.isEmpty,
+                "\(name) is listed as a pseudo class but the interpreter does not know it"
+            )
+        }
+    }
+
     /// Nothing the language does not implement is advertised.
     ///
     /// A regression guard with names on it. Each of these was in the old
