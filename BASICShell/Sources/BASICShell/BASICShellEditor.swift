@@ -31,144 +31,12 @@
 //  it was afterwards: scrollback intact, prompt in place, nothing scrolled away.
 //
 
-import BASICCore
 import Foundation
 import TUIKit
 
 #if canImport(Darwin)
 import Darwin
 #endif
-
-// MARK: - Syntax
-
-/// Colors a line of BASIC.
-///
-/// Every word comes from ``BASICKeywords``, the language's one vocabulary —
-/// never a list living here. A keyword the parser learns reaches this
-/// highlighter, the completion menu, `LIST`, and Studio's editor together,
-/// because a test in BASICCore fails until it does.
-///
-/// ## One colour, for now
-///
-/// ``BASICKeywords`` separates functions and type names from statements, and
-/// Studio gives each its own colour. TUIKit's `HighlightKind` has no `function`
-/// or `type` case, so they all arrive as `.keyword` here — deliberately, in one
-/// `switch`, rather than by pretending the distinction does not exist. Give
-/// TUIKit those two kinds and this file is a three-line change.
-///
-/// BASIC has no block comments and no multi-line strings, so every line is
-/// independent and the threaded `state` never leaves `.initial`. That is worth
-/// saying out loud: it is why this highlighter can be a pure function of one
-/// line, and why editing line 900 does not force a re-lex of the 899 above it.
-struct BASICSyntaxHighlighter: SyntaxHighlighting {
-
-    /// The kind a vocabulary category paints as.
-    private static func kind(for category: BASICKeywords.Category) -> HighlightKind {
-        switch category {
-        case .control, .declaration, .io, .graphics, .option, .type, .function:
-            return .keyword
-        }
-    }
-
-    func highlight(line: String, state: inout HighlightState) -> [HighlightSpan] {
-        let characters = Array(line)
-        var spans: [HighlightSpan] = []
-        var index = 0
-
-        // `#!/usr/bin/env basicshell` and `# a note`. A shebang is the first
-        // line of every runnable script in Docs/SHELL.md, and without this the
-        // interpreter's own name lit up as if it were code.
-        let leading = characters.prefix { $0.isWhitespace }.count
-        if leading < characters.count, characters[leading] == "#" {
-            return [HighlightSpan(start: leading, length: characters.count - leading, kind: .comment)]
-        }
-
-        // A leading line number, which is a number rather than an expression:
-        // `10 PRINT` is line 10, but `10 + X` in an expression is arithmetic.
-        // Only a run of digits followed by whitespace or end-of-line counts.
-        var scan = 0
-        while scan < characters.count, characters[scan].isWhitespace { scan += 1 }
-        if scan < characters.count, characters[scan].isNumber {
-            var end = scan
-            while end < characters.count, characters[end].isNumber { end += 1 }
-            if end == characters.count || characters[end].isWhitespace {
-                spans.append(HighlightSpan(start: scan, length: end - scan, kind: .number))
-                index = end
-            }
-        }
-
-        while index < characters.count {
-            let character = characters[index]
-
-            // `'` and `//` both start a comment, as they do in Studio.
-            if character == "'"
-                || (character == "/" && index + 1 < characters.count && characters[index + 1] == "/") {
-                spans.append(
-                    HighlightSpan(start: index, length: characters.count - index, kind: .comment)
-                )
-                break
-            }
-
-            if character == "\"" {
-                // An unterminated string runs to end of line rather than being
-                // dropped. Someone in the middle of typing `PRINT "hel` should
-                // see it as the string it is about to be, not as plain text
-                // that turns green a keystroke later.
-                var end = index + 1
-                while end < characters.count, characters[end] != "\"" { end += 1 }
-                let stop = min(end + 1, characters.count)
-                spans.append(HighlightSpan(start: index, length: stop - index, kind: .string))
-                index = stop
-                continue
-            }
-
-            if character.isNumber {
-                var end = index
-                while end < characters.count,
-                      characters[end].isNumber || characters[end] == "." {
-                    end += 1
-                }
-                spans.append(HighlightSpan(start: index, length: end - index, kind: .number))
-                index = end
-                continue
-            }
-
-            if character.isLetter || character == "_" {
-                var end = index
-                // `$` is part of the word: BASIC's string-typed names end in
-                // one, and `TASKSTATUS$` is a keyword. Stopping before it would
-                // match the *prefix* against the keyword list and color half an
-                // identifier.
-                while end < characters.count,
-                      characters[end].isLetter || characters[end].isNumber
-                        || characters[end] == "_" || characters[end] == "$" {
-                    end += 1
-                }
-                let word = String(characters[index..<end]).uppercased()
-                if word == "REM" {
-                    spans.append(
-                        HighlightSpan(start: index, length: characters.count - index, kind: .comment)
-                    )
-                    break
-                }
-                // `BASICKeywords.category(of:)` matches without regard to case
-                // because BASIC does: `print`, `Print`, and `PRINT` are one
-                // keyword and all three should look like one.
-                if let category = BASICKeywords.category(of: word) {
-                    spans.append(
-                        HighlightSpan(start: index, length: end - index, kind: Self.kind(for: category))
-                    )
-                }
-                index = end
-                continue
-            }
-
-            index += 1
-        }
-
-        return spans
-    }
-}
 
 // MARK: - Main-actor bridge
 
@@ -321,7 +189,7 @@ enum BASICProgramEditor {
         document.anchors = AnchorSet(leading: 0, trailing: 0, top: 1, bottom: 1)
 
         let text = SyntaxTextView(text: original, language: "basic")
-        text.highlighter = BASICSyntaxHighlighter()
+        text.highlighter = BASICHighlighter()
         text.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
         document.content.addSubview(text)
 
