@@ -5328,6 +5328,17 @@ public final class BASICInterpreter {
             if name.normalized == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
             }
+            // The same table the `.newObject` case above uses. The pseudo-class
+            // names are listed in two places — here for `RichTable()` and there
+            // for `NEW RichTable()` — and the four that came before this were
+            // spelled out separately in both, which is a drift waiting to
+            // happen. One dictionary, consulted twice.
+            if let richName = Self.richClassNames[name.normalized] {
+                guard arguments.isEmpty else {
+                    throw BASICError.runtime("\(richName) takes no arguments")
+                }
+                return runtime.richObject(typeName: richName)
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -5352,6 +5363,14 @@ public final class BASICInterpreter {
             }
             if className.uppercased() == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
+            }
+            // The Rich* family. They take no constructor arguments — everything
+            // is set by method afterwards — so one line handles all of them.
+            if let richName = Self.richClassNames[className.uppercased()] {
+                guard arguments.isEmpty else {
+                    throw BASICError.runtime("\(richName) takes no arguments")
+                }
+                return runtime.richObject(typeName: richName)
             }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")
@@ -5982,6 +6001,18 @@ public final class BASICInterpreter {
         }
         return runtime.vectorTerminalObject()
     }
+
+    /// The Rich* pseudo classes, spelled as the runtime stores them.
+    ///
+    /// Keyed by the uppercased name a program writes, valued by the canonical
+    /// spelling, so `richmarkdown()` and `RichMarkdown()` reach the same object
+    /// and the debugger shows one name rather than however it was typed.
+    static let richClassNames: [String: String] = [
+        "RICHTEXT": "RichText",
+        "RICHMARKDOWN": "RichMarkdown",
+        "RICHTABLE": "RichTable",
+        "RICHPANEL": "RichPanel",
+    ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {
         guard arguments.count == 1 else {

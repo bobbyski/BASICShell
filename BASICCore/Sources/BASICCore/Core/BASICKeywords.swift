@@ -131,7 +131,8 @@ public enum BASICKeywords {
     /// test. `BASICKeywordTests` now constructs each of these to prove the
     /// interpreter still answers to it.
     public static let pseudoClasses: Set<String> = [
-        "FILE", "HTTPCLIENT", "SECONDSTIMER", "VECTORTERMINAL", "VTG",
+        "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
+        "RICHTEXT", "SECONDSTIMER", "VECTORTERMINAL", "VTG",
     ]
 
     /// Words reserved only in a modifier or `OPTION` position.

@@ -33,6 +33,11 @@ final class BASICRuntime {
     private var fileObjects: [Int: BASICOpenFile] = [:]
     private var timerObjects: [Int: BASICSecondsTimer] = [:]
     private var httpClientObjects: [Int: HTTPClientState] = [:]
+    // The Rich* pseudo classes' state. `internal`, not private, because the
+    // logic lives in BASICRichText.swift as an extension — this file is large
+    // enough without a rendering binding in it.
+    var richObjects: [Int: BASICRichObject] = [:]
+    var nextRichObjectID = 1
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
@@ -45,6 +50,7 @@ final class BASICRuntime {
         fileObjects.removeAll()
         timerObjects.removeAll()
         httpClientObjects.removeAll()
+        richObjects.removeAll()
         eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
@@ -386,14 +392,34 @@ final class BASICRuntime {
         return try coerce(value, to: field, variable: VariableName(name: field.displayName, column: 0))
     }
 
+    /// The event records a handler can be declared to take.
+    ///
+    /// Not pseudo classes: nothing constructs one, they arrive as a handler's
+    /// argument. Kept here because that is the only thing they have in common
+    /// with the list below — both are types a program may name but not define.
+    private static let builtInEventTypes: Set<String> = [
+        "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT",
+        "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT",
+        "BASICNETWORKEVENT",
+    ]
+
+    /// Whether `name` is a type the language provides rather than the program.
+    ///
+    /// The pseudo classes come from ``BASICKeywords/pseudoClasses`` rather than
+    /// being spelled out again. They were spelled out here, and that was a
+    /// third copy of the same list — the interpreter has one in its `.newObject`
+    /// dispatch and another in `.callOrArray` — with nothing keeping the three
+    /// in step.
+    ///
+    /// The failure it produces is not obvious from the symptom. A pseudo class
+    /// missing from *this* list constructs perfectly and then cannot be
+    /// assigned to anything: `let md = RichMarkdown()` fails with "Cannot
+    /// assign non-RichMarkdown object to md", which reads as a type error in
+    /// the program rather than a missing registration.
     static func isBuiltInClass(_ name: String) -> Bool {
-        switch name.uppercased() {
-        case "FILE", "HTTPCLIENT", "VECTORTERMINAL", "VTG", "SECONDSTIMER",
-            "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
-            return true
-        default:
-            return false
-        }
+        let uppercased = name.uppercased()
+        return BASICKeywords.pseudoClasses.contains(uppercased)
+            || builtInEventTypes.contains(uppercased)
     }
 
     func fileObject(isOpen: Bool = false) -> BASICValue {
@@ -543,6 +569,10 @@ final class BASICRuntime {
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
+        case "RICHTEXT", "RICHMARKDOWN", "RICHTABLE", "RICHPANEL":
+            return try callRichMethod(
+                typeName: typeName, id: id, method: method, arguments: arguments
+            )
         case "HTTPCLIENT":
             guard method.uppercased() == "HEADER", arguments.count == 2,
                   let name = arguments[0].string, let value = arguments[1].string else {
