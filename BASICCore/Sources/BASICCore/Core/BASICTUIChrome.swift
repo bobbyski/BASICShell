@@ -26,6 +26,26 @@ extension BASICTUIRegistry {
     }
 }
 
+/// A full-screen window that paints only its chrome rows.
+///
+/// The desktop is *behind* the root window, so a root that paints its whole
+/// background hides it — and the theme's desktop colour never appears no
+/// matter how carefully it is chosen. That is what made the gallery grey.
+///
+/// The gallery's own `GalleryShellWindow` paints the menu row and the status
+/// row and leaves everything between untouched, which is what lets the
+/// desktop show around the floating windows. This is that window.
+@MainActor
+final class BASICTUIShellWindow: Window {
+    override func draw(_ painter: Painter) {
+        painter.fill(Rect(x: 0, y: 0, width: bounds.size.width, height: 1), with: .blank)
+        painter.fill(
+            Rect(x: 0, y: bounds.size.height - 1, width: bounds.size.width, height: 1),
+            with: .blank
+        )
+    }
+}
+
 extension BASICRuntime {
 
     /// Builds a chrome handle, or returns false when `typeName` is not one.
@@ -46,6 +66,11 @@ extension BASICRuntime {
             window.themeContext = ThemeContext.contentWindow
             registry.floatingWindows[id] = window
             registry.windows[id] = window
+
+        case "TUISHELL":
+            let shell = BASICTUIShellWindow()
+            shell.fillsScreen = true
+            registry.windows[id] = shell
 
         case "TUITOOLBAR":
             registry.views[id] = Toolbar()

@@ -6071,6 +6071,7 @@ public final class BASICInterpreter {
         "TUIMENU": "TUIMenu",
         "TUIDIALOG": "TUIDialog",
         "TUIFLOATWINDOW": "TUIFloatWindow",
+        "TUISHELL": "TUIShell",
         "TUITOOLBAR": "TUIToolbar",
         "TUITABS": "TUITabs",
         "TUIPANEL": "TUIPanel",

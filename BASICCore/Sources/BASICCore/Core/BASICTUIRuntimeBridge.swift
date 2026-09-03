@@ -172,9 +172,20 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 // A one-shot timer is the shortest way to be later than a call
                 // that has not returned yet.
                 let presents = registry.pendingPresents.compactMap { registry.floatingWindows[$0] }
-                if !presents.isEmpty {
+                // Re-applied once the loop is up, together with the windows.
+                //
+                // `App.run` builds its own desktop as it starts, which throws
+                // away a `desktop.fillStyle` set before it — so the theme was
+                // dressing the windows and the desktop was reverting to the
+                // terminal's own background. Setting it before *and* after is
+                // what makes the colour stick.
+                let theme = registry.pendingTheme
+                if !presents.isEmpty || theme != nil {
                     _ = app.addTimer(every: .milliseconds(1), repeats: false) { [weak app] in
                         guard let app else { return }
+                        if let theme {
+                            BASICRuntime.applyTUITheme(theme, to: app)
+                        }
                         for extra in presents {
                             app.present(extra)
                         }

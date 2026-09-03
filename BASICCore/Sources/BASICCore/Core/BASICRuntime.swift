@@ -573,7 +573,7 @@ final class BASICRuntime {
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
         case "TUIAPP", "TUIWINDOW", "TUISTACK", "TUIBUTTON", "TUILABEL", "TUIFIELD",
             "TUILIST", "TUITABLE", "TUICHECK", "TUITEXT", "TUIGAUGE", "TUIMENU",
-            "TUIDIALOG", "TUIFLOATWINDOW", "TUITOOLBAR", "TUITABS", "TUIPANEL",
+            "TUIDIALOG", "TUIFLOATWINDOW", "TUISHELL", "TUITOOLBAR", "TUITABS", "TUIPANEL",
             "TUISTATUS", "TUIDIVIDER", "TUISIDEBAR", "TUITOGGLE", "TUIRADIO",
             "TUISEGMENTS", "TUICOMBO", "TUIPOPUP", "TUISLIDER", "TUISTEPPER",
             "TUILEVEL", "TUIPROGRESS", "TUIDATE", "TUICOLOR", "TUIMATRIX", "TUISEARCH", "TUIPASTE",
