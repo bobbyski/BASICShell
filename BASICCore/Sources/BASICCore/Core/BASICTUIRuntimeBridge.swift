@@ -145,6 +145,17 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 app.stopsOnControlC = false
                 registry.apps[appID] = app
 
+                // Everything the program said to its application before there
+                // was one to say it to.
+                if let theme = registry.pendingTheme {
+                    app.applyTheme(theme)
+                }
+                for timer in registry.pendingTimers {
+                    _ = app.addTimer(every: .milliseconds(Int(timer.seconds * 1000))) {
+                        BASICTUIRuntimeBridge.shared.invoke(handlerNamed: timer.handler)
+                    }
+                }
+
                 // Focus the first control that has a handler. Without this the
                 // window opens with nothing focused, the first keypress goes
                 // nowhere, and the program looks hung rather than waiting.
@@ -152,6 +163,23 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                     _ = window.makeFirstResponder(first)
                 }
                 started.signal()
+
+                // Presented *after* `run` has started, not before. `App.run`
+                // shows its own window last, so a floating window presented
+                // first is immediately buried under the desktop — which looks
+                // exactly like `present` doing nothing at all.
+                //
+                // A one-shot timer is the shortest way to be later than a call
+                // that has not returned yet.
+                let presents = registry.pendingPresents.compactMap { registry.floatingWindows[$0] }
+                if !presents.isEmpty {
+                    _ = app.addTimer(every: .milliseconds(1), repeats: false) { [weak app] in
+                        guard let app else { return }
+                        for extra in presents {
+                            app.present(extra)
+                        }
+                    }
+                }
 
                 do {
                     try await app.run(window)

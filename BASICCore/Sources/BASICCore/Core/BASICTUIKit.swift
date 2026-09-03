@@ -76,6 +76,23 @@ final class BASICTUIRegistry {
     var openMenus: [Int: Menu] = [:]
     /// Windows that have a menu bar, and so have one row less to give.
     var windowsWithMenuBars: Set<Int> = []
+    /// Windows that have a status strip, and so have one row less at the foot.
+    var windowsWithStatusBars: Set<Int> = []
+    /// Backing store for ``floatingWindows`` (see BASICTUIChrome.swift).
+    var floatingWindowStorage: [Int: FloatingWindow] = [:]
+    /// The handle most recently allocated, so a builder can reach it.
+    var lastAllocatedID = 0
+    /// A theme set before the app existed, applied when it does.
+    ///
+    /// A program configures its application before running it — that is the
+    /// natural order to write — but `TUIApp` holds no `App` until `run`,
+    /// because TUIKit takes the driver at construction. So everything said to
+    /// the application early is remembered here and applied at `run`.
+    var pendingTheme: Theme?
+    /// Timers asked for before the app existed.
+    var pendingTimers: [(seconds: Double, handler: String)] = []
+    /// Windows to present once the app is up.
+    var pendingPresents: [Int] = []
     /// The BASIC function each control calls, by handle.
     var handlers: [Int: String] = [:]
     /// The first control that can take focus, per window, in the order the
@@ -94,6 +111,7 @@ final class BASICTUIRegistry {
         let id = nextID
         nextID += 1
         kinds[id] = kind
+        lastAllocatedID = id
         return id
     }
 
@@ -105,6 +123,11 @@ final class BASICTUIRegistry {
     func releaseAll() {
         pendingFirstResponder = nil
         windowsWithMenuBars.removeAll()
+        windowsWithStatusBars.removeAll()
+        floatingWindowStorage.removeAll()
+        pendingTheme = nil
+        pendingTimers.removeAll()
+        pendingPresents.removeAll()
         views.removeAll()
         menus.removeAll()
         dialogs.removeAll()
@@ -235,7 +258,11 @@ extension BASICRuntime {
                 registry.dialogs[id] = BASICTUIDialogSpec(title: title)
 
             default:
-                throw BASICError.runtime("Unknown TUI class \(typeName)")
+                guard try BASICRuntime.tuiChromeObject(
+                    typeName: typeName, title: title, registry: registry
+                ) else {
+                    throw BASICError.runtime("Unknown TUI class \(typeName)")
+                }
             }
             return id
         }
@@ -289,6 +316,15 @@ extension BASICRuntime {
                 // the top of the window rather than taking a place in a column.
                 // Checked before the view lookup below, because a bar is not in
                 // the view table and would be rejected as "not a TUI view".
+                // A status strip owns the last row, the way a menu bar owns the
+                // first. Filling the window with it would hide everything else.
+                if let window = registry.windows[id],
+                   let strip = registry.views[childID] as? StatusBar {
+                    strip.anchors = AnchorSet(leading: 0, trailing: 0, bottom: 0, height: 1)
+                    window.addSubview(strip)
+                    registry.windowsWithStatusBars.insert(id)
+                    return .empty
+                }
                 if let window = registry.windows[id], let bar = registry.menus[childID] {
                     bar.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, height: 1)
                     window.addSubview(bar)
@@ -305,6 +341,19 @@ extension BASICRuntime {
                 guard let child = registry.views[childID] else {
                     throw BASICError.runtime("\(typeName).add expects a TUI view")
                 }
+                // A panel and a floating window are frames: things go *inside*
+                // them, not on top of them. Adding to the view itself would put
+                // the child over the border.
+                if let window = registry.floatingWindows[id] {
+                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                    window.content.addSubview(child)
+                    return .empty
+                }
+                if let panel = registry.views[id] as? Panel {
+                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                    panel.content.addSubview(child)
+                    return .empty
+                }
                 if let window = registry.windows[id] {
                     // Fill the window unless the program has said otherwise. A
                     // view added with no anchors gets zero size and the window
@@ -313,7 +362,10 @@ extension BASICRuntime {
                     //
                     // One row down when there is a menu bar, which owns the top.
                     let top = registry.windowsWithMenuBars.contains(id) ? 1 : 0
-                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: top, bottom: 0)
+                    let bottom = registry.windowsWithStatusBars.contains(id) ? 1 : 0
+                    child.anchors = AnchorSet(
+                        leading: 0, trailing: 0, top: top, bottom: bottom
+                    )
                     window.addSubview(child)
                 } else {
                     let parent = try view()
@@ -351,8 +403,12 @@ extension BASICRuntime {
                 return .empty
 
             case "ADDROW":
-                guard let table = try view() as? TableView else {
-                    throw BASICError.runtime("\(typeName) has no rows")
+                guard let table = subject as? TableView else {
+                    // A sidebar's `addrow` — icon, title, subtitle.
+                    return try BASICRuntime.callTUIChromeMethod(
+                        typeName: typeName, id: id, method: method,
+                        arguments: arguments, registry: registry
+                    )
                 }
                 // Short rows are padded rather than refused, as RichTable does:
                 // a table gaining a column should not turn every existing
@@ -453,8 +509,12 @@ extension BASICRuntime {
                 return .empty
 
             case "ADDITEM":
-                guard let list = try view() as? ListView else {
-                    throw BASICError.runtime("\(typeName) is not a list")
+                guard let list = subject as? ListView else {
+                    // A toolbar's `additem` — same word, different control.
+                    return try BASICRuntime.callTUIChromeMethod(
+                        typeName: typeName, id: id, method: method,
+                        arguments: arguments, registry: registry
+                    )
                 }
                 guard let value = arguments.first?.string?.description else {
                     throw BASICError.runtime("\(typeName).additem expects a string")
@@ -466,8 +526,11 @@ extension BASICRuntime {
                 if let table = try? view() as? TableView {
                     return .number(Double(table.selectedIndex ?? -1))
                 }
-                guard let list = try view() as? ListView else {
-                    throw BASICError.runtime("\(typeName) is not a list")
+                guard let list = subject as? ListView else {
+                    return try BASICRuntime.callTUIChromeMethod(
+                        typeName: typeName, id: id, method: method,
+                        arguments: arguments, registry: registry
+                    )
                 }
                 // -1 rather than an error when nothing is selected: a program
                 // asking "which row?" before the user has touched anything is
@@ -535,8 +598,12 @@ extension BASICRuntime {
                     }
                     return .empty
                 }
-                guard let list = try view() as? ListView else {
-                    throw BASICError.runtime("\(typeName) has no selection to handle")
+                guard let list = subject as? ListView else {
+                    // A tab strip's or a sidebar's selection.
+                    return try BASICRuntime.callTUIChromeMethod(
+                        typeName: typeName, id: id, method: method,
+                        arguments: arguments, registry: registry
+                    )
                 }
                 if registry.pendingFirstResponder == nil {
                     registry.pendingFirstResponder = list
@@ -628,7 +695,17 @@ extension BASICRuntime {
                 return .empty
 
             default:
-                throw BASICError.runtime("\(typeName) has no method \(method)")
+                // Not a control method — try the shell (BASICTUIChrome.swift).
+                // One `default` rather than two switches the caller has to
+                // choose between, so a program never has to know which half of
+                // the binding a method lives in.
+                return try BASICRuntime.callTUIChromeMethod(
+                    typeName: typeName,
+                    id: id,
+                    method: method,
+                    arguments: arguments,
+                    registry: registry
+                )
             }
         }
     }
