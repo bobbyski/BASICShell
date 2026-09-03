@@ -577,7 +577,8 @@ final class BASICRuntime {
             "TUISTATUS", "TUIDIVIDER", "TUISIDEBAR", "TUITOGGLE", "TUIRADIO",
             "TUISEGMENTS", "TUICOMBO", "TUIPOPUP", "TUISLIDER", "TUISTEPPER",
             "TUILEVEL", "TUIPROGRESS", "TUIDATE", "TUICOLOR", "TUIMATRIX", "TUISEARCH", "TUIPASTE",
-            "TUITOKENS", "TUICOMPLETIONS", "TUIRANGE":
+            "TUITOKENS", "TUICOMPLETIONS", "TUIRANGE", "TUITREE", "TUIDIRTREE",
+            "TUIBROWSER", "TUIPATH", "TUIFAVORITES":
             return try callTUIMethod(
                 typeName: typeName,
                 id: id,

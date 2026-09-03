@@ -72,6 +72,8 @@ final class BASICTUIRegistry {
     /// exist until the program has finished saying what it wants, which is at
     /// `show`. The same reason `TUIApp` holds no `App` until `run`.
     var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// Tree nodes by path, per tree handle — see `addnode`.
+    var treeNodes: [Int: [String: TreeNode]] = [:]
     /// The stack inside each panel, which is what its children go into.
     var panelStacks: [Int: StackView] = [:]
     /// The menu a `TUIMenu` is currently building items into.
@@ -135,6 +137,7 @@ final class BASICTUIRegistry {
         dialogs.removeAll()
         openMenus.removeAll()
         panelStacks.removeAll()
+        treeNodes.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
@@ -236,6 +239,26 @@ extension BASICRuntime {
                 // the one family that reads every argument rather than just
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUITREE":
+                registry.views[id] = TreeView(roots: [])
+                registry.treeNodes[id] = [:]
+
+            case "TUIDIRTREE":
+                let directory = DirectoryTree(root: title.isEmpty
+                    ? FileManager.default.currentDirectoryPath : title)
+                directory.expandRoot()
+                registry.views[id] = directory
+
+            case "TUIBROWSER":
+                registry.views[id] = Browser(fileSystemRoot: title.isEmpty
+                    ? FileManager.default.currentDirectoryPath : title)
+
+            case "TUIPATH":
+                registry.views[id] = PathControl(path: title)
+
+            case "TUIFAVORITES":
+                registry.views[id] = TUIFavorites()
 
             case "TUISEARCH":
                 registry.views[id] = SearchField(placeholder: title.isEmpty ? "Search" : title)
@@ -512,7 +535,13 @@ extension BASICRuntime {
                 guard let heading = arguments.first?.string?.description else {
                     throw BASICError.runtime("\(typeName).column expects a title")
                 }
-                table.columns.append(TableColumn(heading))
+                // An optional second argument fixes the column's width, as the
+                // gallery's Size and Kind columns do.
+                if let width = Self.tuiInt(arguments, 1), width > 0 {
+                    table.columns.append(TableColumn(heading, width: .fixed(width)))
+                } else {
+                    table.columns.append(TableColumn(heading))
+                }
                 return .empty
 
             case "ADDROW":
@@ -635,6 +664,13 @@ extension BASICRuntime {
                 return .empty
 
             case "ADDITEM":
+                if let favorites = subject as? TUIFavorites {
+                    guard let itemTitle = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).additem expects a title")
+                    }
+                    favorites.items.append(TUIFavorites.Item(title: itemTitle))
+                    return .empty
+                }
                 guard let list = subject as? ListView else {
                     // A toolbar's `additem` — same word, different control.
                     return try BASICRuntime.callTUIChromeMethod(
@@ -826,6 +862,41 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "ADDNODE":
+                // A tree is built by *path*, not by nesting constructors, which
+                // BASIC cannot do: addnode("Sources"), then
+                // addnode("Sources/TUIKit"), then the leaves under it. Each
+                // call finds its parent by the part before the last slash.
+                guard let tree = subject as? TreeView else {
+                    throw BASICError.runtime("\(typeName) has no nodes")
+                }
+                guard let path = arguments.first?.string?.description, !path.isEmpty else {
+                    throw BASICError.runtime("\(typeName).addnode expects a path")
+                }
+                var known = registry.treeNodes[id] ?? [:]
+                let parts = path.split(separator: "/").map(String.init)
+                guard let leaf = parts.last else { return .empty }
+                let node = TreeNode(leaf)
+                known[path] = node
+                if parts.count == 1 {
+                    tree.roots.append(node)
+                } else {
+                    let parentPath = parts.dropLast().joined(separator: "/")
+                    guard let parent = known[parentPath] else {
+                        throw BASICError.runtime(
+                            "\(typeName).addnode: no parent for \(path) — add \(parentPath) first"
+                        )
+                    }
+                    parent.addChild(node)
+                }
+                registry.treeNodes[id] = known
+                // Reassigned, not mutated: `roots` rebuilds the visible rows in
+                // its `didSet`, and `addChild` on a node buried inside it never
+                // touches the property — so a nested node would be added and
+                // never drawn.
+                tree.roots = tree.roots
                 return .empty
 
             case "ITEMS":
