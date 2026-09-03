@@ -6077,6 +6077,9 @@ public final class BASICInterpreter {
         "TUISTATUS": "TUIStatus",
         "TUIDIVIDER": "TUIDivider",
         "TUISIDEBAR": "TUISidebar",
+        "TUITOGGLE": "TUIToggle",
+        "TUIRADIO": "TUIRadio",
+        "TUISEGMENTS": "TUISegments",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {

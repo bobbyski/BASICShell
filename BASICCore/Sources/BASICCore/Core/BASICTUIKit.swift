@@ -225,6 +225,18 @@ extension BASICRuntime {
             case "TUIBUTTON":
                 registry.views[id] = Button(title)
 
+            case "TUITOGGLE":
+                registry.views[id] = ToggleButton(title)
+
+            case "TUIRADIO":
+                // Options at construction, as TUIKit takes them — so this is
+                // the one family that reads every argument rather than just
+                // the first: TUIRadio("Ask", "Allow", "Block").
+                registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUISEGMENTS":
+                registry.views[id] = SegmentedControl(Self.tuiStrings(arguments), selectedIndex: 0)
+
             case "TUILABEL":
                 registry.views[id] = Label(title)
 
@@ -493,6 +505,19 @@ extension BASICRuntime {
                 return .boolean(box.isChecked)
 
             case "ONTOGGLE":
+                if let toggle = subject as? ToggleButton {
+                    guard let handler = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).ontoggle expects a handler name")
+                    }
+                    registry.handlers[id] = handler
+                    if registry.pendingFirstResponder == nil {
+                        registry.pendingFirstResponder = toggle
+                    }
+                    toggle.onChange = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 guard let box = try view() as? Checkbox else {
                     throw BASICError.runtime("\(typeName) has nothing to toggle")
                 }
@@ -523,6 +548,12 @@ extension BASICRuntime {
                 return .empty
 
             case "SELECTED":
+                if let radio = subject as? RadioGroup {
+                    return .number(Double(radio.selectedIndex ?? -1))
+                }
+                if let segments = subject as? SegmentedControl {
+                    return .number(Double(segments.selectedIndex ?? -1))
+                }
                 if let table = try? view() as? TableView {
                     return .number(Double(table.selectedIndex ?? -1))
                 }
@@ -589,6 +620,24 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
                 registry.handlers[id] = handler
+                if let radio = subject as? RadioGroup {
+                    if registry.pendingFirstResponder == nil {
+                        registry.pendingFirstResponder = radio
+                    }
+                    radio.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
+                if let segments = subject as? SegmentedControl {
+                    if registry.pendingFirstResponder == nil {
+                        registry.pendingFirstResponder = segments
+                    }
+                    segments.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 if let table = try? view() as? TableView {
                     if registry.pendingFirstResponder == nil {
                         registry.pendingFirstResponder = table
@@ -627,6 +676,65 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "HEIGHT":
+                // The gallery's `pinnedHeight`: a fixed row count, so a group
+                // takes exactly the space it needs and the ones below it are
+                // not pushed off the page.
+                guard let view = subject else {
+                    throw BASICError.runtime("\(typeName) has no height to pin")
+                }
+                guard let rows = arguments.first?.number, rows > 0 else {
+                    throw BASICError.runtime("\(typeName).height expects a row count")
+                }
+                view.minimumSize = Size(width: 0, height: Int(rows))
+                view.maximumSize = Size(width: Int.max, height: Int(rows))
+                return .empty
+
+            case "ROLE":
+                guard let button = subject as? Button else {
+                    throw BASICError.runtime("\(typeName) has no role")
+                }
+                switch (arguments.first?.string?.description ?? "").lowercased() {
+                case "default": button.role = .default
+                case "destructive": button.role = .destructive
+                default: button.role = .normal
+                }
+                return .empty
+
+            case "STYLE":
+                guard let button = subject as? Button else {
+                    throw BASICError.runtime("\(typeName) has no style")
+                }
+                button.style =
+                    (arguments.first?.string?.description ?? "").lowercased() == "bordered"
+                    ? .bordered : .tinted
+                return .empty
+
+            case "ONLONGPRESS":
+                guard let button = subject as? Button else {
+                    throw BASICError.runtime("\(typeName) has no long press")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onlongpress expects a handler name")
+                }
+                button.onLongPress = {
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+                return .empty
+
+            case "CONTEXTMENU":
+                // Any view can carry one; on a button with no handler, holding
+                // it opens the menu instead of firing an action.
+                guard let view = subject else {
+                    throw BASICError.runtime("\(typeName) cannot carry a menu")
+                }
+                guard case .systemObject(_, let menuID)? = arguments.first,
+                      let menu = registry.openMenus[menuID] else {
+                    throw BASICError.runtime("\(typeName).contextmenu expects a TUIMenu")
+                }
+                view.contextMenu = menu
                 return .empty
 
             case "ONCLICK":
@@ -748,5 +856,12 @@ extension BASICRuntime {
         }
         if case .boolean(let flag) = value { return flag ? "True" : "False" }
         return ""
+    }
+}
+
+extension BASICRuntime {
+    /// Every string argument, for the controls TUIKit builds from a list.
+    static func tuiStrings(_ arguments: [BASICValue]) -> [String] {
+        arguments.compactMap { $0.string?.description }
     }
 }
