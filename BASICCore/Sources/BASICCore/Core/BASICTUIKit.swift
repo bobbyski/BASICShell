@@ -246,6 +246,19 @@ extension BASICRuntime {
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
 
+            case "TUISYNTAX":
+                registry.views[id] = SyntaxTextView(
+                    text: title,
+                    language: (arguments.count > 1
+                        ? arguments[1].string?.description : nil) ?? "swift"
+                )
+
+            case "TUIMARKDOWN":
+                registry.views[id] = MarkdownView(markdown: title)
+
+            case "TUIRICH":
+                registry.views[id] = RichText(markup: title)
+
             case "TUIMASTERDETAIL":
                 // Nothing built yet. `MasterDetail` fixes its rows at
                 // construction and offers no way to add one after, so the
@@ -820,6 +833,13 @@ extension BASICRuntime {
                     }
                     return .number(gauge.value)
                 }
+                if let editor = try? view() as? SyntaxTextView {
+                    if let wanted = arguments.first?.string?.description {
+                        editor.setText(wanted)
+                        return .empty
+                    }
+                    return .string(BASICString(editor.text))
+                }
                 if let editor = try? view() as? TextView {
                     if let wanted = arguments.first?.string?.description {
                         editor.setText(wanted)
@@ -916,6 +936,26 @@ extension BASICRuntime {
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
                 return .empty
+
+            case "LANGUAGE":
+                guard let editor = subject as? SyntaxTextView else {
+                    throw BASICError.runtime("\(typeName) has no language")
+                }
+                editor.language = arguments.first?.string?.description ?? "swift"
+                return .empty
+
+            case "TOGGLEEDIT":
+                guard let markdown = subject as? MarkdownView else {
+                    throw BASICError.runtime("\(typeName) has no source view")
+                }
+                markdown.toggleEditing()
+                return .empty
+
+            case "EDITING":
+                guard let markdown = subject as? MarkdownView else {
+                    throw BASICError.runtime("\(typeName) has no source view")
+                }
+                return .boolean(markdown.isEditing)
 
             case "DETAIL":
                 guard registry.masterRows[id] != nil else {
