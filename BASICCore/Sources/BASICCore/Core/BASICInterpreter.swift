@@ -6089,6 +6089,11 @@ public final class BASICInterpreter {
         "TUIDATE": "TUIDate",
         "TUICOLOR": "TUIColor",
         "TUIMATRIX": "TUIMatrix",
+        "TUISEARCH": "TUISearch",
+        "TUIPASTE": "TUIPaste",
+        "TUITOKENS": "TUITokens",
+        "TUICOMPLETIONS": "TUICompletions",
+        "TUIRANGE": "TUIRange",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {

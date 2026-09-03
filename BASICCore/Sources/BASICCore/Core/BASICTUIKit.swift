@@ -237,6 +237,47 @@ extension BASICRuntime {
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
 
+            case "TUISEARCH":
+                registry.views[id] = SearchField(placeholder: title.isEmpty ? "Search" : title)
+
+            case "TUIPASTE":
+                registry.views[id] = PasteButton(title.isEmpty ? "&Paste" : title) { _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                }
+
+            case "TUITOKENS":
+                // Placeholder first, tokens after — BASIC's variadic tail has
+                // to be last.
+                registry.views[id] = TokenField(
+                    tokens: Array(Self.tuiStrings(arguments).dropFirst()),
+                    placeholder: title
+                )
+
+            case "TUICOMPLETIONS":
+                // Attaches to a plain field, or to a token field's inner one —
+                // and on a token field, accepting mints, as the gallery does.
+                guard case .systemObject(_, let targetID) = arguments.first,
+                      let target = registry.views[targetID] else {
+                    throw BASICError.runtime("TUICompletions expects a field")
+                }
+                if let tokens = target as? TokenField {
+                    let list = CompletionList(for: tokens.field)
+                    list.onAccept = { [weak tokens] accepted in tokens?.mint(accepted) }
+                    registry.views[id] = list
+                } else if let field = target as? TextField {
+                    registry.views[id] = CompletionList(for: field)
+                } else {
+                    throw BASICError.runtime("TUICompletions expects a field")
+                }
+
+            case "TUIRANGE":
+                registry.views[id] = RangeSlider(
+                    lower: Self.tuiInt(arguments, 0) ?? 0,
+                    upper: Self.tuiInt(arguments, 1) ?? 100,
+                    in: (Self.tuiInt(arguments, 2) ?? 0)...(Self.tuiInt(arguments, 3) ?? 100),
+                    minimumGap: Self.tuiInt(arguments, 4) ?? 0
+                )
+
             case "TUIDATE":
                 // "date" gives YYYY-MM-DD segments with a calendar popup;
                 // "calendar" is the month grid itself.
@@ -671,6 +712,9 @@ extension BASICRuntime {
                 if let box = try? view() as? Checkbox {
                     return .boolean(box.isChecked)
                 }
+                if let search = subject as? SearchField {
+                    return .string(BASICString(search.text))
+                }
                 if let slider = subject as? Slider {
                     return .number(Double(slider.value))
                 }
@@ -759,6 +803,16 @@ extension BASICRuntime {
                 return .empty
 
             case "ONCHANGE":
+                if let span = subject as? RangeSlider {
+                    guard let handler = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).onchange expects a handler name")
+                    }
+                    registry.handlers[id] = handler
+                    span.onValuesChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 guard let field = try view() as? TextField else {
                     throw BASICError.runtime("\(typeName) has no text to handle")
                 }
@@ -773,6 +827,56 @@ extension BASICRuntime {
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
                 return .empty
+
+            case "ITEMS":
+                guard let list = subject as? CompletionList else {
+                    throw BASICError.runtime("\(typeName) has no completion items")
+                }
+                list.items = Self.tuiStrings(arguments)
+                return .empty
+
+            case "TICKS":
+                guard let slider = subject as? Slider else {
+                    throw BASICError.runtime("\(typeName) has no tick marks")
+                }
+                let marks = Self.tuiInt(arguments, 0) ?? 0
+                slider.tickMarks = marks
+                // Ticks a value can rest between are decoration; the gallery
+                // asks for both together, so this does too.
+                slider.snapsToTicks = marks > 0
+                return .empty
+
+            case "ONSEARCH", "ONCOMMIT", "ONEMPTY":
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).\(method) expects a handler name")
+                }
+                if let search = subject as? SearchField {
+                    if method.uppercased() == "ONSEARCH" {
+                        search.onSearch = { _ in
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        }
+                    } else {
+                        search.onCommit = { _ in
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        }
+                    }
+                    return .empty
+                }
+                if let paste = subject as? PasteButton, method.uppercased() == "ONEMPTY" {
+                    paste.onEmpty = {
+                        BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                    }
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no \(method)")
+
+            case "LOWER", "UPPER":
+                guard let span = subject as? RangeSlider else {
+                    throw BASICError.runtime("\(typeName) has no range")
+                }
+                return .number(Double(
+                    method.uppercased() == "LOWER" ? span.lowerValue : span.upperValue
+                ))
 
             case "PLACEHOLDER":
                 guard let field = subject as? TextField else {
@@ -869,6 +973,16 @@ extension BASICRuntime {
                 return .empty
 
             case "ONCLICK":
+                // A paste button's action is fixed at construction — it has to
+                // be, because TUIKit hands the pasted text to it — so this only
+                // records which BASIC function that action should call.
+                if subject is PasteButton {
+                    guard let handler = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).onclick expects a handler name")
+                    }
+                    registry.handlers[id] = handler
+                    return .empty
+                }
                 // Recorded here rather than at `add`: a button only earns focus
                 // once it has something to do.
                 guard let handler = arguments.first?.string?.description else {
