@@ -234,6 +234,40 @@ extension BASICRuntime {
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
 
+            case "TUICOMBO":
+                registry.views[id] = ComboBox(items: Self.tuiStrings(arguments))
+
+            case "TUIPOPUP":
+                registry.views[id] = PopUpButton(
+                    items: Self.tuiStrings(arguments), selectedIndex: 0
+                )
+
+            case "TUISLIDER":
+                registry.views[id] = Slider(
+                    value: Self.tuiInt(arguments, 0) ?? 0,
+                    in: (Self.tuiInt(arguments, 1) ?? 0)...(Self.tuiInt(arguments, 2) ?? 100)
+                )
+
+            case "TUISTEPPER":
+                registry.views[id] = Stepper(
+                    value: Self.tuiInt(arguments, 0) ?? 0,
+                    in: (Self.tuiInt(arguments, 1) ?? 0)...(Self.tuiInt(arguments, 2) ?? 10)
+                )
+
+            case "TUILEVEL":
+                registry.views[id] = LevelIndicator(
+                    value: Self.tuiInt(arguments, 0) ?? 0,
+                    maximum: Self.tuiInt(arguments, 1) ?? 5
+                )
+
+            case "TUIPROGRESS":
+                // "bar" is determinate; "spinner" advances a glyph per tick and
+                // is what an App timer drives.
+                registry.views[id] = ProgressIndicator(
+                    style: title.lowercased().hasPrefix("s") ? .spinner : .bar,
+                    value: (arguments.count > 1 ? arguments[1].number : nil) ?? 0
+                )
+
             case "TUISEGMENTS":
                 registry.views[id] = SegmentedControl(Self.tuiStrings(arguments), selectedIndex: 0)
 
@@ -551,6 +585,9 @@ extension BASICRuntime {
                 if let radio = subject as? RadioGroup {
                     return .number(Double(radio.selectedIndex ?? -1))
                 }
+                if let popUp = subject as? PopUpButton {
+                    return .number(Double(popUp.selectedIndex ?? -1))
+                }
                 if let segments = subject as? SegmentedControl {
                     return .number(Double(segments.selectedIndex ?? -1))
                 }
@@ -596,6 +633,15 @@ extension BASICRuntime {
                 if let box = try? view() as? Checkbox {
                     return .boolean(box.isChecked)
                 }
+                if let slider = subject as? Slider {
+                    return .number(Double(slider.value))
+                }
+                if let stepper = subject as? Stepper {
+                    return .number(Double(stepper.value))
+                }
+                if let level = subject as? LevelIndicator {
+                    return .number(Double(level.value))
+                }
                 if let gauge = try? view() as? Gauge {
                     if let wanted = arguments.first?.number {
                         gauge.setValue(wanted)
@@ -620,6 +666,12 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
                 registry.handlers[id] = handler
+                if let popUp = subject as? PopUpButton {
+                    popUp.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 if let radio = subject as? RadioGroup {
                     if registry.pendingFirstResponder == nil {
                         registry.pendingFirstResponder = radio
@@ -676,6 +728,41 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "PLACEHOLDER":
+                guard let field = subject as? TextField else {
+                    throw BASICError.runtime("\(typeName) has no placeholder")
+                }
+                field.placeholder = arguments.first?.string?.description ?? ""
+                return .empty
+
+            case "EDITABLE":
+                guard let level = subject as? LevelIndicator else {
+                    throw BASICError.runtime("\(typeName) has no editable state")
+                }
+                level.isEditable = arguments.first?.truthy ?? true
+                return .empty
+
+            case "WARNING":
+                guard let level = subject as? LevelIndicator else {
+                    throw BASICError.runtime("\(typeName) has no warning level")
+                }
+                level.warningLevel = Self.tuiInt(arguments, 0)
+                return .empty
+
+            case "CRITICAL":
+                guard let level = subject as? LevelIndicator else {
+                    throw BASICError.runtime("\(typeName) has no critical level")
+                }
+                level.criticalLevel = Self.tuiInt(arguments, 0)
+                return .empty
+
+            case "ADVANCE":
+                guard let progress = subject as? ProgressIndicator else {
+                    throw BASICError.runtime("\(typeName) has nothing to advance")
+                }
+                progress.advance()
                 return .empty
 
             case "HEIGHT":
@@ -860,6 +947,12 @@ extension BASICRuntime {
 }
 
 extension BASICRuntime {
+    /// One numeric argument, for the controls TUIKit builds from numbers.
+    static func tuiInt(_ arguments: [BASICValue], _ index: Int) -> Int? {
+        guard index < arguments.count, let value = arguments[index].number else { return nil }
+        return Int(value)
+    }
+
     /// Every string argument, for the controls TUIKit builds from a list.
     static func tuiStrings(_ arguments: [BASICValue]) -> [String] {
         arguments.compactMap { $0.string?.description }
