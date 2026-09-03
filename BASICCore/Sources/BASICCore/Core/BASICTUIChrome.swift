@@ -54,7 +54,16 @@ extension BASICRuntime {
             registry.views[id] = TabView()
 
         case "TUIPANEL":
-            registry.views[id] = Panel(title)
+            // A panel stacks what it is given, as the gallery's own `group`
+            // helper does. Adding straight to `content` gives every child fill
+            // anchors, so the second one covers the first — which looked like
+            // controls that had failed to build.
+            let panel = Panel(title)
+            let stack = VStack(spacing: 1, insets: EdgeInsets(top: 0, left: 1, bottom: 0, right: 1))
+            stack.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+            panel.content.addSubview(stack)
+            registry.panelStacks[id] = stack
+            registry.views[id] = panel
 
         case "TUISTATUS":
             let bar = StatusBar()
@@ -223,6 +232,10 @@ extension BASICRuntime {
                 }
                 if let sidebar = registry.views[id] as? SidebarList {
                     sidebar.select(index)
+                    return .empty
+                }
+                if let matrix = registry.views[id] as? Matrix {
+                    matrix.select([index])
                     return .empty
                 }
                 throw BASICError.runtime("\(typeName) has nothing to select")

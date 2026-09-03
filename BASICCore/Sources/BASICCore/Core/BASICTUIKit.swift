@@ -72,6 +72,8 @@ final class BASICTUIRegistry {
     /// exist until the program has finished saying what it wants, which is at
     /// `show`. The same reason `TUIApp` holds no `App` until `run`.
     var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// The stack inside each panel, which is what its children go into.
+    var panelStacks: [Int: StackView] = [:]
     /// The menu a `TUIMenu` is currently building items into.
     var openMenus: [Int: Menu] = [:]
     /// Windows that have a menu bar, and so have one row less to give.
@@ -132,6 +134,7 @@ final class BASICTUIRegistry {
         menus.removeAll()
         dialogs.removeAll()
         openMenus.removeAll()
+        panelStacks.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
@@ -233,6 +236,30 @@ extension BASICRuntime {
                 // the one family that reads every argument rather than just
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUIDATE":
+                // "date" gives YYYY-MM-DD segments with a calendar popup;
+                // "calendar" is the month grid itself.
+                registry.views[id] = DatePicker(
+                    mode: title.lowercased().hasPrefix("c") ? .calendar
+                        : title.lowercased().hasPrefix("t") ? .time : .date
+                )
+
+            case "TUICOLOR":
+                registry.views[id] = ColorPicker()
+
+            case "TUIMATRIX":
+                // Columns and mode first, titles after, because BASIC's
+                // variadic tail has to be last: TUIMatrix(4, "highlight",
+                // "Mon", "Tue", …).
+                let titles = Self.tuiStrings(arguments).dropFirst()
+                registry.views[id] = Matrix(
+                    titles: Array(titles),
+                    columns: max(1, Self.tuiInt(arguments, 0) ?? 1),
+                    mode: (arguments.count > 1
+                        ? arguments[1].string?.description ?? "" : "")
+                        .lowercased().hasPrefix("h") ? .highlight : .radio
+                )
 
             case "TUICOMBO":
                 registry.views[id] = ComboBox(items: Self.tuiStrings(arguments))
@@ -395,9 +422,8 @@ extension BASICRuntime {
                     window.content.addSubview(child)
                     return .empty
                 }
-                if let panel = registry.views[id] as? Panel {
-                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
-                    panel.content.addSubview(child)
+                if let stack = registry.panelStacks[id] {
+                    stack.addSubview(child)
                     return .empty
                 }
                 if let window = registry.windows[id] {
@@ -588,6 +614,9 @@ extension BASICRuntime {
                 if let popUp = subject as? PopUpButton {
                     return .number(Double(popUp.selectedIndex ?? -1))
                 }
+                if let matrix = subject as? Matrix {
+                    return .number(Double(matrix.selectedIndex ?? -1))
+                }
                 if let segments = subject as? SegmentedControl {
                     return .number(Double(segments.selectedIndex ?? -1))
                 }
@@ -606,6 +635,15 @@ extension BASICRuntime {
                 return .number(Double(list.selectedIndex ?? -1))
 
             case "SELECTEDTEXT$", "SELECTEDTEXT":
+                if let matrix = subject as? Matrix {
+                    // Every selected title, in order — a highlight matrix has
+                    // a *set*, and reporting only the first would lose what the
+                    // control exists to show.
+                    let chosen = matrix.selected.sorted().compactMap { index in
+                        matrix.titles.indices.contains(index) ? matrix.titles[index] : nil
+                    }
+                    return .string(BASICString(chosen.joined(separator: ", ")))
+                }
                 guard let list = try view() as? ListView else {
                     throw BASICError.runtime("\(typeName) is not a list")
                 }
@@ -666,6 +704,12 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
                 registry.handlers[id] = handler
+                if let matrix = subject as? Matrix {
+                    matrix.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 if let popUp = subject as? PopUpButton {
                     popUp.onSelectionChanged = { _ in
                         BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
