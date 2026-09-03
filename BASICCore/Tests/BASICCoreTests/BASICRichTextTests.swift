@@ -45,7 +45,14 @@ struct BASICRichTextTests {
     func assignableToAVariable() {
         // Constructor arguments, for the ones that need them. Everything not
         // listed takes none — which is the answer for the whole Rich family.
-        let arguments = ["HTTPCLIENT": "\"https://example.com\"", "SECONDSTIMER": "1"]
+        // Constructor arguments, for the ones that need them. A pseudo class
+        // that takes *another object* gets one built inline — TUICompletions
+        // attaches to a field and cannot exist without one.
+        let arguments = [
+            "HTTPCLIENT": "\"https://example.com\"",
+            "SECONDSTIMER": "1",
+            "TUICOMPLETIONS": "TUIField()",
+        ]
         for name in BASICKeywords.pseudoClasses.sorted() {
             let host = TestHost()
             let session = BASICSession(host: host)
