@@ -72,6 +72,10 @@ final class BASICTUIRegistry {
     /// exist until the program has finished saying what it wants, which is at
     /// `show`. The same reason `TUIApp` holds no `App` until `run`.
     var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// Rows described for a master-detail that has not been built yet.
+    var masterRows: [Int: [SidebarItem]] = [:]
+    /// Detail panes by row, per master-detail handle — see `detail`.
+    var detailViews: [Int: [Int: TUIView]] = [:]
     /// Tree nodes by path, per tree handle — see `addnode`.
     var treeNodes: [Int: [String: TreeNode]] = [:]
     /// The stack inside each panel, which is what its children go into.
@@ -138,6 +142,8 @@ final class BASICTUIRegistry {
         openMenus.removeAll()
         panelStacks.removeAll()
         treeNodes.removeAll()
+        detailViews.removeAll()
+        masterRows.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
@@ -239,6 +245,20 @@ extension BASICRuntime {
                 // the one family that reads every argument rather than just
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUIMASTERDETAIL":
+                // Nothing built yet. `MasterDetail` fixes its rows at
+                // construction and offers no way to add one after, so the
+                // handle collects a description and the control is built when
+                // it is added to something — the same shape as TUIDialog,
+                // which cannot exist until `show`.
+                registry.masterRows[id] = []
+
+            case "TUICOLLECTION":
+                // Same shape, and the gallery's builder is `{ Label($0) }` — so
+                // that is exactly what this is, with no way to be anything else
+                // until a BASIC closure can return a view.
+                registry.views[id] = CollectionView(sections: []) { Label($0) }
 
             case "TUITREE":
                 registry.views[id] = TreeView(roots: [])
@@ -475,6 +495,13 @@ extension BASICRuntime {
                     }
                     return .empty
                 }
+                // A master-detail is described, then built here — the first
+                // and only place it is consumed.
+                if let rows = registry.masterRows[childID], registry.views[childID] == nil {
+                    registry.views[childID] = MasterDetail(items: rows) { index in
+                        BASICTUIRegistry.shared.detailViews[childID]?[index] ?? Label("")
+                    }
+                }
                 guard let child = registry.views[childID] else {
                     throw BASICError.runtime("\(typeName).add expects a TUI view")
                 }
@@ -664,6 +691,32 @@ extension BASICRuntime {
                 return .empty
 
             case "ADDITEM":
+                if registry.masterRows[id] != nil {
+                    // icon, title, subtitle — the sidebar row shape.
+                    let icon = arguments.first?.string?.description
+                    registry.masterRows[id]?.append(
+                        SidebarItem(
+                            icon: icon.flatMap { $0.count == 1 ? $0.first : nil },
+                            title: (arguments.count > 1
+                                ? arguments[1].string?.description : nil) ?? (icon ?? ""),
+                            subtitle: arguments.count > 2
+                                ? arguments[2].string?.description : nil
+                        )
+                    )
+                    return .empty
+                }
+                if let collection = subject as? CollectionView {
+                    guard !collection.sections.isEmpty else {
+                        throw BASICError.runtime(
+                            "\(typeName).additem needs a section — call section first"
+                        )
+                    }
+                    guard let text = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).additem expects a title")
+                    }
+                    collection.sections[collection.sections.count - 1].items.append(text)
+                    return .empty
+                }
                 if let favorites = subject as? TUIFavorites {
                     guard let itemTitle = arguments.first?.string?.description else {
                         throw BASICError.runtime("\(typeName).additem expects a title")
@@ -862,6 +915,33 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "DETAIL":
+                guard registry.masterRows[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no detail pane")
+                }
+                guard let index = Self.tuiInt(arguments, 0),
+                      case .systemObject(_, let viewID) = arguments[1],
+                      let pane = registry.views[viewID] else {
+                    throw BASICError.runtime("\(typeName).detail expects a row number and a view")
+                }
+                // Anchored here, because a detail pane never passes through
+                // `add` — MasterDetail places it itself, and a view with no
+                // anchors gets zero size and never appears.
+                pane.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                registry.detailViews[id, default: [:]][index] = pane
+                return .empty
+
+            case "SECTION":
+                guard let collection = subject as? CollectionView else {
+                    throw BASICError.runtime("\(typeName) has no sections")
+                }
+                collection.sections.append(
+                    CollectionView.Section(
+                        title: arguments.first?.string?.description ?? "", items: []
+                    )
+                )
                 return .empty
 
             case "ADDNODE":

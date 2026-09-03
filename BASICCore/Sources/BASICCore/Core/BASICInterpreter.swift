@@ -6099,6 +6099,8 @@ public final class BASICInterpreter {
         "TUIBROWSER": "TUIBrowser",
         "TUIPATH": "TUIPath",
         "TUIFAVORITES": "TUIFavorites",
+        "TUIMASTERDETAIL": "TUIMasterDetail",
+        "TUICOLLECTION": "TUICollection",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {
