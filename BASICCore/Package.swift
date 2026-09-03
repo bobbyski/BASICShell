@@ -22,7 +22,13 @@ let package = Package(
         // The interactive layer. Unlike RichSwift this is not free: TUIKit's
         // @Bound macro pulls in swift-syntax, which SwiftPM rebuilds for the
         // release configuration. Measured before and after — see the commit.
-        .package(path: "../../../frameworks/UILess/Code/TUIKit")
+        .package(path: "../../../frameworks/UILess/Code/TUIKit"),
+        // The gallery's sibling pages. Kanban and node-graph views live in
+        // their own packages because they depend on TUIKit rather than being
+        // part of it — which is also why the Swift gallery cannot live inside
+        // TUIKit either.
+        .package(path: "../../../frameworks/UILess/Code/TUIBoards"),
+        .package(path: "../../../frameworks/UILess/Code/TUIDiagram")
     ],
     targets: [
         .target(
@@ -30,6 +36,8 @@ let package = Package(
             dependencies: [
                 .product(name: "RichSwift", package: "RichSwift"),
                 .product(name: "TUIKit", package: "TUIKit"),
+                .product(name: "TUIBoards", package: "TUIBoards"),
+                .product(name: "TUIDiagram", package: "TUIDiagram"),
             ]
         ),
         .testTarget(name: "BASICCoreTests", dependencies: ["BASICCore"])

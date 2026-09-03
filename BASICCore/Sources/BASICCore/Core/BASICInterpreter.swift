@@ -6123,6 +6123,9 @@ public final class BASICInterpreter {
         "TUIIMAGE": "TUIImage",
         "TUICANVAS": "TUICanvas",
         "TUIWIZARD": "TUIWizard",
+        "TUIBOARD": "TUIBoard",
+        "TUIDIAGRAM": "TUIDiagram",
+        "TUILOG": "TUILog",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {

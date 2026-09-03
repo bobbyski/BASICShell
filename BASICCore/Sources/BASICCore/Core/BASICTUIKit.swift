@@ -25,6 +25,8 @@
 
 import Foundation
 import TUIKit
+import TUIBoards
+import TUIDiagram
 
 // MARK: - The host seam
 
@@ -72,6 +74,11 @@ final class BASICTUIRegistry {
     /// exist until the program has finished saying what it wants, which is at
     /// `show`. The same reason `TUIApp` holds no `App` until `run`.
     var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// Columns described for a board that has not been built yet.
+    var boardColumns: [Int: [BoardColumn]] = [:]
+    /// Nodes and edges described for a diagram that has not been built yet.
+    var diagramNodes: [Int: [DiagramNode]] = [:]
+    var diagramEdges: [Int: [DiagramEdge]] = [:]
     /// Steps described for a wizard that has not been built yet.
     var wizardSteps: [Int: [Wizard.Step]] = [:]
     /// The handler a wizard calls when it finishes.
@@ -150,6 +157,9 @@ final class BASICTUIRegistry {
         masterRows.removeAll()
         wizardSteps.removeAll()
         wizardFinish.removeAll()
+        boardColumns.removeAll()
+        diagramNodes.removeAll()
+        diagramEdges.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
@@ -251,6 +261,23 @@ extension BASICRuntime {
                 // the one family that reads every argument rather than just
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUIBOARD":
+                // Columns and cards are fixed at construction, so the handle
+                // collects them and the board is built where it is added — the
+                // pattern TUIDialog, TUIMasterDetail and TUIWizard all use.
+                registry.boardColumns[id] = []
+
+            case "TUIDIAGRAM":
+                registry.diagramNodes[id] = []
+                registry.diagramEdges[id] = []
+
+            case "TUILOG":
+                // The view watches LogStore.shared; the logger has to be fed
+                // into that store before anything appears.
+                TUILogger.shared.add(LogStore.shared)
+                TUILogger.shared.level = .debug
+                registry.views[id] = LogView()
 
             case "TUISPARKLINE":
                 registry.views[id] = Sparkline(values: Self.tuiNumbers(arguments))
@@ -661,6 +688,26 @@ extension BASICRuntime {
                 }
                 // A master-detail is described, then built here — the first
                 // and only place it is consumed.
+                if let columns = registry.boardColumns[childID], registry.views[childID] == nil {
+                    let board = BoardView(columns: columns)
+                    if let handler = registry.handlers[childID] {
+                        board.onCardMoved = { _, _, _, _ in
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        }
+                    }
+                    registry.views[childID] = board
+                }
+                if let nodes = registry.diagramNodes[childID], registry.views[childID] == nil {
+                    let diagram = DiagramView(
+                        nodes: nodes, edges: registry.diagramEdges[childID] ?? []
+                    )
+                    if let handler = registry.handlers[childID] {
+                        diagram.onSelectionChanged = { _ in
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        }
+                    }
+                    registry.views[childID] = diagram
+                }
                 if let steps = registry.wizardSteps[childID], registry.views[childID] == nil {
                     let wizard = Wizard(steps: steps)
                     if let handler = registry.wizardFinish[childID] {
@@ -1020,7 +1067,22 @@ extension BASICRuntime {
                 }
                 return .string(BASICString(field.text))
 
+            case "ONMOVE":
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onmove expects a handler name")
+                }
+                registry.handlers[id] = handler
+                return .empty
+
             case "ONSELECT":
+                if registry.diagramNodes[id] != nil || registry.boardColumns[id] != nil {
+                    // Recorded now, wired when the control is built.
+                    guard let handler = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).onselect expects a handler name")
+                    }
+                    registry.handlers[id] = handler
+                    return .empty
+                }
                 guard let handler = arguments.first?.string?.description else {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
@@ -1109,6 +1171,102 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "COLUMN2":
+                // A board column: id, title, and an optional WIP limit.
+                guard registry.boardColumns[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no columns")
+                }
+                guard let columnID = arguments.first?.string?.description,
+                      arguments.count > 1,
+                      let columnTitle = arguments[1].string?.description else {
+                    throw BASICError.runtime("\(typeName).column2 expects an id and a title")
+                }
+                registry.boardColumns[id]?.append(
+                    BoardColumn(
+                        id: columnID,
+                        title: columnTitle,
+                        cards: [],
+                        limit: Self.tuiInt(arguments, 2),
+                        isCollapsed: arguments.count > 3 ? arguments[3].truthy : false
+                    )
+                )
+                return .empty
+
+            case "CARD":
+                guard registry.boardColumns[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no cards")
+                }
+                guard let cardID = arguments.first?.string?.description,
+                      arguments.count > 1,
+                      let cardTitle = arguments[1].string?.description else {
+                    throw BASICError.runtime("\(typeName).card expects an id and a title")
+                }
+                guard var columns = registry.boardColumns[id], !columns.isEmpty else {
+                    throw BASICError.runtime("\(typeName).card needs a column — call column2 first")
+                }
+                columns[columns.count - 1].cards.append(
+                    BoardCard(
+                        id: cardID,
+                        title: cardTitle,
+                        subtitle: arguments.count > 2 ? arguments[2].string?.description : nil
+                    )
+                )
+                registry.boardColumns[id] = columns
+                return .empty
+
+            case "NODE":
+                guard registry.diagramNodes[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no nodes")
+                }
+                guard let nodeID = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).node expects an id")
+                }
+                registry.diagramNodes[id]?.append(
+                    DiagramNode(
+                        id: nodeID,
+                        title: arguments.count > 1 ? arguments[1].string?.description : nil
+                    )
+                )
+                return .empty
+
+            case "EDGE":
+                guard registry.diagramEdges[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no edges")
+                }
+                guard let from = arguments.first?.string?.description,
+                      arguments.count > 1,
+                      let to = arguments[1].string?.description else {
+                    throw BASICError.runtime("\(typeName).edge expects two node ids")
+                }
+                registry.diagramEdges[id]?.append(
+                    DiagramEdge(
+                        from: from, to: to,
+                        label: arguments.count > 2 ? arguments[2].string?.description : nil
+                    )
+                )
+                return .empty
+
+            case "WRITE":
+                // level, then the message. Not `log`: LOG is both the
+                // logarithm and a statement keyword, so `entries.log(...)`
+                // parses as LOG and fails with "Expected expression".
+                let level = (arguments.first?.string?.description ?? "info").lowercased()
+                let message = (arguments.count > 1
+                    ? arguments[1].string?.description : nil) ?? ""
+                switch level.first {
+                case "d": TUILogger.shared.debug(message, category: "gallery")
+                case "w": TUILogger.shared.warning(message, category: "gallery")
+                case "e": TUILogger.shared.error(message, category: "gallery")
+                case "n": TUILogger.shared.notice(message, category: "gallery")
+                default: TUILogger.shared.info(message, category: "gallery")
+                }
+                TUILogger.shared.flush()
+                // The view watches the store but does not poll it. Without
+                // this the entries are recorded and the page stays empty,
+                // which reads as logging that does not work.
+                (subject as? LogView)?.reload()
                 return .empty
 
             case "SERIES":
