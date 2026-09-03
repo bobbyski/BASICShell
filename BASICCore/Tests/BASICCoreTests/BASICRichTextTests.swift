@@ -52,6 +52,8 @@ struct BASICRichTextTests {
             "HTTPCLIENT": "\"https://example.com\"",
             "SECONDSTIMER": "1",
             "TUICOMPLETIONS": "TUIField()",
+            "TUISCROLL": "TUIStack(\"v\")",
+            "TUISPLIT": "\"h\", TUILabel(\"a\"), TUILabel(\"b\")",
         ]
         for name in BASICKeywords.pseudoClasses.sorted() {
             let host = TestHost()

@@ -246,6 +246,86 @@ extension BASICRuntime {
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
 
+            case "TUIFLOW":
+                registry.views[id] = FlowStack(spacing: 1)
+
+            case "TUITOOLBOX":
+                // Axis, then alternating glyph/caption pairs.
+                let words = Array(Self.tuiStrings(arguments).dropFirst())
+                var tools: [Toolbox.Tool] = []
+                var index = 0
+                while index < words.count {
+                    tools.append(Toolbox.Tool(
+                        glyph: words[index].first ?? "?",
+                        caption: index + 1 < words.count ? words[index + 1] : ""
+                    ))
+                    index += 2
+                }
+                registry.views[id] = Toolbox(
+                    axis: title.lowercased().hasPrefix("v") ? .vertical : .horizontal,
+                    tools: tools
+                )
+
+            case "TUISCROLLER":
+                registry.views[id] = Scroller(
+                    axis: title.lowercased().hasPrefix("h") ? .horizontal : .vertical,
+                    span: ScrollSpan(
+                        offset: 0,
+                        viewport: Self.tuiInt(arguments, 1) ?? 8,
+                        content: Self.tuiInt(arguments, 2) ?? 30
+                    )
+                )
+
+            case "TUISPLIT":
+                // Both panes at construction — SplitView has no way to set one
+                // afterwards.
+                guard case .systemObject(_, let firstID) = arguments.count > 1
+                        ? arguments[1] : .empty,
+                      case .systemObject(_, let secondID) = arguments.count > 2
+                        ? arguments[2] : .empty,
+                      let first = registry.views[firstID],
+                      let second = registry.views[secondID] else {
+                    throw BASICError.runtime("TUISplit expects an axis and two views")
+                }
+                let split = SplitView(
+                    axis: title.lowercased().hasPrefix("v") ? .vertical : .horizontal,
+                    first: first, second: second
+                )
+                // Minimums keep the divider sane through the zero-size first
+                // layout a freshly built tab goes through.
+                split.minimumFirstLength = 8
+                split.minimumSecondLength = 8
+                registry.views[id] = split
+
+            case "TUISCROLL":
+                guard let documentArgument = arguments.first,
+                      case .systemObject(_, let documentID) = documentArgument,
+                      let document = registry.views[documentID] else {
+                    throw BASICError.runtime("TUIScroll expects a document view")
+                }
+                // A scroll view measures its document by `intrinsicContentSize`
+                // and falls back to `frame`. A stack of rows offers neither, so
+                // the document reports zero height and nothing scrolls into
+                // view — it looked like an empty scroll view.
+                //
+                // Height is the sum of what the rows were pinned to, which is
+                // what a document built by `height(1)` per line means.
+                if document.frame.size.height == 0 {
+                    let rows = document.subviews.reduce(0) { total, row in
+                        total + max(1, row.minimumSize.height)
+                    }
+                    document.frame = Rect(x: 0, y: 0, width: 40, height: max(1, rows))
+                }
+                registry.views[id] = ScrollView(document: document)
+
+            case "TUIDISCLOSURE":
+                registry.views[id] = DisclosureGroup(
+                    title, isExpanded: (arguments.count > 1 ? arguments[1].truthy : true)
+                )
+
+            case "TUIRIBBON":
+                registry.views[id] = Ribbon()
+
             case "TUISYNTAX":
                 registry.views[id] = SyntaxTextView(
                     text: title,
@@ -530,6 +610,11 @@ extension BASICRuntime {
                     stack.addSubview(child)
                     return .empty
                 }
+                if let disclosure = registry.views[id] as? DisclosureGroup {
+                    child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                    disclosure.content.addSubview(child)
+                    return .empty
+                }
                 if let window = registry.windows[id] {
                     // Fill the window unless the program has said otherwise. A
                     // view added with no anchors gets zero size and the window
@@ -760,6 +845,9 @@ extension BASICRuntime {
                 if let matrix = subject as? Matrix {
                     return .number(Double(matrix.selectedIndex ?? -1))
                 }
+                if let toolbox = subject as? Toolbox {
+                    return .number(Double(toolbox.selectedIndex))
+                }
                 if let segments = subject as? SegmentedControl {
                     return .number(Double(segments.selectedIndex ?? -1))
                 }
@@ -857,6 +945,12 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName).onselect expects a handler name")
                 }
                 registry.handlers[id] = handler
+                if let toolbox = subject as? Toolbox {
+                    toolbox.onSelectionChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 if let matrix = subject as? Matrix {
                     matrix.onSelectionChanged = { _ in
                         BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
@@ -934,6 +1028,56 @@ extension BASICRuntime {
                 }
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                }
+                return .empty
+
+            case "FLASH":
+                guard let bar = subject as? StatusBar else {
+                    throw BASICError.runtime("\(typeName) has nothing to flash")
+                }
+                bar.flash(arguments.first?.string?.description ?? "")
+                return .empty
+
+            case "GROUP":
+                // One call per group, title then alternating item/glyph pairs:
+                // Ribbon takes a group's items at once, so buffering them would
+                // need a flush nobody would remember to call.
+                guard let ribbon = subject as? Ribbon else {
+                    throw BASICError.runtime("\(typeName) has no groups")
+                }
+                let words = Self.tuiStrings(arguments)
+                guard let groupTitle = words.first else {
+                    throw BASICError.runtime("\(typeName).group expects a title")
+                }
+                var items: [ToolbarItem] = []
+                var index = 1
+                while index < words.count {
+                    let glyph = index + 1 < words.count ? words[index + 1].first : nil
+                    items.append(ToolbarItem(
+                        words[index],
+                        icon: glyph.map { ToolbarIcon(glyph: $0) }
+                    ))
+                    index += 2
+                }
+                ribbon.addGroup(groupTitle, items: items)
+                return .empty
+
+            case "AXIS":
+                guard let split = subject as? SplitView else {
+                    throw BASICError.runtime("\(typeName) has no axis")
+                }
+                split.axis = (arguments.first?.string?.description ?? "")
+                    .lowercased().hasPrefix("v") ? .vertical : .horizontal
+                return .empty
+
+            case "ALIGN":
+                guard let label = subject as? Label else {
+                    throw BASICError.runtime("\(typeName) has no alignment")
+                }
+                switch (arguments.first?.string?.description ?? "").lowercased().first {
+                case "c": label.alignment = .center
+                case "t", "r": label.alignment = .trailing
+                default: label.alignment = .leading
                 }
                 return .empty
 
