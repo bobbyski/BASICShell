@@ -148,7 +148,7 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 // Everything the program said to its application before there
                 // was one to say it to.
                 if let theme = registry.pendingTheme {
-                    app.applyTheme(theme)
+                    BASICRuntime.applyTUITheme(theme, to: app)
                 }
                 for timer in registry.pendingTimers {
                     _ = app.addTimer(every: .milliseconds(Int(timer.seconds * 1000))) {

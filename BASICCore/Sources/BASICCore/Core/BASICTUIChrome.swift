@@ -119,7 +119,9 @@ extension BASICRuntime {
                 // Applied now if the app is already up, and remembered either
                 // way: a program usually sets the theme before `run`, when
                 // there is no App yet to apply it to.
-                registry.apps[id]?.applyTheme(theme)
+                if let app = registry.apps[id] {
+                    Self.applyTUITheme(theme, to: app)
+                }
                 return .empty
 
             case "FRAME":
@@ -336,6 +338,27 @@ extension BASICRuntime {
                 throw BASICError.runtime("\(typeName) has no method \(method)")
             }
         }
+    }
+
+    /// Applies a theme, and paints the desktop behind it.
+    ///
+    /// `applyTheme` alone dresses the windows and leaves the desktop as it
+    /// was, so the terminal's own background shows through around them and
+    /// reads as a hole rather than a desktop. The gallery's own
+    /// `applyGalleryTheme` does both, and this is that:
+    ///
+    /// - the theme's desktop background, when it has one;
+    /// - a neutral grey when it resolves to `.standard`, which is what themes
+    ///   that do not paint a desktop resolve to.
+    @MainActor
+    static func applyTUITheme(_ theme: Theme, to app: App) {
+        app.applyTheme(theme)
+        let backdrop = theme.resolved(for: .desktop).background
+        app.desktop.fillStyle = CellStyle(
+            background: backdrop == .standard
+                ? TerminalColor.rgb(red: 128, green: 128, blue: 128)
+                : backdrop
+        )
     }
 
     /// The built-in theme names, for an error message that helps.
