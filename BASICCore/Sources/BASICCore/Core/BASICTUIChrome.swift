@@ -200,6 +200,12 @@ extension BASICRuntime {
                     }
                     return .empty
                 }
+                if let pages = registry.views[id] as? PageView {
+                    pages.onPageChanged = { _ in
+                        BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
+                    }
+                    return .empty
+                }
                 if let sidebar = registry.views[id] as? SidebarList {
                     // Both, as the gallery wires them: moving the highlight
                     // changes the page, and Enter does too.
@@ -219,6 +225,9 @@ extension BASICRuntime {
                 }
                 if let tabs = registry.views[id] as? TabView {
                     return .number(Double(tabs.selectedIndex))
+                }
+                if let pages = registry.views[id] as? PageView {
+                    return .number(Double(pages.currentIndex))
                 }
                 throw BASICError.runtime("\(typeName) has nothing selected")
 

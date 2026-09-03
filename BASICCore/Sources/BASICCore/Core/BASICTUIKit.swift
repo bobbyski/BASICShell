@@ -246,6 +246,24 @@ extension BASICRuntime {
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
 
+            case "TUIVIEWTHATFITS":
+                // Candidates widest-first; the first that fits is shown.
+                let candidates = arguments.compactMap { value -> TUIView? in
+                    guard case .systemObject(_, let viewID) = value else { return nil }
+                    return registry.views[viewID]
+                }
+                registry.views[id] = ViewThatFits(axis: .horizontal, candidates: candidates)
+
+            case "TUIPAGES":
+                let pages = arguments.compactMap { value -> TUIView? in
+                    guard case .systemObject(_, let viewID) = value else { return nil }
+                    return registry.views[viewID]
+                }
+                registry.views[id] = PageView(pages: pages)
+
+            case "TUIACCORDION":
+                registry.views[id] = Accordion()
+
             case "TUIFLOW":
                 registry.views[id] = FlowStack(spacing: 1)
 
@@ -498,7 +516,23 @@ extension BASICRuntime {
                 registry.views[id] = TextView(text: title)
 
             case "TUIGAUGE":
-                registry.views[id] = Gauge(value: 0, in: 0...100)
+                // value, then "bar" | "ring" | "dial", then a label.
+                let gauge = Gauge(
+                    value: arguments.first?.number ?? 0,
+                    in: 0...100,
+                    style: {
+                        switch (arguments.count > 1
+                            ? arguments[1].string?.description ?? "" : "").lowercased() {
+                        case "ring": return .ring
+                        case "dial": return .dial
+                        default: return .bar
+                        }
+                    }()
+                )
+                if arguments.count > 2, let caption = arguments[2].string?.description {
+                    gauge.label = caption
+                }
+                registry.views[id] = gauge
 
             case "TUIMENU":
                 // The bar, not a menu: a program adds menus to it by title.
@@ -1029,6 +1063,28 @@ extension BASICRuntime {
                 field.onChanged = { _ in
                     BASICTUIRuntimeBridge.shared.invoke(handlerFor: id)
                 }
+                return .empty
+
+            case "SECTION2":
+                // An accordion section: a title and the view behind it.
+                guard let accordion = subject as? Accordion else {
+                    throw BASICError.runtime("\(typeName) has no sections")
+                }
+                guard let sectionTitle = arguments.first?.string?.description,
+                      arguments.count > 1,
+                      case .systemObject(_, let contentID) = arguments[1],
+                      let content = registry.views[contentID] else {
+                    throw BASICError.runtime("\(typeName).section2 expects a title and a view")
+                }
+                _ = accordion.addSection(sectionTitle, content: content)
+                return .empty
+
+            case "THRESHOLDS":
+                guard let gauge = subject as? Gauge else {
+                    throw BASICError.runtime("\(typeName) has no thresholds")
+                }
+                gauge.warningThreshold = arguments.first?.number ?? 0.7
+                gauge.criticalThreshold = (arguments.count > 1 ? arguments[1].number : nil) ?? 0.9
                 return .empty
 
             case "FLASH":
