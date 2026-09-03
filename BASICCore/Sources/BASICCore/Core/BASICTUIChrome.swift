@@ -365,22 +365,41 @@ extension BASICRuntime {
     /// Applies a theme, and paints the desktop behind it.
     ///
     /// `applyTheme` alone dresses the windows and leaves the desktop as it
-    /// was, so the terminal's own background shows through around them and
-    /// reads as a hole rather than a desktop. The gallery's own
-    /// `applyGalleryTheme` does both, and this is that:
+    /// was, so the terminal's own background shows through around them.
     ///
-    /// - the theme's desktop background, when it has one;
-    /// - a neutral grey when it resolves to `.standard`, which is what themes
-    ///   that do not paint a desktop resolve to.
+    /// ## Why the fallback is not grey
+    ///
+    /// Most themes — Modern Turbo among them — define no *cell* background for
+    /// the desktop at all. They describe it once, in the vector chrome, as a
+    /// gradient. On a VectorTerminal that gradient is what you see; on a plain
+    /// terminal the cell layer has nothing, resolves to `.standard`, and the
+    /// gallery's own fallback paints a neutral grey.
+    ///
+    /// That grey is what a plain terminal showed instead of Turbo's blue. So
+    /// the cell fill borrows the vector backdrop's top colour when there is
+    /// one, and only falls back to grey when the theme describes no desktop by
+    /// either route — which makes the two renderings agree.
     @MainActor
     static func applyTUITheme(_ theme: Theme, to app: App) {
         app.applyTheme(theme)
-        let backdrop = theme.resolved(for: .desktop).background
-        app.desktop.fillStyle = CellStyle(
-            background: backdrop == .standard
-                ? TerminalColor.rgb(red: 128, green: 128, blue: 128)
-                : backdrop
-        )
+
+        app.desktop.fillStyle = CellStyle(background: Self.tuiDesktopFill(for: theme))
+    }
+
+    /// The colour the desktop should be painted, for a theme.
+    ///
+    /// Separated from `applyTUITheme` so it can be tested without an
+    /// application or a terminal — which is how the Modern Turbo case was
+    /// pinned down after two rounds of guessing at a screen capture.
+    static func tuiDesktopFill(for theme: Theme) -> TerminalColor {
+        let cellBackground = theme.resolved(for: .desktop).background
+        if cellBackground != .standard {
+            return cellBackground
+        }
+        if let backdrop = theme.base.vector?.desktop?.topColor {
+            return .rgb(red: backdrop.red, green: backdrop.green, blue: backdrop.blue)
+        }
+        return .rgb(red: 128, green: 128, blue: 128)
     }
 
     /// The built-in theme names, for an error message that helps.
