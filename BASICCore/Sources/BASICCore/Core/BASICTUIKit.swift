@@ -72,6 +72,10 @@ final class BASICTUIRegistry {
     /// exist until the program has finished saying what it wants, which is at
     /// `show`. The same reason `TUIApp` holds no `App` until `run`.
     var dialogs: [Int: BASICTUIDialogSpec] = [:]
+    /// Steps described for a wizard that has not been built yet.
+    var wizardSteps: [Int: [Wizard.Step]] = [:]
+    /// The handler a wizard calls when it finishes.
+    var wizardFinish: [Int: String] = [:]
     /// Rows described for a master-detail that has not been built yet.
     var masterRows: [Int: [SidebarItem]] = [:]
     /// Detail panes by row, per master-detail handle — see `detail`.
@@ -144,6 +148,8 @@ final class BASICTUIRegistry {
         treeNodes.removeAll()
         detailViews.removeAll()
         masterRows.removeAll()
+        wizardSteps.removeAll()
+        wizardFinish.removeAll()
         apps.removeAll()
         windows.removeAll()
         handlers.removeAll()
@@ -245,6 +251,37 @@ extension BASICRuntime {
                 // the one family that reads every argument rather than just
                 // the first: TUIRadio("Ask", "Allow", "Block").
                 registry.views[id] = RadioGroup(Self.tuiStrings(arguments), selectedIndex: 0)
+
+            case "TUISPARKLINE":
+                registry.views[id] = Sparkline(values: Self.tuiNumbers(arguments))
+
+            case "TUIBARCHART":
+                registry.views[id] = BarChart()
+
+            case "TUILINECHART":
+                registry.views[id] = LineChart()
+
+            case "TUIPIECHART":
+                registry.views[id] = PieChart()
+
+            case "TUISCATTER":
+                registry.views[id] = ScatterChart()
+
+            case "TUITIMELINE":
+                registry.views[id] = TimelineChart()
+
+            case "TUIIMAGE":
+                registry.views[id] = ImageView(caption: title)
+
+            case "TUICANVAS":
+                // No drawing closure: a Canvas paints through
+                // `(Painter, Rect) -> Void`, which BASIC has no way to supply.
+                // The control is bound so a program can place one; what it
+                // draws waits on a callback that can paint.
+                registry.views[id] = Canvas()
+
+            case "TUIWIZARD":
+                registry.wizardSteps[id] = []
 
             case "TUIVIEWTHATFITS":
                 // Candidates widest-first; the first that fits is shown.
@@ -624,6 +661,15 @@ extension BASICRuntime {
                 }
                 // A master-detail is described, then built here — the first
                 // and only place it is consumed.
+                if let steps = registry.wizardSteps[childID], registry.views[childID] == nil {
+                    let wizard = Wizard(steps: steps)
+                    if let handler = registry.wizardFinish[childID] {
+                        wizard.onFinish = {
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        }
+                    }
+                    registry.views[childID] = wizard
+                }
                 if let rows = registry.masterRows[childID], registry.views[childID] == nil {
                     registry.views[childID] = MasterDetail(items: rows) { index in
                         BASICTUIRegistry.shared.detailViews[childID]?[index] ?? Label("")
@@ -1065,6 +1111,113 @@ extension BASICRuntime {
                 }
                 return .empty
 
+            case "SERIES":
+                // label, then the values — or x/y pairs for a scatter.
+                let words = Self.tuiStrings(arguments)
+                let numbers = Self.tuiNumbers(arguments)
+                guard let label = words.first else {
+                    throw BASICError.runtime("\(typeName).series expects a label")
+                }
+                if let bars = subject as? BarChart {
+                    bars.series.append(BarChart.Series(label: label, values: numbers))
+                    return .empty
+                }
+                if let lines = subject as? LineChart {
+                    lines.series.append(LineChart.Series(label: label, values: numbers))
+                    return .empty
+                }
+                if let scatter = subject as? ScatterChart {
+                    var points: [ScatterChart.DataPoint] = []
+                    var index = 0
+                    while index + 1 < numbers.count {
+                        points.append(
+                            ScatterChart.DataPoint(x: numbers[index], y: numbers[index + 1])
+                        )
+                        index += 2
+                    }
+                    scatter.series.append(ScatterChart.Series(label: label, points: points))
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no series")
+
+            case "LEGEND":
+                // The Swift sets `showsLegend` on every multi-series chart; a
+                // series without it is drawn but never named, which is what
+                // "builds" missing from the bar chart meant.
+                let wanted = arguments.first?.truthy ?? true
+                if let bars = subject as? BarChart { bars.showsLegend = wanted; return .empty }
+                if let lines = subject as? LineChart { lines.showsLegend = wanted; return .empty }
+                if let scatter = subject as? ScatterChart {
+                    scatter.showsLegend = wanted
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no legend")
+
+            case "CATEGORIES":
+                guard let bars = subject as? BarChart else {
+                    throw BASICError.runtime("\(typeName) has no categories")
+                }
+                bars.categories = Self.tuiStrings(arguments)
+                return .empty
+
+            case "SLICE":
+                guard let pie = subject as? PieChart else {
+                    throw BASICError.runtime("\(typeName) has no slices")
+                }
+                guard let label = arguments.first?.string?.description,
+                      let value = Self.tuiNumbers(arguments).first else {
+                    throw BASICError.runtime("\(typeName).slice expects a label and a value")
+                }
+                pie.slices.append(PieChart.Slice(label: label, value: value))
+                return .empty
+
+            case "TRACK":
+                // label, then start/duration pairs.
+                guard let timeline = subject as? TimelineChart else {
+                    throw BASICError.runtime("\(typeName) has no tracks")
+                }
+                guard let label = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).track expects a label")
+                }
+                let numbers = Self.tuiNumbers(arguments)
+                var segments: [TimelineRow.Segment] = []
+                var index = 0
+                while index + 1 < numbers.count {
+                    segments.append(
+                        TimelineRow.Segment(
+                            start: numbers[index], duration: numbers[index + 1]
+                        )
+                    )
+                    index += 2
+                }
+                timeline.rows.append(TimelineRow(label: label, segments: segments))
+                return .empty
+
+            case "STEP":
+                // A wizard step: id, title, and the view behind it.
+                guard registry.wizardSteps[id] != nil else {
+                    throw BASICError.runtime("\(typeName) has no steps")
+                }
+                guard let stepID = arguments.first?.string?.description,
+                      arguments.count > 2,
+                      let stepTitle = arguments[1].string?.description,
+                      case .systemObject(_, let viewID) = arguments[2],
+                      let stepView = registry.views[viewID] else {
+                    throw BASICError.runtime("\(typeName).step expects an id, a title and a view")
+                }
+                registry.wizardSteps[id]?.append(
+                    Wizard.Step(id: stepID, title: stepTitle, view: stepView)
+                )
+                return .empty
+
+            case "ONFINISH":
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onfinish expects a handler name")
+                }
+                registry.handlers[id] = handler
+                registry.wizardFinish[id] = handler
+                return .empty
+
             case "SECTION2":
                 // An accordion section: a title and the view behind it.
                 guard let accordion = subject as? Accordion else {
@@ -1500,6 +1653,11 @@ extension BASICRuntime {
     static func tuiInt(_ arguments: [BASICValue], _ index: Int) -> Int? {
         guard index < arguments.count, let value = arguments[index].number else { return nil }
         return Int(value)
+    }
+
+    /// Every numeric argument, for the charts.
+    static func tuiNumbers(_ arguments: [BASICValue]) -> [Double] {
+        arguments.compactMap { $0.number }
     }
 
     /// Every string argument, for the controls TUIKit builds from a list.
