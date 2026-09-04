@@ -560,6 +560,13 @@ final class FunctionBuilder {
             emit(.print(items, newline: !(parts.last?.suppressesNewline ?? false)))
 
         case .assignment(let kind, let name, let declared, let value):
+            if SemanticModel.namedConstants.contains(name.normalized) {
+                // `RAW = "x"` changes nothing: the interpreter reads the
+                // constant back whatever was assigned. The value is still
+                // worked out, in case working it out was the point.
+                if let value { emit(.discard(boxed(try lowerExpression(value)))) }
+                return
+            }
             if let signature, kind != .global, name.normalized == shortFunctionName, signature.returnType != .void {
                 // `Name = value` inside FUNCTION Name sets the result.
                 guard declared == nil else { throw CompileError("Type error: Cannot redeclare function return \(name.name)", at: location) }

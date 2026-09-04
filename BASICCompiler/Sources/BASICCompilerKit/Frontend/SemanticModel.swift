@@ -332,6 +332,10 @@ public final class SemanticModel {
     /// Updates a variable's info wherever it resolves, creating a global
     /// when it is new.
     func update(_ name: String, in function: String?, _ change: (inout VariableInfo) -> Void) {
+        // A named constant is a constant: the interpreter reads `RAW` as
+        // "RAW" whatever a program has assigned to it, so it never becomes a
+        // variable here either.
+        if Self.namedConstants.contains(name) { return }
         if let function, locals[function]?[name] != nil {
             change(&locals[function]![name]!)
             return

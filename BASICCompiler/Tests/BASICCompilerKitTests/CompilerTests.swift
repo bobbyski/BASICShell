@@ -254,11 +254,41 @@ struct StarterTests {
         // The console starter reads a name; feed both engines the same one.
         let stdin = "Bobby\n"
         let compiled = try runWithInput(output, stdin)
-        #expect(compiled.exitCode == 0)
+        // The TUI starter needs a terminal, and says so where the
+        // interpreter says so. Everything else runs to the end.
+        #expect(compiled.exitCode == (kind == .tui ? 1 : 0))
         if let interpreter = TestBuild.interpreter {
             let interpreted = try runWithInput(interpreter, stdin, arguments: [source])
             #expect(compiled.stdout == interpreted.stdout, "starter \(kind.rawValue)")
         }
+    }
+
+    @Test func aProgramCanBeWrappedInAnAppBundle() throws {
+        let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-bundle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let source = workDir.appendingPathComponent("Greeter.bas").path
+        try "PRINT \"hi\"\n".write(toFile: source, atomically: true, encoding: .utf8)
+        let program = workDir.appendingPathComponent("Greeter").path
+        try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: program) }
+
+        let bundle = try AppBundle.wrap(program: program)
+        #expect((bundle as NSString).lastPathComponent == "Greeter.app")
+        let contents = (bundle as NSString).appendingPathComponent("Contents")
+        let inner = (contents as NSString).appendingPathComponent("MacOS/Greeter")
+        let launcher = (contents as NSString).appendingPathComponent("MacOS/Greeter-launch")
+        let plist = (contents as NSString).appendingPathComponent("Info.plist")
+        for path in [inner, launcher, plist] {
+            #expect(FileManager.default.fileExists(atPath: path), Comment(rawValue: "missing \(path)"))
+        }
+        #expect(FileManager.default.isExecutableFile(atPath: launcher))
+        // The plist names the launcher, and the launcher names the program.
+        let plistText = try String(contentsOfFile: plist, encoding: .utf8)
+        #expect(plistText.contains("<string>Greeter-launch</string>"))
+        #expect(try String(contentsOfFile: launcher, encoding: .utf8).contains("/Greeter\""))
+        // The program inside it is the program.
+        let run = try ProcessRunner.run(inner, [])
+        #expect(run.stdout == "hi\n")
     }
 
     private func runWithInput(_ executable: String, _ input: String, arguments: [String] = []) throws -> (stdout: String, exitCode: Int32) {

@@ -21,12 +21,16 @@ public enum ProjectScaffold {
         /// A program with functions, arrays, and DATA — the shape a real
         /// program grows into.
         case structured
+        /// A full-screen TUIKit application: a window, a menu bar, controls,
+        /// and named handlers.
+        case tui
 
         /// One line for `basicc new --help`.
         public var summary: String {
             switch self {
             case .console: return "one .bas file that prints, loops, and reads input"
             case .structured: return "functions, arrays, and DATA in one program"
+            case .tui: return "a full-screen TUIKit application with a window, a menu, and controls"
             }
         }
     }
@@ -57,6 +61,81 @@ public enum ProjectScaffold {
         try write(readme(name: name), to: root, "README.md")
         try write(program(kind: kind, name: name), to: sources, "main.bas")
         return root
+    }
+
+    /// The TUI starter.
+    ///
+    /// Two rules it follows on purpose, both of them ones a first TUI program
+    /// gets wrong: every handler is a NAMED function, because a closure would
+    /// run and discard whatever it assigned; and anything it wants to report
+    /// is kept in a GLOBAL and printed after `run` returns, because while the
+    /// application is up the screen belongs to it.
+    static func tuiProgram(name: String) -> String {
+        """
+        ' \(name) — a full-screen TUIKit application.
+        '
+        ' Run it in a terminal: a window with a menu bar, a field, a list and
+        ' buttons. Tab moves between controls, Enter presses one, and the File
+        ' menu (Alt-F, then Q) closes the application.
+
+        GLOBAL app = TUIApp()
+        GLOBAL banner = TUILabel("Tab to move, Enter to press.")
+        GLOBAL who = TUIField("your name")
+        GLOBAL picks = TUIList()
+        GLOBAL report$ = ""
+
+        LET win = TUIWindow()
+
+        ' `&` marks the mnemonic, here and everywhere in TUIKit.
+        LET bar = TUIMenu()
+        bar.menu("&File")
+        bar.item("&Quit", "Quit")
+        win.add(bar)
+
+        LET page = TUIStack("v")
+        page.add(banner)
+        page.add(TUILabel("Type a name, then press Greet"))
+        page.add(who)
+
+        picks.additem("BASIC")
+        picks.additem("Swift")
+        picks.onselect("Picked")
+        page.add(picks)
+
+        LET row = TUIStack("h")
+        LET greet = TUIButton("Greet")
+        greet.onclick("Greet")
+        LET done = TUIButton("Quit")
+        done.onclick("Quit")
+        row.add(greet)
+        row.add(done)
+        page.add(row)
+
+        win.add(page)
+
+        app.run(win)
+
+        PRINT "\(name) closed."
+        IF report$ <> "" THEN PRINT report$
+
+        FUNCTION Greet()
+          IF who.value$() = "" THEN
+            banner.text("Type a name in the field first.")
+          ELSE
+            banner.text("Hello, " + who.value$() + "!")
+          END IF
+        END FUNCTION
+
+        FUNCTION Picked()
+          banner.text("Language: " + picks.selectedtext$())
+        END FUNCTION
+
+        FUNCTION Quit()
+          report$ = "Last status: " + banner.value$()
+          app.stop()
+        END FUNCTION
+
+        """
     }
 
     static func makefile(name: String) -> String {
@@ -117,6 +196,8 @@ public enum ProjectScaffold {
 
     static func program(kind: Kind, name: String) -> String {
         switch kind {
+        case .tui:
+            return tuiProgram(name: name)
         case .console:
             return """
             ' \(name) — a console program.

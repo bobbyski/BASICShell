@@ -29,6 +29,7 @@ func printUsage() {
       --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
       -O, -O0..-O3         optimization level for the generated code (default -O0)
       --json-diagnostics   report errors as a JSON array (for IDEs)
+      --bundle             also write <name>.app, a macOS launcher for the program
       --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
     """)
 }
@@ -49,6 +50,7 @@ struct Invocation {
     var emitAssembly = false
     var optimizationLevel = 0
     var kind: String?
+    var bundle = false
 
     init(_ arguments: [String]) {
         command = arguments.first ?? "help"
@@ -70,6 +72,7 @@ struct Invocation {
             case "-O": optimizationLevel = 2
             case "-O0", "-O1", "-O2", "-O3": optimizationLevel = Int(String(argument.dropFirst(2)))!
             case "--json-diagnostics": jsonDiagnostics = true
+            case "--bundle": bundle = true
             case "--kind":
                 index += 1
                 guard index < arguments.count else { fail("--kind needs a name") }
@@ -112,6 +115,10 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
             return
         }
         try compilation.build(sourcePath: source, output: output)
+        if invocation.bundle {
+            let path = try AppBundle.wrap(program: output)
+            print("wrapped \((path as NSString).lastPathComponent)")
+        }
         if thenRun {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: output).absoluteURL
