@@ -51,6 +51,11 @@ public indirect enum BIRExpression: Sendable {
     case usingString(format: BIRExpression, values: [BIRExpression])
     /// A `File.*` service call: `method` is the normalized member name.
     case fileService(method: String, arguments: [BIRExpression], returns: BIRType)
+    /// Makes a closure: its body function, the environment type holding the
+    /// captures, and the captured values in field order. Owned.
+    case makeClosure(function: String, environment: String?, captures: [BIRExpression], signature: String)
+    /// Calls a closure value.
+    case callClosure(BIRExpression, [BIRExpression], returns: BIRType)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -78,6 +83,10 @@ public indirect enum BIRExpression: Sendable {
         case .usingString:
             return .string
         case .fileService(_, _, let returns):
+            return returns
+        case .makeClosure(_, _, _, let signature):
+            return .closure(signature)
+        case .callClosure(_, _, let returns):
             return returns
         }
     }

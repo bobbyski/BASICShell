@@ -86,7 +86,7 @@ struct LLVMLowering {
                 case .number: kinds.append("i8 0")
                 case .string: kinds.append("i8 1")
                 case .boolean: kinds.append("i8 2")
-                case .composite, .void: kinds.append("i8 3")
+                case .composite, .void, .closure: kinds.append("i8 3")
                 }
                 if case .composite(let name) = field.type {
                     subtypes.append("i64 \(module.typeIndex(of: name) ?? -1)")
@@ -173,6 +173,11 @@ struct LLVMLowering {
     declare void @basic_rt_composite_set_composite(ptr, i64, ptr)
     declare void @basic_rt_print_composite(ptr)
     declare ptr @basic_rt_composite_text(ptr)
+    declare ptr @basic_rt_closure_new(ptr, ptr)
+    declare void @basic_rt_closure_retain(ptr)
+    declare void @basic_rt_closure_release(ptr)
+    declare ptr @basic_rt_closure_function(ptr)
+    declare ptr @basic_rt_closure_environment(ptr)
     declare void @basic_rt_array_release(ptr)
     declare i64 @basic_rt_array_offset(ptr, ptr, i64, ptr)
     declare double @basic_rt_array_load_number(ptr, i64)
@@ -206,6 +211,10 @@ struct LLVMLowering {
     declare i1 @basic_rt_file_eof(double)
     declare double @basic_rt_file_lof(double)
     declare double @basic_rt_file_loc(double)
+    declare double @basic_rt_file_exists_number(ptr)
+    declare ptr @basic_rt_date()
+    declare ptr @basic_rt_time()
+    declare double @basic_rt_sleep(double)
     declare ptr @basic_rt_file_cwd()
     declare void @basic_rt_file_chdir(ptr)
     declare void @basic_rt_file_mkdir(ptr)
@@ -259,6 +268,8 @@ struct FunctionEmitter {
     private var owned: [String] = []
     /// Which owned temporaries are records (released differently).
     private var ownedComposites: Set<String> = []
+    /// Which owned temporaries are closures.
+    private var ownedClosures: Set<String> = []
     private var gosubResumes: [BIRBlockID] = []
     private var usesGosub = false
     private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
@@ -305,7 +316,9 @@ struct FunctionEmitter {
             var value = "%p\(index)"
             if parameter.type == .string {
                 out.emit("call void @basic_rt_string_retain(ptr %p\(index))")
-            } else if parameter.type.isComposite, parameter.rank == nil, parameter.name != "ME" {
+            } else if parameter.type.isClosure {
+                out.emit("call void @basic_rt_closure_retain(ptr %p\(index))")
+            } else if parameter.type.isComposite, parameter.rank == nil, parameter.name != "ME", parameter.name != "$ENV" {
                 // Records and objects pass by value: the callee works on a copy.
                 // ME is the caller's copy already, borrowed and written back.
                 let copy = out.temp()
@@ -410,7 +423,7 @@ struct FunctionEmitter {
                 out.emit("\(number) = uitofp i1 \(result) to double")
                 out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(number))")
             case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
-            case .composite, .void: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
+            case .composite, .void, .closure: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
             }
 
         case .callMethod(let receiver, let candidates, let arguments, let result):
@@ -465,6 +478,7 @@ struct FunctionEmitter {
                 } else if Self.isManaged(callee.returnType) {
                     owned.append(value)
                     if callee.returnType.isComposite { ownedComposites.insert(value) }
+                    if callee.returnType.isClosure { ownedClosures.insert(value) }
                 }
             }
             // Write the receiver back — a method's changes to ME are the
@@ -530,6 +544,8 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_cls()")
         case .fileService(let method, let arguments):
             _ = lowerFileService(method, arguments)
+        case .callClosure(let closure, let arguments):
+            _ = lowerClosureCall(closure, arguments, .void)
         case .openFile(let path, let mode, let number):
             let pathValue = lowerValue(path).0
             let numberValue = lowerValue(number).0
@@ -560,7 +576,7 @@ struct FunctionEmitter {
                     let length = out.temp()
                     out.emit("\(length) = select i1 \(result), i64 4, i64 5")
                     out.emit("\(piece) = call ptr @basic_rt_string_literal(ptr \(text), i64 \(length))")
-                case .composite, .void: out.emit("\(piece) = call ptr @basic_rt_composite_text(ptr \(result))")
+                case .composite, .void, .closure: out.emit("\(piece) = call ptr @basic_rt_composite_text(ptr \(result))")
                 }
                 owned.append(piece)
                 if let previous = line {
@@ -633,6 +649,11 @@ struct FunctionEmitter {
                     case .string: out.emit("call void @basic_rt_print_text(ptr \(result))")
                     case .boolean: out.emit("call void @basic_rt_print_boolean(i1 \(result))")
                     case .composite: out.emit("call void @basic_rt_print_composite(ptr \(result))")
+                    case .closure:
+                        let text = out.temp()
+                        out.emit("\(text) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
+                        owned.append(text)
+                        out.emit("call void @basic_rt_print_text(ptr \(text))")
                     case .void: break
                     }
                 case .comma:
@@ -663,8 +684,8 @@ struct FunctionEmitter {
                 let result = out.temp()
                 out.emit("\(result) = call i1 @basic_rt_input_boolean(ptr \(promptValue), ptr \(name))")
                 out.emit("store i1 \(result), ptr \(slotName(variable))")
-            case .void, .composite:
-                fail("INPUT into a record is not supported")
+            case .void, .composite, .closure:
+                fail("INPUT into a record or closure is not supported")
             }
 
         case .lineInput(let prompt, let variable):
@@ -727,7 +748,7 @@ struct FunctionEmitter {
                     out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
                     owned.append(string)
                     out.emit("call void @basic_rt_using_string(ptr \(string))")
-                case .void: break
+                case .void, .closure: break
                 }
             }
         }
@@ -748,7 +769,16 @@ struct FunctionEmitter {
 
     /// Types whose values are runtime objects with ownership.
     static func isManaged(_ type: BIRType) -> Bool {
-        type == .string || type.isComposite
+        type == .string || type.isComposite || type.isClosure
+    }
+
+    /// The runtime call that drops one reference of a managed value.
+    static func releaseFunction(_ type: BIRType) -> String {
+        switch type {
+        case .string: return "basic_rt_string_release"
+        case .closure: return "basic_rt_closure_release"
+        default: return "basic_rt_composite_release"
+        }
     }
 
     /// Stores a string or record into a slot with the ownership dance: a
@@ -762,6 +792,8 @@ struct FunctionEmitter {
             owned.removeAll { $0 == value }
         } else if type == .string {
             out.emit("call void @basic_rt_string_retain(ptr \(value))")
+        } else if type.isClosure {
+            out.emit("call void @basic_rt_closure_retain(ptr \(value))")
         } else {
             let copy = out.temp()
             out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr \(value))")
@@ -769,7 +801,7 @@ struct FunctionEmitter {
         }
         let old = out.temp()
         out.emit("\(old) = load ptr, ptr \(slot)")
-        out.emit("call void @\(type == .string ? "basic_rt_string_release" : "basic_rt_composite_release")(ptr \(old))")
+        out.emit("call void @\(Self.releaseFunction(type))(ptr \(old))")
         out.emit("store ptr \(stored), ptr \(slot)")
     }
 
@@ -900,6 +932,9 @@ struct FunctionEmitter {
                         out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr \(lowered))")
                         result = copy
                     }
+                } else if function.returnType.isClosure {
+                    if isOwned { owned.removeAll { $0 == lowered } } else { out.emit("call void @basic_rt_closure_retain(ptr \(lowered))") }
+                    result = lowered
                 } else {
                     result = lowered
                 }
@@ -917,10 +952,15 @@ struct FunctionEmitter {
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_string_release(ptr \(old))")
         }
-        for local in function.locals where local.type.isComposite && local.rank == nil && local.name != "ME" {
+        for local in function.locals where local.type.isComposite && local.rank == nil && local.name != "ME" && local.name != "$ENV" {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_composite_release(ptr \(old))")
+        }
+        for local in function.locals where local.type.isClosure && local.rank == nil {
+            let old = out.temp()
+            out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
+            out.emit("call void @basic_rt_closure_release(ptr \(old))")
         }
         for local in function.locals where local.rank != nil {
             let old = out.temp()
@@ -936,11 +976,13 @@ struct FunctionEmitter {
 
     private mutating func releaseOwned() {
         for temporary in owned {
-            let release = ownedComposites.contains(temporary) ? "basic_rt_composite_release" : "basic_rt_string_release"
+            let release = ownedComposites.contains(temporary) ? "basic_rt_composite_release"
+                : ownedClosures.contains(temporary) ? "basic_rt_closure_release" : "basic_rt_string_release"
             out.emit("call void @\(release)(ptr \(temporary))")
         }
         owned.removeAll()
         ownedComposites.removeAll()
+        ownedClosures.removeAll()
     }
 
     // MARK: - Expressions
@@ -999,12 +1041,40 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_composite_get_string(ptr \(parent), i64 \(index))")
                 owned.append(result)
                 return (result, true)
-            case .composite, .void:
+            case .composite, .void, .closure:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
                 return (result, false)
             }
         case .fileService(let method, let arguments, _):
             return lowerFileService(method, arguments)
+        case .makeClosure(let functionName, let environment, let captures, _):
+            var env = "null"
+            if let environment, let type = module.types.first(where: { $0.name == environment }) {
+                let created = out.temp()
+                out.emit("\(created) = call ptr @basic_rt_composite_new(i64 \(type.index))")
+                for (index, capture) in captures.enumerated() {
+                    let (value, _) = lowerValue(capture)
+                    switch capture.type {
+                    case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(created), i64 \(index), double \(value))")
+                    case .boolean:
+                        let number = out.temp()
+                        out.emit("\(number) = uitofp i1 \(value) to double")
+                        out.emit("call void @basic_rt_composite_set_number(ptr \(created), i64 \(index), double \(number))")
+                    case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(created), i64 \(index), ptr \(value))")
+                    default: out.emit("call void @basic_rt_composite_set_composite(ptr \(created), i64 \(index), ptr \(value))")
+                    }
+                }
+                env = created
+                owned.append(created)
+                ownedComposites.insert(created)
+            }
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_closure_new(ptr @\"F.\(functionName)\", ptr \(env))")
+            owned.append(result)
+            ownedClosures.insert(result)
+            return (result, true)
+        case .callClosure(let closure, let arguments, let returns):
+            return lowerClosureCall(closure, arguments, returns)
         case .usingString(let format, let values):
             out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
             feedUsingValues(values)
@@ -1026,6 +1096,7 @@ struct FunctionEmitter {
             if Self.isManaged(returns) {
                 owned.append(result)
                 if returns.isComposite { ownedComposites.insert(result) }
+                if returns.isClosure { ownedClosures.insert(result) }
                 return (result, true)
             }
             return (result, false)
@@ -1046,6 +1117,11 @@ struct FunctionEmitter {
             case .composite:
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_composite_text(ptr \(value))")
+                owned.append(result)
+                return (result, true)
+            case .closure:
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
                 owned.append(result)
                 return (result, true)
             case .boolean, .void:
@@ -1104,6 +1180,29 @@ struct FunctionEmitter {
         }
     }
 
+    /// Calls a closure value: its body with its environment first.
+    private mutating func lowerClosureCall(_ closure: BIRExpression, _ arguments: [BIRExpression], _ returns: BIRType) -> (String, owned: Bool) {
+        let (value, _) = lowerValue(closure)
+        let function = out.temp(), environment = out.temp()
+        out.emit("\(function) = call ptr @basic_rt_closure_function(ptr \(value))")
+        out.emit("\(environment) = call ptr @basic_rt_closure_environment(ptr \(value))")
+        let values = arguments.map { argument in "\(Self.llvmType(argument.type)) \(lowerValue(argument).0)" }
+        let argumentList = (["ptr \(environment)"] + values).joined(separator: ", ")
+        if returns == .void {
+            out.emit("call void \(function)(\(argumentList))")
+            return ("", false)
+        }
+        let result = out.temp()
+        out.emit("\(result) = call \(Self.llvmType(returns)) \(function)(\(argumentList))")
+        if Self.isManaged(returns) {
+            owned.append(result)
+            if returns.isComposite { ownedComposites.insert(result) }
+            if returns.isClosure { ownedClosures.insert(result) }
+            return (result, true)
+        }
+        return (result, false)
+    }
+
     /// Calls one `File.*` runtime entry; strings come back owned.
     private mutating func lowerFileService(_ method: String, _ arguments: [BIRExpression]) -> (String, owned: Bool) {
         let values = arguments.map { lowerValue($0).0 }
@@ -1142,7 +1241,7 @@ struct FunctionEmitter {
             out.emit("\(flag) = fcmp \(predicate) double \(l), \(r)")
         case .boolean:
             out.emit("\(flag) = icmp \(op == .equal ? "eq" : "ne") i1 \(l), \(r)")
-        case .composite:
+        case .composite, .closure:
             out.emit("\(flag) = icmp eq ptr \(l), \(r)")
         case .string, .void:
             switch op {
@@ -1183,7 +1282,7 @@ struct FunctionEmitter {
             let flag = out.temp()
             out.emit("\(flag) = call i1 @basic_rt_string_truthy(ptr \(value))")
             return flag
-        case .composite:
+        case .composite, .closure:
             return "true"
         }
     }
@@ -1216,6 +1315,10 @@ struct FunctionEmitter {
         case .err: return number("call double @basic_rt_err()")
         case .erl: return number("call double @basic_rt_erl()")
         case .lof: return number("call double @basic_rt_file_lof(double \(a))")
+        case .fileExists: return number("call double @basic_rt_file_exists_number(ptr \(a))")
+        case .sleep: return number("call double @basic_rt_sleep(double \(a))")
+        case .date: return string("call ptr @basic_rt_date()")
+        case .time: return string("call ptr @basic_rt_time()")
         case .loc: return number("call double @basic_rt_file_loc(double \(a))")
         case .eof:
             out.emit("\(result) = call i1 @basic_rt_file_eof(double \(a))")
@@ -1255,7 +1358,7 @@ struct FunctionEmitter {
     static func llvmType(_ type: BIRType) -> String {
         switch type {
         case .number: return "double"
-        case .string, .composite: return "ptr"
+        case .string, .composite, .closure: return "ptr"
         case .boolean: return "i1"
         case .void: return "void"
         }
@@ -1264,7 +1367,7 @@ struct FunctionEmitter {
     static func zero(_ type: BIRType) -> String {
         switch type {
         case .number: return "0.0"
-        case .string, .composite: return "null"
+        case .string, .composite, .closure: return "null"
         case .boolean: return "false"
         case .void: return ""
         }

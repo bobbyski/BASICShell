@@ -39,16 +39,20 @@ public struct BIRBuilder {
             })
         }
 
-        let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner)
+        let closures = ClosureContext(firstTypeIndex: module.types.count)
+        let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner, closures: closures)
         main.substitutesStrings = defaultStringSubstitution
         try main.run()
         module.main = main.function
 
         for name in model.functionOrder {
-            let builder = FunctionBuilder(lines: lines, model: model, function: name, owner: analyzer.owner)
+            let builder = FunctionBuilder(lines: lines, model: model, function: name, owner: analyzer.owner, closures: closures)
             try builder.run()
             module.functions.append(builder.function)
         }
+        module.functions.append(contentsOf: closures.functions)
+        module.types.append(contentsOf: closures.environmentTypes)
+        module.signatures = model.signatures
         return module
     }
 
@@ -68,8 +72,37 @@ public struct BIRBuilder {
     }
 }
 
-/// Builds one function's blocks — `main` or a `FUNCTION`. A class so the
-/// many helpers can share mutable state without `inout` threading.
+/// What every function builder in a module shares about closures: the
+/// bodies and environment types they synthesize.
+final class ClosureContext {
+    /// Closure body functions, in creation order.
+    var functions: [BIRFunction] = []
+    /// Environment record types, one per closure literal with captures.
+    var environmentTypes: [BIRCompositeType] = []
+    private var counter = 0
+    private let firstTypeIndex: Int
+
+    init(firstTypeIndex: Int) {
+        self.firstTypeIndex = firstTypeIndex
+    }
+
+    /// A fresh closure number.
+    func next() -> Int {
+        counter += 1
+        return counter
+    }
+
+    /// Registers an environment type and returns its name.
+    func addEnvironment(fields: [BIRField], number: Int) -> String {
+        let name = "$ENV.\(number)"
+        environmentTypes.append(BIRCompositeType(name: name, displayName: name, index: firstTypeIndex + environmentTypes.count, fields: fields))
+        return name
+    }
+}
+
+/// Builds one function's blocks — `main`, a `FUNCTION`, or a closure body.
+/// A class so the many helpers can share mutable state without `inout`
+/// threading.
 final class FunctionBuilder {
     private let lines: [ParsedLine]
     private let model: SemanticModel
@@ -79,7 +112,15 @@ final class FunctionBuilder {
     private let owner: [String?]
     /// The class whose method this is, for PRIVATE/PROTECTED checks.
     private let ownerClass: String?
-    private(set) var function: BIRFunction
+    private let closures: ClosureContext
+    /// For a closure body: the names that are its locals (parameters,
+    /// captures, LOCALs), with their types. Every other name is global.
+    var closureLocals: [String: BIRVariable]?
+    /// For a closure body: the statements to build, replacing `lines`.
+    var closureLines: [ParsedLine]?
+    /// For a closure body: the declared return type, so RETURN checks it.
+    var closureSignatureReturn: BIRType?
+    var function: BIRFunction
 
     /// The block instructions are currently appended to.
     private var current: BIRBlockID = 0
@@ -87,7 +128,7 @@ final class FunctionBuilder {
     private var blockForLine: [Int: BIRBlockID] = [:]
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
-    private var location = BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
+    var location = BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
     private var frames: [Frame] = []
     private var hiddenCounter = 0
     /// True when main uses ON ERROR: every statement then starts a block and
@@ -105,12 +146,13 @@ final class FunctionBuilder {
         case select(subject: BIRVariable, next: BIRBlockID, elseBlock: BIRBlockID?, end: BIRBlockID)
     }
 
-    init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?]) {
+    init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?], closures: ClosureContext) {
         self.lines = lines
         self.model = model
         self.functionName = function
         self.signature = function.flatMap { model.functions[$0] }
         self.owner = owner
+        self.closures = closures
         self.ownerClass = self.signature?.owner
         if let signature = self.signature {
             self.function = BIRFunction(name: signature.name, parameters: signature.parameters, returnType: signature.returnType)
@@ -124,13 +166,27 @@ final class FunctionBuilder {
     /// contribute their declarations only; the interpreter skips their
     /// top-level statements.
     private var ownedLines: [Int] {
+        if closureLines != nil { return Array(sourceLines.indices) }
         if let signature {
             return Array(signature.body)
         }
         return lines.indices.filter { owner[$0] == nil && !lines[$0].isImported }
     }
 
+    /// The statements being built: the program's, or a closure body's.
+    private var sourceLines: [ParsedLine] { closureLines ?? lines }
+
+    /// A closure body starts by taking its captures out of the environment.
+    private func emitEnvironmentPrologue() {
+        guard let environment = function.environment else { return }
+        let env = function.parameters[0]
+        for (index, local) in environment.locals.enumerated() {
+            emit(.store(local, .field(.load(env), index: index, type: local.type)))
+        }
+    }
+
     func run() throws {
+        emitEnvironmentPrologue()
         if let signature, let expression = signature.expression {
             location = signature.location
             terminate(.ret(try lowerExpression(expression, expecting: signature.returnType, context: "DEF \(signature.displayName)")))
@@ -153,7 +209,7 @@ final class FunctionBuilder {
         }
         let owned = ownedLines
         for (position, index) in owned.enumerated() {
-            let line = lines[index]
+            let line = sourceLines[index]
             location = SemanticAnalyzer.location(of: line)
             if let block = blockForLine[index] {
                 terminate(.jump(block))
@@ -166,7 +222,7 @@ final class FunctionBuilder {
             }
             try lower(line.statement)
         }
-        terminate(signature == nil ? .end : .ret(nil))
+        terminate(signature == nil && closureLines == nil ? .end : .ret(nil))
         guard frames.isEmpty else {
             throw CompileError(unterminatedFrameMessage(), at: location)
         }
@@ -188,13 +244,13 @@ final class FunctionBuilder {
     /// dimension) are created up front instead, and record/object variables
     /// start as default instances.
     private func emitImplicitDimensions() {
-        let variables = signature == nil ? model.globalVariables : function.locals.filter { !function.parameters.contains($0) }
+        let variables = (signature == nil && closureLines == nil) ? model.globalVariables : function.locals.filter { !function.parameters.contains($0) }
         for variable in variables {
             if let rank = variable.rank {
                 if signature == nil, model.globals[variable.name]?.wasDimensioned == false {
                     emit(.dim(variable, Array(repeating: .number(10), count: rank)))
                 }
-            } else if case .composite(let typeName) = variable.type, model.types[typeName]?.kind != .interface {
+            } else if case .composite(let typeName) = variable.type, model.types[typeName] != nil, model.types[typeName]?.kind != .interface {
                 emit(.store(variable, .construct(typeName)))
             }
         }
@@ -204,13 +260,13 @@ final class FunctionBuilder {
 
     private func indexTargets() throws {
         for index in ownedLines {
-            let line = lines[index]
+            let line = sourceLines[index]
             if let number = line.number { lineIndexByNumber[number] = index }
             if let label = line.statement.label { lineIndexByLabel[label.uppercased()] = index }
         }
         for index in ownedLines {
-            location = SemanticAnalyzer.location(of: lines[index])
-            try collectTargets(in: lines[index].statement)
+            location = SemanticAnalyzer.location(of: sourceLines[index])
+            try collectTargets(in: sourceLines[index].statement)
         }
     }
 
@@ -290,7 +346,7 @@ final class FunctionBuilder {
     /// Ends the current block. If it already ended (a GOTO, say), the
     /// terminator is dropped and a fresh, unreachable block absorbs whatever
     /// follows — exactly the code the interpreter would never reach either.
-    private func terminate(_ terminator: BIRTerminator) {
+    func terminate(_ terminator: BIRTerminator) {
         if case .unterminated = function.blocks[current].terminator {
             function.blocks[current].terminator = terminator
         }
@@ -305,7 +361,11 @@ final class FunctionBuilder {
     }
 
     private func variable(_ name: VariableName) -> BIRVariable {
-        model.variable(name.normalized, in: functionName)
+        if let closureLocals {
+            if let local = closureLocals[name.normalized] { return local }
+            return model.variable(name.normalized, in: nil)
+        }
+        return model.variable(name.normalized, in: functionName)
     }
 
     private func unsupported(_ what: String) -> CompileError {
@@ -336,7 +396,7 @@ final class FunctionBuilder {
                 target = model.variable(name.normalized, in: nil)
             }
             guard target.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
-            if value == nil, isInterface(target.type) { return }
+            if value == nil, isInterface(target.type) || target.type.isClosure { return }
             guard let stored = try value.map({ try lowerAssigned($0, to: target.type, name: name.name) }) ?? defaultValue(for: target.type) else { return }
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
@@ -351,8 +411,8 @@ final class FunctionBuilder {
         case .dim(_, let name, let dimensions, _):
             let target = variable(name)
             if dimensions.isEmpty {
-                // An interface-typed slot starts empty, like the interpreter's.
-                if !isInterface(target.type) { emit(.store(target, defaultValue(for: target.type))) }
+                // An interface- or closure-typed slot starts empty, like the interpreter's.
+                if !isInterface(target.type), !target.type.isClosure { emit(.store(target, defaultValue(for: target.type))) }
             } else {
                 let bounds = try dimensions.map { dimension -> BIRExpression in
                     guard let dimension else { throw unsupported("DIM with an open dimension") }
@@ -459,13 +519,18 @@ final class FunctionBuilder {
             terminate(.end)
 
         case .returnValue(let expression):
+            if closureLines != nil, let closureReturn = closureSignatureReturn {
+                guard closureReturn != .void else { throw CompileError("Type error: VOID closure cannot return a value", at: location) }
+                terminate(.ret(try lowerExpression(expression, expecting: closureReturn, context: "RETURN")))
+                return
+            }
             guard let signature else { emit(.fail("RETURN value outside FUNCTION")); return }
             guard signature.returnType != .void else {
                 throw CompileError("Type error: VOID function \(signature.displayName) cannot return a value", at: location)
             }
             terminate(.ret(try lowerExpression(expression, expecting: signature.returnType, context: "RETURN")))
         case .exitFunction:
-            guard signature != nil else { emit(.fail("EXIT FUNCTION outside FUNCTION")); return }
+            guard signature != nil || closureLines != nil else { emit(.fail("EXIT FUNCTION outside FUNCTION")); return }
             terminate(.ret(nil))
         case .expression(let expression):
             try lowerExpressionStatement(expression)
@@ -567,18 +632,21 @@ final class FunctionBuilder {
         case .randomize(let seed):
             emit(.randomize(try seed.map { try lowerExpression($0, expecting: .number, context: "RANDOMIZE") }))
 
-        case .functionDeclaration, .endFunction, .defFunction:
+        case .functionDeclaration, .endFunction, .defFunction, .functionTypeDeclaration:
             // Declarations are hoisted by the analyzer; the body is built as
             // its own function and never runs inline.
             break
+        case .closureAssignment(_, let name, _, let parameters, let returnType, let captures, let body):
+            let target = variable(name)
+            let made = try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body))
+            guard model.isAssignable(made.type, to: target.type) else {
+                throw CompileError("Type error: Cannot assign this closure to \(name.name) (\(target.type.name))", at: location)
+            }
+            emit(.store(target, made))
         case .typeDeclaration, .typeField, .endType, .classDeclaration, .classField, .endClass,
              .interfaceDeclaration, .interfaceFunctionSignature, .endInterface, .implementsDeclaration, .inheritsDeclaration:
             // Declarations are hoisted by the analyzer and never run.
             break
-        case .functionTypeDeclaration:
-            throw unsupported("FUNCTION TYPE (Phase 4.4)")
-        case .closureAssignment:
-            throw unsupported("closures (Phase 4.4)")
         case .importDirective:
             break  // Expanded by SourceLoader before the builder sees the program.
         case .onErrorGoto(let target):
@@ -626,6 +694,7 @@ final class FunctionBuilder {
         case .string: message = "Cannot assign non-string value to \(name)"
         case .boolean: message = "Boolean \(name) must be FALSE, TRUE, 0, or 1"
         case .composite(let typeName): message = "Cannot assign non-\(model.types[typeName]?.displayName ?? typeName) value to \(name)"
+        case .closure: message = "Type Mismatch"
         case .void: message = "Cannot assign to \(name)"
         }
         emit(.failType(message))
@@ -643,6 +712,7 @@ final class FunctionBuilder {
         case .string: return .string("")
         case .boolean: return .boolean(false)
         case .composite(let name): return .construct(name)
+        case .closure: return .number(0)  // never stored: closure slots start empty
         }
     }
 
@@ -847,6 +917,13 @@ final class FunctionBuilder {
                 emit(.call(userFunction.name, try lowerArguments(arguments, for: userFunction)))
                 return
             }
+            if BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
+               let signature = model.signature(of: variable(name).type) {
+                if case .callClosure(let closure, let lowered, _) = try lowerClosureCall(.load(variable(name)), signature: signature, arguments, name: name.name) {
+                    emit(.callClosure(closure, lowered))
+                }
+                return
+            }
         case .methodCall(let reference, let method, let arguments):
             if isFileService(reference) {
                 let (member, lowered, _) = try lowerFileService(method, arguments)
@@ -1034,6 +1111,8 @@ final class FunctionBuilder {
             return try lowerCall(name, arguments)
         case .variableReference(let reference):
             return load(try lowerPlace(reference))
+        case .closure(let parameters, let returnType, let captures, let body):
+            return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
@@ -1142,9 +1221,164 @@ final class FunctionBuilder {
         }
     }
 
-    /// `NAME(args)`: a user function, an array element, or a builtin — in
-    /// the interpreter's order of precedence.
+    /// A closure literal's body: an expression, or the block's lines.
+    private enum ClosureBody {
+        case expression(Expression)
+        case block([ClosureBodyLine])
+    }
+
+    /// Builds a closure literal: decides the captures, synthesizes the body
+    /// function and its environment type, and returns the make expression.
+    ///
+    /// The interpreter's rule: with no capture list, every variable the body
+    /// refers to (that is not a parameter, function, or builtin) is captured
+    /// by snapshot; with one, only the listed names are, and the rest resolve
+    /// live. Captures become locals of each call.
+    private func makeClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: ClosureBody) throws -> BIRExpression {
+        let number = closures.next()
+        let line = ParsedLine(number: location.lineNumber, displayLineNumber: location.line, fileName: location.file, sourceLineNumber: location.line, statementNumber: location.statement, isImported: false, statement: .empty)
+        let parameterVariables = try parameters.map {
+            BIRVariable(name: $0.variable.normalized, type: try SemanticAnalyzer.mapWithModel(model, $0.type, for: $0.variable.name, at: line), scope: .local)
+        }
+        guard returnType != .scalar(.variant) else {
+            throw CompileError("a closure needs AS <type>; basicc cannot infer VARIANT", at: location)
+        }
+        let resolvedReturn: BIRType = returnType == .void ? .void : try SemanticAnalyzer.mapWithModel(model, returnType, for: "closure", at: line)
+        let parameterNames = Set(parameterVariables.map(\.name))
+
+        // Captures, in first-reference order, typed as the creating scope sees them.
+        let captureNames: [String]
+        if captures.isEmpty {
+            switch body {
+            case .expression(let expression):
+                captureNames = SemanticAnalyzer.freeVariables(in: expression, model: model)
+            case .block(let bodyLines):
+                captureNames = bodyLines.flatMap { SemanticAnalyzer.freeVariables(in: $0.statement, model: model) }
+                    .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            }
+        } else {
+            captureNames = captures.map { $0.variable.normalized }
+        }
+        var declaredLocals = Set<String>()
+        if case .block(let bodyLines) = body {
+            for bodyLine in bodyLines {
+                SemanticAnalyzer.forEachStatement(in: bodyLine.statement) { statement in
+                    if case .assignment(.local, let name, _, _) = statement { declaredLocals.insert(name.normalized) }
+                    if case .dim(.local, let name, _, _) = statement { declaredLocals.insert(name.normalized) }
+                }
+            }
+        }
+        let captured = captureNames.filter { !parameterNames.contains($0) && !declaredLocals.contains($0) }.map { name -> BIRVariable in
+            let outer = variable(VariableName(name: name, column: 0))
+            return BIRVariable(name: name, type: outer.type, scope: .local)
+        }
+        for capture in captured where variable(VariableName(name: capture.name, column: 0)).rank != nil || capture.type.isComposite {
+            throw unsupported("capturing arrays or records in a closure")
+        }
+
+        let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
+        model.addSignature(name: canonical, parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
+
+        let bodyName = "closure$\(number)"
+        var environmentName: String?
+        var bodyFunction: BIRFunction
+        if captured.isEmpty {
+            bodyFunction = BIRFunction(name: bodyName, parameters: [BIRVariable(name: "$ENV", type: .composite("$NONE"), scope: .local)] + parameterVariables, returnType: resolvedReturn)
+        } else {
+            let name = closures.addEnvironment(fields: captured.map { BIRField(name: $0.name, type: $0.type) }, number: number)
+            environmentName = name
+            bodyFunction = BIRFunction(name: bodyName, parameters: [BIRVariable(name: "$ENV", type: .composite(name), scope: .local)] + parameterVariables, returnType: resolvedReturn)
+            bodyFunction.locals += captured
+            bodyFunction.environment = (name, captured)
+        }
+
+        // Build the body with its own builder, in a scope of parameters + captures + LOCALs.
+        let bodyBuilder = FunctionBuilder(lines: lines, model: model, function: nil, owner: owner, closures: closures)
+        bodyBuilder.function = bodyFunction
+        var locals: [String: BIRVariable] = [:]
+        for parameter in parameterVariables { locals[parameter.name] = parameter }
+        for capture in captured { locals[capture.name] = capture }
+        bodyBuilder.closureSignatureReturn = resolvedReturn
+        switch body {
+        case .expression(let expression):
+            bodyBuilder.closureLines = []
+            bodyBuilder.closureLocals = locals
+            bodyBuilder.location = location
+            bodyBuilder.emitEnvironmentPrologue()
+            let value = try bodyBuilder.lowerExpression(expression, expecting: resolvedReturn == .void ? nil : resolvedReturn, context: "closure result")
+            bodyBuilder.terminate(.ret(resolvedReturn == .void ? nil : value))
+            bodyBuilder.function.pruneUnreachableBlocks()
+        case .block(let bodyLines):
+            let parsed = bodyLines.enumerated().map { index, bodyLine in
+                ParsedLine(number: nil, displayLineNumber: bodyLine.sourceLineNumber, fileName: bodyLine.fileName, sourceLineNumber: bodyLine.sourceLineNumber, statementNumber: index, isImported: false, statement: bodyLine.statement)
+            }
+            // LOCALs declared in the body are locals too.
+            for parsedLine in parsed {
+                SemanticAnalyzer.forEachStatement(in: parsedLine.statement) { statement in
+                    if case .assignment(.local, let name, let declared, let value) = statement, locals[name.normalized] == nil {
+                        var type: BIRType = SemanticAnalyzer.suffixType(name.normalized) ?? .number
+                        if let declared, let mapped = try? SemanticAnalyzer.mapWithModel(self.model, declared, for: name.name, at: parsedLine) {
+                            type = mapped
+                        } else if let value, let inferred = try? self.closureLocalType(of: value, locals: locals) {
+                            type = inferred
+                        }
+                        locals[name.normalized] = BIRVariable(name: name.normalized, type: type, scope: .local)
+                    }
+                }
+            }
+            for local in locals.values where !bodyBuilder.function.locals.contains(local) {
+                bodyBuilder.function.locals.append(local)
+            }
+            bodyBuilder.closureLines = parsed
+            bodyBuilder.closureLocals = locals
+            try bodyBuilder.run()
+        }
+        closures.functions.append(bodyBuilder.function)
+
+        return .makeClosure(function: bodyName, environment: environmentName, captures: captured.map { .load(variable(VariableName(name: $0.name, column: 0))) }, signature: canonical)
+    }
+
+    /// A quick static type for a LOCAL's initial value inside a closure body.
+    private func closureLocalType(of expression: Expression, locals: [String: BIRVariable]) throws -> BIRType? {
+        switch expression {
+        case .number: return .number
+        case .string, .interpolatedString: return .string
+        case .boolean: return .boolean
+        case .variable(let name): return locals[name.normalized]?.type ?? model.variable(name.normalized, in: nil).type
+        case .binary(let left, let operation, let right):
+            if operation == .add, try closureLocalType(of: left, locals: locals) == .string, try closureLocalType(of: right, locals: locals) == .string { return .string }
+            return .number
+        case .unaryMinus: return .number
+        case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
+            if let userFunction = model.functions[name.normalized] { return userFunction.returnType }
+            return BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count)?.returnType
+        case .lenFunction: return .number
+        case .chrFunction: return .string
+        default: return nil
+        }
+    }
+
+    /// A call through a closure value, checked against its signature.
+    private func lowerClosureCall(_ closure: BIRExpression, signature: BIRSignature, _ arguments: [Expression], name: String) throws -> BIRExpression {
+        guard arguments.count == signature.parameterTypes.count else {
+            throw CompileError("Function \(name) expects \(signature.parameterTypes.count) arguments, got \(arguments.count)", at: location)
+        }
+        let lowered = try zip(arguments, signature.parameterTypes).map { argument, type in
+            try lowerExpression(argument, expecting: type, context: "\(name) parameter")
+        }
+        return .callClosure(closure, lowered, returns: signature.returnType)
+    }
+
+    /// `NAME(args)`: a closure variable, a user function, an array element,
+    /// or a builtin — in the interpreter's order of precedence.
     private func lowerCall(_ name: VariableName, _ arguments: [Expression]) throws -> BIRExpression {
+        if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
+           !BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
+            let candidate = variable(name)
+            if let signature = model.signature(of: candidate.type) {
+                return try lowerClosureCall(.load(candidate), signature: signature, arguments, name: name.name)
+            }
+        }
         if let userFunction = model.functions[name.normalized], userFunction.owner == nil {
             guard userFunction.returnType != .void else {
                 throw CompileError("VOID function \(userFunction.displayName) cannot be used in an expression", at: location)

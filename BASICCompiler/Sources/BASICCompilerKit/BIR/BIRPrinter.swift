@@ -93,6 +93,8 @@ public struct BIRPrinter {
             return "cls"
         case .fileService(let method, let arguments):
             return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .callClosure(let closure, let arguments):
+            return "call \(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
         case .openFile(let path, let mode, let number):
             return "open \(render(path)) mode \(mode) as \(render(number))"
         case .closeFile(let number):
@@ -214,6 +216,10 @@ public struct BIRPrinter {
             return "USING$(" + ([format] + values).map(render).joined(separator: ", ") + ")"
         case .fileService(let method, let arguments, _):
             return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .makeClosure(let function, _, let captures, _):
+            return "closure \(function)[" + captures.map(render).joined(separator: ", ") + "]"
+        case .callClosure(let closure, let arguments, _):
+            return "\(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
         }
     }
 }

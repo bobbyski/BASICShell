@@ -101,3 +101,33 @@ public func basic_rt_randomize_time() {
 public func basic_rt_rnd() -> Double {
     RTRandom.next()
 }
+
+/// `DATE$`: `MM-dd-yyyy`, as the interpreter formats it.
+@_cdecl("basic_rt_date")
+public func basic_rt_date() -> UnsafeMutableRawPointer {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MM-dd-yyyy"
+    return rtOwned(formatter.string(from: Date()))
+}
+
+/// `TIME$`: `HH:mm:ss`.
+@_cdecl("basic_rt_time")
+public func basic_rt_time() -> UnsafeMutableRawPointer {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+    return rtOwned(formatter.string(from: Date()))
+}
+
+/// `SLEEP(ms)`: pauses; the value is 0, as a statement-shaped builtin.
+@_cdecl("basic_rt_sleep")
+public func basic_rt_sleep(_ milliseconds: Double) -> Double {
+    fflush(stdout)
+    usleep(UInt32(max(0, milliseconds.rounded())) * 1000)
+    return 0
+}
+
+/// `FILEEXISTS(path)`: 1 or 0.
+@_cdecl("basic_rt_file_exists_number")
+public func basic_rt_file_exists_number(_ pathPointer: UnsafeMutableRawPointer?) -> Double {
+    FileManager.default.fileExists(atPath: (rtText(pathPointer) as NSString).expandingTildeInPath) ? 1 : 0
+}

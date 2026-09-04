@@ -15,15 +15,21 @@ import Foundation
 /// compiled program needs one slot type.
 struct SemanticAnalyzer {
     let lines: [ParsedLine]
-    let model = SemanticModel()
+    let model: SemanticModel
     private var diagnostics: [Diagnostic] = []
     /// Which function each line belongs to (nil = main; `declaration` for
     /// the inside of a TYPE/CLASS/INTERFACE, which nothing executes).
     private(set) var owner: [String?] = []
     static let declaration = "$declaration"
 
-    init(lines: [ParsedLine]) {
+    init(lines: [ParsedLine], model: SemanticModel = SemanticModel()) {
         self.lines = lines
+        self.model = model
+    }
+
+    /// `map` for callers that hold a finished model (the builder).
+    static func mapWithModel(_ model: SemanticModel, _ type: BASICType, for name: String, at line: ParsedLine) throws -> BIRType {
+        try SemanticAnalyzer(lines: [], model: model).map(type, for: name, at: line)
     }
 
     /// Runs every pass; throws when anything is contradictory.
@@ -31,6 +37,7 @@ struct SemanticAnalyzer {
         owner = Array(repeating: nil, count: lines.count)
         try collectTypeNames()
         try collectTypeMembers()
+        try collectSignatures()
         try collectFunctions()
         collectLocals()
         var changed = true
@@ -193,6 +200,30 @@ struct SemanticAnalyzer {
         return nil
     }
 
+    /// `FUNCTION TYPE Name(params) AS type` declarations, anywhere at top level.
+    private mutating func collectSignatures() throws {
+        for (index, line) in lines.enumerated() where owner[index] == nil {
+            guard case .functionTypeDeclaration(let name, let parameters, let returnType, let isAsync) = line.statement else { continue }
+            guard !isAsync else { throw CompileError("ASYNC FUNCTION TYPE is not supported by basicc yet", at: Self.location(of: line)) }
+            let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
+            let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name, at: line)
+            model.addSignature(name: name.uppercased(), parameters: parameterTypes, returnType: resolvedReturn)
+            owner[index] = Self.declaration
+        }
+    }
+
+    /// The closure type of a closure literal, from its own declared shape.
+    func closureType(parameters: [FunctionParameter], returnType: BASICType, at line: ParsedLine) throws -> BIRType {
+        let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
+        guard returnType != .scalar(.variant) else {
+            throw CompileError("a closure needs AS <type>; basicc cannot infer VARIANT", at: Self.location(of: line))
+        }
+        let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: "closure", at: line)
+        let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn)
+        model.addSignature(name: canonical, parameters: parameterTypes, returnType: resolvedReturn)
+        return .closure(canonical)
+    }
+
     // MARK: - Functions and scopes
 
     private mutating func collectFunctions() throws {
@@ -296,6 +327,13 @@ struct SemanticAnalyzer {
                 note(name, .scalar, at: line, in: function, changed: &changed)
             }
             if let value { try noteReferences(in: value, at: line, in: function, changed: &changed) }
+        case .closureAssignment(_, let name, let declared, let parameters, let returnType, let captures, let body):
+            if let declared {
+                try record(name, .scalar, try map(declared, for: name.name, at: line), at: line, in: function, changed: &changed)
+            } else {
+                try record(name, .scalar, try closureType(parameters: parameters, returnType: returnType, at: line), at: line, in: function, changed: &changed)
+            }
+            noteClosureReferences(parameters: parameters, captures: captures, names: body.flatMap { Self.freeVariables(in: $0.statement, model: model) }, bodyLines: body, at: line, in: function, changed: &changed)
         case .referenceAssignment(let reference, let value):
             let storage: Storage = reference.indexes.isEmpty ? .scalar : .array(reference.indexes.count)
             if reference.fields.isEmpty, let value, let type = try typeOf(value, in: function) {
@@ -383,11 +421,14 @@ struct SemanticAnalyzer {
                 try noteReferences(in: inner, at: line, in: function, changed: &changed)
             }
         case .callOrArray(let name, let arguments):
+            let known = model.info(name.normalized, in: function)?.type
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
-               !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty {
+               !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true {
                 note(name, .array(arguments.count), at: line, in: function, changed: &changed)
             }
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
+        case .closure(let parameters, _, let captures, let body):
+            noteClosureReferences(parameters: parameters, captures: captures, names: Self.freeVariables(in: body, model: model), bodyLines: [], at: line, in: function, changed: &changed)
         case .functionCall(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .unaryMinus(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner):
@@ -397,6 +438,24 @@ struct SemanticAnalyzer {
             try noteReferences(in: right, at: line, in: function, changed: &changed)
         default:
             break
+        }
+    }
+
+    /// A closure body's free names — captured or live — are variables of the
+    /// creating scope; its parameters and LOCALs are not.
+    private mutating func noteClosureReferences(parameters: [FunctionParameter], captures: [ClosureCaptureSpec], names: [String], bodyLines: [ClosureBodyLine], at line: ParsedLine, in function: String?, changed: inout Bool) {
+        var excluded = Set(parameters.map { $0.variable.normalized })
+        for bodyLine in bodyLines {
+            Self.forEachStatement(in: bodyLine.statement) { statement in
+                if case .assignment(.local, let name, _, _) = statement { excluded.insert(name.normalized) }
+                if case .dim(.local, let name, _, _) = statement { excluded.insert(name.normalized) }
+            }
+        }
+        for capture in captures where !excluded.contains(capture.variable.normalized) {
+            note(capture.variable, .scalar, at: line, in: function, changed: &changed)
+        }
+        for name in names where !excluded.contains(name) {
+            note(VariableName(name: name, column: 0), .scalar, at: line, in: function, changed: &changed)
         }
     }
 
@@ -472,7 +531,11 @@ struct SemanticAnalyzer {
             if let userFunction = model.functions[name.normalized] { return userFunction.returnType }
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
             if name.normalized == "USING$" { return .string }
-            return model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
+            let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
+            if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
+            return variableType
+        case .closure(let parameters, let returnType, _, _):
+            return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
         case .lenFunction: return .number
         case .chrFunction: return .string
         default: return nil
@@ -503,10 +566,16 @@ struct SemanticAnalyzer {
         case .scalar(.boolean): return .boolean
         case .void: return .void
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):
+            if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
             guard model.types[typeName.uppercased()] != nil else {
                 throw CompileError("\(name) AS \(typeName): unknown TYPE, CLASS, or INTERFACE", at: Self.location(of: line))
             }
             return .composite(typeName.uppercased())
+        case .functionType(let typeName):
+            guard model.signatures[typeName.uppercased()] != nil else {
+                throw CompileError("\(name) AS \(typeName): unknown FUNCTION TYPE", at: Self.location(of: line))
+            }
+            return .closure(typeName.uppercased())
         default:
             throw CompileError("\(name) AS \(type.name) is not supported by basicc yet", at: Self.location(of: line))
         }
@@ -526,6 +595,73 @@ struct SemanticAnalyzer {
             index = template.index(after: end)
         }
         return expressions
+    }
+
+    /// The variables an expression refers to, in first-reference order —
+    /// the interpreter's `capturedVariableNames`.
+    static func freeVariables(in expression: Expression, model: SemanticModel) -> [String] {
+        var ordered: [String] = []
+        func append(_ name: VariableName) {
+            let key = name.normalized
+            guard !ordered.contains(key),
+                  !["READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON", "NATIVE", "LITTLE", "BIG", "ERR", "ERL", "FILE"].contains(key) else { return }
+            ordered.append(key)
+        }
+        func visit(_ expression: Expression) {
+            switch expression {
+            case .number, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction: return
+            case .variable(let name): append(name)
+            case .variableReference(let reference):
+                append(reference.base); reference.indexes.forEach(visit); reference.fieldIndexes.flatMap { $0 }.forEach(visit)
+            case .callOrArray(let name, let arguments):
+                if model.functions[name.normalized] == nil, !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), name.normalized != "USING$" { append(name) }
+                arguments.forEach(visit)
+            case .functionCall(_, let arguments), .newObject(_, let arguments): arguments.forEach(visit)
+            case .methodCall(let receiver, _, let arguments):
+                if receiver.base.normalized != "FILE" { append(receiver.base) }
+                receiver.indexes.forEach(visit); arguments.forEach(visit)
+            case .unaryMinus(let inner), .await(let inner), .chrFunction(let inner), .lenFunction(let inner),
+                 .environmentFunction(let inner), .systemFunction(let inner): visit(inner)
+            case .binary(let left, _, let right): visit(left); visit(right)
+            case .pointFunction(let point): visit(point.x); visit(point.y)
+            }
+        }
+        visit(expression)
+        return ordered
+    }
+
+    /// The variables a statement refers to, for block closures.
+    static func freeVariables(in statement: Statement, model: SemanticModel) -> [String] {
+        var ordered: [String] = []
+        func add(_ names: [String]) { for name in names where !ordered.contains(name) { ordered.append(name) } }
+        SemanticAnalyzer.forEachStatement(in: statement) { statement in
+            switch statement {
+            case .assignment(.local, _, _, let value):
+                if let value { add(freeVariables(in: value, model: model)) }
+            case .assignment(_, let name, _, let value):
+                add([name.normalized]); if let value { add(freeVariables(in: value, model: model)) }
+            case .referenceAssignment(let reference, let value):
+                add(freeVariables(in: .variableReference(reference), model: model)); if let value { add(freeVariables(in: value, model: model)) }
+            case .print(let parts):
+                for case .expression(let expression) in parts { add(freeVariables(in: expression, model: model)) }
+            case .returnValue(let expression), .expression(let expression), .selectCase(let expression), .blockIf(let expression), .elseIf(let expression):
+                add(freeVariables(in: expression, model: model))
+            case .ifThen(let condition, _, _):
+                add(freeVariables(in: condition, model: model))
+            case .forLoop(let variable, let start, let end, let step):
+                add([variable.normalized]); add(freeVariables(in: start, model: model)); add(freeVariables(in: end, model: model))
+                if let step { add(freeVariables(in: step, model: model)) }
+            case .caseClause(let clauses):
+                for clause in clauses {
+                    switch clause {
+                    case .equals(let e), .comparison(_, let e): add(freeVariables(in: e, model: model))
+                    case .range(let lower, let upper): add(freeVariables(in: lower, model: model)); add(freeVariables(in: upper, model: model))
+                    }
+                }
+            default: break
+            }
+        }
+        return ordered
     }
 
     /// Visits a statement and the statements nested in it.

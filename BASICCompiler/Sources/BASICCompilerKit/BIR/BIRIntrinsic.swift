@@ -28,6 +28,11 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case eof = "EOF"
     case lof = "LOF"
     case loc = "LOC"
+    case fileExists = "FILEEXISTS"
+    // Clock and pauses
+    case date = "DATE$"
+    case time = "TIME$"
+    case sleep = "SLEEP"
     // Strings → number
     case len = "LEN"
     case asc = "ASC"
@@ -46,11 +51,11 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     public var returnType: BIRType {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
-             .len, .asc, .val, .instr, .lof, .loc:
+             .len, .asc, .val, .instr, .lof, .loc, .fileExists, .sleep:
             return .number
         case .eof:
             return .boolean
-        case .str, .chr, .left, .right, .mid, .space, .stringRepeat:
+        case .str, .chr, .left, .right, .mid, .space, .stringRepeat, .date, .time:
             return .string
         }
     }
@@ -59,11 +64,11 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// argument; ``lookup(_:argumentCount:)`` checks the count.
     public var parameterTypes: [BIRType] {
         switch self {
-        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc:
+        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .sleep:
             return [.number]
-        case .rnd, .err, .erl:
+        case .rnd, .err, .erl, .date, .time:
             return []
-        case .len, .asc, .val:
+        case .len, .asc, .val, .fileExists:
             return [.string]
         case .left, .right:
             return [.string, .number]

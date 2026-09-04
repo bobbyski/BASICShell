@@ -29,6 +29,9 @@ public enum BIRType: Sendable, Hashable {
     case void
     /// A `TYPE` record, `CLASS` object, or `INTERFACE` value, by name.
     case composite(String)
+    /// A closure with the named signature (a `FUNCTION TYPE`, or one the
+    /// compiler made for a closure literal).
+    case closure(String)
 
     /// The type as diagnostics spell it.
     public var name: String {
@@ -38,12 +41,19 @@ public enum BIRType: Sendable, Hashable {
         case .boolean: return "boolean"
         case .void: return "void"
         case .composite(let typeName): return typeName
+        case .closure(let signature): return signature
         }
     }
 
     /// Whether values of this type live in the runtime (pointers).
     public var isComposite: Bool {
         if case .composite = self { return true }
+        return false
+    }
+
+    /// Whether this is a closure type.
+    public var isClosure: Bool {
+        if case .closure = self { return true }
         return false
     }
 }

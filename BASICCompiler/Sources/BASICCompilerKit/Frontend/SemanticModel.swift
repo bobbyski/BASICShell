@@ -75,6 +75,30 @@ public final class SemanticModel {
 
     /// Whether `OPTION LOCAL-LET` is in effect for the program.
     public internal(set) var usesLocalLet = false
+    /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
+    /// anonymous ones by their canonical shape.
+    public private(set) var signatures: [String: BIRSignature] = [:]
+
+    /// The canonical name of a closure shape, so compatibility is structural:
+    /// `(number,string)->string`.
+    public static func canonicalSignature(parameters: [BIRType], returnType: BIRType) -> String {
+        "(" + parameters.map(\.name).joined(separator: ",") + ")->" + returnType.name
+    }
+
+    /// Registers a signature under `name` (and under its canonical shape).
+    func addSignature(name: String, parameters: [BIRType], returnType: BIRType) {
+        signatures[name] = BIRSignature(name: name, parameterTypes: parameters, returnType: returnType)
+        let canonical = Self.canonicalSignature(parameters: parameters, returnType: returnType)
+        if signatures[canonical] == nil {
+            signatures[canonical] = BIRSignature(name: canonical, parameterTypes: parameters, returnType: returnType)
+        }
+    }
+
+    /// The shape behind a closure type, if known.
+    public func signature(of type: BIRType) -> BIRSignature? {
+        guard case .closure(let name) = type else { return nil }
+        return signatures[name]
+    }
     /// Functions by normalized name.
     public private(set) var functions: [String: Function] = [:]
     /// Function names in source order.
@@ -237,6 +261,9 @@ public final class SemanticModel {
     /// an interface.
     public func isAssignable(_ source: BIRType, to target: BIRType) -> Bool {
         if source == target { return true }
+        if let from = signature(of: source), let to = signature(of: target) {
+            return from.parameterTypes == to.parameterTypes && from.returnType == to.returnType
+        }
         guard case .composite(let from) = source, case .composite(let to) = target, let targetType = types[to] else { return false }
         switch targetType.kind {
         case .interface: return classConforms(from, to: to)

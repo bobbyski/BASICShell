@@ -85,6 +85,8 @@ public enum BIROperation: Sendable {
     case cls
     /// A `File.*` service call used as a statement.
     case fileService(method: String, arguments: [BIRExpression])
+    /// A closure call used as a statement (a VOID closure, or a value dropped).
+    case callClosure(BIRExpression, [BIRExpression])
     /// `OPEN path FOR mode AS #n`: mode 0 input, 1 output, 2 append.
     case openFile(path: BIRExpression, mode: Int, number: BIRExpression)
     /// `CLOSE #n`, or every file when nil.
@@ -194,6 +196,9 @@ public struct BIRFunction: Sendable {
     public var returnType: BIRType
     /// Frame-local variables (parameters and hidden temporaries included).
     public var locals: [BIRVariable]
+    /// For a closure body: the environment type whose fields are copied into
+    /// the named locals at entry, in field order.
+    public var environment: (type: String, locals: [BIRVariable])?
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
     /// For `main` when the program uses `ON ERROR`: the block that begins
@@ -271,6 +276,19 @@ public struct BIRField: Sendable {
     }
 }
 
+/// A closure signature — the shape a closure value has.
+public struct BIRSignature: Sendable {
+    public let name: String
+    public let parameterTypes: [BIRType]
+    public let returnType: BIRType
+
+    public init(name: String, parameterTypes: [BIRType], returnType: BIRType) {
+        self.name = name
+        self.parameterTypes = parameterTypes
+        self.returnType = returnType
+    }
+}
+
 /// A `TYPE` or `CLASS`, as the runtime needs to know it.
 public struct BIRCompositeType: Sendable {
     /// The normalized name, as types are looked up.
@@ -304,6 +322,8 @@ public struct BIRModule: Sendable {
     public var data: [BIRDataItem]
     /// Every `TYPE` and `CLASS`, by runtime type index.
     public var types: [BIRCompositeType]
+    /// Every closure signature, by name.
+    public var signatures: [String: BIRSignature]
 
     /// Creates an empty module.
     public init(name: String) {
@@ -313,6 +333,7 @@ public struct BIRModule: Sendable {
         self.functions = []
         self.data = []
         self.types = []
+        self.signatures = [:]
     }
 
     /// The type index of a composite type name.
