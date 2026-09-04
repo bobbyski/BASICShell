@@ -169,6 +169,11 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                         BASICTUIRuntimeBridge.shared.invoke(handlerNamed: timer.handler)
                     }
                 }
+                for scheduled in registry.pendingSchedules {
+                    app.schedule(after: .milliseconds(scheduled.milliseconds)) {
+                        BASICTUIRuntimeBridge.shared.invoke(handlerNamed: scheduled.handler)
+                    }
+                }
 
                 // Focus the first control that has a handler. Without this the
                 // window opens with nothing focused, the first keypress goes

@@ -198,6 +198,23 @@ extension BASICRuntime {
                 }
                 return .empty
 
+            case "THEMECOUNT":
+                // Count and name rather than an array of names: this BASIC has
+                // no UBOUND and no FOR EACH, so a returned array is a thing a
+                // program cannot walk. Together these two are the BASIC form of
+                // `for (name, theme) in Theme.builtIn`.
+                return .number(Double(Self.tuiThemeNames.count))
+
+            case "THEMENAME":
+                let names = Self.tuiThemeNames
+                guard let index = number(0), index >= 0, index < names.count else {
+                    throw BASICError.runtime(
+                        "\(typeName).themename expects an index from 0 to \(names.count - 1)"
+                    )
+                }
+                // Round-trips: the name handed back is what `theme` takes.
+                return .string(BASICString(names[index]))
+
             case "FRAME":
                 guard let window = registry.floatingWindows[id] else {
                     throw BASICError.runtime("\(typeName) has no frame to set")
@@ -405,6 +422,63 @@ extension BASICRuntime {
                     minimumWidth: number(1),
                     percentage: number(2) ?? 0
                 )
+                return .empty
+
+            case "AFTER":
+                // One-shot work: `app.schedule(after:)`. The gallery uses it
+                // for the VTG probe, which can only answer once the app is up.
+                guard let milliseconds = number(0), milliseconds > 0,
+                      let handler = text(1) else {
+                    throw BASICError.runtime("\(typeName).after expects milliseconds and a handler")
+                }
+                if let app = registry.apps[id] {
+                    app.schedule(after: .milliseconds(milliseconds)) {
+                        BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                    }
+                } else {
+                    registry.pendingSchedules.append((milliseconds: milliseconds, handler: handler))
+                }
+                return .empty
+
+            case "DISMISS":
+                guard let app = registry.apps[id] else {
+                    throw BASICError.runtime("\(typeName) is not a running application")
+                }
+                // `app.windows.last(where: { $0 !== shell })` — the front-most
+                // window that is not the shell. BASIC cannot search the window
+                // list, and the shell is the one window a program never means
+                // to close, so it is excluded here rather than named.
+                if let target = app.windows.last(where: { !($0 is BASICTUIShellWindow) }) {
+                    app.dismiss(target)
+                }
+                return .empty
+
+            case "VTGREPORT":
+                guard let app = registry.apps[id] else {
+                    throw BASICError.runtime("\(typeName) is not a running application")
+                }
+                // One sentence rather than a capability record: BASIC has no
+                // shape to hand the record back in, and the report is what the
+                // gallery does with it either way.
+                guard app.isVectorChromeActive, let plane = app.graphicsCapabilities else {
+                    return .string(BASICString(
+                        "VTG check: plain cells — no VectorTerminal graphics plane answered the probe"
+                    ))
+                }
+                let raster = plane.rasterFormats.map(\.rawValue).sorted().joined(separator: "/")
+                return .string(BASICString(
+                    "VTG check: vector chrome ACTIVE — raster \(raster.isEmpty ? "none" : raster)"
+                    + ", sprites \(plane.supportsSprites ? "yes" : "no")"
+                    + ", layer scroll \(plane.supportsLayerScroll ? "yes" : "no")"
+                    + ", clipping \(plane.supportsClipping ? "yes" : "no")"
+                    + ", under-text raster \(plane.supportsUnderTextRaster ? "yes" : "no — riding the overlay")"
+                ))
+
+            case "TOGGLESLIDEOUT":
+                guard let window = registry.floatingWindows[id] else {
+                    throw BASICError.runtime("\(typeName) has no slide-out")
+                }
+                window.toggleSlideOut(Self.tuiEdge(text(0) ?? "leading"))
                 return .empty
 
             case "TIMER":

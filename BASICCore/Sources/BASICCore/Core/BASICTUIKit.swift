@@ -110,6 +110,9 @@ final class BASICTUIRegistry {
     var pendingTheme: Theme?
     /// Timers asked for before the app existed.
     var pendingTimers: [(seconds: Double, handler: String)] = []
+
+    /// One-shot work asked for before there was an application to ask.
+    var pendingSchedules: [(milliseconds: Int, handler: String)] = []
     /// Windows to present once the app is up.
     var pendingPresents: [Int] = []
     /// The BASIC function each control calls, by handle.
@@ -1691,6 +1694,25 @@ extension BASICRuntime {
                 return .empty
 
             case "STYLE":
+                // A label takes a theme role rather than a button style: chrome
+                // a program builds itself — a status strip's own labels — is
+                // not inside a themed control and so is not re-dressed by
+                // `applyTheme`. Without this a BASIC status strip keeps the
+                // terminal's default colours while everything around it changes
+                // theme. "header" is the strip's own style; "headerplain" is the
+                // same without bold, for the segments that should not shout.
+                if let label = subject as? Label {
+                    // Resolved through the label itself, so it picks up the
+                    // context of whatever it was added to — which means the
+                    // strip has to be in its window before this is called, as
+                    // it is in the gallery.
+                    var style = label.effectiveTheme.header
+                    if (arguments.first?.string?.description ?? "").lowercased() != "header" {
+                        style.flags.remove(.bold)
+                    }
+                    label.style = style
+                    return .empty
+                }
                 guard let button = subject as? Button else {
                     throw BASICError.runtime("\(typeName) has no style")
                 }
