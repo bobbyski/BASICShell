@@ -280,6 +280,15 @@ struct LLVMLowering {
     declare void @basic_rt_file_write_json(ptr, ptr, i1)
     declare ptr @basic_rt_file_files(ptr)
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
+    declare ptr @basic_rt_inkey()
+    declare void @basic_rt_files_list()
+    declare ptr @basic_rt_current_dir()
+    declare void @basic_rt_key_mode(i64)
+    declare double @basic_rt_screen_width()
+    declare double @basic_rt_screen_height()
+    declare void @basic_rt_locate(double, double)
+    declare ptr @basic_rt_line_input_field(ptr, i1, double, double, ptr, i1)
+    declare ptr @basic_rt_line_input_exit_key()
     declare ptr @basic_rt_system_call(ptr, ptr, i64, ptr)
     declare void @basic_rt_file_close(double)
     declare void @basic_rt_file_print(double, ptr)
@@ -691,6 +700,27 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_file_reset(double \(lowerValue(number).0))")
         case .discard(let value):
             _ = lowerValue(value)
+        case .locate(let row, let column):
+            let rowValue = lowerValue(row).0
+            let columnValue = lowerValue(column).0
+            out.emit("call void @basic_rt_locate(double \(rowValue), double \(columnValue))")
+        case .keyMode(let mode):
+            out.emit("call void @basic_rt_key_mode(i64 \(mode))")
+        case .filesList:
+            out.emit("call void @basic_rt_files_list()")
+        case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
+            let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
+            let lengthValue = length.map { lowerValue($0).0 } ?? "-1.0"
+            let maxValue = maximum.map { lowerValue($0).0 } ?? "-1.0"
+            let defaultValue = defaultText.map { lowerValue($0).0 } ?? "null"
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_line_input_field(ptr \(promptValue), i1 \(exitInto == nil ? "false" : "true"), double \(lengthValue), double \(maxValue), ptr \(defaultValue), i1 \(defaultText == nil ? "false" : "true"))")
+            storeManaged(result, owned: true, into: slotName(into), type: .string)
+            if let exitInto {
+                let key = out.temp()
+                out.emit("\(key) = call ptr @basic_rt_line_input_exit_key()")
+                storeManaged(key, owned: true, into: slotName(exitInto), type: .string)
+            }
         case .closeFile(let number):
             out.emit("call void @basic_rt_file_close(double \(number.map { lowerValue($0).0 } ?? "0.0"))")
         case .printFile(let number, let items, let newline):

@@ -461,16 +461,40 @@ final class FunctionBuilder {
         case .input(let prompt, .variable(let name)):
             let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
             emit(.input(prompt: promptValue, into: variable(name)))
-        case .input:
-            throw unsupported("INPUT into an array element or field")
+        case .input(let prompt, .reference(let reference)):
+            // INPUT into an element or field: read into a temporary of the
+            // place's type, then store it there.
+            let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
+            let place = try lowerPlace(reference)
+            let slotType: BIRType = [.number, .string, .boolean].contains(place.type) ? place.type : .string
+            let slot = hidden("input", slotType)
+            emit(.input(prompt: promptValue, into: slot))
+            emitStore(place, convert(.load(slot), to: place.type, name: reference.base.name))
         case .lineInput(let prompt, .variable(let name), nil, nil, nil, nil):
             let target = variable(name)
             guard target.type == .string, target.rank == nil else {
                 throw CompileError("Type error: LINE INPUT needs a string variable, got \(name.name)", at: location)
             }
             emit(.lineInput(prompt: try prompt.map { try lowerExpression($0, expecting: .string, context: "LINE INPUT prompt") }, into: target))
-        case .lineInput:
-            throw unsupported("LINE INPUT with EXITVAR, LENGTH, MAX, or DEFAULT")
+        case .lineInput(let prompt, let target, let exitTarget, let length, let maximum, let defaultText):
+            let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "LINE INPUT prompt") }
+            let slot = hidden("line", .string)
+            var exitSlot: BIRVariable?
+            if exitTarget != nil { exitSlot = hidden("exit", .string) }
+            emit(.lineInputField(
+                prompt: promptValue, into: slot, exitInto: exitSlot,
+                length: try length.map { try lowerExpression($0, expecting: .number, context: "LINE INPUT LENGTH") },
+                max: try maximum.map { try lowerExpression($0, expecting: .number, context: "LINE INPUT MAX") },
+                defaultText: try defaultText.map { try lowerExpression($0, expecting: .string, context: "LINE INPUT DEFAULT") }
+            ))
+            let place = try lowerPlace(readTargetReference(target))
+            emitStore(place, convert(.load(slot), to: place.type, name: readTargetReference(target).base.name))
+            if let exitTarget, let exitSlot {
+                let exitPlace = try lowerPlace(readTargetReference(exitTarget))
+                emitStore(exitPlace, convert(.load(exitSlot), to: exitPlace.type, name: readTargetReference(exitTarget).base.name))
+            }
+        case .locate(let row, let column):
+            emit(.locate(try lowerExpression(row, expecting: .number, context: "LOCATE"), try lowerExpression(column, expecting: .number, context: "LOCATE")))
         case .printUsing(let format, let values, let trailingSeparator):
             emit(.printUsing(
                 format: try lowerExpression(format, expecting: .string, context: "PRINT USING"),
@@ -481,7 +505,9 @@ final class FunctionBuilder {
             substitutesStrings = enabled
         case .optionLetMode:
             break  // Resolved by the analyzer for the whole program.
-        case .optionKeyMode, .optionShellMode, .optionEventInput:
+        case .optionKeyMode(let mode):
+            emit(.keyMode(mode == .ibm ? 1 : 0))
+        case .optionShellMode, .optionEventInput:
             // Host-facing options: key encoding for INKEY$, shell-mode
             // command dispatch, and mouse/gamepad gating. A compiled console
             // program has none of those surfaces yet (Phase 5.2), so the
@@ -742,7 +768,9 @@ final class FunctionBuilder {
         case .resumeNext:
             guard signature == nil else { throw unsupported("RESUME inside a FUNCTION") }
             terminate(.resumeNext)
-        case .load, .save, .cd, .pwd, .files:
+        case .files:
+            emit(.filesList)
+        case .load, .save, .cd, .pwd:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
         default:
             throw unsupported(describe(statement))
@@ -1071,6 +1099,14 @@ final class FunctionBuilder {
         return .load(instance)
     }
 
+    /// A read target as a reference, so it can become a place.
+    private func readTargetReference(_ target: ReadTarget) -> VariableReference {
+        switch target {
+        case .variable(let name): return VariableReference(base: name)
+        case .reference(let reference): return reference
+        }
+    }
+
     private func lowerReadTarget(_ target: ReadTarget) throws -> BIRReadTarget {
         switch target {
         case .variable(let name):
@@ -1297,6 +1333,10 @@ final class FunctionBuilder {
             if SemanticModel.namedConstants.contains(name.normalized), model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
                 return .string(name.normalized)
             }
+            if let host = SemanticModel.hostVariables[name.normalized], model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
+                let symbol = ["SCREENWIDTH": "basic_rt_screen_width", "SCREENHEIGHT": "basic_rt_screen_height", "CURRENTDIR$": "basic_rt_current_dir"][name.normalized]!
+                return .hostCall(symbol, [], returns: host)
+            }
             let resolved = variable(name)
             if resolved.rank != nil { return .loadArray(resolved) }
             return .load(resolved)
@@ -1344,6 +1384,11 @@ final class FunctionBuilder {
             return .intrinsic(.chr, [try lowerExpression(inner, expecting: .number, context: "CHR$")])
         case .null:
             return .nullValue
+        case .await(let inner):
+            // The compiled runtime finishes host work before returning it, so
+            // AWAIT of anything is the value itself — the interpreter's rule
+            // for a non-task value.
+            return try lowerExpression(inner)
         default:
             throw unsupported(describe(expression))
         }
@@ -1685,6 +1730,9 @@ final class FunctionBuilder {
         case "SEEK":
             try count(1...1)
             return .hostCall("basic_rt_file_seek_position", [try argument(0, .number, default: .number(0))], returns: .number)
+        case "INKEY$":
+            try count(0...0)
+            return .hostCall("basic_rt_inkey", [], returns: .string)
         default:
             return nil
         }

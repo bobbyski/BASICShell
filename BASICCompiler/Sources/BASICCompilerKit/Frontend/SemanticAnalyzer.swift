@@ -374,8 +374,15 @@ struct SemanticAnalyzer {
         case .setFieldString(.variable(let name), let value, _):
             try record(name, .scalar, .string, at: line, in: function, changed: &changed)
             try noteReferences(in: value, at: line, in: function, changed: &changed)
-        case .input(_, let target), .lineInput(_, let target, _, _, _, _):
+        case .input(_, let target):
             noteTarget(target, at: line, in: function, changed: &changed)
+        case .lineInput(let prompt, let target, let exitTarget, let length, let maximum, let defaultText):
+            noteTarget(target, at: line, in: function, changed: &changed)
+            if let exitTarget { noteTarget(exitTarget, at: line, in: function, changed: &changed) }
+            for expression in [prompt, length, maximum, defaultText].compactMap({ $0 }) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
+        case .locate(let row, let column):
+            try noteReferences(in: row, at: line, in: function, changed: &changed)
+            try noteReferences(in: column, at: line, in: function, changed: &changed)
         case .read(let targets):
             for target in targets { noteTarget(target, at: line, in: function, changed: &changed) }
         case .forLoop(let variable, let start, let end, let step):
@@ -489,6 +496,7 @@ struct SemanticAnalyzer {
         let key = name.normalized
         if key == "ERR" || key == "ERL" { return }
         if SemanticModel.namedConstants.contains(key), case .scalar = storage, model.info(key, in: function) == nil { return }
+        if SemanticModel.hostVariables[key] != nil, case .scalar = storage, model.info(key, in: function) == nil { return }
         let before = model.info(key, in: function)
         model.update(key, in: function) { info in
             if case .array(let rank) = storage, info.rank == nil { info.rank = rank }
@@ -527,6 +535,7 @@ struct SemanticAnalyzer {
             if name.normalized == "ERR" || name.normalized == "ERL" { return .number }
             if let known = model.info(name.normalized, in: function)?.type { return known }
             if SemanticModel.namedConstants.contains(name.normalized) { return .string }
+            if let host = SemanticModel.hostVariables[name.normalized] { return host }
             return Self.suffixType(name.normalized)
         case .variableReference(let reference):
             guard var type = model.info(reference.base.normalized, in: function)?.type ?? Self.suffixType(reference.base.normalized) else { return nil }
@@ -566,6 +575,7 @@ struct SemanticAnalyzer {
             }
             return nil
         case .unaryMinus: return .number
+        case .await(let inner): return try typeOf(inner, in: function)
         case .binary(let left, let operation, let right):
             switch operation {
             case .add:
@@ -580,7 +590,7 @@ struct SemanticAnalyzer {
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
             if name.normalized == "USING$" || name.normalized == "TOJSONSTRING" { return .string }
             if name.normalized == "FROMJSONSTRING" { return .variant }
-            if ["MKI$", "MKS$", "MKD$", "INPUT$"].contains(name.normalized) { return .string }
+            if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$"].contains(name.normalized) { return .string }
             if ["CVI", "CVS", "CVD", "SEEK"].contains(name.normalized) { return .number }
             if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)

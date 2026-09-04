@@ -101,7 +101,14 @@ public final class SemanticModel {
             "CLOSE": (0, .void), "ISOPEN": (0, .boolean), "POSITION": (0, .number), "EOF": (0, .boolean),
             "ERROR": (0, .string), "ERROR$": (0, .string),
         ],
+        "HTTPCLIENT": [
+            "HEADER": (2, .void), "GET": (nil, .variant),
+        ],
     ]
+
+    /// Builtin variables the interpreter assigns at start; read through the
+    /// runtime when the program never assigns them.
+    public static let hostVariables: [String: BIRType] = ["SCREENWIDTH": .number, "SCREENHEIGHT": .number, "CURRENTDIR$": .string]
 
     /// The static type of a system member, when the class and member exist.
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {

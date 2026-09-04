@@ -136,6 +136,15 @@ public enum BIROperation: Sendable {
     case resetFile(BIRExpression)
     /// Evaluates an expression for its effect and drops the value.
     case discard(BIRExpression)
+    /// `LOCATE row, column`.
+    case locate(BIRExpression, BIRExpression)
+    /// `FILES` inside a program: lists the working directory.
+    case filesList
+    /// `OPTION AIBASIC-KEYS` (0) / `OPTION IBM-KEYS` (1).
+    case keyMode(Int)
+    /// `LINE INPUT` with LENGTH/MAX/DEFAULT/EXITVAR: the text lands in
+    /// `into`, the key that ended input (or "") in `exitInto`.
+    case lineInputField(prompt: BIRExpression?, into: BIRVariable, exitInto: BIRVariable?, length: BIRExpression?, max: BIRExpression?, defaultText: BIRExpression?)
     /// `CLOSE #n`, or every file when nil.
     case closeFile(BIRExpression?)
     /// `PRINT #n, items` — rendered like PRINT, appended to the file.

@@ -113,6 +113,16 @@ public struct BIRPrinter {
             return "reset \(render(number))"
         case .discard(let value):
             return "discard \(render(value))"
+        case .locate(let row, let column):
+            return "locate \(render(row)), \(render(column))"
+        case .keyMode(let mode):
+            return "option \(mode == 1 ? "ibm" : "aibasic")-keys"
+        case .filesList:
+            return "files"
+        case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
+            return "line input field " + (prompt.map { render($0) + ", " } ?? "") + into.name
+                + (length.map { " length \(render($0))" } ?? "") + (maximum.map { " max \(render($0))" } ?? "")
+                + (defaultText.map { " default \(render($0))" } ?? "") + (exitInto.map { " exitvar \($0.name)" } ?? "")
         case .closeFile(let number):
             return "close" + (number.map { " " + render($0) } ?? "")
         case .printFile(let number, let items, let newline):
