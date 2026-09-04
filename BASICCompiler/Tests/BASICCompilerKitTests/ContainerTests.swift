@@ -109,3 +109,59 @@ struct ContainerTests {
         }
     }
 }
+
+/// The protocol the IDEs reach a compiler through (BASIC_COMPILER.md 7.6).
+@Suite("The IDE-facing compiler protocol")
+struct LanguageCompilerTests {
+    private func compiler() -> any LanguageCompiler { Compilation(dialect: TraditionalDialect()) }
+
+    @Test func itNamesTheLanguageAndWhatItBuilds() {
+        #expect(Compilation.languageIdentifier == "basic")
+        #expect(Compilation.sourceExtensions == ["bas"])
+        #expect(Compilation.containerExtensions == ["basproj", "baslib"])
+    }
+
+    @Test func itKnowsWhatItCanBuild() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basicc-protocol-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let source = (root as NSString).appendingPathComponent("hello.bas")
+        try "PRINT \"hi\"\n".write(toFile: source, atomically: true, encoding: .utf8)
+
+        let compiler = compiler()
+        #expect(compiler.canBuild(path: source))
+        #expect(compiler.canBuild(path: "/somewhere/app.basproj"))
+        #expect(!compiler.canBuild(path: (root as NSString).appendingPathComponent("notes.txt")))
+    }
+
+    @Test func itBuildsAndReportsWhatIsWrong() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basicc-protocol-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+
+        let good = (root as NSString).appendingPathComponent("good.bas")
+        try "PRINT \"hi\"\n".write(toFile: good, atomically: true, encoding: .utf8)
+        let compiler = compiler()
+        #expect(compiler.diagnostics(for: good).isEmpty)
+        let built = try TestBuild.onDeepStack {
+            compiler.build(path: good, output: (root as NSString).appendingPathComponent("good"))
+        }
+        #expect(built.succeeded)
+        #expect(built.artifact != nil)
+        #expect(built.diagnostics.isEmpty)
+
+        // A build that cannot happen comes back as diagnostics, not as an
+        // error: an IDE shows them the same way either way.
+        let bad = (root as NSString).appendingPathComponent("bad.bas")
+        try "PRINT 1 +\n".write(toFile: bad, atomically: true, encoding: .utf8)
+        let failed = try TestBuild.onDeepStack {
+            compiler.build(path: bad, output: (root as NSString).appendingPathComponent("bad"))
+        }
+        #expect(!failed.succeeded)
+        #expect(failed.artifact == nil)
+        #expect(!failed.diagnostics.isEmpty)
+        #expect(!compiler.diagnostics(for: bad).isEmpty)
+    }
+}

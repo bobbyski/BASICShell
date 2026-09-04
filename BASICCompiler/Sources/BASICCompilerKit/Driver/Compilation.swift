@@ -13,7 +13,7 @@ import Foundation
 /// The runtime object is compiled once per runtime-source revision and kept
 /// in the user's cache directory, so building a program costs one clang run
 /// and one link.
-public struct Compilation {
+public struct Compilation: Sendable {
     /// The dialect doing the lowering.
     public let dialect: any DialectCompiler
     /// Options for this compilation.
