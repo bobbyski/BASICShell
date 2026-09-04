@@ -174,6 +174,24 @@ struct BASICTUIDialogSpec {
     var buttons: [(title: String, handler: String?)] = []
 }
 
+/// A vertical stack whose scroll height can be declared.
+///
+/// A `ScrollView` measures its document by `intrinsicContentSize`, and a stack
+/// of rows pinned with `height` has none of its own — the pinned rows carry a
+/// minimum and maximum, not an intrinsic. So the document reported zero height
+/// and nothing scrolled.
+///
+/// The gallery's own `ChartsColumn` solves it the same way: declare the total
+/// and let the scroll view believe it.
+@MainActor
+final class BASICTUIDocumentStack: StackView {
+    var declaredHeight = 0
+
+    override var intrinsicContentSize: Size? {
+        declaredHeight > 0 ? Size(width: 0, height: declaredHeight) : super.intrinsicContentSize
+    }
+}
+
 /// Runs `body` on the main actor, from wherever the interpreter happens to be.
 ///
 /// TUIKit is main-actor isolated. The interpreter is not isolated at all, and —
@@ -245,10 +263,15 @@ extension BASICRuntime {
                 // "h" or "v", defaulting to vertical: a column of controls is
                 // the shape a form takes, and the one a program writing its
                 // first window almost always means.
-                let horizontal = title.lowercased().hasPrefix("h")
-                registry.views[id] = horizontal
-                    ? HStack(spacing: 1)
-                    : VStack(spacing: 0)
+                //
+                // A vertical stack is the document-capable one, so it can be
+                // given a scroll height with `contentheight`.
+                if title.lowercased().hasPrefix("h") {
+                    registry.views[id] = HStack(spacing: 1)
+                } else {
+                    let column = BASICTUIDocumentStack(axis: .vertical, spacing: 0)
+                    registry.views[id] = column
+                }
 
             case "TUIBUTTON":
                 registry.views[id] = Button(title)
@@ -385,20 +408,16 @@ extension BASICRuntime {
                       let document = registry.views[documentID] else {
                     throw BASICError.runtime("TUIScroll expects a document view")
                 }
-                // A scroll view measures its document by `intrinsicContentSize`
-                // and falls back to `frame`. A stack of rows offers neither, so
-                // the document reports zero height and nothing scrolls into
-                // view — it looked like an empty scroll view.
+                // Fitted to the viewport width, which is what makes a
+                // declared height work at all: a document stack reports
+                // `Size(width: 0, height: total)`, and without this the scroll
+                // view lays the document out zero-wide and draws nothing.
                 //
-                // Height is the sum of what the rows were pinned to, which is
-                // what a document built by `height(1)` per line means.
-                if document.frame.size.height == 0 {
-                    let rows = document.subviews.reduce(0) { total, row in
-                        total + max(1, row.minimumSize.height)
-                    }
-                    document.frame = Rect(x: 0, y: 0, width: 40, height: max(1, rows))
-                }
-                registry.views[id] = ScrollView(document: document)
+                // That was the whole of the earlier "ScrollView binds but does
+                // not render" — one flag, and the gallery sets it too.
+                let scroll = ScrollView(document: document)
+                scroll.fitsDocumentWidth = true
+                registry.views[id] = scroll
 
             case "TUIDISCLOSURE":
                 registry.views[id] = DisclosureGroup(
@@ -1318,6 +1337,13 @@ extension BASICRuntime {
                 bars.categories = Self.tuiStrings(arguments)
                 return .empty
 
+            case "DONUT":
+                guard let pie = subject as? PieChart else {
+                    throw BASICError.runtime("\(typeName) is not a pie chart")
+                }
+                pie.innerRadiusFraction = arguments.first?.number ?? 0.55
+                return .empty
+
             case "SLICE":
                 guard let pie = subject as? PieChart else {
                     throw BASICError.runtime("\(typeName) has no slices")
@@ -1613,6 +1639,23 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName) has nothing to advance")
                 }
                 progress.advance()
+                return .empty
+
+            case "NOCHROME":
+                // The gallery's cells-pinned twin: the same chart, told to
+                // render ANSI even where a VectorTerminal would draw vectors.
+                // On a plain terminal the two copies are identical by design.
+                guard let view = subject else {
+                    throw BASICError.runtime("\(typeName) cannot suppress chrome")
+                }
+                view.suppressesVectorChrome = arguments.first?.truthy ?? true
+                return .empty
+
+            case "CONTENTHEIGHT":
+                guard let column = subject as? BASICTUIDocumentStack else {
+                    throw BASICError.runtime("\(typeName) is not a scrollable column")
+                }
+                column.declaredHeight = Self.tuiInt(arguments, 0) ?? 0
                 return .empty
 
             case "HEIGHT":
