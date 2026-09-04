@@ -14,6 +14,13 @@ let package = Package(
         // diagnostics. The interpreter and basicc both consume it, so the
         // language stays one language (BASIC_COMPILER.md, decision D2).
         .library(name: "BASICSyntax", targets: ["BASICSyntax"]),
+        // The linter: rules, profiles, and metrics over the same parser, so
+        // a program lints exactly as it parses. Knows nothing about
+        // CodeWatch — CodeWatch gets an adapter, not a copy.
+        .library(name: "BASICLint", targets: ["BASICLint"]),
+        // BASIC in CodeWatch: the front end, so CodeWatch's own rules run on
+        // BASIC without a second parser existing anywhere.
+        .library(name: "BASICLintCodeWatch", targets: ["BASICLintCodeWatch"]),
     ],
     dependencies: [
         // RichSwift renders rich *content* — markdown, tables, panels — and is
@@ -32,10 +39,20 @@ let package = Package(
         // part of it — which is also why the Swift gallery cannot live inside
         // TUIKit either.
         .package(path: "../../../frameworks/UILess/Code/TUIBoards"),
-        .package(path: "../../../frameworks/UILess/Code/TUIDiagram")
+        .package(path: "../../../frameworks/UILess/Code/TUIDiagram"),
+        // CodeWatch's rule engine, for the BASIC front end. The dependency
+        // points this way on purpose: CodeWatchLint's core is Foundation
+        // only and is consumed by hosts that bring their own parser, which
+        // is exactly what BASIC is.
+        .package(path: "../../../../AIResearch/CodeWatch/Code/CodeWatchLint")
     ],
     targets: [
         .target(name: "BASICSyntax"),
+        .target(name: "BASICLint", dependencies: ["BASICSyntax"]),
+        .target(
+            name: "BASICLintCodeWatch",
+            dependencies: ["BASICLint", .product(name: "CodeWatchLint", package: "CodeWatchLint")]
+        ),
         .target(
             name: "BASICCore",
             dependencies: [
@@ -46,6 +63,7 @@ let package = Package(
                 .product(name: "TUIDiagram", package: "TUIDiagram"),
             ]
         ),
-        .testTarget(name: "BASICCoreTests", dependencies: ["BASICCore"])
+        .testTarget(name: "BASICCoreTests", dependencies: ["BASICCore"]),
+        .testTarget(name: "BASICLintTests", dependencies: ["BASICLint", "BASICLintCodeWatch"], resources: [.copy("Fixtures")])
     ]
 )

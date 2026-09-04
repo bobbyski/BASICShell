@@ -1,0 +1,4 @@
+PRINT "main"
+FUNCTION Unreached() AS DOUBLE
+    RETURN 1
+END FUNCTION

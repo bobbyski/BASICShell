@@ -30,6 +30,11 @@ let package = Package(
     products: [
         .executable(name: "basicc", targets: ["basicc"]),
         .executable(name: "basictest", targets: ["basictest"]),
+        // The target is `BASICLintCLI`, not `basiclint`: a target whose
+        // name differs from the `BASICLint` library only by case collides
+        // with it on a case-insensitive filesystem. The product keeps the
+        // name the command is spelled with.
+        .executable(name: "basiclint", targets: ["BASICLintCLI"]),
         .library(name: "BASICCompilerKit", targets: ["BASICCompilerKit"]),
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
@@ -60,6 +65,11 @@ let package = Package(
         .executableTarget(
             name: "basicc",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
+        ),
+        .executableTarget(
+            name: "BASICLintCLI",
+            dependencies: [.product(name: "BASICLint", package: "BASICCore")],
+            path: "Sources/basiclint"
         ),
         .plugin(name: "BASICBuildPlugin", capability: .buildTool(), dependencies: ["basicc"]),
         .executableTarget(

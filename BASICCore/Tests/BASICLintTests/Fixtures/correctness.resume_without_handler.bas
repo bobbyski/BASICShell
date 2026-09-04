@@ -1,0 +1,2 @@
+PRINT "one"
+RESUME NEXT

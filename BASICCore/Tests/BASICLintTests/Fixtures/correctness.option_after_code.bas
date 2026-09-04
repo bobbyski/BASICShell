@@ -1,0 +1,2 @@
+PRINT "one"
+OPTION LOCAL-LET

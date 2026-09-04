@@ -1,0 +1,4 @@
+DIM flag AS BOOLEAN
+flag = TRUE
+IF flag THEN
+END IF
