@@ -104,7 +104,7 @@ public struct Compilation {
             // Compile beside the final name and move it into place, so two
             // compilations racing for the same cache entry never link a
             // half-written object.
-            let staging = objectPath + ".\(ProcessInfo.processInfo.processIdentifier).tmp"
+            let staging = objectPath + ".\(UUID().uuidString).tmp"
             try toolchain.compileRuntime(sources: sources, objectPath: staging)
             if FileManager.default.fileExists(atPath: objectPath) {
                 try? FileManager.default.removeItem(atPath: staging)

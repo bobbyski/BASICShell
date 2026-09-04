@@ -215,6 +215,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_date()
     declare ptr @basic_rt_time()
     declare double @basic_rt_sleep(double)
+    declare ptr @basic_rt_input_chars(double)
     declare ptr @basic_rt_file_cwd()
     declare void @basic_rt_file_chdir(ptr)
     declare void @basic_rt_file_mkdir(ptr)
@@ -1318,6 +1319,7 @@ struct FunctionEmitter {
         case .fileExists: return number("call double @basic_rt_file_exists_number(ptr \(a))")
         case .sleep: return number("call double @basic_rt_sleep(double \(a))")
         case .date: return string("call ptr @basic_rt_date()")
+        case .inputChars: return string("call ptr @basic_rt_input_chars(double \(a))")
         case .time: return string("call ptr @basic_rt_time()")
         case .loc: return number("call double @basic_rt_file_loc(double \(a))")
         case .eof:

@@ -33,6 +33,8 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case date = "DATE$"
     case time = "TIME$"
     case sleep = "SLEEP"
+    /// `INPUT$(n)`: the next n characters typed, blocking.
+    case inputChars = "INPUT$"
     // Strings → number
     case len = "LEN"
     case asc = "ASC"
@@ -55,7 +57,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
             return .number
         case .eof:
             return .boolean
-        case .str, .chr, .left, .right, .mid, .space, .stringRepeat, .date, .time:
+        case .str, .chr, .left, .right, .mid, .space, .stringRepeat, .date, .time, .inputChars:
             return .string
         }
     }
@@ -64,7 +66,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// argument; ``lookup(_:argumentCount:)`` checks the count.
     public var parameterTypes: [BIRType] {
         switch self {
-        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .sleep:
+        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .sleep, .inputChars:
             return [.number]
         case .rnd, .err, .erl, .date, .time:
             return []

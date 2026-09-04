@@ -156,3 +156,25 @@ public func basic_rt_capture_end() -> UnsafeMutableRawPointer {
     RTCapture.active = false
     return rtOwned(RTCapture.text)
 }
+
+/// `INPUT$(n)`: the next n keys typed, without echo — the interpreter's
+/// blocking keyboard read. Its keyboard host reads nothing when standard
+/// input is not a terminal, and neither does this.
+@_cdecl("basic_rt_input_chars")
+public func basic_rt_input_chars(_ countValue: Double) -> UnsafeMutableRawPointer {
+    let count = max(0, Int(countValue.rounded()))
+    fflush(stdout)
+    var original = termios()
+    guard isatty(STDIN_FILENO) == 1, tcgetattr(STDIN_FILENO, &original) == 0 else { return rtOwned("") }
+    var raw = original
+    raw.c_lflag &= ~tcflag_t(ICANON | ECHO)
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw)
+    defer { tcsetattr(STDIN_FILENO, TCSANOW, &original) }
+    var bytes: [UInt8] = []
+    while bytes.count < count {
+        var byte: UInt8 = 0
+        guard read(STDIN_FILENO, &byte, 1) == 1 else { break }
+        bytes.append(byte)
+    }
+    return rtOwned(String(decoding: bytes, as: UTF8.self))
+}

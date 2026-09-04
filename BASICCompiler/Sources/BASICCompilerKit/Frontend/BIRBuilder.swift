@@ -444,6 +444,13 @@ final class FunctionBuilder {
             substitutesStrings = enabled
         case .optionLetMode:
             break  // Resolved by the analyzer for the whole program.
+        case .optionKeyMode, .optionShellMode, .optionEventInput:
+            // Host-facing options: key encoding for INKEY$, shell-mode
+            // command dispatch, and mouse/gamepad gating. A compiled console
+            // program has none of those surfaces yet (Phase 5.2), so the
+            // options are accepted and change nothing, as they would in the
+            // interpreter with no such host.
+            break
         case .read(let targets):
             emit(.read(try targets.map(lowerReadTarget)))
         case .restore:
