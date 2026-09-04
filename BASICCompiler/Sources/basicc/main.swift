@@ -17,6 +17,7 @@ func printUsage() {
     usage:
       basicc build <file.bas> [options]   compile to an executable
       basicc run <file.bas> [options]     compile, then run it
+      basicc new <Name> [--kind k] [-o dir]   create a starter project
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -26,6 +27,7 @@ func printUsage() {
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
       --json-diagnostics   report errors as a JSON array (for IDEs)
+      --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
     """)
 }
 
@@ -42,6 +44,7 @@ struct Invocation {
     var emitBIR = false
     var emitLLVM = false
     var jsonDiagnostics = false
+    var kind: String?
 
     init(_ arguments: [String]) {
         command = arguments.first ?? "help"
@@ -60,6 +63,10 @@ struct Invocation {
             case "--emit-bir": emitBIR = true
             case "--emit-llvm": emitLLVM = true
             case "--json-diagnostics": jsonDiagnostics = true
+            case "--kind":
+                index += 1
+                guard index < arguments.count else { fail("--kind needs a name") }
+                kind = arguments[index]
             default:
                 if argument.hasPrefix("-") { fail("unknown option '\(argument)'", code: 2) }
                 if source == nil { source = argument } else { fail("only one source file at a time", code: 2) }
@@ -125,6 +132,17 @@ case "--version", "-v":
 case "dialects":
     for identity in registry.identities {
         print("\(identity.identifier)\(identity.isDefault ? " (default)" : "")\t\(identity.summary)")
+    }
+case "new":
+    guard let name = invocation.source else { fail("basicc new needs a project name", code: 2) }
+    guard let kind = ProjectScaffold.Kind(rawValue: invocation.kind ?? "console") else {
+        fail("unknown kind '\(invocation.kind ?? "")' — one of: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", "))", code: 2)
+    }
+    do {
+        let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath, kind: kind)
+        print("created \(root) — build with: make")
+    } catch {
+        fail("\(error)")
     }
 case "build":
     buildCommand(invocation, thenRun: false)
