@@ -132,20 +132,17 @@ public final class SemanticModel {
         ],
     ]
 
-    /// The TUI classes the compiled runtime has behind it. The rest are
-    /// still refused by name (Phase 8.7 is finishing them).
-    public static let supportedTUIClasses: Set<String> = [
-        "TUIAPP", "TUIWINDOW", "TUISTACK", "TUILABEL", "TUIFIELD", "TUILIST",
-        "TUITABLE", "TUICHECK", "TUIGAUGE", "TUIBUTTON", "TUIMENU", "TUIDIALOG",
-    ]
+    /// The TUI classes the compiled runtime has behind it: all of them. The
+    /// binding is BASICCore's, called across a small ABI, so what a compiled
+    /// program can build is what the interpreter can build.
+    public static var supportedTUIClasses: Set<String> { Set(tuiClassNames.keys) }
 
-    /// What a TUI method gives back. Everything unnamed is `void`: a control
-    /// call is usually a command, and the few that answer are listed.
+    /// What a TUI method gives back: a VARIANT, whatever it is. The binding
+    /// answers with the interpreter's own value — a string here, a number
+    /// there, nothing at all for a command — so the static type is the one
+    /// that holds all of them, and the conversion happens where it is used.
     public static let tuiMembers: [String: (parameters: Int?, returns: BIRType)] = [
-        "*": (nil, .void),
-        "VALUE": (nil, .number), "VALUE$": (nil, .string), "TEXT$": (nil, .string),
-        "SELECTED": (nil, .number), "SELECTEDTEXT$": (nil, .string),
-        "CHECKED": (nil, .boolean), "COUNT": (nil, .number), "ISRUNNING": (nil, .boolean),
+        "*": (nil, .variant),
     ]
 
     /// The TUIKit pseudo classes, spelled as the interpreter stores them.
@@ -235,9 +232,18 @@ public final class SemanticModel {
 
     /// The static type of a system member, when the class and member exist.
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
-        if supportedTUIClasses.contains(typeName) { return tuiMembers[member] ?? tuiMembers["*"] }
+        if typeName == "TUI" || supportedTUIClasses.contains(typeName) { return tuiMembers[member] ?? tuiMembers["*"] }
         let name = typeName == "VTG" ? "VECTORTERMINAL" : typeName
         return systemClasses[name]?[member] ?? systemClasses[name]?["*"]
+    }
+
+    /// The static type a system class's objects have. Every TUI class shares
+    /// one, because the interpreter has no type here at all: a program may
+    /// keep a dialog in the variable that held a window, and the method it
+    /// calls is looked up on the object, not on the name.
+    public static func systemTypeName(_ className: String) -> String {
+        if supportedTUIClasses.contains(className) { return "TUI" }
+        return className == "VTG" ? "VECTORTERMINAL" : className
     }
 
     /// Whether a name constructs a system object.

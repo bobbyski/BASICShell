@@ -98,9 +98,12 @@ public indirect enum BIRExpression: Sendable {
     /// `INPUT$(n, #f)`, `SEEK(n)`).
     case hostCall(String, [BIRExpression], returns: BIRType)
     /// `File(args…)` / `NEW File(args…)`: a system object.
-    case systemNew(String, [BIRExpression])
+    case systemNew(String, [BIRExpression], type: String)
     /// `object.Method(args…)` on a system object, typed by its member table.
     case systemCall(BIRExpression, method: String, [BIRExpression], returns: BIRType)
+    /// `value.Method(args…)` on a VARIANT: what it means is settled at run
+    /// time, as the interpreter settles it.
+    case valueCall(BIRExpression, method: String, [BIRExpression], name: String)
     /// A call of an `ASYNC FUNCTION`: launches a task (a VARIANT handle).
     case asyncLaunch(String, [BIRExpression])
 
@@ -153,9 +156,9 @@ public indirect enum BIRExpression: Sendable {
             return .dictionary
         case .hostCall(_, _, let returns), .systemCall(_, _, _, let returns):
             return returns
-        case .systemNew(let name, _):
-            return .system(name)
-        case .asyncLaunch:
+        case .systemNew(_, _, let type):
+            return .system(type)
+        case .valueCall, .asyncLaunch:
             return .variant
         }
     }
@@ -180,6 +183,8 @@ public indirect enum BIRExpression: Sendable {
             return format.mayRunCode || values.contains(where: \.mayRunCode)
         case .elementOf(let a, let list, _), .valueIndex(let a, let list, _):
             return a.mayRunCode || list.contains(where: \.mayRunCode)
+        case .valueCall:
+            return true
         }
     }
 }

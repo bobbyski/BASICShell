@@ -251,7 +251,7 @@ final class FunctionBuilder {
     /// One open IF / FOR / SELECT.
     private enum Frame {
         case ifBlock(elseBlock: BIRBlockID?, join: BIRBlockID)
-        case forLoop(variable: BIRVariable, end: BIRVariable, step: BIRVariable, body: BIRBlockID, exit: BIRBlockID)
+        case forLoop(variable: BIRVariable, mirror: BIRVariable?, end: BIRVariable, step: BIRVariable, body: BIRBlockID, exit: BIRBlockID)
         case select(subject: BIRVariable, next: BIRBlockID, elseBlock: BIRBlockID?, end: BIRBlockID)
     }
 
@@ -1208,9 +1208,13 @@ final class FunctionBuilder {
             return load(fieldPlace)
         }
         if place.type == .variant {
-            var valuePlace = BIRPlace.valueField(place, field: method.name, name: reference.base.name)
-            if !arguments.isEmpty { valuePlace = .valueEntry(valuePlace, try arguments.map { try lowerExpression($0) }, name: method.name) }
-            return load(valuePlace)
+            // What this means is only known at run time: an object takes it
+            // as a method, a record as a field. The runtime decides, as the
+            // interpreter does.
+            let call = BIRExpression.valueCall(load(place), method: method.name, try arguments.map { boxed(try lowerExpression($0)) }, name: reference.base.name)
+            if wantsValue { return call }
+            emit(.discard(call))
+            return nil
         }
         let (candidates, signature) = try candidates(for: method, on: place.type)
         let parameters = Array(signature.parameters.dropFirst())
@@ -1427,7 +1431,15 @@ final class FunctionBuilder {
     }
 
     private func lowerFor(_ name: VariableName, _ start: Expression, _ end: Expression, _ step: Expression?) throws {
-        let counter = variable(name)
+        let declared = variable(name)
+        // A VARIANT counter is counted in a number of its own and written
+        // back each time round, so the body sees the value the interpreter
+        // would have put there. The interpreter has no type here at all, and
+        // a program that read a number out of a control into the variable it
+        // later counts with is ordinary BASIC.
+        let isVariant = declared.type == .variant && declared.rank == nil
+        let counter = isVariant ? hidden("for.counter", .number) : declared
+        let mirror: BIRVariable? = isVariant ? declared : nil
         guard counter.type == .number, counter.rank == nil else {
             throw CompileError("Type error: FOR variable \(name.name) must be numeric", at: location)
         }
@@ -1449,7 +1461,8 @@ final class FunctionBuilder {
         let exit = newBlock("for.end")
         terminate(.branch(loopContinues(counter, endSlot, stepSlot), then: body, else: exit))
         current = body
-        frames.append(.forLoop(variable: counter, end: endSlot, step: stepSlot, body: body, exit: exit))
+        if let mirror { emit(.store(mirror, convert(.load(counter), to: .variant, name: nil))) }
+        frames.append(.forLoop(variable: counter, mirror: mirror, end: endSlot, step: stepSlot, body: body, exit: exit))
     }
 
     /// `(step > 0 AND counter <= end) OR (step <= 0 AND counter >= end)`.
@@ -1460,14 +1473,19 @@ final class FunctionBuilder {
     }
 
     private func lowerNext(_ name: VariableName?) throws {
-        guard case .forLoop(let counter, let end, let step, let body, let exit)? = frames.last else {
+        guard case .forLoop(let counter, let mirror, let end, let step, let body, let exit)? = frames.last else {
             throw CompileError("NEXT without FOR", at: location)
         }
-        if let name, name.normalized != counter.name {
-            throw CompileError("NEXT \(name.name) does not match FOR \(counter.name)", at: location)
+        let loopName = mirror?.name ?? counter.name
+        if let name, name.normalized != loopName {
+            throw CompileError("NEXT \(name.name) does not match FOR \(loopName)", at: location)
         }
         frames.removeLast()
+        // A VARIANT counter may have been assigned inside the body, as the
+        // interpreter's would have been, so it is read back before it counts.
+        if let mirror { emit(.store(counter, convert(.load(mirror), to: .number, name: mirror.name))) }
         emit(.store(counter, .arithmetic(.add, .load(counter), .load(step))))
+        if let mirror { emit(.store(mirror, convert(.load(counter), to: .variant, name: nil))) }
         terminate(.branch(loopContinues(counter, end, step), then: body, else: exit))
         current = exit
     }
@@ -1505,7 +1523,7 @@ final class FunctionBuilder {
     private func unterminatedFrameMessage() -> String {
         switch frames.last! {
         case .ifBlock: return "IF without END IF"
-        case .forLoop(let variable, _, _, _, _): return "FOR \(variable.name) without NEXT"
+        case .forLoop(let variable, let mirror, _, _, _, _): return "FOR \(mirror?.name ?? variable.name) without NEXT"
         case .select: return "SELECT CASE without END SELECT"
         }
     }
@@ -1580,7 +1598,8 @@ final class FunctionBuilder {
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
             if SemanticModel.isSystemClass(className.uppercased()), model.types[className.uppercased()] == nil {
-                return .systemNew(className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased(), try arguments.map { try lowerExpression($0) })
+                let systemClass = className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased()
+                return .systemNew(systemClass, try arguments.map { try lowerExpression($0) }, type: SemanticModel.systemTypeName(systemClass))
             }
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
@@ -1917,7 +1936,8 @@ final class FunctionBuilder {
         }
         if let host = try lowerHostBuiltin(name, arguments) { return host }
         if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: functionName) == nil {
-            return .systemNew(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized, try arguments.map { try lowerExpression($0) })
+            let systemClass = name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized
+            return .systemNew(systemClass, try arguments.map { try lowerExpression($0) }, type: SemanticModel.systemTypeName(systemClass))
         }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             throw unsupported("the builtin \(name.name)")

@@ -494,6 +494,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
     declare void @basic_rt_event_register(ptr, ptr, ptr, i64)
     declare void @basic_rt_handler_register(ptr, ptr)
+    declare ptr @basic_rt_value_call(ptr, ptr, i64, ptr, ptr)
     declare void @basic_rt_event_post(ptr, ptr, ptr)
     declare void @basic_rt_events_drain(i64)
     declare void @basic_rt_timer_on(ptr, double, ptr, i64)
@@ -616,8 +617,11 @@ struct FunctionEmitter {
     private var ownedValues: Set<String> = []
     /// Which owned temporaries are dictionaries.
     private var ownedDictionaries: Set<String> = []
-    /// Slots for boxed indexes handed to the runtime.
-    private let scratchValues = 8
+    /// Slots for boxed arguments and indexes handed to the runtime. Wide
+    /// enough for every call the language allows — a TUI control takes a
+    /// dozen arguments, a `rect` twelve — and a call that wanted more is
+    /// refused rather than written past the end of it and over the stack.
+    private let scratchValues = 32
     private var gosubResumes: [BIRBlockID] = []
     private var usesGosub = false
     private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
@@ -1276,7 +1280,15 @@ struct FunctionEmitter {
     /// A value as a VARIANT box pointer: itself for a VARIANT, else boxed
     /// (an owned temporary).
     private mutating func boxedPointer(_ value: String, _ type: BIRType) -> String {
-        if type == .variant || type.isSystem { return value }
+        if type == .variant || type.isSystem {
+            // A VARIANT and a system object are already boxed values, so
+            // there is nothing to wrap — but the caller takes what comes back
+            // as its own, and this one belongs to whoever it was loaded from.
+            let copy = out.temp()
+            out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr \(value))")
+            own(copy, as: .variant)
+            return copy
+        }
         let box = out.temp()
         switch type {
         case .number: out.emit("\(box) = call ptr @basic_rt_value_from_number(double \(value))")
@@ -1294,6 +1306,10 @@ struct FunctionEmitter {
 
     /// Boxes each index into the scratch slots and returns the slot array.
     private mutating func boxedIndexes(_ indexes: [BIRExpression]) -> String {
+        guard indexes.count <= scratchValues else {
+            fail("a call with more than \(scratchValues) arguments is not supported by basicc yet")
+            return "%\"scratch.values\""
+        }
         for (position, index) in indexes.enumerated() {
             let (value, _) = lowerValue(index)
             let box = boxedPointer(value, index.type)
@@ -1920,6 +1936,13 @@ struct FunctionEmitter {
             out.emit("\(result) = call \(Self.llvmType(returns)) @\(name)(\(values.joined(separator: ", ")))")
             if Self.isManaged(returns) { own(result, as: returns); return (result, true) }
             return (result, false)
+        case .valueCall(let receiver, let method, let arguments, let name):
+            let (value, _) = lowerValue(receiver)
+            let list = boxedIndexes(arguments)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_call(ptr \(value), ptr \(constants.constant(method)), i64 \(arguments.count), ptr \(list), ptr \(constants.constant(name)))")
+            own(result, as: .variant)
+            return (result, true)
         case .asyncLaunch(let name, let arguments):
             let args = out.temp()
             out.emit("\(args) = call ptr @basic_rt_snapshot_new(i64 \(arguments.count))")
@@ -1934,7 +1957,7 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_snapshot_release(ptr \(args))")
             own(result, as: .variant)
             return (result, true)
-        case .systemNew(let name, let arguments):
+        case .systemNew(let name, let arguments, _):
             let list = boxedIndexes(arguments)
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_system_new(ptr \(constants.constant(name)), i64 \(arguments.count), ptr \(list))")

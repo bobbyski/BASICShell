@@ -82,7 +82,11 @@ public struct RuntimeLibrary: Sendable {
         let manifest = root.appendingPathComponent("Package.swift").path
         guard FileManager.default.fileExists(atPath: manifest) else { return nil }
         let archive = root.appendingPathComponent(".build/release/lib\(name)Host.a").path
+        // The archive is also built from the packages the manifest names by
+        // path — the runtime's host half links the interpreter's TUI binding
+        // — so a change to one of those makes it stale too.
         let inputs = [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]
+            + Self.siblingSourceDirectories(manifest: manifest, root: root)
         if Self.isStale(archive, against: inputs) {
             // Several compilers can run at once (a test sweep, a parallel
             // build). They would each start their own release build and then
@@ -115,15 +119,39 @@ public struct RuntimeLibrary: Sendable {
         try body()
     }
 
+    /// The `Sources` directory of every package the manifest names by a
+    /// relative path.
+    private static func siblingSourceDirectories(manifest: String, root: URL) -> [String] {
+        guard let text = try? String(contentsOfFile: manifest, encoding: .utf8) else { return [] }
+        var found: [String] = []
+        var rest = Substring(text)
+        while let start = rest.range(of: ".package(path: \"") {
+            rest = rest[start.upperBound...]
+            guard let end = rest.firstIndex(of: "\"") else { break }
+            let path = String(rest[..<end])
+            rest = rest[end...]
+            guard path.hasPrefix("..") else { continue }
+            let sources = URL(fileURLWithPath: path, relativeTo: root).appendingPathComponent("Sources").standardizedFileURL.path
+            if FileManager.default.fileExists(atPath: sources) { found.append(sources) }
+        }
+        return found
+    }
+
     /// Whether `archive` is missing or older than anything under `inputs`.
     private static func isStale(_ archive: String, against inputs: [String]) -> Bool {
         guard let archiveDate = (try? FileManager.default.attributesOfItem(atPath: archive))?[.modificationDate] as? Date else { return true }
         for input in inputs {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: input, isDirectory: &isDirectory) else { continue }
-            let files = isDirectory.boolValue
-                ? ((try? FileManager.default.contentsOfDirectory(atPath: input)) ?? []).map { (input as NSString).appendingPathComponent($0) }
-                : [input]
+            // Recursive: a package keeps its sources in subdirectories, and
+            // a change two levels down is still a change.
+            let files: [String]
+            if isDirectory.boolValue {
+                let enumerator = FileManager.default.enumerator(atPath: input)
+                files = (enumerator?.allObjects as? [String] ?? []).map { (input as NSString).appendingPathComponent($0) }
+            } else {
+                files = [input]
+            }
             for file in files {
                 if let date = (try? FileManager.default.attributesOfItem(atPath: file))?[.modificationDate] as? Date, date > archiveDate {
                     return true

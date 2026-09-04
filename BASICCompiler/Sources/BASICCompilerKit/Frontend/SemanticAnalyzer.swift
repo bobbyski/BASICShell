@@ -477,17 +477,6 @@ struct SemanticAnalyzer {
     }
 
     /// Array references inside expressions decide that a name is an array.
-    /// A TUIKit pseudo class named where no variable of that name exists is
-    /// a program the compiler has no runtime for yet — say so, rather than
-    /// letting it be read as an array and complaining about its indexes.
-    private func refuseTUIClass(_ name: VariableName, at line: ParsedLine, in function: String?) throws {
-        guard let display = SemanticModel.tuiClassNames[name.normalized],
-              !SemanticModel.supportedTUIClasses.contains(name.normalized),
-              model.info(name.normalized, in: function) == nil,
-              model.functions[name.normalized] == nil else { return }
-        throw CompileError("\(display) is not supported by basicc yet", at: Self.location(of: line))
-    }
-
     private mutating func noteReferences(in expression: Expression, at line: ParsedLine, in function: String?, changed: inout Bool) throws {
         switch expression {
         case .variable(let name):
@@ -511,7 +500,6 @@ struct SemanticAnalyzer {
                 try noteReferences(in: inner, at: line, in: function, changed: &changed)
             }
         case .callOrArray(let name, let arguments):
-            try refuseTUIClass(name, at: line, in: function)
             let known = model.info(name.normalized, in: function)?.type
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true,
@@ -616,7 +604,7 @@ struct SemanticAnalyzer {
             return type
         case .null: return .variant
         case .newObject(let name, _):
-            if SemanticModel.isSystemClass(name.uppercased()), model.types[name.uppercased()] == nil { return .system(name.uppercased() == "VTG" ? "VECTORTERMINAL" : name.uppercased()) }
+            if SemanticModel.isSystemClass(name.uppercased()), model.types[name.uppercased()] == nil { return .system(SemanticModel.systemTypeName(name.uppercased())) }
             return model.types[name.uppercased()].map { _ in .composite(name.uppercased()) }
         case .methodCall(let reference, let method, let arguments):
             if reference.base.normalized == "FILE", model.info("FILE", in: function) == nil {
@@ -661,7 +649,7 @@ struct SemanticAnalyzer {
             if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$", "TASKSTATUS$", "TASKERROR$"].contains(name.normalized) { return .string }
             if ["CVI", "CVS", "CVD", "SEEK", "FIELDCOUNT"].contains(name.normalized) { return .number }
             if ["FIELDMETA", "FIELDVALUE", "SETFIELD", "ASYNCVALUE", "SLEEP"].contains(name.normalized) { return .variant }
-            if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: function) == nil { return .system(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized) }
+            if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: function) == nil { return .system(SemanticModel.systemTypeName(name.normalized)) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
@@ -775,7 +763,7 @@ struct SemanticAnalyzer {
         case .void: return .void
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
-            if SemanticModel.isSystemClass(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(typeName.uppercased()) }
+            if SemanticModel.isSystemClass(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
             guard model.types[typeName.uppercased()] != nil else {
                 throw CompileError("\(name) AS \(typeName): unknown TYPE, CLASS, or INTERFACE", at: Self.location(of: line))
             }

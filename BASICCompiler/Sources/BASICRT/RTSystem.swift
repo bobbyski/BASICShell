@@ -450,7 +450,9 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
 /// `object.Method(args…)` on a system object; the result, owned.
 @_cdecl("basic_rt_system_call")
 public func basic_rt_system_call(_ pointer: UnsafeMutableRawPointer?, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
-    guard case .system(let object) = rtValue(pointer) else { basic_rt_fail("Bad file object") }
+    guard case .system(let object) = rtValue(pointer) else {
+        basic_rt_fail("\(String(cString: method)) needs an object, got \(rtValue(pointer).typeName)")
+    }
     let values = (0..<count).map { rtValue(arguments[$0]) }
     return rtOwned(RTSystem.call(object, method: String(cString: method), arguments: values))
 }
@@ -461,4 +463,22 @@ public func basic_rt_system_call(_ pointer: UnsafeMutableRawPointer?, _ method: 
 public func basic_rt_system_set(_ pointer: UnsafeMutableRawPointer?, _ property: UnsafePointer<CChar>, _ value: UnsafeMutableRawPointer?) {
     guard case .system(let object) = rtValue(pointer) else { basic_rt_fail("Not a system object") }
     RTSystem.set(object, property: String(cString: property), to: rtValue(value))
+}
+
+/// `value.Method(args…)` where the receiver's type is only known at run
+/// time — a VARIANT. The interpreter decides the same way: a system object
+/// takes the call, a record takes it as a field (indexed by the arguments,
+/// when it has any), and anything else says so.
+@_cdecl("basic_rt_value_call")
+public func basic_rt_value_call(_ receiver: UnsafeMutableRawPointer?, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>, _ name: UnsafePointer<CChar>) -> UnsafeMutableRawPointer {
+    let value = rtValue(receiver)
+    let methodName = String(cString: method)
+    if case .system(let object) = value {
+        let values = (0..<count).map { rtValue(arguments[$0]) }
+        return rtOwned(RTSystem.call(object, method: methodName, arguments: values))
+    }
+    let field = basic_rt_value_field(receiver, method, name)
+    guard count > 0 else { return field }
+    defer { basic_rt_value_release(field) }
+    return basic_rt_value_index(field, count, arguments, method)
 }

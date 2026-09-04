@@ -311,9 +311,11 @@ public struct BIRPrinter {
             return "new DICTIONARY"
         case .hostCall(let name, let arguments, _):
             return "\(name)(" + arguments.map(render).joined(separator: ", ") + ")"
-        case .systemNew(let name, let arguments):
+        case .systemNew(let name, let arguments, _):
             return "new \(name)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .systemCall(let receiver, let method, let arguments, _):
+            return "\(render(receiver)).\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .valueCall(let receiver, let method, let arguments, _):
             return "\(render(receiver)).\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .asyncLaunch(let name, let arguments):
             return "launch \(name)(" + arguments.map(render).joined(separator: ", ") + ")"

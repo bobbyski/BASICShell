@@ -130,6 +130,13 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
         guard let driver = host.makeTUIDriver() else {
             throw BASICError.runtime("This host has no surface to draw a TUI application on")
         }
+        try runBlocking(appID: appID, windowID: windowID, driver: driver)
+    }
+
+    /// The same, for a caller that already has a driver and no host to ask.
+    /// A compiled program is its own host: it brings an `ANSIDriver` and
+    /// nothing else of a `BASICHost`.
+    static func runBlocking(appID: Int, windowID: Int, driver: any TerminalDriver) throws {
         return try lendingTerminal {
             let box = Box()
 
@@ -218,7 +225,17 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 }
                 box.isFinished = true
             }
-            started.wait()
+            // Pumped rather than waited on when this *is* the main thread —
+            // a compiled program calls `run` from it, and the task below is
+            // enqueued on the main actor, whose executor is that same
+            // thread. Waiting here would be waiting for itself.
+            if Thread.isMainThread {
+                while started.wait(timeout: .now()) == .timedOut {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                }
+            } else {
+                started.wait()
+            }
 
             // Waiting for the application to finish. On the main thread this
             // pumps; on a worker it blocks, because the main thread is already

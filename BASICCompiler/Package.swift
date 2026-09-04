@@ -47,8 +47,6 @@ let package = Package(
     dependencies: [
         .package(path: "../BASICCore"),
         .package(path: vectorTerminalSDKPath),
-        // TUIKit, for the compiled runtime's TUI applications (Phase 8.7).
-        .package(path: "../../../frameworks/UILess/Code/TUIKit"),
     ],
     targets: [
         .target(
@@ -57,7 +55,7 @@ let package = Package(
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICRT"),
-        .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "TUIKit", package: "TUIKit")]),
+        .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
