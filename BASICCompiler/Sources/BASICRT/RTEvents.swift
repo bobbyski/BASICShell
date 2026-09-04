@@ -17,6 +17,8 @@ import Foundation
 
 /// The host's mouse-reporting switch (BASICRTHost) — or the stub that says no.
 @_silgen_name("basic_rt_host_mouse_reporting") func rtHostMouseReporting(_ enabled: Bool)
+/// Tells the host the terminal reported a new canvas size.
+@_silgen_name("basic_rt_host_canvas_update") func rtHostCanvasUpdate(_ width: Int, _ height: Int, _ source: UnsafePointer<CChar>)
 /// Whether the host has a VTG terminal at all.
 @_silgen_name("basic_rt_host_graphics_available") func rtHostGraphicsAvailableForEvents() -> Bool
 
@@ -206,6 +208,12 @@ public func basic_rt_events_drain(_ limit: Int) {
     RTEvents.drain(limit: limit)
 }
 
+/// Whether a program registered a handler for mouse events.
+@_cdecl("basic_rt_events_wants_mouse")
+public func basic_rt_events_wants_mouse() -> Bool {
+    RTEvents.handlers.keys.contains { $0 == "MOUSE" || $0.hasPrefix("MOUSE.") }
+}
+
 /// Whether any handler asked for terminal input events.
 @_cdecl("basic_rt_events_wants_host_input")
 public func basic_rt_events_wants_host_input() -> Bool {
@@ -344,6 +352,7 @@ enum RTTerminalEvents {
             guard let width = found["width"].flatMap(Int.init), let height = found["height"].flatMap(Int.init) else { return "" }
             if width != canvasSize.width || height != canvasSize.height {
                 canvasSize = (width, height)
+                "resize".withCString { rtHostCanvasUpdate(width, height, $0) }
                 postResize(width: width, height: height)
             }
             return ""

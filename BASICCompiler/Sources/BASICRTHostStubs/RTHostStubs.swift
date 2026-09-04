@@ -47,3 +47,6 @@ public func basic_rt_host_vtg_call(_ method: UnsafePointer<CChar>, _ count: Int,
 
 @_cdecl("basic_rt_host_mouse_reporting")
 public func basic_rt_host_mouse_reporting(_ enabled: Bool) {}
+
+@_cdecl("basic_rt_host_canvas_update")
+public func basic_rt_host_canvas_update(_ width: Int, _ height: Int, _ source: UnsafePointer<CChar>) {}

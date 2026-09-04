@@ -291,6 +291,10 @@ public struct BIRFunction: Sendable {
     public var statementResumeBlocks: [BIRBlockID] = []
     /// For `main`: the blocks `ON ERROR GOTO` can name, by handler index.
     public var errorHandlerBlocks: [BIRBlockID] = []
+    /// For `main`: blocks that are entered from outside it — the labels a
+    /// FUNCTION reaches with GOSUB. Nothing in the body branches to them, so
+    /// they are roots of their own.
+    public var externalEntryBlocks: [BIRBlockID] = []
 
     /// Creates a function with an empty entry block.
     public init(name: String, parameters: [BIRVariable] = [], returnType: BIRType = .void) {
@@ -317,7 +321,7 @@ public struct BIRFunction: Sendable {
         var reachable = Set<BIRBlockID>()
         // Resume and handler blocks are entered by runtime dispatch, so they
         // are roots too.
-        var worklist: [BIRBlockID] = [0] + statementResumeBlocks + errorHandlerBlocks
+        var worklist: [BIRBlockID] = [0] + statementResumeBlocks + errorHandlerBlocks + externalEntryBlocks
         while let id = worklist.popLast() {
             guard reachable.insert(id).inserted else { continue }
             worklist.append(contentsOf: Self.successors(of: blocks[id].terminator))
@@ -332,6 +336,7 @@ public struct BIRFunction: Sendable {
         }
         statementResumeBlocks = statementResumeBlocks.map { renumbered[$0]! }
         errorHandlerBlocks = errorHandlerBlocks.map { renumbered[$0]! }
+        externalEntryBlocks = externalEntryBlocks.map { renumbered[$0]! }
     }
 
     private static func renumber(_ terminator: BIRTerminator, _ map: [BIRBlockID: BIRBlockID]) -> BIRTerminator {

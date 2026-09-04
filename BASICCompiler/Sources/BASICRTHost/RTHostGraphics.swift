@@ -10,6 +10,9 @@ enum RTHostCanvas {
     nonisolated(unsafe) static var canvas: VectorTerminalCanvas?
     nonisolated(unsafe) static var probed = false
     nonisolated(unsafe) static var liveSize = (width: 0, height: 0)
+    /// Where the live size came from, for the dictionary a query returns.
+    nonisolated(unsafe) static var liveSource: String?
+    nonisolated(unsafe) static var liveRawResponse: String?
 
     /// The Shell's probe: a terminal on stdout that answers `capabilities?`
     /// within 750 ms, else no graphics.
@@ -22,6 +25,7 @@ enum RTHostCanvas {
         canvas = created
         if let current = created.queryCurrentCanvas(timeoutMilliseconds: 750) {
             liveSize = (current.width, current.height)
+            liveSource = "canvas"
         }
         return created
     }
@@ -74,4 +78,13 @@ public func basic_rt_host_gfx_clear() {
 @_cdecl("basic_rt_host_gfx_present")
 public func basic_rt_host_gfx_present() {
     RTHostCanvas.canvas?.present()
+}
+
+/// The runtime tells the host when a resize response changed the canvas, so
+/// a `queryCurrentCanvas(0)` reads the size the terminal last reported —
+/// what the Shell answers from its own cached snapshot.
+@_cdecl("basic_rt_host_canvas_update")
+public func basic_rt_host_canvas_update(_ width: Int, _ height: Int, _ source: UnsafePointer<CChar>) {
+    RTHostCanvas.liveSize = (width, height)
+    RTHostCanvas.liveSource = String(cString: source)
 }

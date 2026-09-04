@@ -34,6 +34,14 @@ enum RTHostVTG {
             if tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 { originalTermios = original }
         }
         canvas.enableResizeEvents()
+        // The Shell turns mouse reporting on here too when the program has
+        // already asked for mouse events, so a program that registers a
+        // handler sends the enable twice: once from polling starting, once
+        // from the registration itself.
+        if basic_rt_events_wants_mouse() {
+            canvas.enableMouseReporting(mode: "all")
+            FileHandle.standardOutput.write(Data("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h".utf8))
+        }
         pollingEnabled = true
     }
 
@@ -116,6 +124,21 @@ enum RTHostVTG {
         return (corners, lineJoin, layer)
     }
 
+    /// The size the terminal last reported, as the interpreter's dictionary.
+    static func liveCanvasValue() -> RTValue {
+        guard RTHostCanvas.liveSource != nil else { return .empty }
+        return sizeValue(width: RTHostCanvas.liveSize.width, height: RTHostCanvas.liveSize.height, source: RTHostCanvas.liveSource)
+    }
+
+    /// A `{width, height[, source]}` dictionary, the interpreter's shape.
+    static func sizeValue(width: Int, height: Int, source: String?) -> RTValue {
+        let dictionary = RTDictionary()
+        dictionary.values["width"] = .number(Double(width))
+        dictionary.values["height"] = .number(Double(height))
+        if let source { dictionary.values["source"] = .string(RTText(source)) }
+        return .dictionary(dictionary)
+    }
+
     static func call(_ method: String, _ arguments: [RTValue]) -> RTValue {
         let canvas = require()
         switch method.uppercased() {
@@ -157,6 +180,55 @@ enum RTHostVTG {
             count(arguments, 5...8, "vectorPrint")
             canvas.vectorPrint(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]), height: integer(arguments[3]), value: string(arguments[4]),
                                stroke: VTGColor(optionalString(arguments, 5) ?? "#f8fafc"), width: optionalInteger(arguments, 6) ?? 1, layer: optionalInteger(arguments, 7))
+        case "CLEARRECT":
+            count(arguments, 5...6, "clearRect")
+            canvas.clearRect(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]), width: integer(arguments[3]), height: integer(arguments[4]), layer: optionalInteger(arguments, 5))
+        case "HITREGION":
+            count(arguments, 5...7, "hitRegion")
+            canvas.hitRegion(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]), width: integer(arguments[3]), height: integer(arguments[4]),
+                             layer: optionalInteger(arguments, 5), target: optionalString(arguments, 6))
+        case "CLEARHITREGIONS":
+            count(arguments, 0...2, "clearHitRegions")
+            canvas.clearHitRegions(id: optionalString(arguments, 0), layer: optionalInteger(arguments, 1))
+        case "STARTFRAME":
+            count(arguments, 1...2, "startFrame")
+            canvas.startFrame(id: string(arguments[0]), timeoutMilliseconds: optionalInteger(arguments, 1) ?? 250)
+        case "ENDFRAME":
+            count(arguments, 1...1, "endFrame"); canvas.endFrame(id: string(arguments[0]))
+        case "CANCELFRAME":
+            count(arguments, 1...1, "cancelFrame"); canvas.cancelFrame(id: string(arguments[0]))
+        case "QUERYCURRENTCANVAS", "QUERYCANVAS", "QUERYSIZE":
+            let name = method.uppercased() == "QUERYCURRENTCANVAS" ? "queryCurrentCanvas" : (method.uppercased() == "QUERYCANVAS" ? "queryCanvas" : "querySize")
+            count(arguments, 0...1, name)
+            let timeout = optionalInteger(arguments, 0) ?? 750
+            // The Shell answers a zero timeout from the size the terminal
+            // last reported rather than asking it again.
+            guard timeout > 0 else { return liveCanvasValue() }
+            let queried: VTGCanvas?
+            switch method.uppercased() {
+            case "QUERYCURRENTCANVAS": queried = canvas.queryCurrentCanvas(timeoutMilliseconds: timeout)
+            case "QUERYCANVAS": queried = canvas.queryCanvas(timeoutMilliseconds: timeout)
+            default: queried = canvas.querySize(timeoutMilliseconds: timeout)
+            }
+            if let queried {
+                RTHostCanvas.liveSize = (queried.width, queried.height)
+                RTHostCanvas.liveSource = "canvas"
+            }
+            return liveCanvasValue()
+        case "VECTORTEXTSIZE":
+            count(arguments, 2...2, "vectorTextSize")
+            let size = canvas.vectorTextSize(height: integer(arguments[0]), value: string(arguments[1]))
+            return sizeValue(width: size.width, height: size.height, source: "VectorTerminalSDK")
+        case "ENABLERESIZEEVENTS":
+            count(arguments, 0...0, "enableResizeEvents"); canvas.enableResizeEvents()
+        case "DISABLERESIZEEVENTS":
+            count(arguments, 0...0, "disableResizeEvents"); canvas.disableResizeEvents()
+        case "ENABLEMOUSEREPORTING":
+            count(arguments, 0...1, "enableMouseReporting")
+            basic_rt_host_mouse_reporting(true)
+        case "DISABLEMOUSEREPORTING":
+            count(arguments, 0...0, "disableMouseReporting")
+            basic_rt_host_mouse_reporting(false)
         case "CANVASWIDTH":
             return .number(Double(RTHostCanvas.liveSize.width))
         case "CANVASHEIGHT":
@@ -181,6 +253,8 @@ public func basic_rt_host_gfx_finish() {
 
 /// Mouse reporting: what the Shell turns on when a program registers an
 /// `ON MOUSE … CALL` handler — the VTG stream and the ANSI modes together.
+@_silgen_name("basic_rt_events_wants_mouse") func basic_rt_events_wants_mouse() -> Bool
+
 @_cdecl("basic_rt_host_mouse_reporting")
 public func basic_rt_host_mouse_reporting(_ enabled: Bool) {
     guard let canvas = RTHostCanvas.probe() else { return }

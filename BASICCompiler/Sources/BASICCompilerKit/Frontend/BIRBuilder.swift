@@ -47,13 +47,32 @@ public struct BIRBuilder {
         let closures = ClosureContext(firstTypeIndex: module.types.count)
         let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner, closures: closures)
         main.substitutesStrings = defaultStringSubstitution
+        main.entryLabels = Self.labelsGosubbedFromFunctions(lines, owner: analyzer.owner)
         try main.run()
         module.main = main.function
 
+        let mainLabels = main.labels
         for name in model.functionOrder {
             let builder = FunctionBuilder(lines: lines, model: model, function: name, owner: analyzer.owner, closures: closures)
+            builder.outerLabels = mainLabels
             try builder.run()
             module.functions.append(builder.function)
+        }
+        // Each main subroutine a function reaches becomes a function whose
+        // body is the main body entered at that label: a RETURN with no
+        // GOSUB of its own pending returns to the caller, which is what the
+        // interpreter's one GOSUB stack does.
+        for label in closures.subroutineLabels.sorted() {
+            guard let entry = main.blockForLabel(label) else { continue }
+            var subroutine = BIRFunction(name: FunctionBuilder.subroutineName(label))
+            subroutine.blocks = main.function.blocks
+            subroutine.locals = main.function.locals
+            subroutine.externalEntryBlocks = []
+            var start = BIRBlock(id: 0, label: "entry")
+            start.terminator = .jump(entry)
+            subroutine.blocks[0] = start
+            subroutine.pruneUnreachableBlocks()
+            module.functions.append(subroutine)
         }
         for index in module.functions.indices where model.eventHandlers.contains(module.functions[index].name) {
             module.functions[index].isEventHandler = true
@@ -66,6 +85,27 @@ public struct BIRBuilder {
             module.asyncDisplayNames[name] = model.functions[name]?.displayName
         }
         return module
+    }
+
+    /// The labels a GOSUB inside a FUNCTION names, uppercased. The main body
+    /// gives each one a block so it can be entered from outside.
+    private static func labelsGosubbedFromFunctions(_ lines: [ParsedLine], owner: [String?]) -> Set<String> {
+        var found: Set<String> = []
+        func note(_ statement: Statement) {
+            switch statement {
+            case .gosub(.label(let name)): found.insert(name.uppercased())
+            case .labeled(_, let inner): note(inner)
+            case .sequence(let statements): statements.forEach(note)
+            case .ifThen(_, let thenAction, let elseAction):
+                if case .statement(let inner) = thenAction { note(inner) }
+                if case .statement(let inner)? = elseAction { note(inner) }
+            default: break
+            }
+        }
+        for (index, line) in lines.enumerated() where index < owner.count && owner[index] != nil {
+            note(line.statement)
+        }
+        return found
     }
 
     /// Every DATA item in source order, as the interpreter collects them.
@@ -87,6 +127,11 @@ public struct BIRBuilder {
 /// What every function builder in a module shares about closures: the
 /// bodies and environment types they synthesize.
 final class ClosureContext {
+    /// Top-level labels a FUNCTION reaches with GOSUB, uppercased. The
+    /// interpreter's GOSUB stack is the program's, not a frame's, so a
+    /// handler can call a subroutine written beside the main body; each one
+    /// named here is emitted as a function of its own.
+    var subroutineLabels: Set<String> = []
     /// Closure body functions, in creation order.
     var functions: [BIRFunction] = []
     /// Environment record types, one per closure literal with captures.
@@ -173,6 +218,13 @@ final class FunctionBuilder {
         case forLoop(variable: BIRVariable, end: BIRVariable, step: BIRVariable, body: BIRBlockID, exit: BIRBlockID)
         case select(subject: BIRVariable, next: BIRBlockID, elseBlock: BIRBlockID?, end: BIRBlockID)
     }
+
+    /// The labels of the main body, uppercased — a GOSUB from inside a
+    /// FUNCTION may name one.
+    var outerLabels: Set<String> = []
+    /// Labels that need a block of their own even when nothing in this body
+    /// branches to them: a FUNCTION reaches them with GOSUB.
+    var entryLabels: Set<String> = []
 
     init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?], closures: ClosureContext) {
         self.lines = lines
@@ -306,6 +358,9 @@ final class FunctionBuilder {
             if let number = line.number { lineIndexByNumber[number] = index }
             if let label = line.statement.label { lineIndexByLabel[label.uppercased()] = index }
         }
+        for label in entryLabels.sorted() where lineIndexByLabel[label] != nil {
+            function.externalEntryBlocks.append(try blockForTarget(.label(label)))
+        }
         for index in ownedLines {
             location = SemanticAnalyzer.location(of: sourceLines[index])
             try collectTargets(in: sourceLines[index].statement)
@@ -316,7 +371,9 @@ final class FunctionBuilder {
         switch statement {
         case .goto(let number): _ = try blockForTarget(.line(number))
         case .gotoLabel(let label): _ = try blockForTarget(.label(label))
-        case .gosub(let target): _ = try blockForTarget(target)
+        case .gosub(let target):
+            if case .label(let name) = target, lineIndexByLabel[name.uppercased()] == nil, outerLabels.contains(name.uppercased()) { return }
+            _ = try blockForTarget(target)
         case .computedGoto(let targets, _), .computedGosub(let targets, _):
             for target in targets { _ = try blockForTarget(target) }
         case .ifThen(_, let thenAction, let elseAction):
@@ -343,6 +400,18 @@ final class FunctionBuilder {
         missingTargetBlocks[message] = block
         return block
     }
+
+    /// The function name an outlined main subroutine is emitted under.
+    static func subroutineName(_ label: String) -> String { "$SUB.\(label)" }
+
+    /// The block a main label begins, once this builder has run. Pruning
+    /// renumbers the blocks, so the block is found by its name.
+    func blockForLabel(_ label: String) -> BIRBlockID? {
+        function.blocks.first { $0.label == "label.\(label.uppercased())" }?.id
+    }
+
+    /// Every label of this body, uppercased.
+    var labels: Set<String> { Set(lineIndexByLabel.keys) }
 
     private func blockForTarget(_ target: BranchTarget) throws -> BIRBlockID {
         let index: Int
@@ -679,6 +748,12 @@ final class FunctionBuilder {
         case .gotoLabel(let label):
             terminate(.jump(try blockForTarget(.label(label))))
         case .gosub(let target):
+            if case .label(let name) = target, lineIndexByLabel[name.uppercased()] == nil, outerLabels.contains(name.uppercased()) {
+                // A subroutine of the main body, reached from a function.
+                closures.subroutineLabels.insert(name.uppercased())
+                emit(.call(Self.subroutineName(name.uppercased()), []))
+                return
+            }
             let resume = newBlock("gosub.resume")
             terminate(.gosub(try blockForTarget(target), resume: resume))
             current = resume
