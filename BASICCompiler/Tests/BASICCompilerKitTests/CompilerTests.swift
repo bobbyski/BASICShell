@@ -222,3 +222,44 @@ struct ProjectTests {
         }
     }
 }
+
+/// The starters `basicc new` writes must compile and, where the interpreter
+/// is built, match it — otherwise the wizards hand people a broken project.
+struct StarterTests {
+    @Test(arguments: ProjectScaffold.Kind.allCases)
+    func starterBuildsAndMatchesTheInterpreter(kind: ProjectScaffold.Kind) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind)
+        let source = (project as NSString).appendingPathComponent("src/main.bas")
+        let output = (project as NSString).appendingPathComponent("Build/Starter")
+        try FileManager.default.createDirectory(atPath: (output as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
+
+        // The console starter reads a name; feed both engines the same one.
+        let stdin = "Bobby\n"
+        let compiled = try runWithInput(output, stdin)
+        #expect(compiled.exitCode == 0)
+        if let interpreter = TestBuild.interpreter {
+            let interpreted = try runWithInput(interpreter, stdin, arguments: [source])
+            #expect(compiled.stdout == interpreted.stdout, "starter \(kind.rawValue)")
+        }
+    }
+
+    private func runWithInput(_ executable: String, _ input: String, arguments: [String] = []) throws -> (stdout: String, exitCode: Int32) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let inPipe = Pipe(), outPipe = Pipe()
+        process.standardInput = inPipe
+        process.standardOutput = outPipe
+        process.standardError = outPipe
+        try process.run()
+        inPipe.fileHandleForWriting.write(Data(input.utf8))
+        try inPipe.fileHandleForWriting.close()
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (String(decoding: data, as: UTF8.self), process.terminationStatus)
+    }
+}
