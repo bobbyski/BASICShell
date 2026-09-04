@@ -12,3 +12,4 @@ BASICStudio/BASICStudio.xcodeproj/xcuserdata
 test.bas
 BASICCompiler/.build
 BASICCompiler/.swiftpm
+BASICCompiler/Examples/*/.build

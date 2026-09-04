@@ -15,8 +15,13 @@ import Foundation
 /// Imported lines are marked `isImported`, which is what keeps their `DATA`
 /// out of the program's DATA list, as in the interpreter.
 public struct SourceLoader {
-    /// Creates a loader.
-    public init() {}
+    /// Inside a `.basproj`, IMPORT paths resolve against the project root.
+    private let projectRoot: String?
+
+    /// Creates a loader; give a project root to resolve imports against it.
+    public init(projectRoot: String? = nil) {
+        self.projectRoot = projectRoot
+    }
 
     /// Loads, parses, and import-expands a program file.
     public func load(path: String) throws -> [ParsedLine] {
@@ -63,7 +68,8 @@ public struct SourceLoader {
                 expanded.append(line)
                 continue
             }
-            let resolved = Self.resolvedImportPath(path, relativeTo: line.fileName)
+            let resolved = projectRoot.map { Self.normalizedImportPath($0 + "/" + path) }
+                ?? Self.resolvedImportPath(path, relativeTo: line.fileName)
             let location = BIRLocation(file: line.fileName, line: line.sourceLineNumber ?? 0, statement: 0, lineNumber: line.number)
             let files: [String]
             if Self.isDirectoryImportPath(path) {

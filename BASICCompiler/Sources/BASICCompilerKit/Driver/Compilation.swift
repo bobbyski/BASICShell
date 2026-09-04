@@ -28,8 +28,12 @@ public struct Compilation {
         self.toolchain = toolchain
     }
 
-    /// The BIR for a source file, for `--emit-bir`.
+    /// The BIR for a source file or project, for `--emit-bir`.
     public func bir(sourcePath: String) throws -> BIRModule {
+        if let project = try ProjectManifest.load(at: sourcePath) {
+            let lines = try SourceLoader(projectRoot: project.root).load(path: project.entryPath)
+            return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution).build(lines, moduleName: project.name)
+        }
         let lines = try SourceLoader().load(path: sourcePath)
         return try BIRBuilder().build(lines, moduleName: Self.moduleName(for: sourcePath))
     }
@@ -65,9 +69,21 @@ public struct Compilation {
         try toolchain.link(objects: [objectPath, runtimeObject], output: output, extraArguments: runtime.linkArguments)
     }
 
-    /// The module name for a source path: its base name without `.bas`.
+    /// Compiles a source file to assembly text at `output`, for the SwiftPM
+    /// build-tool plugin: no runtime is linked here — the package links the
+    /// BASICRT product like any other dependency.
+    public func buildAssembly(sourcePath: String, output: String) throws {
+        let module = try bir(sourcePath: sourcePath)
+        let lowered = try dialect.lower(module, options: options)
+        let irPath = (output as NSString).deletingPathExtension + ".ll"
+        try toolchain.assembleToAssembly(llvmIR: lowered.llvmIR, irPath: irPath, assemblyPath: output)
+    }
+
+    /// The module name for a source path: its base name without `.bas`, or
+    /// the project's name.
     public static func moduleName(for sourcePath: String) -> String {
-        ((sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        if let project = try? ProjectManifest.load(at: sourcePath) { return project.name }
+        return ((sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     /// Compiles the runtime once per revision of its sources.

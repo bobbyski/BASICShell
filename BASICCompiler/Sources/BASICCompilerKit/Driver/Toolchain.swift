@@ -30,6 +30,16 @@ public struct Toolchain: Sendable {
         }
     }
 
+    /// Assembles textual LLVM IR into assembly text — what a SwiftPM
+    /// build-tool plugin can hand to a C-family target as a generated source.
+    public func assembleToAssembly(llvmIR: String, irPath: String, assemblyPath: String) throws {
+        try llvmIR.write(toFile: irPath, atomically: true, encoding: .utf8)
+        let result = try ProcessRunner.xcrun("clang", ["-S", irPath, "-o", assemblyPath, "-Wno-override-module"])
+        guard result.exitCode == 0 else {
+            throw ToolchainError(stage: "clang", exitCode: result.exitCode, stderr: result.stderr)
+        }
+    }
+
     /// Compiles the runtime's Swift sources into one object file.
     ///
     /// Whole-module, optimized: the runtime is compiled once and cached, so

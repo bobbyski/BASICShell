@@ -16,8 +16,13 @@ import Foundation
 ///                                             silent difference
 /// ```
 public struct BIRBuilder {
-    /// Creates a builder.
-    public init() {}
+    private let defaultStringSubstitution: Bool
+
+    /// Creates a builder; `defaultStringSubstitution` is how OPTION
+    /// STRING-SUB starts (the shell's default is on).
+    public init(defaultStringSubstitution: Bool = true) {
+        self.defaultStringSubstitution = defaultStringSubstitution
+    }
 
     /// Builds the module for a program.
     public func build(_ lines: [ParsedLine], moduleName: String) throws -> BIRModule {
@@ -35,6 +40,7 @@ public struct BIRBuilder {
         }
 
         let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner)
+        main.substitutesStrings = defaultStringSubstitution
         try main.run()
         module.main = main.function
 
@@ -90,7 +96,7 @@ final class FunctionBuilder {
     /// `OPTION STRING-SUB`: whether plain strings interpolate `${…}` too.
     /// BASICShell turns this on for every program it runs, so a compiled
     /// program starts the same way; tracked in program order from there.
-    private var substitutesStrings = true
+    var substitutesStrings = true
 
     /// One open IF / FOR / SELECT.
     private enum Frame {

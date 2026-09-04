@@ -173,3 +173,52 @@ struct EndToEndTests {
         #expect(run.stdout == interpreted, "interpreter parity for \((path as NSString).lastPathComponent)")
     }
 }
+
+
+/// `swift build` compiles BASIC through BASICBuildPlugin — held by building
+/// the example package for real.
+struct SwiftPMPluginTests {
+    @Test func examplePackageBuildsAndRuns() throws {
+        let example = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Examples/SwiftPMHello")
+        let build = try ProcessRunner.run("/usr/bin/xcrun", ["swift", "build", "--package-path", example.path])
+        #expect(build.exitCode == 0, Comment(rawValue: build.stderr))
+        let run = try ProcessRunner.run(example.appendingPathComponent(".build/debug/Hello").path, [])
+        #expect(run.stdout == "Hello from a SwiftPM package!\n  count1\n  count2\n  count3\n")
+    }
+}
+
+
+/// A directory-form `.basproj`: manifest, entry, root-relative IMPORT, and
+/// the project's own STRING-SUB default.
+struct ProjectTests {
+    @Test func projectDirectoryBuildsWithItsManifest() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-proj-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources/Lib"), withIntermediateDirectories: true)
+        try """
+            { "schemaVersion": 1, "kind": "project", "name": "Demo", "entry": "Sources/main.bas", "options": { "stringSub": false } }
+            """.write(to: root.appendingPathComponent("project.json"), atomically: true, encoding: .utf8)
+        try "FUNCTION Shout$(T AS STRING) AS STRING\n  RETURN T + \"!\"\nEND FUNCTION\n"
+            .write(to: root.appendingPathComponent("Sources/Lib/util.bas"), atomically: true, encoding: .utf8)
+        try "IMPORT \"Sources/Lib/util.bas\"\nPRINT Shout$(\"project\")\nPRINT \"no ${sub} here\"\n"
+            .write(to: root.appendingPathComponent("Sources/main.bas"), atomically: true, encoding: .utf8)
+
+        let output = root.appendingPathComponent("Build/Demo").path
+        try Compilation(dialect: TraditionalDialect()).build(sourcePath: root.path, output: output)
+        let run = try ProcessRunner.run(output, [])
+        #expect(run.stdout == "project!\nno ${sub} here\n")
+    }
+
+    @Test func newerManifestsAreRefusedByVersion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-proj-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "{ \"schemaVersion\": 2, \"kind\": \"project\", \"name\": \"X\" }"
+            .write(to: root.appendingPathComponent("project.json"), atomically: true, encoding: .utf8)
+        #expect(throws: CompileError.self) {
+            try Compilation(dialect: TraditionalDialect()).bir(sourcePath: root.path)
+        }
+    }
+}

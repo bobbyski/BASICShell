@@ -15,8 +15,8 @@ func printUsage() {
     basicc \(version) — a BASIC compiler that builds LLVM modules and links Swift libraries
 
     usage:
-      basicc build <file.bas> [options]   compile to an executable
-      basicc run <file.bas> [options]     compile, then run it
+      basicc build <file.bas|project/> [options]   compile to an executable
+      basicc run <file.bas|project/> [options]     compile, then run it
       basicc new <Name> [--kind k] [-o dir]   create a starter project
       basicc dialects                     list the dialects this build supports
       basicc --version
@@ -26,6 +26,7 @@ func printUsage() {
       --dialect <name>     traditional (default) or, later, swift
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
+      --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
       --json-diagnostics   report errors as a JSON array (for IDEs)
       --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
     """)
@@ -44,6 +45,7 @@ struct Invocation {
     var emitBIR = false
     var emitLLVM = false
     var jsonDiagnostics = false
+    var emitAssembly = false
     var kind: String?
 
     init(_ arguments: [String]) {
@@ -62,6 +64,7 @@ struct Invocation {
                 dialect = arguments[index]
             case "--emit-bir": emitBIR = true
             case "--emit-llvm": emitLLVM = true
+            case "--emit-asm": emitAssembly = true
             case "--json-diagnostics": jsonDiagnostics = true
             case "--kind":
                 index += 1
@@ -97,6 +100,10 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
             return
         }
         let output = invocation.output ?? Compilation.moduleName(for: source)
+        if invocation.emitAssembly {
+            try compilation.buildAssembly(sourcePath: source, output: output)
+            return
+        }
         try compilation.build(sourcePath: source, output: output)
         if thenRun {
             let process = Process()

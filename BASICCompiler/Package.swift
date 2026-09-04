@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 
 import PackageDescription
 
@@ -14,6 +14,7 @@ import PackageDescription
 //   BASICDialectTraditional   the default dialect (Rev 1)
 //   BASICRT                   the runtime library, in Swift, linked into
 //                             every compiled program
+//   BASICBuildPlugin          swift build compiles .bas files in a C target
 //
 // The only dependency is BASICSyntax — the interpreter's own front end,
 // published by the BASICCore package. Nothing is fetched from the network.
@@ -26,6 +27,9 @@ let package = Package(
         .library(name: "BASICCompilerKit", targets: ["BASICCompilerKit"]),
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
+        // Compile .bas sources inside any package's C-family target
+        // (see Plugins/BASICBuildPlugin for the how and why).
+        .plugin(name: "BASICBuildPlugin", targets: ["BASICBuildPlugin"]),
     ],
     dependencies: [
         .package(path: "../BASICCore"),
@@ -41,6 +45,7 @@ let package = Package(
             name: "basicc",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
         ),
+        .plugin(name: "BASICBuildPlugin", capability: .buildTool(), dependencies: ["basicc"]),
         .executableTarget(
             name: "basictest",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
