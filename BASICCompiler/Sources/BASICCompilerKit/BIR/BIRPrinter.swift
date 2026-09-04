@@ -191,7 +191,7 @@ public struct BIRPrinter {
                 }
             }
             return "print " + rendered.joined(separator: " ") + (newline ? " newline" : "")
-        case .input(let prompt, let variable):
+        case .input(let prompt, let variable, _):
             return "input " + (prompt.map { render($0) + " " } ?? "") + "-> \(variable.name)"
         case .lineInput(let prompt, let variable):
             return "line input " + (prompt.map { render($0) + " " } ?? "") + "-> \(variable.name)"

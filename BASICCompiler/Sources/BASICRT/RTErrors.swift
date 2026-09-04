@@ -51,7 +51,6 @@ enum RTError {
             rt_longjmp(jumpBuffer, 1)
         }
         fflush(stdout)
-        if RTConsole.column != 0 { fputs("\n", stdout) }
         fputs((prefix.map { "\($0): " } ?? "") + message + "\n", stdout)
         fflush(stdout)
         exit(1)

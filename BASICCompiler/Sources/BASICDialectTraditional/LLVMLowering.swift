@@ -1138,9 +1138,10 @@ struct FunctionEmitter {
                 out.emit("call void @basic_rt_print_newline()")
             }
 
-        case .input(let prompt, let variable):
+        case .input(let prompt, let variable, let displayName):
             let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
-            let name = constants.constant(variable.name)
+            // The interpreter names the variable as the program wrote it.
+            let name = constants.constant(displayName)
             switch variable.type {
             case .number:
                 let result = out.temp()

@@ -198,7 +198,7 @@ public enum BIROperation: Sendable {
     /// Prints items; `newline` is false when the statement ended in `;` or `,`.
     case print([BIRPrintItem], newline: Bool)
     /// Reads one value from the console into a variable.
-    case input(prompt: BIRExpression?, into: BIRVariable)
+    case input(prompt: BIRExpression?, into: BIRVariable, displayName: String)
     /// Reads one whole line into a string variable.
     case lineInput(prompt: BIRExpression?, into: BIRVariable)
     /// `PRINT USING format; values` — `newline` is false after a trailing

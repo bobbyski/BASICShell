@@ -574,7 +574,7 @@ final class FunctionBuilder {
 
         case .input(let prompt, .variable(let name)):
             let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
-            emit(.input(prompt: promptValue, into: variable(name)))
+            emit(.input(prompt: promptValue, into: variable(name), displayName: name.name))
         case .input(let prompt, .reference(let reference)):
             // INPUT into an element or field: read into a temporary of the
             // place's type, then store it there.
@@ -582,7 +582,7 @@ final class FunctionBuilder {
             let place = try lowerPlace(reference)
             let slotType: BIRType = [.number, .string, .boolean].contains(place.type) ? place.type : .string
             let slot = hidden("input", slotType)
-            emit(.input(prompt: promptValue, into: slot))
+            emit(.input(prompt: promptValue, into: slot, displayName: ([reference.base.name] + reference.fields).joined(separator: ".")))
             emitStore(place, convert(.load(slot), to: place.type, name: reference.base.name))
         case .lineInput(let prompt, .variable(let name), nil, nil, nil, nil):
             let target = variable(name)

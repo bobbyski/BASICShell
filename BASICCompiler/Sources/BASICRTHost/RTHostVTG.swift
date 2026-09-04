@@ -16,7 +16,7 @@ enum RTHostVTG {
     /// terminal in raw mode with resize events enabled.
     static func require() -> VectorTerminalCanvas {
         guard let canvas = RTHostCanvas.probe() else {
-            basic_rt_fail("VectorTerminal graphics are not supported by this terminal")
+            basic_rt_fail("VectorTerminal graphics are not supported by this host")
         }
         startPolling(canvas)
         return canvas
