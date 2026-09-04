@@ -75,6 +75,9 @@ final class FunctionBuilder {
     private var location = BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
     private var frames: [Frame] = []
     private var hiddenCounter = 0
+    /// True when main uses ON ERROR: every statement then starts a block and
+    /// is marked, so the runtime can report ERL and RESUME NEXT.
+    private var tracksStatements = false
 
     /// One open IF / FOR / SELECT.
     private enum Frame {
@@ -114,12 +117,30 @@ final class FunctionBuilder {
         }
         try indexTargets()
         emitImplicitDimensions()
-        for index in ownedLines {
+        if signature == nil {
+            tracksStatements = ownedLines.contains { index in
+                if case .onErrorGoto = lines[index].statement { return true }
+                return false
+            }
+        }
+        if tracksStatements {
+            // Every statement gets a block so RESUME NEXT has somewhere to go.
+            for index in ownedLines where blockForLine[index] == nil {
+                blockForLine[index] = newBlock("s\(index)")
+            }
+        }
+        let owned = ownedLines
+        for (position, index) in owned.enumerated() {
             let line = lines[index]
             location = SemanticAnalyzer.location(of: line)
             if let block = blockForLine[index] {
                 terminate(.jump(block))
                 current = block
+            }
+            if tracksStatements {
+                let next = position + 1 < owned.count ? blockForLine[owned[position + 1]]! : endBlock()
+                function.statementResumeBlocks.append(next)
+                emit(.markStatement(id: position, line: line.displayLineNumber))
             }
             try lower(line.statement)
         }
@@ -128,6 +149,17 @@ final class FunctionBuilder {
             throw CompileError(unterminatedFrameMessage(), at: location)
         }
         function.pruneUnreachableBlocks()
+    }
+
+    private var endBlockID: BIRBlockID?
+
+    /// A block that ends the program, for RESUME NEXT after the last statement.
+    private func endBlock() -> BIRBlockID {
+        if let endBlockID { return endBlockID }
+        let block = newBlock("program.end")
+        function.blocks[block].terminator = .end
+        endBlockID = block
+        return block
     }
 
     /// Arrays the interpreter would create on first use (0...10 per
@@ -440,8 +472,21 @@ final class FunctionBuilder {
             throw unsupported("closures (Phase 4.4)")
         case .importDirective:
             throw unsupported("IMPORT (Phase 4.7)")
-        case .onErrorGoto, .error, .resumeNext:
-            throw unsupported("ON ERROR (Phase 4.6)")
+        case .onErrorGoto(let target):
+            guard signature == nil else { throw unsupported("ON ERROR inside a FUNCTION") }
+            guard let target else { emit(.onError(handler: nil)); return }
+            let block = try blockForTarget(target)
+            if let existing = function.errorHandlerBlocks.firstIndex(of: block) {
+                emit(.onError(handler: existing))
+            } else {
+                function.errorHandlerBlocks.append(block)
+                emit(.onError(handler: function.errorHandlerBlocks.count - 1))
+            }
+        case .error(let number):
+            emit(.raise(try lowerExpression(number, expecting: .number, context: "ERROR")))
+        case .resumeNext:
+            guard signature == nil else { throw unsupported("RESUME inside a FUNCTION") }
+            terminate(.resumeNext)
         case .load, .save, .cd, .pwd, .files:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
         default:
@@ -650,6 +695,8 @@ final class FunctionBuilder {
         case .string(let value): return .string(value)
         case .boolean(let value): return .boolean(value)
         case .variable(let name):
+            if name.normalized == "ERR" { return .intrinsic(.err, []) }
+            if name.normalized == "ERL" { return .intrinsic(.erl, []) }
             let resolved = variable(name)
             guard resolved.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
             return .load(resolved)

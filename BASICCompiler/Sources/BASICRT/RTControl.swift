@@ -34,11 +34,7 @@ func basic_rt_fail_type(_ message: String) -> Never {
 }
 
 private func basic_rt_fail(prefix: String, _ message: String) -> Never {
-    fflush(stdout)
-    if RTConsole.column != 0 { fputs("\n", stdout) }
-    fputs("\(prefix): \(message)\n", stdout)
-    fflush(stdout)
-    exit(1)
+    RTError.raise(number: RTError.number(for: message, isTypeError: prefix == "Type error"), message: message, prefix: prefix)
 }
 
 /// The GOSUB return stack: each entry is the index of the block to resume.

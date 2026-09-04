@@ -44,6 +44,15 @@ public enum BIROperation: Sendable {
     case read([BIRReadTarget])
     /// `RESTORE`: rewind DATA.
     case restore
+    /// Marks the start of statement `id` on display line `line`, so a
+    /// runtime error knows its `ERL` and where `RESUME NEXT` continues.
+    /// Emitted only when the program uses `ON ERROR`.
+    case markStatement(id: Int, line: Int)
+    /// `ON ERROR GOTO target` (a handler index into
+    /// ``BIRFunction/errorHandlerBlocks``) or `ON ERROR GOTO 0` (nil).
+    case onError(handler: Int?)
+    /// `ERROR n`: raise error number n.
+    case raise(BIRExpression)
     /// Prints items; `newline` is false when the statement ended in `;` or `,`.
     case print([BIRPrintItem], newline: Bool)
     /// Reads one value from the console into a variable.
@@ -84,6 +93,8 @@ public enum BIRTerminator: Sendable {
     case end
     /// Return from a `FUNCTION`, with the value when it has one.
     case ret(BIRExpression?)
+    /// `RESUME NEXT`: continue at the statement after the one that failed.
+    case resumeNext
     /// The block was never finished — a builder bug if it survives.
     case unterminated
 }
@@ -120,6 +131,11 @@ public struct BIRFunction: Sendable {
     public var locals: [BIRVariable]
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
+    /// For `main` when the program uses `ON ERROR`: the block that begins
+    /// statement `id + 1`, i.e. where `RESUME NEXT` after statement `id` goes.
+    public var statementResumeBlocks: [BIRBlockID] = []
+    /// For `main`: the blocks `ON ERROR GOTO` can name, by handler index.
+    public var errorHandlerBlocks: [BIRBlockID] = []
 
     /// Creates a function with an empty entry block.
     public init(name: String, parameters: [BIRVariable] = [], returnType: BIRType = .void) {
@@ -136,7 +152,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return [target]
         case .branch(_, let then, let otherwise): return [then, otherwise]
         case .gosub(let target, let resume): return [target, resume]
-        case .returnFromGosub, .end, .ret, .unterminated: return []
+        case .returnFromGosub, .end, .ret, .resumeNext, .unterminated: return []
         }
     }
 
@@ -144,7 +160,9 @@ public struct BIRFunction: Sendable {
     /// interpreter would never execute either — and renumbers the rest.
     public mutating func pruneUnreachableBlocks() {
         var reachable = Set<BIRBlockID>()
-        var worklist: [BIRBlockID] = [0]
+        // Resume and handler blocks are entered by runtime dispatch, so they
+        // are roots too.
+        var worklist: [BIRBlockID] = [0] + statementResumeBlocks + errorHandlerBlocks
         while let id = worklist.popLast() {
             guard reachable.insert(id).inserted else { continue }
             worklist.append(contentsOf: Self.successors(of: blocks[id].terminator))
@@ -157,6 +175,8 @@ public struct BIRFunction: Sendable {
             copy.terminator = Self.renumber(block.terminator, renumbered)
             return copy
         }
+        statementResumeBlocks = statementResumeBlocks.map { renumbered[$0]! }
+        errorHandlerBlocks = errorHandlerBlocks.map { renumbered[$0]! }
     }
 
     private static func renumber(_ terminator: BIRTerminator, _ map: [BIRBlockID: BIRBlockID]) -> BIRTerminator {
@@ -164,7 +184,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return .jump(map[target]!)
         case .branch(let condition, let then, let otherwise): return .branch(condition, then: map[then]!, else: map[otherwise]!)
         case .gosub(let target, let resume): return .gosub(map[target]!, resume: map[resume]!)
-        case .returnFromGosub, .end, .ret: return terminator
+        case .returnFromGosub, .end, .ret, .resumeNext: return terminator
         case .unterminated: return .end
         }
     }

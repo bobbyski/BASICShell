@@ -123,6 +123,15 @@ struct LLVMLowering {
     declare void @basic_rt_restore()
     declare double @basic_rt_read_number(ptr)
     declare ptr @basic_rt_read_string(ptr)
+    declare i32 @setjmp(ptr) returns_twice
+    declare void @basic_rt_error_install(ptr)
+    declare void @basic_rt_statement(i64, i64)
+    declare void @basic_rt_on_error(i64)
+    declare void @basic_rt_raise(double)
+    declare i64 @basic_rt_error_handler()
+    declare i64 @basic_rt_resume_next()
+    declare double @basic_rt_err()
+    declare double @basic_rt_erl()
     declare double @llvm.fabs.f64(double)
     declare double @llvm.floor.f64(double)
     declare double @llvm.trunc.f64(double)
@@ -167,6 +176,7 @@ struct FunctionEmitter {
     private var owned: [String] = []
     private var gosubResumes: [BIRBlockID] = []
     private var usesGosub = false
+    private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
     /// The largest number of indexes any DIM or element access uses.
     private var scratchRank = 1
 
@@ -219,7 +229,17 @@ struct FunctionEmitter {
         if usesGosub {
             out.emit("%\"gosub.base\" = call i64 @basic_rt_gosub_depth()")
         }
-        out.emit("br label %\"b.\(function.blocks[0].label)\"")
+        if usesErrorHandling {
+            // A runtime error longjmps back here; the runtime then says which
+            // handler to enter.
+            out.emit("%\"error.jmpbuf\" = alloca [64 x i64]")
+            out.emit("call void @basic_rt_error_install(ptr %\"error.jmpbuf\")")
+            out.emit("%\"error.landed\" = call i32 @setjmp(ptr %\"error.jmpbuf\")")
+            out.emit("%\"error.flag\" = icmp ne i32 %\"error.landed\", 0")
+            out.emit("br i1 %\"error.flag\", label %\"error.dispatch\", label %\"b.\(function.blocks[0].label)\"")
+        } else {
+            out.emit("br label %\"b.\(function.blocks[0].label)\"")
+        }
 
         for block in function.blocks {
             out.label("b.\(block.label)")
@@ -231,6 +251,26 @@ struct FunctionEmitter {
             releaseOwned()
         }
 
+        if usesErrorHandling {
+            out.label("error.dispatch")
+            let handler = out.temp()
+            out.emit("\(handler) = call i64 @basic_rt_error_handler()")
+            let handlers = function.errorHandlerBlocks.enumerated()
+                .map { "i64 \($0.offset), label %\"b.\(function.blocks[$0.element].label)\"" }
+                .joined(separator: " ")
+            out.emit("switch i64 \(handler), label %\"error.bad\" [ \(handlers) ]")
+            out.label("error.bad")
+            out.emit("unreachable")
+            out.label("resume.dispatch")
+            let statement = out.temp()
+            out.emit("\(statement) = call i64 @basic_rt_resume_next()")
+            let resumes = function.statementResumeBlocks.enumerated()
+                .map { "i64 \($0.offset), label %\"b.\(function.blocks[$0.element].label)\"" }
+                .joined(separator: " ")
+            out.emit("switch i64 \(statement), label %\"resume.bad\" [ \(resumes) ]")
+            out.label("resume.bad")
+            out.emit("unreachable")
+        }
         if usesGosub {
             out.label("gosub.dispatch")
             let index = out.temp()
@@ -312,6 +352,14 @@ struct FunctionEmitter {
             }
         case .restore:
             out.emit("call void @basic_rt_restore()")
+        case .markStatement(let id, let line):
+            out.emit("call void @basic_rt_statement(i64 \(id), i64 \(line))")
+        case .onError(let handler):
+            out.emit("call void @basic_rt_on_error(i64 \(handler ?? -1))")
+        case .raise(let number):
+            out.emit("call void @basic_rt_raise(double \(lowerValue(number).0))")
+            out.emit("unreachable")
+            out.label(out.freshLabel("raise.cont"))
 
         case .print(let items, let newline):
             for item in items {
@@ -452,6 +500,8 @@ struct FunctionEmitter {
             }
         case .ret(let value):
             emitReturn(value)
+        case .resumeNext:
+            out.emit("br label %\"resume.dispatch\"")
         case .unterminated:
             out.emit("unreachable")
         }
@@ -664,6 +714,8 @@ struct FunctionEmitter {
             out.emit("\(partial) = select i1 \(positive), double 1.0, double 0.0")
             return number("select i1 \(negative), double -1.0, double \(partial)")
         case .rnd: return number("call double @basic_rt_rnd()")
+        case .err: return number("call double @basic_rt_err()")
+        case .erl: return number("call double @basic_rt_erl()")
         case .len: return number("call double @basic_rt_string_length(ptr \(a))")
         case .asc: return number("call double @basic_rt_string_asc(ptr \(a))")
         case .val: return number("call double @basic_rt_string_val(ptr \(a))")

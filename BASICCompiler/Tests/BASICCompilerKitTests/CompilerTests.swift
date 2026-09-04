@@ -102,7 +102,7 @@ struct BIRGoldenTests {
 struct IntrinsicTableTests {
     @Test func everyIntrinsicIsOneTheInterpreterHas() {
         // LEN and CHR$ are parsed as their own expression nodes, not looked up.
-        let parsedSpecially: Set<String> = ["LEN", "CHR$"]
+        let parsedSpecially: Set<String> = ["LEN", "CHR$", "ERR", "ERL"]
         for intrinsic in BIRIntrinsic.allCases where !parsedSpecially.contains(intrinsic.rawValue) {
             #expect(BASICKeywords.intrinsicFunctionNames.contains(intrinsic.rawValue), "\(intrinsic.rawValue)")
         }

@@ -21,6 +21,9 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case log = "LOG"
     case sgn = "SGN"
     case rnd = "RND"
+    /// `ERR` and `ERL` read like variables but are runtime state.
+    case err = "ERR"
+    case erl = "ERL"
     // Strings → number
     case len = "LEN"
     case asc = "ASC"
@@ -38,7 +41,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// The type of the value the intrinsic returns.
     public var returnType: BIRType {
         switch self {
-        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd,
+        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
              .len, .asc, .val, .instr:
             return .number
         case .str, .chr, .left, .right, .mid, .space, .stringRepeat:
@@ -52,7 +55,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space:
             return [.number]
-        case .rnd:
+        case .rnd, .err, .erl:
             return []
         case .len, .asc, .val:
             return [.string]

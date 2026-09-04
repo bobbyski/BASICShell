@@ -210,6 +210,7 @@ struct SemanticAnalyzer {
 
     private mutating func note(_ name: VariableName, _ storage: Storage, at line: ParsedLine, in function: String?, changed: inout Bool) {
         let key = name.normalized
+        if key == "ERR" || key == "ERL" { return }
         let before = model.info(key, in: function)
         model.update(key, in: function) { info in
             if case .array(let rank) = storage, info.rank == nil { info.rank = rank }
@@ -243,6 +244,7 @@ struct SemanticAnalyzer {
         case .string, .interpolatedString: return .string
         case .boolean: return .boolean
         case .variable(let name):
+            if name.normalized == "ERR" || name.normalized == "ERL" { return .number }
             return model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
         case .unaryMinus: return .number
         case .binary(let left, let operation, let right):

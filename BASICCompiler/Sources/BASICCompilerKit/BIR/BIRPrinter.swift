@@ -80,6 +80,12 @@ public struct BIRPrinter {
             }.joined(separator: ", ")
         case .restore:
             return "restore"
+        case .markStatement(let id, let line):
+            return "statement \(id) line \(line)"
+        case .onError(let handler):
+            return "on error " + (handler.map { "handler \($0)" } ?? "off")
+        case .raise(let number):
+            return "raise \(render(number))"
         case .print(let items, let newline):
             let rendered = items.map { item -> String in
                 switch item {
@@ -109,6 +115,7 @@ public struct BIRPrinter {
         case .returnFromGosub: return "return"
         case .end: return "end"
         case .ret(let value): return "ret" + (value.map { " " + render($0) } ?? "")
+        case .resumeNext: return "resume next"
         case .unterminated: return "<unterminated>"
         }
     }

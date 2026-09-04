@@ -85,7 +85,16 @@ public struct Compilation {
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         let objectPath = cacheDir.appendingPathComponent("\(runtime.name)-\(digest).o").path
         if !FileManager.default.fileExists(atPath: objectPath) {
-            try toolchain.compileRuntime(sources: sources, objectPath: objectPath)
+            // Compile beside the final name and move it into place, so two
+            // compilations racing for the same cache entry never link a
+            // half-written object.
+            let staging = objectPath + ".\(ProcessInfo.processInfo.processIdentifier).tmp"
+            try toolchain.compileRuntime(sources: sources, objectPath: staging)
+            if FileManager.default.fileExists(atPath: objectPath) {
+                try? FileManager.default.removeItem(atPath: staging)
+            } else {
+                try FileManager.default.moveItem(atPath: staging, toPath: objectPath)
+            }
         }
         return objectPath
     }
