@@ -54,6 +54,7 @@ struct BASICRichTextTests {
             "TUICOMPLETIONS": "TUIField()",
             "TUISCROLL": "TUIStack(\"v\")",
             "TUISPLIT": "\"h\", TUILabel(\"a\"), TUILabel(\"b\")",
+            "TUINAVIGATOR": "TUIStack(\"v\"), \"Settings\"",
         ]
         for name in BASICKeywords.pseudoClasses.sorted() {
             let host = TestHost()

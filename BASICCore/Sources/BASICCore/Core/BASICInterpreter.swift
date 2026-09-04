@@ -6132,6 +6132,8 @@ public final class BASICInterpreter {
         "TUIPREFS": "TUIPrefs",
         "TUIFORM": "TUIForm",
         "TUIPREFSDIALOG": "TUIPrefsDialog",
+        "TUILINK": "TUILink",
+        "TUINAVIGATOR": "TUINavigator",
     ]
 
     private func constructSecondsTimer(arguments: [Expression]) throws -> BASICValue {

@@ -257,7 +257,13 @@ extension BASICRuntime {
                 // between tabs is exactly when it should stay put.
                 slide.isPinned = true
                 window.slideOutToggleEdge = Self.tuiEdge(edge)
-                window.openSlideOut(Self.tuiEdge(edge))
+                // Open unless told otherwise. A fifth argument says whether
+                // the panel starts open, because a program that wants it shut
+                // cannot close it before the window is presented — toggling
+                //早 has nothing to toggle.
+                if (arguments.count > 4 ? arguments[4].truthy : true) {
+                    window.openSlideOut(Self.tuiEdge(edge))
+                }
                 return .empty
 
             case "MINSIZE":
@@ -313,6 +319,15 @@ extension BASICRuntime {
                 return .empty
 
             case "SELECTEDTITLE":
+                // A toolbox knows its own tools' captions, so it answers
+                // without the binding having to remember them.
+                if let toolbox = registry.views[id] as? Toolbox {
+                    let index = toolbox.selectedIndex
+                    guard toolbox.tools.indices.contains(index) else {
+                        return .string(BASICString(""))
+                    }
+                    return .string(BASICString(toolbox.tools[index].caption))
+                }
                 guard let tabs = registry.views[id] as? TabView else {
                     throw BASICError.runtime("\(typeName) has no tabs")
                 }
@@ -480,10 +495,13 @@ extension BASICRuntime {
                 // A percentage claims the leftover width; a minimum width just
                 // reserves room. The gallery's strip is title, stretchy hint,
                 // clock — which is one of each.
+                // A fourth argument is the segment's priority: which segment
+                // gives way first when the bar is too narrow.
                 _ = bar.addSegment(
                     content,
                     minimumWidth: number(1),
-                    percentage: number(2) ?? 0
+                    percentage: number(2) ?? 0,
+                    priority: number(3) ?? 0
                 )
                 return .empty
 

@@ -50,7 +50,7 @@ extension BASICRuntime {
     @MainActor
     static func materializeTUIForm(id: Int, registry: BASICTUIRegistry) -> Form? {
         guard let fields = registry.formFields[id] else { return nil }
-        let form = Form(spacing: 0, fields: fields.map { Field($0.title, view: $0.view) })
+        let form = Form(spacing: 0, entries: fields)
         registry.views[id] = form
         return form
     }
@@ -131,7 +131,18 @@ extension BASICRuntime {
                 guard let child else {
                     throw BASICError.runtime("\(typeName).field expects a view")
                 }
-                registry.formFields[id]?.append((title: title, view: child))
+                registry.formFields[id]?.append(.field(Field(title, view: child)))
+                return .empty
+
+            case "SECTION":
+                // `Section("Account") { ... }` is builder-only, but the entries
+                // it emits are not: a header row, then the fields under it, all
+                // sharing the form's one label column. So a section is opened
+                // and the fields that follow fall under it.
+                guard let title = text(0) else {
+                    throw BASICError.runtime("\(typeName).section expects a title")
+                }
+                registry.formFields[id]?.append(.header(title))
                 return .empty
 
             default:

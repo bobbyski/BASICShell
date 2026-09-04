@@ -117,7 +117,7 @@ final class BASICTUIRegistry {
     /// Preferences stores, aligned forms and paged dialogs — see
     /// BASICTUIPreferences.swift.
     var preferences: [Int: Preferences] = [:]
-    var formFields: [Int: [(title: String, view: TUIView)]] = [:]
+    var formFields: [Int: [FormEntry]] = [:]
     var preferencesDialogs: [Int: PreferencesDialog] = [:]
 
     /// Tab titles, in order. A `TabView` keeps its own privately, so a program
@@ -308,6 +308,29 @@ extension BASICRuntime {
                 registry.diagramNodes[id] = []
                 registry.diagramEdges[id] = []
 
+            case "TUINAVIGATOR":
+                // Root view first, then the title: TUINavigator(menu, "Settings").
+                guard case .systemObject(_, let rootID) = arguments.first,
+                      let rootView = registry.views[rootID] else {
+                    throw BASICError.runtime("TUINavigator expects a root view")
+                }
+                registry.views[id] = Navigator(
+                    root: rootView,
+                    title: arguments.count > 1
+                        ? arguments[1].string?.description ?? "" : ""
+                )
+
+            case "TUILINK":
+                // TUILink("title", "url") is the plain link; a third argument
+                // makes it the help button over that anchor.
+                let url = arguments.count > 1
+                    ? arguments[1].string?.description ?? "" : ""
+                if arguments.count > 2, let base = arguments[2].string?.description {
+                    registry.views[id] = Link.help(anchor: url, baseURL: base)
+                } else {
+                    registry.views[id] = Link(title, url: url)
+                }
+
             case "TUILOG":
                 // The view watches LogStore.shared; the logger has to be fed
                 // into that store before anything appears.
@@ -418,7 +441,9 @@ extension BASICRuntime {
             case "TUISCROLL":
                 guard let documentArgument = arguments.first,
                       case .systemObject(_, let documentID) = documentArgument,
-                      let document = registry.views[documentID] else {
+                      let document = Self.materializeTUIView(
+                          id: documentID, registry: registry
+                      ) else {
                     throw BASICError.runtime("TUIScroll expects a document view")
                 }
                 // Fitted to the viewport width, which is what makes a
@@ -573,9 +598,14 @@ extension BASICRuntime {
                 )
 
             case "TUILEVEL":
+                // A third argument picks the rating dress (stars) over the
+                // default segmented fill.
                 registry.views[id] = LevelIndicator(
                     value: Self.tuiInt(arguments, 0) ?? 0,
-                    maximum: Self.tuiInt(arguments, 1) ?? 5
+                    maximum: Self.tuiInt(arguments, 1) ?? 5,
+                    style: (arguments.count > 2
+                        ? arguments[2].string?.description ?? "" : "")
+                        .lowercased().hasPrefix("r") ? .rating : .capacity
                 )
 
             case "TUIPROGRESS":
@@ -737,41 +767,9 @@ extension BASICRuntime {
                 }
                 // A master-detail is described, then built here — the first
                 // and only place it is consumed.
-                if let columns = registry.boardColumns[childID], registry.views[childID] == nil {
-                    let board = BoardView(columns: columns)
-                    if let handler = registry.handlers[childID] {
-                        board.onCardMoved = { _, _, _, _ in
-                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
-                        }
-                    }
-                    registry.views[childID] = board
-                }
-                if let nodes = registry.diagramNodes[childID], registry.views[childID] == nil {
-                    let diagram = DiagramView(
-                        nodes: nodes, edges: registry.diagramEdges[childID] ?? []
-                    )
-                    if let handler = registry.handlers[childID] {
-                        diagram.onSelectionChanged = { _ in
-                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
-                        }
-                    }
-                    registry.views[childID] = diagram
-                }
-                if let steps = registry.wizardSteps[childID], registry.views[childID] == nil {
-                    let wizard = Wizard(steps: steps)
-                    if let handler = registry.wizardFinish[childID] {
-                        wizard.onFinish = {
-                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
-                        }
-                    }
-                    registry.views[childID] = wizard
-                }
-                if let rows = registry.masterRows[childID], registry.views[childID] == nil {
-                    registry.views[childID] = MasterDetail(items: rows) { index in
-                        BASICTUIRegistry.shared.detailViews[childID]?[index] ?? Label("")
-                    }
-                }
-                guard let child = registry.views[childID] else {
+                guard let child = BASICRuntime.materializeTUIView(
+                    id: childID, registry: registry
+                ) else {
                     throw BASICError.runtime("\(typeName).add expects a TUI view")
                 }
                 // A panel and a floating window are frames: things go *inside*
@@ -830,6 +828,26 @@ extension BASICRuntime {
                 return .empty
 
             case "COLUMN":
+                // A board's columns and a table's share the word; the handle
+                // decides which is meant, so a program says `column` for both
+                // rather than remembering `column2`.
+                if registry.boardColumns[id] != nil {
+                    guard let columnID = arguments.first?.string?.description,
+                          arguments.count > 1,
+                          let columnTitle = arguments[1].string?.description else {
+                        throw BASICError.runtime("\(typeName).column expects an id and a title")
+                    }
+                    registry.boardColumns[id]?.append(
+                        BoardColumn(
+                            id: columnID,
+                            title: columnTitle,
+                            cards: [],
+                            limit: Self.tuiInt(arguments, 2)
+                        )
+                    )
+                    return .empty
+                }
+
                 guard let table = try view() as? TableView else {
                     throw BASICError.runtime("\(typeName) has no columns")
                 }
@@ -981,6 +999,15 @@ extension BASICRuntime {
                                 ? arguments[2].string?.description : nil
                         )
                     )
+                    return .empty
+                }
+                if let completions = subject as? CompletionList {
+                    // `items` replaces the list; `additem` appends, which is
+                    // what a program building the list in a loop needs.
+                    guard let text = arguments.first?.string?.description else {
+                        throw BASICError.runtime("\(typeName).additem expects a title")
+                    }
+                    completions.items.append(text)
                     return .empty
                 }
                 if let sidebar = subject as? SidebarList {
@@ -1569,6 +1596,25 @@ extension BASICRuntime {
                 return .empty
 
             case "SECTION":
+                // An accordion's sections and a collection's share the word;
+                // the subject decides which is meant, so a program says
+                // `section` for both rather than remembering `section2`.
+                if let accordion = subject as? Accordion {
+                    guard let sectionTitle = arguments.first?.string?.description,
+                          arguments.count > 1,
+                          case .systemObject(_, let contentID) = arguments[1],
+                          let content = registry.views[contentID] else {
+                        throw BASICError.runtime(
+                            "\(typeName).section expects a title and a view"
+                        )
+                    }
+                    _ = accordion.addSection(
+                        sectionTitle,
+                        content: content,
+                        isExpanded: arguments.count > 2 ? arguments[2].truthy : false
+                    )
+                    return .empty
+                }
                 guard let collection = subject as? CollectionView else {
                     throw BASICError.runtime("\(typeName) has no sections")
                 }
@@ -1615,6 +1661,12 @@ extension BASICRuntime {
                 return .empty
 
             case "ITEMS":
+                // A plain list takes its rows the same way a completion list
+                // takes its suggestions: all of them, in one call.
+                if let rows = subject as? ListView {
+                    rows.items = Self.tuiStrings(arguments)
+                    return .empty
+                }
                 guard let list = subject as? CompletionList else {
                     throw BASICError.runtime("\(typeName) has no completion items")
                 }
@@ -1767,6 +1819,60 @@ extension BASICRuntime {
                 button.style =
                     (arguments.first?.string?.description ?? "").lowercased() == "bordered"
                     ? .bordered : .tinted
+                return .empty
+
+            case "PUSH":
+                guard let navigator = subject as? Navigator else {
+                    throw BASICError.runtime("\(typeName) has nothing to push onto")
+                }
+                guard case .systemObject(_, let pageID)? = arguments.first,
+                      let page = registry.views[pageID],
+                      arguments.count > 1,
+                      let pageTitle = arguments[1].string?.description else {
+                    throw BASICError.runtime("\(typeName).push expects a view and a title")
+                }
+                navigator.push(page, title: pageTitle)
+                return .empty
+
+            case "ONDEPTH":
+                guard let navigator = subject as? Navigator else {
+                    throw BASICError.runtime("\(typeName) has no depth")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).ondepth expects a handler name")
+                }
+                navigator.onDepthChanged = { depth in
+                    BASICTUIRuntimeBridge.shared.invoke(
+                        handlerNamed: handler, with: [.number(Double(depth))]
+                    )
+                }
+                return .empty
+
+            case "MINIMUMS":
+                // `minimumFirstLength` / `minimumSecondLength` as one call:
+                // they are set together, and they keep the divider sane
+                // through the zero-size first layout a fresh tab goes through.
+                guard let split = subject as? SplitView else {
+                    throw BASICError.runtime("\(typeName) has no minimums")
+                }
+                split.minimumFirstLength = Self.tuiInt(arguments, 0) ?? 0
+                split.minimumSecondLength = Self.tuiInt(arguments, 1) ?? 0
+                return .empty
+
+            case "ONOPEN":
+                guard let link = subject as? Link else {
+                    throw BASICError.runtime("\(typeName) has nothing to open")
+                }
+                guard let handler = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).onopen expects a handler name")
+                }
+                // The URL is handed to the handler, so one handler can serve
+                // several links — the Swift closure receives it the same way.
+                link.onOpen = { url in
+                    BASICTUIRuntimeBridge.shared.invoke(
+                        handlerNamed: handler, with: [.string(BASICString(url))]
+                    )
+                }
                 return .empty
 
             case "ONLONGPRESS":
@@ -1938,6 +2044,61 @@ extension BASICRuntime {
 }
 
 extension BASICRuntime {
+    /// The view a handle stands for, building it if it has been collecting
+    /// parts rather than holding a view.
+    ///
+    /// Boards, diagrams, wizards, master details and forms are all fixed at
+    /// construction in TUIKit, so their handles gather what they were given
+    /// and the control is made the first time something asks for it. That
+    /// used to happen only inside `add`, which meant the same handle passed
+    /// to `TUIScroll` or `TUISplit` was "not a view".
+    @MainActor
+    static func materializeTUIView(id: Int, registry: BASICTUIRegistry) -> TUIView? {
+        if let existing = registry.views[id] {
+            return existing
+        }
+        if let columns = registry.boardColumns[id] {
+            let board = BoardView(columns: columns)
+            if let handler = registry.handlers[id] {
+                board.onCardMoved = { _, _, _, _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+            }
+            registry.views[id] = board
+            return board
+        }
+        if let nodes = registry.diagramNodes[id] {
+            let diagram = DiagramView(
+                nodes: nodes, edges: registry.diagramEdges[id] ?? []
+            )
+            if let handler = registry.handlers[id] {
+                diagram.onSelectionChanged = { _ in
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+            }
+            registry.views[id] = diagram
+            return diagram
+        }
+        if let steps = registry.wizardSteps[id] {
+            let wizard = Wizard(steps: steps)
+            if let handler = registry.wizardFinish[id] {
+                wizard.onFinish = {
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+            }
+            registry.views[id] = wizard
+            return wizard
+        }
+        if let rows = registry.masterRows[id] {
+            let detail = MasterDetail(items: rows) { index in
+                BASICTUIRegistry.shared.detailViews[id]?[index] ?? Label("")
+            }
+            registry.views[id] = detail
+            return detail
+        }
+        return materializeTUIForm(id: id, registry: registry)
+    }
+
     /// A non-string BASIC value as a table cell.
     ///
     /// Numbers reach `addrow` constantly — a row of counts is the ordinary
