@@ -27,6 +27,7 @@ func printUsage() {
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
       --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
+      -O, -O0..-O3         optimization level for the generated code (default -O0)
       --json-diagnostics   report errors as a JSON array (for IDEs)
       --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
     """)
@@ -46,6 +47,7 @@ struct Invocation {
     var emitLLVM = false
     var jsonDiagnostics = false
     var emitAssembly = false
+    var optimizationLevel = 0
     var kind: String?
 
     init(_ arguments: [String]) {
@@ -65,6 +67,8 @@ struct Invocation {
             case "--emit-bir": emitBIR = true
             case "--emit-llvm": emitLLVM = true
             case "--emit-asm": emitAssembly = true
+            case "-O": optimizationLevel = 2
+            case "-O0", "-O1", "-O2", "-O3": optimizationLevel = Int(String(argument.dropFirst(2)))!
             case "--json-diagnostics": jsonDiagnostics = true
             case "--kind":
                 index += 1
@@ -81,7 +85,10 @@ struct Invocation {
 
 func compilation(for invocation: Invocation) -> Compilation {
     do {
-        return Compilation(dialect: try registry.dialect(named: invocation.dialect))
+        return Compilation(
+            dialect: try registry.dialect(named: invocation.dialect),
+            options: CompileOptions(optimizationLevel: invocation.optimizationLevel)
+        )
     } catch {
         fail("\(error)", code: 2)
     }

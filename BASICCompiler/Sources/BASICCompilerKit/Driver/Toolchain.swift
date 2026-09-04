@@ -22,9 +22,9 @@ public struct Toolchain: Sendable {
     ///   - llvmIR: The module as `.ll` text.
     ///   - irPath: Where to write the `.ll`, kept for `--emit-llvm`.
     ///   - objectPath: Where clang writes the object.
-    public func assemble(llvmIR: String, irPath: String, objectPath: String) throws {
+    public func assemble(llvmIR: String, irPath: String, objectPath: String, optimizationLevel: Int = 0) throws {
         try llvmIR.write(toFile: irPath, atomically: true, encoding: .utf8)
-        let result = try ProcessRunner.xcrun("clang", ["-c", irPath, "-o", objectPath, "-Wno-override-module"])
+        let result = try ProcessRunner.xcrun("clang", ["-c", irPath, "-O\(optimizationLevel)", "-o", objectPath, "-Wno-override-module"])
         guard result.exitCode == 0 else {
             throw ToolchainError(stage: "clang", exitCode: result.exitCode, stderr: result.stderr)
         }

@@ -62,7 +62,7 @@ public struct Compilation {
         try FileManager.default.createDirectory(atPath: buildDir, withIntermediateDirectories: true)
         let irPath = (buildDir as NSString).appendingPathComponent("\(module.name).ll")
         let objectPath = (buildDir as NSString).appendingPathComponent("\(module.name).o")
-        try toolchain.assemble(llvmIR: lowered.llvmIR, irPath: irPath, objectPath: objectPath)
+        try toolchain.assemble(llvmIR: lowered.llvmIR, irPath: irPath, objectPath: objectPath, optimizationLevel: options.optimizationLevel)
 
         let runtime = dialect.runtimeLibrary(for: options.target)
         let runtimeObject = try cachedRuntimeObject(runtime)
