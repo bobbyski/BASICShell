@@ -26,6 +26,13 @@ public struct BIRBuilder {
         var module = BIRModule(name: moduleName)
         module.globals = model.globalVariables
         module.data = Self.collectData(lines)
+        module.types = model.typeOrder.compactMap { name -> BIRCompositeType? in
+            let type = model.types[name]!
+            guard type.kind != .interface else { return nil }
+            return BIRCompositeType(name: name, displayName: type.displayName, index: type.index, fields: model.allFields(of: name).map {
+                BIRField(name: $0.name, type: $0.type, defaultNumber: $0.defaultNumber, defaultString: $0.defaultString)
+            })
+        }
 
         let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner)
         try main.run()
@@ -64,6 +71,8 @@ final class FunctionBuilder {
     private let functionName: String?
     private let signature: SemanticModel.Function?
     private let owner: [String?]
+    /// The class whose method this is, for PRIVATE/PROTECTED checks.
+    private let ownerClass: String?
     private(set) var function: BIRFunction
 
     /// The block instructions are currently appended to.
@@ -96,6 +105,7 @@ final class FunctionBuilder {
         self.functionName = function
         self.signature = function.flatMap { model.functions[$0] }
         self.owner = owner
+        self.ownerClass = self.signature?.owner
         if let signature = self.signature {
             self.function = BIRFunction(name: signature.name, parameters: signature.parameters, returnType: signature.returnType)
             self.function.locals = model.localVariables(of: signature.name)
@@ -167,12 +177,18 @@ final class FunctionBuilder {
     }
 
     /// Arrays the interpreter would create on first use (0...10 per
-    /// dimension) are created up front instead.
+    /// dimension) are created up front instead, and record/object variables
+    /// start as default instances.
     private func emitImplicitDimensions() {
-        guard signature == nil else { return }
-        for variable in model.globalVariables {
-            guard let rank = variable.rank, model.globals[variable.name]?.wasDimensioned == false else { continue }
-            emit(.dim(variable, Array(repeating: .number(10), count: rank)))
+        let variables = signature == nil ? model.globalVariables : function.locals.filter { !function.parameters.contains($0) }
+        for variable in variables {
+            if let rank = variable.rank {
+                if signature == nil, model.globals[variable.name]?.wasDimensioned == false {
+                    emit(.dim(variable, Array(repeating: .number(10), count: rank)))
+                }
+            } else if case .composite(let typeName) = variable.type, model.types[typeName]?.kind != .interface {
+                emit(.store(variable, .construct(typeName)))
+            }
         }
     }
 
@@ -298,25 +314,25 @@ final class FunctionBuilder {
             }
             let target = variable(name)
             guard target.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
+            if value == nil, isInterface(target.type) { return }
             let stored = try value.map { try lowerExpression($0, expecting: target.type, context: "assign to \(name.name)") }
                 ?? defaultValue(for: target.type)
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
-            guard reference.fields.isEmpty else { throw unsupported("field assignment") }
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
-            let target = variable(reference.base)
-            let indexes = try reference.indexes.map { try lowerExpression($0, expecting: .number, context: "\(reference.base.name) index") }
-            let stored = try value.map { try lowerExpression($0, expecting: target.type, context: "assign to \(reference.base.name)") }
-                ?? defaultValue(for: target.type)
-            if indexes.isEmpty {
-                emit(.store(target, stored))
-            } else {
-                emit(.storeElement(target, indexes, stored))
+            let place = try lowerPlace(reference)
+            let stored = try value.map { try lowerExpression($0, expecting: place.type, context: "assign to \(reference.base.name)") }
+                ?? defaultValue(for: place.type)
+            switch place {
+            case .variable(let target): emit(.store(target, stored))
+            case .element(let target, let indexes): emit(.storeElement(target, indexes, stored))
+            case .field: emit(.storeField(place, stored))
             }
         case .dim(_, let name, let dimensions, _):
             let target = variable(name)
             if dimensions.isEmpty {
-                emit(.store(target, defaultValue(for: target.type)))
+                // An interface-typed slot starts empty, like the interpreter's.
+                if !isInterface(target.type) { emit(.store(target, defaultValue(for: target.type))) }
             } else {
                 let bounds = try dimensions.map { dimension -> BIRExpression in
                     guard let dimension else { throw unsupported("DIM with an open dimension") }
@@ -481,11 +497,12 @@ final class FunctionBuilder {
             // Declarations are hoisted by the analyzer; the body is built as
             // its own function and never runs inline.
             break
-        case .typeDeclaration, .typeField, .endType:
-            throw unsupported("TYPE (Phase 4.2)")
-        case .classDeclaration, .classField, .endClass, .interfaceDeclaration, .interfaceFunctionSignature,
-             .endInterface, .implementsDeclaration, .inheritsDeclaration, .functionTypeDeclaration:
-            throw unsupported("CLASS and INTERFACE (Phase 4.3)")
+        case .typeDeclaration, .typeField, .endType, .classDeclaration, .classField, .endClass,
+             .interfaceDeclaration, .interfaceFunctionSignature, .endInterface, .implementsDeclaration, .inheritsDeclaration:
+            // Declarations are hoisted by the analyzer and never run.
+            break
+        case .functionTypeDeclaration:
+            throw unsupported("FUNCTION TYPE (Phase 4.4)")
         case .closureAssignment:
             throw unsupported("closures (Phase 4.4)")
         case .importDirective:
@@ -522,12 +539,166 @@ final class FunctionBuilder {
         return String(text.prefix { $0 != "(" })
     }
 
+    private func isInterface(_ type: BIRType) -> Bool {
+        if case .composite(let name) = type { return model.types[name]?.kind == .interface }
+        return false
+    }
+
     private func defaultValue(for type: BIRType) -> BIRExpression {
         switch type {
         case .number, .void: return .number(0)
         case .string: return .string("")
         case .boolean: return .boolean(false)
+        case .composite(let name): return .construct(name)
         }
+    }
+
+    /// The storage a reference names: its base variable or element, then
+    /// each `.field` in turn, with the interpreter's access checks.
+    private func lowerPlace(_ reference: VariableReference) throws -> BIRPlace {
+        let base = variable(reference.base)
+        var place: BIRPlace
+        if reference.indexes.isEmpty {
+            guard base.rank == nil else { throw CompileError("Type error: \(reference.base.name) is an array", at: location) }
+            place = .variable(base)
+        } else {
+            guard let rank = base.rank else { throw CompileError("\(reference.base.name) is not an array", at: location) }
+            guard rank == reference.indexes.count else { throw CompileError("\(reference.base.name) expects \(rank) indexes", at: location) }
+            place = .element(base, try reference.indexes.map { try lowerExpression($0, expecting: .number, context: "\(reference.base.name) index") })
+        }
+        for (position, fieldName) in reference.fields.enumerated() {
+            if reference.fieldIndexes.indices.contains(position), !reference.fieldIndexes[position].isEmpty {
+                throw unsupported("indexed fields")
+            }
+            let found = try resolveField(fieldName, on: place.type, baseName: reference.base.name)
+            place = .field(place, index: found.index, type: found.field.type)
+        }
+        return place
+    }
+
+    /// Finds a field by name on a composite type, checking visibility.
+    private func resolveField(_ fieldName: String, on type: BIRType, baseName: String) throws -> (index: Int, field: SemanticModel.Field) {
+        guard case .composite(let typeName) = type else {
+            throw CompileError("\(baseName) has no field \(fieldName)", at: location)
+        }
+        guard let found = model.field(fieldName.uppercased(), of: typeName) else {
+            throw CompileError("\(model.types[typeName]?.displayName ?? typeName) has no field \(fieldName)", at: location)
+        }
+        try checkAccess(found.field.visibility, owner: found.field.owner, what: fieldName)
+        return found
+    }
+
+    /// The interpreter's PRIVATE/PROTECTED rules, applied at compile time.
+    private func checkAccess(_ visibility: BASICMemberVisibility, owner: String, what: String) throws {
+        switch visibility {
+        case .public:
+            return
+        case .private:
+            guard ownerClass == owner else { throw CompileError("Type error: \(what) is PRIVATE", at: location) }
+        case .protected:
+            guard let ownerClass, ownerClass == owner || model.isClass(ownerClass, subclassOf: owner) else {
+                throw CompileError("Type error: \(what) is PROTECTED", at: location)
+            }
+        }
+    }
+
+    /// A place as a value: loads, element reads, and field reads.
+    private func load(_ place: BIRPlace) -> BIRExpression {
+        switch place {
+        case .variable(let variable): return .load(variable)
+        case .element(let variable, let indexes): return .element(variable, indexes)
+        case .field(let base, let index, let type): return .field(load(base), index: index, type: type)
+        }
+    }
+
+    /// The implementations a method call may reach, by runtime type — one
+    /// when nothing overrides it, several for a virtual or interface call.
+    private func candidates(for method: VariableName, on type: BIRType) throws -> (candidates: [BIRMethodCandidate], signature: SemanticModel.Function) {
+        guard case .composite(let typeName) = type, let composite = model.types[typeName] else {
+            throw CompileError("\(type.name) has no method \(method.name)", at: location)
+        }
+        var candidates: [BIRMethodCandidate] = []
+        var signature: SemanticModel.Function?
+        switch composite.kind {
+        case .record:
+            throw CompileError("\(composite.displayName) has no method \(method.name)", at: location)
+        case .classType:
+            guard let resolved = model.lookupMethod(method.normalized, in: typeName) else {
+                throw CompileError("\(composite.displayName) has no method \(method.name)", at: location)
+            }
+            try checkAccess(resolved.visibility, owner: resolved.owner!, what: method.name)
+            signature = resolved
+            for className in model.classFamily(of: typeName) {
+                if let implementation = model.lookupMethod(method.normalized, in: className) {
+                    candidates.append(BIRMethodCandidate(typeIndex: model.types[className]!.index, function: implementation.name))
+                }
+            }
+        case .interface:
+            guard composite.members[method.normalized] != nil else {
+                throw CompileError("\(composite.displayName) has no method \(method.name)", at: location)
+            }
+            for className in model.classes(conformingTo: typeName) {
+                guard let implementation = model.implementation(of: method.normalized, interface: typeName, in: className) else {
+                    throw CompileError("CLASS \(model.types[className]!.displayName) does not implement \(composite.displayName).\(method.name)", at: location)
+                }
+                signature = signature ?? implementation
+                candidates.append(BIRMethodCandidate(typeIndex: model.types[className]!.index, function: implementation.name))
+            }
+            guard let found = signature else {
+                throw CompileError("No CLASS implements \(composite.displayName)", at: location)
+            }
+            signature = found
+        }
+        // Collapse to one candidate when every runtime type lands on the same
+        // function.
+        if Set(candidates.map(\.function)).count == 1 { candidates = [candidates[0]] }
+        return (candidates, signature!)
+    }
+
+    /// Lowers a method call; the receiver is copied in and written back.
+    private func lowerMethodCall(_ reference: VariableReference, _ method: VariableName, _ arguments: [Expression], wantsValue: Bool) throws -> BIRExpression? {
+        let place = try lowerPlace(reference)
+        let (candidates, signature) = try candidates(for: method, on: place.type)
+        let parameters = Array(signature.parameters.dropFirst())
+        guard arguments.count == parameters.count else {
+            throw CompileError("Function \(signature.displayName) expects \(parameters.count) arguments, got \(arguments.count)", at: location)
+        }
+        let lowered = try zip(arguments, parameters).map { argument, parameter in
+            try lowerExpression(argument, expecting: parameter.type, context: "\(signature.displayName) parameter \(parameter.name)")
+        }
+        if wantsValue {
+            guard signature.returnType != .void else {
+                throw CompileError("VOID function \(signature.displayName) cannot be used in an expression", at: location)
+            }
+            let result = hidden("call", signature.returnType)
+            emit(.callMethod(receiver: place, candidates: candidates, arguments: lowered, result: result))
+            return .load(result)
+        }
+        emit(.callMethod(receiver: place, candidates: candidates, arguments: lowered, result: nil))
+        return nil
+    }
+
+    /// `NEW Class(args)`: a default instance, then its NEW method if any.
+    private func lowerNew(_ className: String, _ arguments: [Expression]) throws -> BIRExpression {
+        let typeName = className.uppercased()
+        guard let type = model.types[typeName], type.kind == .classType else {
+            throw CompileError("Unknown CLASS \(className)", at: location)
+        }
+        guard let constructor = model.lookupMethod("NEW", in: typeName) else {
+            guard arguments.isEmpty else { throw CompileError("CLASS \(type.displayName) has no constructor", at: location) }
+            return .construct(typeName)
+        }
+        let instance = hidden("new", .composite(typeName))
+        emit(.store(instance, .construct(typeName)))
+        let parameters = Array(constructor.parameters.dropFirst())
+        guard arguments.count == parameters.count else {
+            throw CompileError("Function \(constructor.displayName) expects \(parameters.count) arguments, got \(arguments.count)", at: location)
+        }
+        let lowered = try zip(arguments, parameters).map { argument, parameter in
+            try lowerExpression(argument, expecting: parameter.type, context: "NEW parameter \(parameter.name)")
+        }
+        emit(.callMethod(receiver: .variable(instance), candidates: [BIRMethodCandidate(typeIndex: type.index, function: constructor.name)], arguments: lowered, result: nil))
+        return .load(instance)
     }
 
     private func lowerReadTarget(_ target: ReadTarget) throws -> BIRReadTarget {
@@ -550,6 +721,9 @@ final class FunctionBuilder {
                 emit(.call(userFunction.name, try lowerArguments(arguments, for: userFunction)))
                 return
             }
+        case .methodCall(let reference, let method, let arguments):
+            _ = try lowerMethodCall(reference, method, arguments, wantsValue: false)
+            return
         default:
             break
         }
@@ -698,9 +872,9 @@ final class FunctionBuilder {
     /// Lowers an expression, checking it against the type the context needs.
     func lowerExpression(_ expression: Expression, expecting: BIRType?, context: String) throws -> BIRExpression {
         let lowered = try lowerExpression(expression)
-        if let expecting, lowered.type != expecting {
+        if let expecting, lowered.type != expecting, !model.isAssignable(lowered.type, to: expecting) {
             throw CompileError(
-                "Type error: \(context) expects \(expecting.rawValue), got \(lowered.type.rawValue)",
+                "Type error: \(context) expects \(expecting.name), got \(lowered.type.name)",
                 at: location
             )
         }
@@ -727,6 +901,12 @@ final class FunctionBuilder {
             return try lowerBinary(left, operation, right)
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             return try lowerCall(name, arguments)
+        case .variableReference(let reference):
+            return load(try lowerPlace(reference))
+        case .newObject(let className, let arguments):
+            return try lowerNew(className, arguments)
+        case .methodCall(let reference, let method, let arguments):
+            return try lowerMethodCall(reference, method, arguments, wantsValue: true)!
         case .lenFunction(let inner):
             return .intrinsic(.len, [try lowerExpression(inner, expecting: .string, context: "LEN")])
         case .chrFunction(let inner):
@@ -790,6 +970,7 @@ final class FunctionBuilder {
         case .equal, .notEqual:
             // The interpreter compares values of different kinds as simply unequal.
             if l.type != r.type { return .number(operation == .equal ? 0 : 1) }
+            if l.type.isComposite { throw unsupported("comparing records or objects") }
             return .compare(Self.comparison(for: operation)!, l, r)
         case .less, .lessEqual, .greater, .greaterEqual:
             // The interpreter orders numbers only; anything else is its
@@ -826,7 +1007,7 @@ final class FunctionBuilder {
     /// `NAME(args)`: a user function, an array element, or a builtin — in
     /// the interpreter's order of precedence.
     private func lowerCall(_ name: VariableName, _ arguments: [Expression]) throws -> BIRExpression {
-        if let userFunction = model.functions[name.normalized] {
+        if let userFunction = model.functions[name.normalized], userFunction.owner == nil {
             guard userFunction.returnType != .void else {
                 throw CompileError("VOID function \(userFunction.displayName) cannot be used in an expression", at: location)
             }
@@ -872,7 +1053,7 @@ final class FunctionBuilder {
         }
         for (argument, expected) in zip(lowered, intrinsic.parameterTypes) where argument.type != expected {
             throw CompileError(
-                "Type error: \(name.name) expects \(expected.rawValue), got \(argument.type.rawValue)",
+                "Type error: \(name.name) expects \(expected.name), got \(argument.type.name)",
                 at: location
             )
         }

@@ -33,6 +33,9 @@ public struct BIRPrinter {
                 }
             }.joined(separator: ", "))
         }
+        for type in module.types {
+            lines.append("type \(type.name) #\(type.index) " + type.fields.map { "\($0.name) : \($0.type.name)" }.joined(separator: ", "))
+        }
         lines.append(contentsOf: render(module.main))
         for function in module.functions {
             lines.append(contentsOf: render(function))
@@ -42,12 +45,12 @@ public struct BIRPrinter {
 
     private func render(_ variable: BIRVariable) -> String {
         let suffix = variable.rank.map { "(\($0))" } ?? ""
-        return "\(variable.name)\(suffix) : \(variable.type.rawValue)"
+        return "\(variable.name)\(suffix) : \(variable.type.name)"
     }
 
     private func render(_ function: BIRFunction) -> [String] {
         let parameters = function.parameters.map(render).joined(separator: ", ")
-        var lines = ["function \(function.name)(\(parameters)) : \(function.returnType.rawValue)"]
+        var lines = ["function \(function.name)(\(parameters)) : \(function.returnType.name)"]
         for variable in function.locals where !function.parameters.contains(variable) {
             lines.append("  local " + render(variable))
         }
@@ -67,6 +70,12 @@ public struct BIRPrinter {
             return "store \(variable.name) <- \(render(value))"
         case .storeElement(let variable, let indexes, let value):
             return "store \(variable.name)(\(indexes.map(render).joined(separator: ", "))) <- \(render(value))"
+        case .storeField(let place, let value):
+            return "store \(render(place)) <- \(render(value))"
+        case .callMethod(let receiver, let candidates, let arguments, let result):
+            let target = candidates.count == 1 ? candidates[0].function : "virtual[" + candidates.map(\.function).joined(separator: "|") + "]"
+            let call = "call \(render(receiver)).\(target)(" + arguments.map(render).joined(separator: ", ") + ")"
+            return result.map { "store \($0.name) <- " + call } ?? call
         case .dim(let variable, let bounds):
             return "dim \(variable.name)(\(bounds.map(render).joined(separator: ", ")))"
         case .call(let name, let arguments):
@@ -124,6 +133,14 @@ public struct BIRPrinter {
         }
     }
 
+    private func render(_ place: BIRPlace) -> String {
+        switch place {
+        case .variable(let variable): return variable.name
+        case .element(let variable, let indexes): return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .field(let base, let index, _): return "\(render(base)).#\(index)"
+        }
+    }
+
     /// An expression, fully parenthesized so precedence is never in doubt.
     public func render(_ expression: BIRExpression) -> String {
         switch expression {
@@ -155,6 +172,10 @@ public struct BIRPrinter {
             return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
         case .text(let value):
             return "text(\(render(value)))"
+        case .field(let base, let index, _):
+            return "\(render(base)).#\(index)"
+        case .construct(let name):
+            return "new \(name)"
         }
     }
 }

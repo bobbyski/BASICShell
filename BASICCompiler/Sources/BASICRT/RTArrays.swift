@@ -13,14 +13,19 @@ public final class RTArray {
     let upperBounds: [Int]
     var numbers: [Double]
     var strings: [RTString?]
-    let holdsStrings: Bool
+    var composites: [RTComposite?]
+    /// Element kind: 0 number, 1 string, 3 composite (of `elementType`).
+    let kind: Int
+    let elementType: Int
 
-    init(upperBounds: [Int], holdsStrings: Bool) {
+    init(upperBounds: [Int], kind: Int, elementType: Int) {
         self.upperBounds = upperBounds
-        self.holdsStrings = holdsStrings
+        self.kind = kind
+        self.elementType = elementType
         let count = upperBounds.reduce(1) { $0 * ($1 + 1) }
-        numbers = holdsStrings ? [] : Array(repeating: 0, count: count)
-        strings = holdsStrings ? Array(repeating: nil, count: count) : []
+        numbers = kind == 0 ? Array(repeating: 0, count: count) : []
+        strings = kind == 1 ? Array(repeating: nil, count: count) : []
+        composites = kind == 3 ? Array(repeating: nil, count: count) : []
     }
 }
 
@@ -33,15 +38,16 @@ func rtArray(_ pointer: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>) 
 }
 
 /// `DIM`: a new array with `rank` upper bounds; returns it owned (+1).
+/// `kind` is 0 number, 1 string, 3 composite of type `elementType`.
 @_cdecl("basic_rt_array_dim")
-public func basic_rt_array_dim(_ rank: Int, _ bounds: UnsafePointer<Double>, _ holdsStrings: Bool) -> UnsafeMutableRawPointer {
+public func basic_rt_array_dim(_ rank: Int, _ bounds: UnsafePointer<Double>, _ kind: Int, _ elementType: Int) -> UnsafeMutableRawPointer {
     var upperBounds: [Int] = []
     for index in 0..<rank {
         let bound = bounds[index].rounded()
         guard bound >= 0 else { basic_rt_fail("DIM bounds must be non-negative") }
         upperBounds.append(Int(bound))
     }
-    return Unmanaged.passRetained(RTArray(upperBounds: upperBounds, holdsStrings: holdsStrings)).toOpaque()
+    return Unmanaged.passRetained(RTArray(upperBounds: upperBounds, kind: kind, elementType: elementType)).toOpaque()
 }
 
 @_cdecl("basic_rt_array_release")
@@ -97,4 +103,22 @@ public func basic_rt_array_load_string(_ pointer: UnsafeMutableRawPointer, _ off
 public func basic_rt_array_store_string(_ pointer: UnsafeMutableRawPointer, _ offset: Int, _ value: UnsafeMutableRawPointer?) {
     let array = Unmanaged<RTArray>.fromOpaque(pointer).takeUnretainedValue()
     array.strings[offset] = value.map { Unmanaged<RTString>.fromOpaque($0).takeUnretainedValue() }
+}
+
+/// Borrowed: the element record itself (created on first touch), so
+/// `A(1).x = 5` mutates in place.
+@_cdecl("basic_rt_array_load_composite")
+public func basic_rt_array_load_composite(_ pointer: UnsafeMutableRawPointer, _ offset: Int) -> UnsafeMutableRawPointer {
+    let array = Unmanaged<RTArray>.fromOpaque(pointer).takeUnretainedValue()
+    if array.composites[offset] == nil {
+        array.composites[offset] = RTComposite(typeIndex: array.elementType)
+    }
+    return Unmanaged.passUnretained(array.composites[offset]!).toOpaque()
+}
+
+/// Stores a deep copy of the record into the element.
+@_cdecl("basic_rt_array_store_composite")
+public func basic_rt_array_store_composite(_ pointer: UnsafeMutableRawPointer, _ offset: Int, _ value: UnsafeMutableRawPointer?) {
+    let array = Unmanaged<RTArray>.fromOpaque(pointer).takeUnretainedValue()
+    array.composites[offset] = value.map { rtComposite($0).copy() }
 }

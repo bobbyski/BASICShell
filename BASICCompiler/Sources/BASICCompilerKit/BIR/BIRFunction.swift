@@ -15,6 +15,36 @@ public enum BIRPrintItem: Sendable {
     case spc(BIRExpression)
 }
 
+/// Somewhere a value can be stored: a variable, an array element, or a
+/// field reached through either.
+public indirect enum BIRPlace: Sendable {
+    case variable(BIRVariable)
+    case element(BIRVariable, [BIRExpression])
+    case field(BIRPlace, index: Int, type: BIRType)
+
+    /// The type of the value the place holds.
+    public var type: BIRType {
+        switch self {
+        case .variable(let variable): return variable.type
+        case .element(let variable, _): return variable.type
+        case .field(_, _, let type): return type
+        }
+    }
+}
+
+/// One implementation a method call may dispatch to, by runtime type.
+public struct BIRMethodCandidate: Sendable {
+    /// The runtime type index of the receiver this candidate serves.
+    public let typeIndex: Int
+    /// The BIR function implementing it.
+    public let function: String
+
+    public init(typeIndex: Int, function: String) {
+        self.typeIndex = typeIndex
+        self.function = function
+    }
+}
+
 /// Where a `READ` puts a value.
 public enum BIRReadTarget: Sendable {
     /// A scalar variable.
@@ -36,6 +66,13 @@ public enum BIROperation: Sendable {
     case store(BIRVariable, BIRExpression)
     /// Stores a value into an array element.
     case storeElement(BIRVariable, [BIRExpression], BIRExpression)
+    /// Stores a value into a field, mutating the record in place.
+    case storeField(BIRPlace, BIRExpression)
+    /// Calls a method on the record at `receiver`: the receiver is copied
+    /// in as `ME`, and written back afterwards — the interpreter's value
+    /// semantics. The result, if any, lands in `result`. `candidates` has one
+    /// entry for a statically bound call, more for a virtual one.
+    case callMethod(receiver: BIRPlace, candidates: [BIRMethodCandidate], arguments: [BIRExpression], result: BIRVariable?)
     /// `DIM`: (re)creates an array with the given upper bounds.
     case dim(BIRVariable, [BIRExpression])
     /// Calls a `FUNCTION` for its effect, discarding any value.
@@ -195,6 +232,41 @@ public struct BIRFunction: Sendable {
     }
 }
 
+/// One field of a composite type.
+public struct BIRField: Sendable {
+    public let name: String
+    public let type: BIRType
+    /// The declared default, when the field has one.
+    public let defaultNumber: Double?
+    public let defaultString: String?
+
+    public init(name: String, type: BIRType, defaultNumber: Double? = nil, defaultString: String? = nil) {
+        self.name = name
+        self.type = type
+        self.defaultNumber = defaultNumber
+        self.defaultString = defaultString
+    }
+}
+
+/// A `TYPE` or `CLASS`, as the runtime needs to know it.
+public struct BIRCompositeType: Sendable {
+    /// The normalized name, as types are looked up.
+    public let name: String
+    /// The name as written, which is what `PRINT` shows in `<Name>`.
+    public let displayName: String
+    /// The runtime type index; also the position in ``BIRModule/types``.
+    public let index: Int
+    /// All fields, inherited ones first.
+    public let fields: [BIRField]
+
+    public init(name: String, displayName: String, index: Int, fields: [BIRField]) {
+        self.name = name
+        self.displayName = displayName
+        self.index = index
+        self.fields = fields
+    }
+}
+
 /// A whole program, ready to lower.
 public struct BIRModule: Sendable {
     /// The module name, usually the source file's base name.
@@ -207,6 +279,8 @@ public struct BIRModule: Sendable {
     public var functions: [BIRFunction]
     /// Every `DATA` item, in source order.
     public var data: [BIRDataItem]
+    /// Every `TYPE` and `CLASS`, by runtime type index.
+    public var types: [BIRCompositeType]
 
     /// Creates an empty module.
     public init(name: String) {
@@ -215,5 +289,11 @@ public struct BIRModule: Sendable {
         self.main = BIRFunction(name: "main")
         self.functions = []
         self.data = []
+        self.types = []
+    }
+
+    /// The type index of a composite type name.
+    public func typeIndex(of name: String) -> Int? {
+        types.first { $0.name == name }?.index
     }
 }

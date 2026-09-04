@@ -43,6 +43,10 @@ public indirect enum BIRExpression: Sendable {
     case element(BIRVariable, [BIRExpression])
     /// The text a value shows as — `PRINT`'s rendering — for interpolation.
     case text(BIRExpression)
+    /// Field `index` of a composite value.
+    case field(BIRExpression, index: Int, type: BIRType)
+    /// A default instance of a `TYPE` or `CLASS` (before any `NEW` runs).
+    case construct(String)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -63,6 +67,10 @@ public indirect enum BIRExpression: Sendable {
             return variable.type
         case .text:
             return .string
+        case .field(_, _, let type):
+            return type
+        case .construct(let name):
+            return .composite(name)
         }
     }
 }

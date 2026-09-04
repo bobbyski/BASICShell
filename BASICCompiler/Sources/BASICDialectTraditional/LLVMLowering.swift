@@ -45,6 +45,7 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\n"
         }
         text += "\n" + renderDataTables() + "\n"
+        text += renderTypeTables() + "\n"
         text += constants.definitions.joined(separator: "\n") + "\n\n"
         text += functions.joined(separator: "\n\n")
         return text
@@ -72,6 +73,39 @@ struct LLVMLowering {
         @data.numbers = private constant [\(count) x double] [\(numbers.joined(separator: ", "))]
         @data.strings = private constant [\(count) x ptr] [\(strings.joined(separator: ", "))]
         """
+    }
+
+    /// Per-type field tables the runtime reads at registration.
+    private func renderTypeTables() -> String {
+        var text = ""
+        for type in module.types {
+            let count = max(type.fields.count, 1)
+            var kinds: [String] = [], subtypes: [String] = [], numbers: [String] = [], strings: [String] = []
+            for field in type.fields {
+                switch field.type {
+                case .number: kinds.append("i8 0")
+                case .string: kinds.append("i8 1")
+                case .boolean: kinds.append("i8 2")
+                case .composite, .void: kinds.append("i8 3")
+                }
+                if case .composite(let name) = field.type {
+                    subtypes.append("i64 \(module.typeIndex(of: name) ?? -1)")
+                } else {
+                    subtypes.append("i64 -1")
+                }
+                numbers.append("double \(FunctionEmitter.double(field.defaultNumber ?? 0))")
+                strings.append(field.defaultString.map { "ptr \(constants.constant($0))" } ?? "ptr null")
+            }
+            if type.fields.isEmpty { kinds.append("i8 0"); subtypes.append("i64 -1"); numbers.append("double 0.0"); strings.append("ptr null") }
+            text += """
+            @type.\(type.index).kinds = private constant [\(count) x i8] [\(kinds.joined(separator: ", "))]
+            @type.\(type.index).subtypes = private constant [\(count) x i64] [\(subtypes.joined(separator: ", "))]
+            @type.\(type.index).numbers = private constant [\(count) x double] [\(numbers.joined(separator: ", "))]
+            @type.\(type.index).strings = private constant [\(count) x ptr] [\(strings.joined(separator: ", "))]
+
+            """
+        }
+        return text
     }
 
     static let runtimeDeclarations = """
@@ -118,7 +152,22 @@ struct LLVMLowering {
     declare ptr @basic_rt_string_mid(ptr, double, double)
     declare ptr @basic_rt_space(double)
     declare ptr @basic_rt_string_repeat(double, ptr)
-    declare ptr @basic_rt_array_dim(i64, ptr, i1)
+    declare ptr @basic_rt_array_dim(i64, ptr, i64, i64)
+    declare ptr @basic_rt_array_load_composite(ptr, i64)
+    declare void @basic_rt_array_store_composite(ptr, i64, ptr)
+    declare void @basic_rt_type_register(i64, ptr, i64, ptr, ptr, ptr, ptr)
+    declare ptr @basic_rt_composite_new(i64)
+    declare ptr @basic_rt_composite_copy(ptr)
+    declare void @basic_rt_composite_release(ptr)
+    declare i64 @basic_rt_composite_type(ptr)
+    declare double @basic_rt_composite_get_number(ptr, i64)
+    declare void @basic_rt_composite_set_number(ptr, i64, double)
+    declare ptr @basic_rt_composite_get_string(ptr, i64)
+    declare void @basic_rt_composite_set_string(ptr, i64, ptr)
+    declare ptr @basic_rt_composite_get_composite(ptr, i64)
+    declare void @basic_rt_composite_set_composite(ptr, i64, ptr)
+    declare void @basic_rt_print_composite(ptr)
+    declare ptr @basic_rt_composite_text(ptr)
     declare void @basic_rt_array_release(ptr)
     declare i64 @basic_rt_array_offset(ptr, ptr, i64, ptr)
     declare double @basic_rt_array_load_number(ptr, i64)
@@ -180,6 +229,8 @@ struct FunctionEmitter {
     private var out = LLVMText()
     /// Owned string temporaries produced by the current instruction.
     private var owned: [String] = []
+    /// Which owned temporaries are records (released differently).
+    private var ownedComposites: Set<String> = []
     private var gosubResumes: [BIRBlockID] = []
     private var usesGosub = false
     private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
@@ -223,13 +274,23 @@ struct FunctionEmitter {
             out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
         }
         for (index, parameter) in function.parameters.enumerated() {
+            var value = "%p\(index)"
             if parameter.type == .string {
                 out.emit("call void @basic_rt_string_retain(ptr %p\(index))")
+            } else if parameter.type.isComposite, parameter.rank == nil, parameter.name != "ME" {
+                // Records and objects pass by value: the callee works on a copy.
+                // ME is the caller's copy already, borrowed and written back.
+                let copy = out.temp()
+                out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr %p\(index))")
+                value = copy
             }
-            out.emit("store \(Self.llvmType(of: parameter)) %p\(index), ptr %\"L.\(parameter.name)\"")
+            out.emit("store \(Self.llvmType(of: parameter)) \(value), ptr %\"L.\(parameter.name)\"")
         }
         if isMain {
             out.emit("call void @basic_rt_start()")
+            for type in module.types {
+                out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(type.displayName)), i64 \(type.fields.count), ptr @type.\(type.index).kinds, ptr @type.\(type.index).subtypes, ptr @type.\(type.index).numbers, ptr @type.\(type.index).strings)")
+            }
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
         }
         if usesGosub {
@@ -296,19 +357,92 @@ struct FunctionEmitter {
         switch operation {
         case .store(let variable, let value):
             let (result, isOwned) = lowerValue(value)
-            storeString(result, owned: isOwned, into: slotName(variable), isString: variable.type == .string)
-            if variable.type != .string {
+            storeManaged(result, owned: isOwned, into: slotName(variable), type: variable.type)
+            if !Self.isManaged(variable.type) {
                 out.emit("store \(Self.llvmType(of: variable)) \(result), ptr \(slotName(variable))")
             }
 
         case .storeElement(let variable, let indexes, let value):
             let (result, _) = lowerValue(value)
             let (array, offset) = elementOffset(variable, indexes)
-            if variable.type == .string {
-                out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
-            } else {
-                out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(result))")
+            switch variable.type {
+            case .string: out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
+            case .composite: out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(result))")
+            default: out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(Self.asNumber(result, value.type, &out)))")
             }
+
+        case .storeField(let place, let value):
+            guard case .field(let base, let index, let type) = place else { break }
+            let (result, _) = lowerValue(value)
+            let target = placePointer(base)
+            switch type {
+            case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(result))")
+            case .boolean:
+                let number = out.temp()
+                out.emit("\(number) = uitofp i1 \(result) to double")
+                out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(number))")
+            case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
+            case .composite, .void: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
+            }
+
+        case .callMethod(let receiver, let candidates, let arguments, let result):
+            let callee = module.functions.first { $0.name == candidates[0].function }!
+            let receiverPointer = placePointer(receiver)
+            let me = out.temp()
+            out.emit("\(me) = call ptr @basic_rt_composite_copy(ptr \(receiverPointer))")
+            let values = arguments.map { lowerValue($0).0 }
+            let argumentList = ([("ptr", me)] + zip(callee.parameters.dropFirst(), values).map { (Self.llvmType(of: $0), $1) })
+                .map { "\($0) \($1)" }.joined(separator: ", ")
+            let returnType = Self.llvmType(callee.returnType)
+            let call: String
+            if candidates.count == 1 {
+                call = "call \(returnType) @\"F.\(candidates[0].function)\"(\(argumentList))"
+            } else {
+                // Virtual: switch on the receiver's runtime type.
+                let typeIndex = out.temp()
+                out.emit("\(typeIndex) = call i64 @basic_rt_composite_type(ptr \(me))")
+                let join = out.freshLabel("dispatch.join")
+                var incoming: [String] = []
+                let cases = candidates.map { candidate -> (String, BIRMethodCandidate) in (out.freshLabel("dispatch.\(candidate.typeIndex)"), candidate) }
+                out.emit("switch i64 \(typeIndex), label %\"\(cases[0].0)\" [ " + cases.map { "i64 \($0.1.typeIndex), label %\"\($0.0)\"" }.joined(separator: " ") + " ]")
+                for (label, candidate) in cases {
+                    out.label(label)
+                    if callee.returnType == .void {
+                        out.emit("call void @\"F.\(candidate.function)\"(\(argumentList))")
+                    } else {
+                        let partial = out.temp()
+                        out.emit("\(partial) = call \(returnType) @\"F.\(candidate.function)\"(\(argumentList))")
+                        incoming.append("[ \(partial), %\"\(label)\" ]")
+                    }
+                    out.emit("br label %\"\(join)\"")
+                }
+                out.label(join)
+                if callee.returnType == .void {
+                    call = ""
+                } else {
+                    call = "phi \(returnType) " + incoming.joined(separator: ", ")
+                }
+            }
+            if callee.returnType == .void {
+                if !call.isEmpty { out.emit(call) }
+            } else {
+                let value = out.temp()
+                out.emit("\(value) = \(call)")
+                if let result {
+                    if Self.isManaged(callee.returnType) {
+                        storeManaged(value, owned: true, into: slotName(result), type: callee.returnType)
+                    } else {
+                        out.emit("store \(returnType) \(value), ptr \(slotName(result))")
+                    }
+                } else if Self.isManaged(callee.returnType) {
+                    owned.append(value)
+                    if callee.returnType.isComposite { ownedComposites.insert(value) }
+                }
+            }
+            // Write the receiver back — a method's changes to ME are the
+            // interpreter's, and so is the copy.
+            writeBack(me, to: receiver)
+            out.emit("call void @basic_rt_composite_release(ptr \(me))")
 
         case .dim(let variable, let bounds):
             let values = bounds.map { lowerValue($0).0 }
@@ -318,7 +452,13 @@ struct FunctionEmitter {
                 out.emit("store double \(value), ptr \(slot)")
             }
             let array = out.temp()
-            out.emit("\(array) = call ptr @basic_rt_array_dim(i64 \(values.count), ptr %\"scratch.indexes\", i1 \(variable.type == .string ? "true" : "false"))")
+            var kind = 0, elementType = -1
+            switch variable.type {
+            case .string: kind = 1
+            case .composite(let name): kind = 3; elementType = module.typeIndex(of: name) ?? -1
+            default: break
+            }
+            out.emit("\(array) = call ptr @basic_rt_array_dim(i64 \(values.count), ptr %\"scratch.indexes\", i64 \(kind), i64 \(elementType))")
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr \(slotName(variable))")
             out.emit("call void @basic_rt_array_release(ptr \(old))")
@@ -341,8 +481,8 @@ struct FunctionEmitter {
                 switch target {
                 case .variable(let variable):
                     let value = readValue(variable)
-                    storeString(value, owned: true, into: slotName(variable), isString: variable.type == .string)
-                    if variable.type != .string {
+                    storeManaged(value, owned: true, into: slotName(variable), type: variable.type)
+                    if !Self.isManaged(variable.type) {
                         out.emit("store double \(value), ptr \(slotName(variable))")
                     }
                 case .element(let variable, let indexes):
@@ -376,6 +516,7 @@ struct FunctionEmitter {
                     case .number: out.emit("call void @basic_rt_print_number(double \(result))")
                     case .string: out.emit("call void @basic_rt_print_text(ptr \(result))")
                     case .boolean: out.emit("call void @basic_rt_print_boolean(i1 \(result))")
+                    case .composite: out.emit("call void @basic_rt_print_composite(ptr \(result))")
                     case .void: break
                     }
                 case .comma:
@@ -401,16 +542,16 @@ struct FunctionEmitter {
             case .string:
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_input_string(ptr \(promptValue), ptr \(name))")
-                storeString(result, owned: true, into: slotName(variable), isString: true)
-            case .boolean, .void:
-                fail("INPUT into a boolean is not supported")
+                storeManaged(result, owned: true, into: slotName(variable), type: .string)
+            case .boolean, .void, .composite:
+                fail("INPUT into a boolean or record is not supported")
             }
 
         case .lineInput(let prompt, let variable):
             let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_line_input(ptr \(promptValue))")
-            storeString(result, owned: true, into: slotName(variable), isString: true)
+            storeManaged(result, owned: true, into: slotName(variable), type: .string)
 
         case .printUsing(let format, let values, let newline):
             out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
@@ -419,6 +560,11 @@ struct FunctionEmitter {
                 switch value.type {
                 case .number: out.emit("call void @basic_rt_using_number(double \(result))")
                 case .string: out.emit("call void @basic_rt_using_string(ptr \(result))")
+                case .composite:
+                    let text = out.temp()
+                    out.emit("\(text) = call ptr @basic_rt_composite_text(ptr \(result))")
+                    owned.append(text)
+                    out.emit("call void @basic_rt_using_string(ptr \(text))")
                 case .boolean:
                     let text = out.temp()
                     out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
@@ -455,19 +601,74 @@ struct FunctionEmitter {
         return result
     }
 
-    /// Stores a string into a slot with the ownership dance; a no-op for
+    /// Types whose values are runtime objects with ownership.
+    static func isManaged(_ type: BIRType) -> Bool {
+        type == .string || type.isComposite
+    }
+
+    /// Stores a string or record into a slot with the ownership dance: a
+    /// string is transferred or retained; a record is transferred or copied
+    /// (value semantics). The slot's old value is released. A no-op for
     /// other types (the caller stores those).
-    private mutating func storeString(_ value: String, owned isOwned: Bool, into slot: String, isString: Bool) {
-        guard isString else { return }
+    private mutating func storeManaged(_ value: String, owned isOwned: Bool, into slot: String, type: BIRType) {
+        guard Self.isManaged(type) else { return }
+        var stored = value
         if isOwned {
             owned.removeAll { $0 == value }
-        } else {
+        } else if type == .string {
             out.emit("call void @basic_rt_string_retain(ptr \(value))")
+        } else {
+            let copy = out.temp()
+            out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr \(value))")
+            stored = copy
         }
         let old = out.temp()
         out.emit("\(old) = load ptr, ptr \(slot)")
-        out.emit("call void @basic_rt_string_release(ptr \(old))")
-        out.emit("store ptr \(value), ptr \(slot)")
+        out.emit("call void @\(type == .string ? "basic_rt_string_release" : "basic_rt_composite_release")(ptr \(old))")
+        out.emit("store ptr \(stored), ptr \(slot)")
+    }
+
+    /// The record a place holds, borrowed and in place — so a store through
+    /// it mutates the original.
+    private mutating func placePointer(_ place: BIRPlace) -> String {
+        switch place {
+        case .variable(let variable):
+            let result = out.temp()
+            out.emit("\(result) = load ptr, ptr \(slotName(variable))")
+            return result
+        case .element(let variable, let indexes):
+            let (array, offset) = elementOffset(variable, indexes)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_array_load_composite(ptr \(array), i64 \(offset))")
+            return result
+        case .field(let base, let index, _):
+            let parent = placePointer(base)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
+            return result
+        }
+    }
+
+    /// Stores a copy of the record `value` (borrowed) into a place.
+    private mutating func writeBack(_ value: String, to place: BIRPlace) {
+        switch place {
+        case .variable(let variable):
+            storeManaged(value, owned: false, into: slotName(variable), type: variable.type)
+        case .element(let variable, let indexes):
+            let (array, offset) = elementOffset(variable, indexes)
+            out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(value))")
+        case .field(let base, let index, _):
+            let parent = placePointer(base)
+            out.emit("call void @basic_rt_composite_set_composite(ptr \(parent), i64 \(index), ptr \(value))")
+        }
+    }
+
+    /// A boolean as a number for storage in a numeric slot.
+    static func asNumber(_ value: String, _ type: BIRType, _ out: inout LLVMText) -> String {
+        guard type == .boolean else { return value }
+        let number = out.temp()
+        out.emit("\(number) = uitofp i1 \(value) to double")
+        return number
     }
 
     /// Loads the array pointer and computes the bounds-checked element offset.
@@ -547,8 +748,20 @@ struct FunctionEmitter {
                 let (lowered, isOwned) = lowerValue(value)
                 if function.returnType == .string {
                     if isOwned { owned.removeAll { $0 == lowered } } else { out.emit("call void @basic_rt_string_retain(ptr \(lowered))") }
+                    result = lowered
+                } else if function.returnType.isComposite {
+                    if isOwned { owned.removeAll { $0 == lowered }; result = lowered } else {
+                        let copy = out.temp()
+                        out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr \(lowered))")
+                        result = copy
+                    }
+                } else {
+                    result = lowered
                 }
-                result = lowered
+            } else if function.returnType.isComposite, case .composite(let name) = function.returnType {
+                let fresh = out.temp()
+                out.emit("\(fresh) = call ptr @basic_rt_composite_new(i64 \(module.typeIndex(of: name) ?? -1))")
+                result = fresh
             } else {
                 result = Self.zero(function.returnType)
             }
@@ -558,6 +771,11 @@ struct FunctionEmitter {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_string_release(ptr \(old))")
+        }
+        for local in function.locals where local.type.isComposite && local.rank == nil && local.name != "ME" {
+            let old = out.temp()
+            out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
+            out.emit("call void @basic_rt_composite_release(ptr \(old))")
         }
         for local in function.locals where local.rank != nil {
             let old = out.temp()
@@ -573,9 +791,11 @@ struct FunctionEmitter {
 
     private mutating func releaseOwned() {
         for temporary in owned {
-            out.emit("call void @basic_rt_string_release(ptr \(temporary))")
+            let release = ownedComposites.contains(temporary) ? "basic_rt_composite_release" : "basic_rt_string_release"
+            out.emit("call void @\(release)(ptr \(temporary))")
         }
         owned.removeAll()
+        ownedComposites.removeAll()
     }
 
     // MARK: - Expressions
@@ -601,20 +821,59 @@ struct FunctionEmitter {
         case .element(let variable, let indexes):
             let (array, offset) = elementOffset(variable, indexes)
             let result = out.temp()
-            if variable.type == .string {
+            switch variable.type {
+            case .string:
                 out.emit("\(result) = call ptr @basic_rt_array_load_string(ptr \(array), i64 \(offset))")
                 owned.append(result)
                 return (result, true)
+            case .composite:
+                out.emit("\(result) = call ptr @basic_rt_array_load_composite(ptr \(array), i64 \(offset))")
+                return (result, false)
+            case .boolean:
+                let number = out.temp()
+                out.emit("\(number) = call double @basic_rt_array_load_number(ptr \(array), i64 \(offset))")
+                out.emit("\(result) = fcmp une double \(number), 0.0")
+                return (result, false)
+            default:
+                out.emit("\(result) = call double @basic_rt_array_load_number(ptr \(array), i64 \(offset))")
+                return (result, false)
             }
-            out.emit("\(result) = call double @basic_rt_array_load_number(ptr \(array), i64 \(offset))")
-            return (result, false)
+        case .field(let base, let index, let type):
+            let (parent, _) = lowerValue(base)
+            let result = out.temp()
+            switch type {
+            case .number:
+                out.emit("\(result) = call double @basic_rt_composite_get_number(ptr \(parent), i64 \(index))")
+                return (result, false)
+            case .boolean:
+                let number = out.temp()
+                out.emit("\(number) = call double @basic_rt_composite_get_number(ptr \(parent), i64 \(index))")
+                out.emit("\(result) = fcmp une double \(number), 0.0")
+                return (result, false)
+            case .string:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_string(ptr \(parent), i64 \(index))")
+                owned.append(result)
+                return (result, true)
+            case .composite, .void:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
+                return (result, false)
+            }
+        case .construct(let name):
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_composite_new(i64 \(module.typeIndex(of: name) ?? -1))")
+            owned.append(result)
+            return (result, true)
         case .call(let name, let arguments, let returns):
             let values = arguments.map { lowerValue($0).0 }
             let callee = module.functions.first { $0.name == name }!
             let argumentList = zip(callee.parameters, values).map { "\(Self.llvmType(of: $0)) \($1)" }.joined(separator: ", ")
             let result = out.temp()
             out.emit("\(result) = call \(Self.llvmType(returns)) @\"F.\(name)\"(\(argumentList))")
-            if returns == .string { owned.append(result); return (result, true) }
+            if Self.isManaged(returns) {
+                owned.append(result)
+                if returns.isComposite { ownedComposites.insert(result) }
+                return (result, true)
+            }
             return (result, false)
         case .negate(let inner):
             let result = out.temp()
@@ -628,6 +887,11 @@ struct FunctionEmitter {
             case .number:
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_number_text(double \(value))")
+                owned.append(result)
+                return (result, true)
+            case .composite:
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_composite_text(ptr \(value))")
                 owned.append(result)
                 return (result, true)
             case .boolean, .void:
@@ -698,6 +962,8 @@ struct FunctionEmitter {
             out.emit("\(flag) = fcmp \(predicate) double \(l), \(r)")
         case .boolean:
             out.emit("\(flag) = icmp \(op == .equal ? "eq" : "ne") i1 \(l), \(r)")
+        case .composite:
+            out.emit("\(flag) = icmp eq ptr \(l), \(r)")
         case .string, .void:
             switch op {
             case .equal:
@@ -737,6 +1003,8 @@ struct FunctionEmitter {
             let flag = out.temp()
             out.emit("\(flag) = call i1 @basic_rt_string_truthy(ptr \(value))")
             return flag
+        case .composite:
+            return "true"
         }
     }
 
@@ -802,7 +1070,7 @@ struct FunctionEmitter {
     static func llvmType(_ type: BIRType) -> String {
         switch type {
         case .number: return "double"
-        case .string: return "ptr"
+        case .string, .composite: return "ptr"
         case .boolean: return "i1"
         case .void: return "void"
         }
@@ -811,7 +1079,7 @@ struct FunctionEmitter {
     static func zero(_ type: BIRType) -> String {
         switch type {
         case .number: return "0.0"
-        case .string: return "null"
+        case .string, .composite: return "null"
         case .boolean: return "false"
         case .void: return ""
         }

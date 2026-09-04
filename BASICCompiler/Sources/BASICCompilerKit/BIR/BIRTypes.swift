@@ -17,7 +17,7 @@ import Foundation
 // two strings concatenates, and truthiness is the interpreter's `truthy`.
 
 /// The static type of a value.
-public enum BIRType: String, Sendable, Hashable {
+public enum BIRType: Sendable, Hashable {
     /// A number. The interpreter keeps every number as a `Double`, so does BIR.
     case number
     /// A string, held by the runtime.
@@ -27,6 +27,25 @@ public enum BIRType: String, Sendable, Hashable {
     case boolean
     /// No value; the type of a `SUB`-shaped call.
     case void
+    /// A `TYPE` record, `CLASS` object, or `INTERFACE` value, by name.
+    case composite(String)
+
+    /// The type as diagnostics spell it.
+    public var name: String {
+        switch self {
+        case .number: return "number"
+        case .string: return "string"
+        case .boolean: return "boolean"
+        case .void: return "void"
+        case .composite(let typeName): return typeName
+        }
+    }
+
+    /// Whether values of this type live in the runtime (pointers).
+    public var isComposite: Bool {
+        if case .composite = self { return true }
+        return false
+    }
 }
 
 /// Where a variable's storage lives.
