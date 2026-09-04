@@ -266,6 +266,30 @@ extension BASICRuntime {
                 }
                 return .empty
 
+            case "FILL":
+                // A single child filling the panel, as the gallery's charts do:
+                // `vector.anchors = .fill(); panel.content.addSubview(vector)`.
+                //
+                // `add` stacks instead, in a padded VStack, which is right for
+                // a group of controls and wrong for one view that should own
+                // the panel — an extra layer and a one-column inset change the
+                // rect a chart is measured and clipped against.
+                guard let panel = registry.views[id] as? Panel else {
+                    throw BASICError.runtime("\(typeName) is not a panel")
+                }
+                guard let childID = handle(0),
+                      let child = BASICRuntime.materializeTUIView(
+                          id: childID, registry: registry
+                      ) else {
+                    throw BASICError.runtime("\(typeName).fill expects a view")
+                }
+                // The stack `add` would have used is left out of the way.
+                registry.panelStacks[id]?.removeFromSuperview()
+                registry.panelStacks[id] = nil
+                child.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, bottom: 0)
+                panel.content.addSubview(child)
+                return .empty
+
             case "MINSIZE":
                 guard let window = registry.floatingWindows[id] else {
                     throw BASICError.runtime("\(typeName) has no minimum size")

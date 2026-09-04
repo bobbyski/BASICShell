@@ -1393,6 +1393,113 @@ extension BASICRuntime {
                 }
                 throw BASICError.runtime("\(typeName) has no series")
 
+            case "SEGMENT":
+                // A timeline segment on the track most recently added, so a
+                // track reads as its label followed by its segments — and each
+                // one carries its kind, which `track` cannot: active, waiting
+                // and failed are what colour the row.
+                guard let timeline = subject as? TimelineChart else {
+                    throw BASICError.runtime("\(typeName) has no segments")
+                }
+                guard !timeline.rows.isEmpty else {
+                    throw BASICError.runtime(
+                        "\(typeName).segment needs a track — call track first"
+                    )
+                }
+                guard let start = arguments.first?.number,
+                      arguments.count > 1, let duration = arguments[1].number else {
+                    throw BASICError.runtime(
+                        "\(typeName).segment expects a start and a duration"
+                    )
+                }
+                let kindWord = (arguments.count > 2
+                    ? arguments[2].string?.description ?? "" : "").lowercased()
+                let kind: TimelineRow.SegmentKind
+                switch kindWord {
+                case "waiting": kind = .waiting
+                case "failed": kind = .failed
+                default: kind = .active
+                }
+                timeline.rows[timeline.rows.count - 1].segments.append(
+                    TimelineRow.Segment(start: start, duration: duration, kind: kind)
+                )
+                return .empty
+
+            case "DOMAIN":
+                // The axis a chart is drawn against, rather than the one it
+                // infers from its data — which is what makes the gallery's
+                // timeline read 0…800ms and its line chart 0…180s.
+                guard let low = arguments.first?.number,
+                      arguments.count > 1, let high = arguments[1].number,
+                      low < high else {
+                    throw BASICError.runtime("\(typeName).domain expects a low and a high")
+                }
+                if let timeline = subject as? TimelineChart {
+                    timeline.domain = low...high
+                    return .empty
+                }
+                if let lines = subject as? LineChart { lines.xDomain = low...high; return .empty }
+                if let scatter = subject as? ScatterChart {
+                    scatter.xDomain = low...high
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no domain")
+
+            case "YDOMAIN":
+                guard let low = arguments.first?.number,
+                      arguments.count > 1, let high = arguments[1].number,
+                      low < high else {
+                    throw BASICError.runtime("\(typeName).ydomain expects a low and a high")
+                }
+                if let lines = subject as? LineChart { lines.yDomain = low...high; return .empty }
+                if let scatter = subject as? ScatterChart {
+                    scatter.yDomain = low...high
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no y domain")
+
+            case "XFORMAT", "YFORMAT", "TICKFORMAT":
+                // A unit suffix rather than a closure: every formatter the
+                // gallery sets is `"\(Int($0))" + unit` — "ms", "MB", "s" —
+                // and a suffix is the part of that BASIC can hand over.
+                let unit = arguments.first?.string?.description ?? ""
+                let format: @Sendable (Double) -> String = { value in
+                    "\(Int(value))" + unit
+                }
+                if let timeline = subject as? TimelineChart, name == "TICKFORMAT" {
+                    timeline.tickFormatter = format
+                    return .empty
+                }
+                if let lines = subject as? LineChart {
+                    if name == "XFORMAT" { lines.xFormatter = format } else { lines.yFormatter = format }
+                    return .empty
+                }
+                if let scatter = subject as? ScatterChart {
+                    if name == "XFORMAT" { scatter.xFormatter = format } else { scatter.yFormatter = format }
+                    return .empty
+                }
+                if let bars = subject as? BarChart, name == "YFORMAT" {
+                    bars.yFormatter = format
+                    return .empty
+                }
+                throw BASICError.runtime("\(typeName) has no \(method) to set")
+
+            case "FILLAREA":
+                // `LineChart.Series(fillsArea: true)` — set after the fact by
+                // label, because a series is added by name and BASIC cannot
+                // pass a flag through the values.
+                guard let lines = subject as? LineChart else {
+                    throw BASICError.runtime("\(typeName) has no area to fill")
+                }
+                guard let label = arguments.first?.string?.description else {
+                    throw BASICError.runtime("\(typeName).fillarea expects a series label")
+                }
+                guard let index = lines.series.firstIndex(where: { $0.label == label }) else {
+                    throw BASICError.runtime("\(typeName) has no series called \(label)")
+                }
+                lines.series[index].fillsArea = true
+                return .empty
+
             case "LEGEND":
                 // The Swift sets `showsLegend` on every multi-series chart; a
                 // series without it is drawn but never named, which is what
