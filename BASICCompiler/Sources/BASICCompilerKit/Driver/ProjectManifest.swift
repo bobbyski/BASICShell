@@ -21,6 +21,14 @@ public struct ProjectManifest: Decodable {
     public let name: String
     public let entry: String?
     public let options: Options?
+    /// Libraries the project names, in the order it names them.
+    public let libraries: [Library]?
+
+    /// One entry of the manifest's `libraries` list.
+    public struct Library: Decodable, Sendable {
+        public let name: String
+        public let path: String
+    }
 
     public struct Options: Decodable {
         public let stringSub: Bool?
@@ -28,7 +36,7 @@ public struct ProjectManifest: Decodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, kind, name, entry, options
+        case schemaVersion, kind, name, entry, options, libraries
     }
 
     /// The directory holding the manifest.
@@ -47,6 +55,11 @@ public struct ProjectManifest: Decodable {
     /// The manifest for a path that is a project directory or its
     /// `project.json`; nil when the path is a plain source file.
     public static func load(at path: String) throws -> ProjectManifest? {
+        // A zipped `.basproj` is unpacked and read as the directory it is.
+        var path = path
+        if ProjectContainer.isZippedContainer(path) {
+            path = try ProjectContainer.directory(of: path)
+        }
         var manifestPath = path
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return nil }

@@ -17,10 +17,13 @@ import Foundation
 public struct SourceLoader {
     /// Inside a `.basproj`, IMPORT paths resolve against the project root.
     private let projectRoot: String?
+    private let libraries: LibraryIndex
 
-    /// Creates a loader; give a project root to resolve imports against it.
-    public init(projectRoot: String? = nil) {
+    /// Creates a loader; give a project root to resolve imports against it,
+    /// and the project's libraries for imports that name one.
+    public init(projectRoot: String? = nil, libraries: LibraryIndex = LibraryIndex()) {
         self.projectRoot = projectRoot
+        self.libraries = libraries
     }
 
     /// Loads, parses, and import-expands a program file.
@@ -74,6 +77,12 @@ public struct SourceLoader {
             let files: [String]
             if Self.isDirectoryImportPath(path) {
                 files = try Self.basFiles(in: resolved, at: location)
+            } else if let library = libraryDirectory(for: path, resolved: resolved) {
+                // A library is a directory of sources, imported whole — the
+                // interpreter's rule, so a program means the same thing to
+                // both. The project's own files come first: this is only
+                // reached when nothing under the root answered to the name.
+                files = try Self.basFiles(in: library, at: location)
             } else {
                 files = [resolved]
             }
@@ -94,6 +103,19 @@ public struct SourceLoader {
             }
         }
         return expanded
+    }
+
+    /// The sources of the library an import names, when the project's own
+    /// files do not answer to it. `IMPORT "charts"` finds it by name and
+    /// `IMPORT "Libraries/charts.baslib"` by path; both mean the library.
+    private func libraryDirectory(for path: String, resolved: String) -> String? {
+        guard !libraries.isEmpty else { return nil }
+        let extensionName = (path as NSString).pathExtension.lowercased()
+        guard extensionName.isEmpty || extensionName == "baslib" else { return nil }
+        // A `.baslib` is a container even though the path exists: it is not
+        // a file of source to be read.
+        if extensionName.isEmpty, FileManager.default.fileExists(atPath: resolved) { return nil }
+        return libraries.sources(forLibraryNamed: path)
     }
 
     /// The path an `IMPORT` line names, or nil for any other line.

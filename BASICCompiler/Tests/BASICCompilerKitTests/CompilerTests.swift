@@ -196,9 +196,19 @@ struct SwiftPMPluginTests {
         let example = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Examples/SwiftPMHello")
-        let build = try ProcessRunner.run("/usr/bin/xcrun", ["swift", "build", "--package-path", example.path])
+        // Its own scratch and cache: this runs inside `swift test`, which is
+        // holding the lock on the package the example depends on by path,
+        // and two SwiftPM builds sharing a build directory contend for it.
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basicc-example-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let build = try ProcessRunner.run("/usr/bin/xcrun", [
+            "swift", "build", "--package-path", example.path,
+            "--scratch-path", scratch.path,
+            "--cache-path", scratch.appendingPathComponent("cache").path,
+        ])
         #expect(build.exitCode == 0, Comment(rawValue: build.stderr))
-        let run = try ProcessRunner.run(example.appendingPathComponent(".build/debug/Hello").path, [])
+        let run = try ProcessRunner.run(scratch.appendingPathComponent("debug/Hello").path, [])
         #expect(run.stdout == "Hello from a SwiftPM package!\n  count1\n  count2\n  count3\n")
     }
 }

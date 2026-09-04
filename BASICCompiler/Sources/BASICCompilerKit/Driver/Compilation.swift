@@ -31,7 +31,8 @@ public struct Compilation {
     /// The BIR for a source file or project, for `--emit-bir`.
     public func bir(sourcePath: String) throws -> BIRModule {
         if let project = try ProjectManifest.load(at: sourcePath) {
-            let lines = try SourceLoader(projectRoot: project.root).load(path: project.entryPath)
+            let libraries = try LibraryIndex.build(root: project.root, declared: project.libraries ?? [])
+            let lines = try SourceLoader(projectRoot: project.root, libraries: libraries).load(path: project.entryPath)
             return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution).build(lines, moduleName: project.name)
         }
         let lines = try SourceLoader().load(path: sourcePath)

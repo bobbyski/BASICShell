@@ -19,11 +19,12 @@ enum ProcessRunner {
 
     /// Runs an executable and waits for it, draining both pipes so a chatty
     /// tool cannot deadlock on a full pipe buffer.
-    static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil) throws -> Result {
+    static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, workingDirectory: String? = nil) throws -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         if let environment { process.environment = environment }
+        if let workingDirectory { process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory) }
 
         let out = Pipe()
         let err = Pipe()
