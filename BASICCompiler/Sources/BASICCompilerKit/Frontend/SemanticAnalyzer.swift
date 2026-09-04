@@ -477,6 +477,16 @@ struct SemanticAnalyzer {
     }
 
     /// Array references inside expressions decide that a name is an array.
+    /// A TUIKit pseudo class named where no variable of that name exists is
+    /// a program the compiler has no runtime for yet — say so, rather than
+    /// letting it be read as an array and complaining about its indexes.
+    private func refuseTUIClass(_ name: VariableName, at line: ParsedLine, in function: String?) throws {
+        guard let display = SemanticModel.tuiClassNames[name.normalized],
+              model.info(name.normalized, in: function) == nil,
+              model.functions[name.normalized] == nil else { return }
+        throw CompileError("\(display) is not supported by basicc yet", at: Self.location(of: line))
+    }
+
     private mutating func noteReferences(in expression: Expression, at line: ParsedLine, in function: String?, changed: inout Bool) throws {
         switch expression {
         case .variable(let name):
@@ -500,6 +510,7 @@ struct SemanticAnalyzer {
                 try noteReferences(in: inner, at: line, in: function, changed: &changed)
             }
         case .callOrArray(let name, let arguments):
+            try refuseTUIClass(name, at: line, in: function)
             let known = model.info(name.normalized, in: function)?.type
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true,
