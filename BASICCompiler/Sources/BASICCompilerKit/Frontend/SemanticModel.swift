@@ -132,6 +132,22 @@ public final class SemanticModel {
         ],
     ]
 
+    /// The TUI classes the compiled runtime has behind it. The rest are
+    /// still refused by name (Phase 8.7 is finishing them).
+    public static let supportedTUIClasses: Set<String> = [
+        "TUIAPP", "TUIWINDOW", "TUISTACK", "TUILABEL", "TUIFIELD", "TUILIST",
+        "TUITABLE", "TUICHECK", "TUIGAUGE", "TUIBUTTON", "TUIMENU", "TUIDIALOG",
+    ]
+
+    /// What a TUI method gives back. Everything unnamed is `void`: a control
+    /// call is usually a command, and the few that answer are listed.
+    public static let tuiMembers: [String: (parameters: Int?, returns: BIRType)] = [
+        "*": (nil, .void),
+        "VALUE": (nil, .number), "VALUE$": (nil, .string), "TEXT$": (nil, .string),
+        "SELECTED": (nil, .number), "SELECTEDTEXT$": (nil, .string),
+        "CHECKED": (nil, .boolean), "COUNT": (nil, .number), "ISRUNNING": (nil, .boolean),
+    ]
+
     /// The TUIKit pseudo classes, spelled as the interpreter stores them.
     /// The compiler has no TUI runtime yet (Phase 8.7), so naming one is a
     /// diagnostic that says so rather than a type error about indexes.
@@ -219,8 +235,14 @@ public final class SemanticModel {
 
     /// The static type of a system member, when the class and member exist.
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
+        if supportedTUIClasses.contains(typeName) { return tuiMembers[member] ?? tuiMembers["*"] }
         let name = typeName == "VTG" ? "VECTORTERMINAL" : typeName
         return systemClasses[name]?[member] ?? systemClasses[name]?["*"]
+    }
+
+    /// Whether a name constructs a system object.
+    public static func isSystemClass(_ name: String) -> Bool {
+        systemClasses[name] != nil || supportedTUIClasses.contains(name)
     }
     /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
     /// anonymous ones by their canonical shape.

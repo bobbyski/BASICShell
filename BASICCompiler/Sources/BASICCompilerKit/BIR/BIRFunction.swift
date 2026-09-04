@@ -464,6 +464,11 @@ public struct BIRModule: Sendable {
         types.first { $0.name == name }?.index
     }
 
+    /// Functions a control may name as its handler, by display name. A TUI
+    /// control is wired by a string, so the program registers every function
+    /// a string could reach.
+    public var namedHandlers: [(name: String, function: String)] = []
+
     /// The display name a task shows for an async function (`<TASK #n Name>`).
     public var asyncDisplayNames: [String: String] = [:]
 

@@ -77,6 +77,15 @@ public struct BIRBuilder {
         for index in module.functions.indices where model.eventHandlers.contains(module.functions[index].name) {
             module.functions[index].isEventHandler = true
         }
+        // A TUI control names its handler with a string, so a program that
+        // builds one registers every function such a string could reach.
+        if Self.usesTUI(lines) {
+            for index in module.functions.indices where module.functions[index].parameters.count <= 1 && !module.functions[index].isAsync {
+                module.functions[index].isEventHandler = true
+                let name = module.functions[index].name
+                module.namedHandlers.append((name: model.functions[name]?.displayName ?? name, function: name))
+            }
+        }
         module.functions.append(contentsOf: closures.functions)
         module.types.append(contentsOf: closures.environmentTypes)
         module.signatures = model.signatures
@@ -85,6 +94,33 @@ public struct BIRBuilder {
             module.asyncDisplayNames[name] = model.functions[name]?.displayName
         }
         return module
+    }
+
+    /// Whether the program constructs a TUI object anywhere.
+    private static func usesTUI(_ lines: [ParsedLine]) -> Bool {
+        var found = false
+        func note(_ expression: Expression) {
+            guard !found else { return }
+            if case .callOrArray(let name, _) = expression, SemanticModel.supportedTUIClasses.contains(name.normalized) { found = true }
+            if case .functionCall(let name, _) = expression, SemanticModel.supportedTUIClasses.contains(name.normalized) { found = true }
+        }
+        for line in lines {
+            for expression in Self.expressions(in: line.statement) { note(expression) }
+            if found { return true }
+        }
+        return false
+    }
+
+    /// The top-level expressions of a statement, for a shallow scan.
+    private static func expressions(in statement: Statement) -> [Expression] {
+        switch statement {
+        case .assignment(_, _, _, let value): return value.map { [$0] } ?? []
+        case .referenceAssignment(_, let value): return value.map { [$0] } ?? []
+        case .labeled(_, let inner): return expressions(in: inner)
+        case .sequence(let statements): return statements.flatMap(expressions(in:))
+        case .expression(let expression): return [expression]
+        default: return []
+        }
     }
 
     /// The labels a GOSUB inside a FUNCTION names, uppercased. The main body
@@ -1543,7 +1579,7 @@ final class FunctionBuilder {
         case .closure(let parameters, let returnType, let captures, let body):
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
-            if SemanticModel.systemClasses[className.uppercased()] != nil, model.types[className.uppercased()] == nil {
+            if SemanticModel.isSystemClass(className.uppercased()), model.types[className.uppercased()] == nil {
                 return .systemNew(className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased(), try arguments.map { try lowerExpression($0) })
             }
             return try lowerNew(className, arguments)
@@ -1880,7 +1916,7 @@ final class FunctionBuilder {
             return .valueIndex(.load(keyed), try arguments.map { try lowerExpression($0) }, name: name.name)
         }
         if let host = try lowerHostBuiltin(name, arguments) { return host }
-        if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: functionName) == nil {
+        if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: functionName) == nil {
             return .systemNew(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized, try arguments.map { try lowerExpression($0) })
         }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {

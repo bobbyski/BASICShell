@@ -24,6 +24,30 @@ package final class RTSystemObject {
 /// The host's VTG dispatcher (BASICRTHost) — or the stub that says no.
 @_silgen_name("basic_rt_host_vtg_call") func rtHostVTGCall(_ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
 
+/// The host's TUIKit bridge (BASICRTHost) — or the stub that says no.
+@_silgen_name("basic_rt_host_tui_new") func rtHostTUINew(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
+@_silgen_name("basic_rt_host_tui_call") func rtHostTUICall(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
+
+/// Registers a named BASIC handler with the host, so a control can call it.
+@_silgen_name("basic_rt_host_handler_register") func rtHostHandlerRegister(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer)
+
+/// The compiler registers every function a control could name.
+@_cdecl("basic_rt_handler_register")
+public func basic_rt_handler_register(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer) {
+    rtHostHandlerRegister(name, handler)
+}
+
+/// A handle to a TUIKit object the host holds: the interpreter's
+/// `.systemObject(kind, id)`, which is an id and nothing more.
+package final class RTTUIHandle {
+    package let id: Int
+    package let typeName: String
+    package init(id: Int, typeName: String) {
+        self.id = id
+        self.typeName = typeName
+    }
+}
+
 /// A `VectorTerminal()` object: no state of its own — every instance
 /// shares the host canvas, as the interpreter's do.
 package final class RTVectorTerminal {}
@@ -108,6 +132,18 @@ enum RTSystem {
             return callFile(file, method: method, arguments: arguments)
         case let client as RTHTTPClient:
             return callHTTP(client, method: method, arguments: arguments)
+        case let handle as RTTUIHandle:
+            var boxes = arguments.map { Optional(rtOwned($0)) }
+            defer { boxes.forEach { basic_rt_value_release($0) } }
+            let result = boxes.withUnsafeBufferPointer { buffer in
+                handle.typeName.withCString { type in
+                    method.withCString { name in
+                        rtHostTUICall(type, handle.id, name, buffer.count, buffer.baseAddress!)
+                    }
+                }
+            }
+            defer { basic_rt_value_release(result) }
+            return rtValue(result)
         case let timer as RTTimer:
             return callTimer(timer, method: method, arguments: arguments)
         case is RTVectorTerminal:
@@ -395,7 +431,19 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     case "SECONDSTIMER":
         guard values.count == 1 else { basic_rt_fail("SecondsTimer expects 1 argument") }
         return basic_rt_timer_new(RTSystem.timerNumber(values[0], "SecondsTimer interval"))
-    default: basic_rt_fail("Unknown CLASS \(String(cString: typeName))")
+    default:
+        // TUIKit's pseudo classes live in the host half, over TUIKit itself.
+        let name = String(cString: typeName)
+        if name.uppercased().hasPrefix("TUI") {
+            var boxes = values.map { Optional(rtOwned($0)) }
+            defer { boxes.forEach { basic_rt_value_release($0) } }
+            let handle = boxes.withUnsafeBufferPointer { buffer in
+                name.withCString { rtHostTUINew($0, buffer.count, buffer.baseAddress!) }
+            }
+            defer { basic_rt_value_release(handle) }
+            return rtOwned(.system(RTSystemObject(typeName: name, payload: RTTUIHandle(id: Int(rtValue(handle).number ?? 0), typeName: name))))
+        }
+        basic_rt_fail("Unknown CLASS \(name)")
     }
 }
 

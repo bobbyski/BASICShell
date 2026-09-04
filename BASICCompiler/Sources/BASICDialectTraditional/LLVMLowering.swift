@@ -493,6 +493,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_file_files(ptr)
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
     declare void @basic_rt_event_register(ptr, ptr, ptr, i64)
+    declare void @basic_rt_handler_register(ptr, ptr)
     declare void @basic_rt_event_post(ptr, ptr, ptr)
     declare void @basic_rt_events_drain(i64)
     declare void @basic_rt_timer_on(ptr, double, ptr, i64)
@@ -691,6 +692,9 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
             if module.functions.contains(where: \.isAsync) {
                 out.emit("call void @basic_rt_tasks_install(ptr @\"globals.capture\", ptr @\"globals.restore\")")
+            }
+            for handler in module.namedHandlers {
+                out.emit("call void @basic_rt_handler_register(ptr \(constants.constant(handler.name)), ptr @\"E.\(handler.function)\")")
             }
         }
         if usesGosub {

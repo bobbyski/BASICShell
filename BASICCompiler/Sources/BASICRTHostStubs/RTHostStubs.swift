@@ -50,3 +50,16 @@ public func basic_rt_host_mouse_reporting(_ enabled: Bool) {}
 
 @_cdecl("basic_rt_host_canvas_update")
 public func basic_rt_host_canvas_update(_ width: Int, _ height: Int, _ source: UnsafePointer<CChar>) {}
+
+@_cdecl("basic_rt_host_tui_new")
+public func basic_rt_host_tui_new(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("TUI applications are not supported by this host")
+}
+
+@_cdecl("basic_rt_host_tui_call")
+public func basic_rt_host_tui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("TUI applications are not supported by this host")
+}
+
+@_cdecl("basic_rt_host_handler_register")
+public func basic_rt_host_handler_register(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer) {}
