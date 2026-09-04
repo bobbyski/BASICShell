@@ -119,6 +119,10 @@ final class BASICTUIRegistry {
     var preferences: [Int: Preferences] = [:]
     var formFields: [Int: [(title: String, view: TUIView)]] = [:]
     var preferencesDialogs: [Int: PreferencesDialog] = [:]
+
+    /// Tab titles, in order. A `TabView` keeps its own privately, so a program
+    /// that wants to name the page it just switched to has nowhere to read.
+    var tabTitles: [Int: [String]] = [:]
     /// Windows to present once the app is up.
     var pendingPresents: [Int] = []
     /// The BASIC function each control calls, by handle.
@@ -1756,6 +1760,20 @@ extension BASICRuntime {
             case "CONTEXTMENU":
                 // Any view can carry one; on a button with no handler, holding
                 // it opens the menu instead of firing an action.
+                // A window presents a menu at a point rather than carrying one:
+                // the held-Back history menu opens under the button, not under
+                // the pointer.
+                if let window = registry.windows[id] {
+                    guard case .systemObject(_, let menuID)? = arguments.first,
+                          let bar = registry.menus[menuID],
+                          let menu = bar.menus.first else {
+                        throw BASICError.runtime("\(typeName).contextmenu expects a menu")
+                    }
+                    let x = arguments.count > 1 ? Int(arguments[1].number ?? 0) : 0
+                    let y = arguments.count > 2 ? Int(arguments[2].number ?? 0) : 0
+                    window.presentContextMenu(menu, at: Point(x: x, y: y))
+                    return .empty
+                }
                 guard let view = subject else {
                     throw BASICError.runtime("\(typeName) cannot carry a menu")
                 }

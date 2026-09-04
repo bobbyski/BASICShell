@@ -260,6 +260,68 @@ extension BASICRuntime {
                 window.openSlideOut(Self.tuiEdge(edge))
                 return .empty
 
+            case "MINSIZE":
+                guard let window = registry.floatingWindows[id] else {
+                    throw BASICError.runtime("\(typeName) has no minimum size")
+                }
+                guard let width = number(0), let height = number(1) else {
+                    throw BASICError.runtime("\(typeName).minsize expects a width and a height")
+                }
+                window.minimumWindowSize = Size(width: width, height: height)
+                return .empty
+
+            case "MAXIMIZEINSETS":
+                guard let window = registry.floatingWindows[id] else {
+                    throw BASICError.runtime("\(typeName) does not maximize")
+                }
+                // Top and bottom only, which is what keeping a menu bar and a
+                // status strip visible needs.
+                window.maximizeInsets = EdgeInsets(
+                    top: number(0) ?? 0, bottom: number(1) ?? 0
+                )
+                return .empty
+
+            case "ONCLOSE":
+                guard let window = registry.floatingWindows[id] else {
+                    throw BASICError.runtime("\(typeName) has no close request")
+                }
+                guard let handler = text(0) else {
+                    throw BASICError.runtime("\(typeName).onclose expects a handler name")
+                }
+                window.onCloseRequest = {
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+                return .empty
+
+            case "LONGPRESS":
+                guard let bar = registry.views[id] as? Toolbar else {
+                    throw BASICError.runtime("\(typeName) has no items to hold")
+                }
+                guard let itemTitle = text(0), let handler = text(1) else {
+                    throw BASICError.runtime(
+                        "\(typeName).longpress expects an item title and a handler"
+                    )
+                }
+                // By title, because `additem` returns nothing a BASIC program
+                // can hold on to.
+                guard let index = bar.items.firstIndex(where: { $0.title == itemTitle }) else {
+                    throw BASICError.runtime("\(typeName) has no item called \(itemTitle)")
+                }
+                bar.items[index].longPressAction = {
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                }
+                return .empty
+
+            case "SELECTEDTITLE":
+                guard let tabs = registry.views[id] as? TabView else {
+                    throw BASICError.runtime("\(typeName) has no tabs")
+                }
+                let titles = registry.tabTitles[id] ?? []
+                guard titles.indices.contains(tabs.selectedIndex) else {
+                    return .string(BASICString(""))
+                }
+                return .string(BASICString(titles[tabs.selectedIndex]))
+
             case "ADDTAB":
                 guard let tabs = registry.views[id] as? TabView else {
                     throw BASICError.runtime("\(typeName) has no tabs")
@@ -269,6 +331,7 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName).addtab expects a title and a view")
                 }
                 tabs.addTab(tabTitle, content: content)
+                registry.tabTitles[id, default: []].append(tabTitle)
                 return .empty
 
             case "ONSELECT":
