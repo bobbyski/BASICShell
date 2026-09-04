@@ -153,6 +153,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_string_mid(ptr, double, double)
     declare ptr @basic_rt_space(double)
     declare ptr @basic_rt_string_repeat(double, ptr)
+    declare ptr @basic_rt_write_quote(ptr)
     declare ptr @basic_rt_array_dim(i64, ptr, i64, i64)
     declare ptr @basic_rt_array_load_composite(ptr, i64)
     declare void @basic_rt_array_store_composite(ptr, i64, ptr)
@@ -188,6 +189,20 @@ struct LLVMLowering {
     declare i64 @basic_rt_resume_next()
     declare double @basic_rt_err()
     declare double @basic_rt_erl()
+    declare void @basic_rt_cls()
+    declare void @basic_rt_capture_begin()
+    declare ptr @basic_rt_capture_end()
+    declare void @basic_rt_file_open(ptr, i64, double)
+    declare void @basic_rt_file_close(double)
+    declare void @basic_rt_file_print(double, ptr)
+    declare void @basic_rt_file_write_line(double, ptr)
+    declare void @basic_rt_file_input_begin(double)
+    declare double @basic_rt_file_input_number(double, ptr)
+    declare ptr @basic_rt_file_input_string(double)
+    declare ptr @basic_rt_file_line_input(double)
+    declare i1 @basic_rt_file_eof(double)
+    declare double @basic_rt_file_lof(double)
+    declare double @basic_rt_file_loc(double)
     declare double @llvm.fabs.f64(double)
     declare double @llvm.floor.f64(double)
     declare double @llvm.trunc.f64(double)
@@ -499,6 +514,88 @@ struct FunctionEmitter {
             }
         case .restore:
             out.emit("call void @basic_rt_restore()")
+        case .cls:
+            out.emit("call void @basic_rt_cls()")
+        case .openFile(let path, let mode, let number):
+            let pathValue = lowerValue(path).0
+            let numberValue = lowerValue(number).0
+            out.emit("call void @basic_rt_file_open(ptr \(pathValue), i64 \(mode), double \(numberValue))")
+        case .closeFile(let number):
+            out.emit("call void @basic_rt_file_close(double \(number.map { lowerValue($0).0 } ?? "0.0"))")
+        case .printFile(let number, let items, let newline):
+            let numberValue = lowerValue(number).0
+            out.emit("call void @basic_rt_capture_begin()")
+            lower(.print(items, newline: newline))
+            let text = out.temp()
+            out.emit("\(text) = call ptr @basic_rt_capture_end()")
+            owned.append(text)
+            out.emit("call void @basic_rt_file_print(double \(numberValue), ptr \(text))")
+        case .writeFile(let number, let values):
+            let numberValue = lowerValue(number).0
+            // WRITE quotes strings, doubles their quotes, and renders the rest as PRINT does.
+            var line: String? = nil
+            for value in values {
+                let (result, _) = lowerValue(value)
+                let piece = out.temp()
+                switch value.type {
+                case .string: out.emit("\(piece) = call ptr @basic_rt_write_quote(ptr \(result))")
+                case .number: out.emit("\(piece) = call ptr @basic_rt_number_text(double \(result))")
+                case .boolean:
+                    let text = out.temp()
+                    out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
+                    let length = out.temp()
+                    out.emit("\(length) = select i1 \(result), i64 4, i64 5")
+                    out.emit("\(piece) = call ptr @basic_rt_string_literal(ptr \(text), i64 \(length))")
+                case .composite, .void: out.emit("\(piece) = call ptr @basic_rt_composite_text(ptr \(result))")
+                }
+                owned.append(piece)
+                if let previous = line {
+                    let comma = out.temp()
+                    out.emit("\(comma) = call ptr @basic_rt_string_literal(ptr \(constants.constant(",")), i64 1)")
+                    owned.append(comma)
+                    let joined = out.temp(), joined2 = out.temp()
+                    out.emit("\(joined) = call ptr @basic_rt_string_concat(ptr \(previous), ptr \(comma))")
+                    out.emit("\(joined2) = call ptr @basic_rt_string_concat(ptr \(joined), ptr \(piece))")
+                    owned.append(joined); owned.append(joined2)
+                    line = joined2
+                } else {
+                    line = piece
+                }
+            }
+            out.emit("call void @basic_rt_file_write_line(double \(numberValue), ptr \(line ?? "null"))")
+        case .inputFile(let number, let targets):
+            let numberValue = lowerValue(number).0
+            out.emit("call void @basic_rt_file_input_begin(double \(numberValue))")
+            for target in targets {
+                switch target {
+                case .variable(let variable):
+                    let value = out.temp()
+                    if variable.type == .string {
+                        out.emit("\(value) = call ptr @basic_rt_file_input_string(double \(numberValue))")
+                        storeManaged(value, owned: true, into: slotName(variable), type: .string)
+                    } else {
+                        out.emit("\(value) = call double @basic_rt_file_input_number(double \(numberValue), ptr \(constants.constant(variable.name)))")
+                        out.emit("store double \(value), ptr \(slotName(variable))")
+                    }
+                case .element(let variable, let indexes):
+                    let value = out.temp()
+                    if variable.type == .string {
+                        out.emit("\(value) = call ptr @basic_rt_file_input_string(double \(numberValue))")
+                        owned.append(value)
+                        let (array, offset) = elementOffset(variable, indexes)
+                        out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(value))")
+                    } else {
+                        out.emit("\(value) = call double @basic_rt_file_input_number(double \(numberValue), ptr \(constants.constant(variable.name)))")
+                        let (array, offset) = elementOffset(variable, indexes)
+                        out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(value))")
+                    }
+                }
+            }
+        case .lineInputFile(let number, let variable):
+            let numberValue = lowerValue(number).0
+            let value = out.temp()
+            out.emit("\(value) = call ptr @basic_rt_file_line_input(double \(numberValue))")
+            storeManaged(value, owned: true, into: slotName(variable), type: .string)
         case .markStatement(let id, let line):
             out.emit("call void @basic_rt_statement(i64 \(id), i64 \(line))")
         case .onError(let handler):
@@ -1044,6 +1141,11 @@ struct FunctionEmitter {
         case .rnd: return number("call double @basic_rt_rnd()")
         case .err: return number("call double @basic_rt_err()")
         case .erl: return number("call double @basic_rt_erl()")
+        case .lof: return number("call double @basic_rt_file_lof(double \(a))")
+        case .loc: return number("call double @basic_rt_file_loc(double \(a))")
+        case .eof:
+            out.emit("\(result) = call i1 @basic_rt_file_eof(double \(a))")
+            return (result, false)
         case .len: return number("call double @basic_rt_string_length(ptr \(a))")
         case .asc: return number("call double @basic_rt_string_asc(ptr \(a))")
         case .val: return number("call double @basic_rt_string_val(ptr \(a))")

@@ -382,6 +382,51 @@ final class FunctionBuilder {
             emit(.read(try targets.map(lowerReadTarget)))
         case .restore:
             emit(.restore)
+        case .cls:
+            emit(.cls)
+
+        case .openFile(let path, let mode, let number, let recordLength):
+            guard recordLength == nil else { throw unsupported("OPEN … LEN") }
+            let modeCode: Int
+            switch mode {
+            case .input: modeCode = 0
+            case .output: modeCode = 1
+            case .append: modeCode = 2
+            case .binary, .random: throw unsupported("OPEN FOR \(mode.rawValue)")
+            }
+            emit(.openFile(
+                path: try lowerExpression(path, expecting: .string, context: "OPEN"),
+                mode: modeCode,
+                number: try lowerExpression(number, expecting: .number, context: "OPEN AS")
+            ))
+        case .closeFile(let number):
+            emit(.closeFile(try number.map { try lowerExpression($0, expecting: .number, context: "CLOSE") }))
+        case .printFile(let number, let parts):
+            let items = try parts
+                .filter { if case .separator(.semicolon) = $0 { return false } else { return true } }
+                .map(lowerPrintPart)
+            emit(.printFile(
+                number: try lowerExpression(number, expecting: .number, context: "PRINT #"),
+                items: items, newline: !(parts.last?.suppressesNewline ?? false)
+            ))
+        case .writeFile(let number, let values):
+            emit(.writeFile(
+                number: try lowerExpression(number, expecting: .number, context: "WRITE #"),
+                values: try values.map { try lowerExpression($0) }
+            ))
+        case .inputFile(let number, let targets):
+            emit(.inputFile(
+                number: try lowerExpression(number, expecting: .number, context: "INPUT #"),
+                targets: try targets.map(lowerReadTarget)
+            ))
+        case .lineInputFile(let number, .variable(let name)):
+            let target = variable(name)
+            guard target.type == .string, target.rank == nil else {
+                throw CompileError("Type error: LINE INPUT # needs a string variable, got \(name.name)", at: location)
+            }
+            emit(.lineInputFile(number: try lowerExpression(number, expecting: .number, context: "LINE INPUT #"), into: target))
+        case .lineInputFile:
+            throw unsupported("LINE INPUT # into an array element or field")
 
         case .goto(let number):
             terminate(.jump(try blockForTarget(.line(number))))

@@ -81,6 +81,20 @@ public enum BIROperation: Sendable {
     case read([BIRReadTarget])
     /// `RESTORE`: rewind DATA.
     case restore
+    /// `CLS`.
+    case cls
+    /// `OPEN path FOR mode AS #n`: mode 0 input, 1 output, 2 append.
+    case openFile(path: BIRExpression, mode: Int, number: BIRExpression)
+    /// `CLOSE #n`, or every file when nil.
+    case closeFile(BIRExpression?)
+    /// `PRINT #n, items` — rendered like PRINT, appended to the file.
+    case printFile(number: BIRExpression, items: [BIRPrintItem], newline: Bool)
+    /// `WRITE #n, values` — quoted, comma-separated, one line.
+    case writeFile(number: BIRExpression, values: [BIRExpression])
+    /// `INPUT #n, targets`.
+    case inputFile(number: BIRExpression, targets: [BIRReadTarget])
+    /// `LINE INPUT #n, target`.
+    case lineInputFile(number: BIRExpression, into: BIRVariable)
     /// Marks the start of statement `id` on display line `line`, so a
     /// runtime error knows its `ERL` and where `RESUME NEXT` continues.
     /// Emitted only when the program uses `ON ERROR`.

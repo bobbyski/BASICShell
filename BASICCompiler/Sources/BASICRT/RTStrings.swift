@@ -194,3 +194,9 @@ public func basic_rt_string_repeat(_ count: Double, _ pointer: UnsafeMutableRawP
     }
     return rtOwned(String(repeating: String(first), count: max(0, Int(count.rounded()))))
 }
+
+/// `WRITE #`'s quoting: `"text"` with inner quotes doubled; owned.
+@_cdecl("basic_rt_write_quote")
+public func basic_rt_write_quote(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    rtOwned("\"" + rtText(pointer).replacingOccurrences(of: "\"", with: "\"\"") + "\"")
+}

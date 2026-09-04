@@ -89,6 +89,32 @@ public struct BIRPrinter {
             }.joined(separator: ", ")
         case .restore:
             return "restore"
+        case .cls:
+            return "cls"
+        case .openFile(let path, let mode, let number):
+            return "open \(render(path)) mode \(mode) as \(render(number))"
+        case .closeFile(let number):
+            return "close" + (number.map { " " + render($0) } ?? "")
+        case .printFile(let number, let items, let newline):
+            return "print #\(render(number)) " + items.map { item -> String in
+                switch item {
+                case .value(let value): return render(value)
+                case .comma: return ","
+                case .tab(let value): return "tab(\(render(value)))"
+                case .spc(let value): return "spc(\(render(value)))"
+                }
+            }.joined(separator: " ") + (newline ? " newline" : "")
+        case .writeFile(let number, let values):
+            return "write #\(render(number)) " + values.map(render).joined(separator: ", ")
+        case .inputFile(let number, let targets):
+            return "input #\(render(number)) " + targets.map { target -> String in
+                switch target {
+                case .variable(let variable): return variable.name
+                case .element(let variable, let indexes): return "\(variable.name)(\(indexes.map(render).joined(separator: ", ")))"
+                }
+            }.joined(separator: ", ")
+        case .lineInputFile(let number, let variable):
+            return "line input #\(render(number)) -> \(variable.name)"
         case .markStatement(let id, let line):
             return "statement \(id) line \(line)"
         case .onError(let handler):

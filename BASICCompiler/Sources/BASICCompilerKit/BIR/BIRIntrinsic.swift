@@ -24,6 +24,10 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// `ERR` and `ERL` read like variables but are runtime state.
     case err = "ERR"
     case erl = "ERL"
+    // Files → number
+    case eof = "EOF"
+    case lof = "LOF"
+    case loc = "LOC"
     // Strings → number
     case len = "LEN"
     case asc = "ASC"
@@ -42,8 +46,10 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     public var returnType: BIRType {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
-             .len, .asc, .val, .instr:
+             .len, .asc, .val, .instr, .lof, .loc:
             return .number
+        case .eof:
+            return .boolean
         case .str, .chr, .left, .right, .mid, .space, .stringRepeat:
             return .string
         }
@@ -53,7 +59,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// argument; ``lookup(_:argumentCount:)`` checks the count.
     public var parameterTypes: [BIRType] {
         switch self {
-        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space:
+        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc:
             return [.number]
         case .rnd, .err, .erl:
             return []

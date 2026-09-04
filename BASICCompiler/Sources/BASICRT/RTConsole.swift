@@ -14,6 +14,15 @@ enum RTConsole {
     nonisolated(unsafe) static var column = 0
 
     static func write(_ text: String) {
+        if RTCapture.active {
+            RTCapture.text += text
+            if let lastNewline = text.lastIndex(of: "\n") {
+                RTCapture.column = text.distance(from: text.index(after: lastNewline), to: text.endIndex)
+            } else {
+                RTCapture.column += text.count
+            }
+            return
+        }
         fputs(text, stdout)
         if let lastNewline = text.lastIndex(of: "\n") {
             column = text.distance(from: text.index(after: lastNewline), to: text.endIndex)
@@ -21,6 +30,10 @@ enum RTConsole {
             column += text.count
         }
     }
+
+    /// The column PRINT's `,` and TAB measure against: the capture's while
+    /// rendering for a file, else the console's.
+    static var effectiveColumn: Int { RTCapture.active ? RTCapture.column : column }
 }
 
 @_cdecl("basic_rt_print_text")
@@ -41,7 +54,7 @@ public func basic_rt_print_boolean(_ value: Bool) {
 /// `,` — pad to the next zone.
 @_cdecl("basic_rt_print_comma")
 public func basic_rt_print_comma() {
-    let spaces = RTConsole.zoneWidth - (RTConsole.column % RTConsole.zoneWidth)
+    let spaces = RTConsole.zoneWidth - (RTConsole.effectiveColumn % RTConsole.zoneWidth)
     RTConsole.write(String(repeating: " ", count: spaces))
 }
 
@@ -49,7 +62,7 @@ public func basic_rt_print_comma() {
 @_cdecl("basic_rt_print_tab")
 public func basic_rt_print_tab(_ target: Double) {
     let targetColumn = max(0, Int(target.rounded()) - 1)
-    RTConsole.write(String(repeating: " ", count: max(0, targetColumn - RTConsole.column)))
+    RTConsole.write(String(repeating: " ", count: max(0, targetColumn - RTConsole.effectiveColumn)))
 }
 
 /// `SPC(n)` — n spaces.
@@ -97,4 +110,33 @@ public func basic_rt_line_input(_ prompt: UnsafeMutableRawPointer?) -> UnsafeMut
     let raw = readInputLine(prompt: prompt, defaultPrompt: "") ?? ""
     RTConsole.column = 0
     return rtOwned(raw)
+}
+
+/// `CLS`: the ANSI clear the interpreter prints, then column 0.
+@_cdecl("basic_rt_cls")
+public func basic_rt_cls() {
+    RTConsole.write("\u{001B}[2J\u{001B}[H\n")
+    RTConsole.column = 0
+}
+
+/// Renders PRINT items into a string instead of the console, for PRINT #.
+/// The compiler brackets the items with begin/end and the runtime collects.
+enum RTCapture {
+    nonisolated(unsafe) static var active = false
+    nonisolated(unsafe) static var text = ""
+    nonisolated(unsafe) static var column = 0
+}
+
+@_cdecl("basic_rt_capture_begin")
+public func basic_rt_capture_begin() {
+    RTCapture.active = true
+    RTCapture.text = ""
+    RTCapture.column = 0
+}
+
+/// Ends a capture and returns the text, owned.
+@_cdecl("basic_rt_capture_end")
+public func basic_rt_capture_end() -> UnsafeMutableRawPointer {
+    RTCapture.active = false
+    return rtOwned(RTCapture.text)
 }

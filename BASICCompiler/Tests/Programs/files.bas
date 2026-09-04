@@ -1,0 +1,27 @@
+F$ = "basicc-files-test.txt"
+OPEN F$ FOR OUTPUT AS #1
+PRINT #1, "Ada,16"
+PRINT #1, "Grace"; ","; 17
+WRITE #1, "Kath B", 18, TRUE
+CLOSE #1
+OPEN F$ FOR APPEND AS #1
+PRINT #1, "Linus,19"
+CLOSE #1
+OPEN F$ FOR INPUT AS #2
+PRINT "LOF ="; LOF(2)
+N = 0
+WHILE_LOOP:
+IF EOF(2) THEN GOTO DONE
+INPUT #2, Name$, Age
+N = N + 1
+PRINT N; Name$; Age
+GOTO WHILE_LOOP
+DONE:
+PRINT "EOF ="; EOF(2); "LOC ="; LOC(2)
+CLOSE #2
+OPEN F$ FOR INPUT AS #3
+LINE INPUT #3, L$
+PRINT "FIRST LINE: "; L$
+CLOSE
+OPEN "missing-file.txt" FOR INPUT AS #4
+PRINT "NEVER"
