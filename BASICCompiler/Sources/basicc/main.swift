@@ -5,11 +5,9 @@ import Foundation
 // basicc — the CLI driver.
 //
 // Owns no language knowledge. Parses the command line, asks the registry for
-// a dialect, and hands it the work. Commands grow with the phases in
-// BASIC_COMPILER.md; today: `--version`, `dialects`, and `help`.
+// a dialect, and hands it the work.
 
 let version = "0.1.0"
-
 let registry = DialectRegistry([TraditionalDialect()])
 
 func printUsage() {
@@ -17,31 +15,115 @@ func printUsage() {
     basicc \(version) — a BASIC compiler that builds LLVM modules and links Swift libraries
 
     usage:
-      basicc dialects            list the dialects this build supports
-      basicc --version           print the version
-      basicc help                this text
+      basicc build <file.bas> [options]   compile to an executable
+      basicc run <file.bas> [options]     compile, then run it
+      basicc dialects                     list the dialects this build supports
+      basicc --version
 
-    build and run arrive with Phase 3 and Phase 6 of BASIC_COMPILER.md.
+    options:
+      -o <path>            output executable (default: the source's base name)
+      --dialect <name>     traditional (default) or, later, swift
+      --emit-bir           print the compiler's IR instead of building
+      --emit-llvm          print the LLVM IR instead of building
     """)
 }
 
-func printDialects() {
-    for identity in registry.identities {
-        let marker = identity.isDefault ? " (default)" : ""
-        print("\(identity.identifier)\(marker)\t\(identity.summary)")
+func fail(_ message: String, code: Int32 = 1) -> Never {
+    FileHandle.standardError.write(Data("basicc: \(message)\n".utf8))
+    exit(code)
+}
+
+struct Invocation {
+    var command: String
+    var source: String?
+    var output: String?
+    var dialect: String?
+    var emitBIR = false
+    var emitLLVM = false
+
+    init(_ arguments: [String]) {
+        command = arguments.first ?? "help"
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "-o":
+                index += 1
+                guard index < arguments.count else { fail("-o needs a path") }
+                output = arguments[index]
+            case "--dialect":
+                index += 1
+                guard index < arguments.count else { fail("--dialect needs a name") }
+                dialect = arguments[index]
+            case "--emit-bir": emitBIR = true
+            case "--emit-llvm": emitLLVM = true
+            default:
+                if argument.hasPrefix("-") { fail("unknown option '\(argument)'", code: 2) }
+                if source == nil { source = argument } else { fail("only one source file at a time", code: 2) }
+            }
+            index += 1
+        }
     }
 }
 
-let arguments = Array(CommandLine.arguments.dropFirst())
-switch arguments.first {
+func compilation(for invocation: Invocation) -> Compilation {
+    do {
+        return Compilation(dialect: try registry.dialect(named: invocation.dialect))
+    } catch {
+        fail("\(error)", code: 2)
+    }
+}
+
+func buildCommand(_ invocation: Invocation, thenRun: Bool) {
+    guard let source = invocation.source else { fail("a source file is required", code: 2) }
+    let compilation = compilation(for: invocation)
+    do {
+        if invocation.emitBIR {
+            print(BIRPrinter().render(try compilation.bir(sourcePath: source)), terminator: "")
+            return
+        }
+        if invocation.emitLLVM {
+            print(try compilation.llvmIR(sourcePath: source), terminator: "")
+            return
+        }
+        let output = invocation.output ?? Compilation.moduleName(for: source)
+        try compilation.build(sourcePath: source, output: output)
+        if thenRun {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: output).absoluteURL
+            process.standardInput = FileHandle.standardInput
+            process.standardOutput = FileHandle.standardOutput
+            process.standardError = FileHandle.standardError
+            try process.run()
+            process.waitUntilExit()
+            exit(process.terminationStatus)
+        }
+    } catch let error as CompileError {
+        for diagnostic in error.diagnostics {
+            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        }
+        exit(1)
+    } catch {
+        fail("\(error)")
+    }
+}
+
+let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
+switch invocation.command {
 case "--version", "-v":
     print("basicc \(version)")
 case "dialects":
-    printDialects()
-case nil, "help", "--help", "-h":
+    for identity in registry.identities {
+        print("\(identity.identifier)\(identity.isDefault ? " (default)" : "")\t\(identity.summary)")
+    }
+case "build":
+    buildCommand(invocation, thenRun: false)
+case "run":
+    buildCommand(invocation, thenRun: true)
+case "help", "--help", "-h":
     printUsage()
-case let other?:
-    FileHandle.standardError.write(Data("basicc: unknown command '\(other)'\n\n".utf8))
+default:
+    FileHandle.standardError.write(Data("basicc: unknown command '\(invocation.command)'\n\n".utf8))
     printUsage()
     exit(2)
 }

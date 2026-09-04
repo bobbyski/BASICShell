@@ -13,7 +13,8 @@ import PackageDescription
 //   BASICRT                   the runtime library, in Swift, linked into
 //                             every compiled program
 //
-// No external dependencies, by design: the compiler must build offline.
+// The only dependency is BASICSyntax — the interpreter's own front end,
+// published by the BASICCore package. Nothing is fetched from the network.
 let package = Package(
     name: "BASICCompiler",
     platforms: [.macOS("16.0")],
@@ -23,8 +24,14 @@ let package = Package(
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
     ],
+    dependencies: [
+        .package(path: "../BASICCore"),
+    ],
     targets: [
-        .target(name: "BASICCompilerKit"),
+        .target(
+            name: "BASICCompilerKit",
+            dependencies: [.product(name: "BASICSyntax", package: "BASICCore")]
+        ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICRT"),
         .executableTarget(

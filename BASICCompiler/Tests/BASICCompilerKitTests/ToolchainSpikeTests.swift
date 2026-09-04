@@ -16,14 +16,21 @@ struct ToolchainSpikeTests {
 
     @.str = private constant [13 x i8] c"HELLO, WORLD\\00"
 
-    declare void @basic_rt_print_cstring(ptr)
-    declare void @basic_rt_print_double(double)
+    declare ptr @basic_rt_string_literal(ptr, i64)
+    declare void @basic_rt_print_text(ptr)
+    declare void @basic_rt_print_number(double)
+    declare void @basic_rt_print_newline()
+    declare void @basic_rt_finish()
 
     define i32 @main(i32 %argc, ptr %argv) {
     entry:
-      call void @basic_rt_print_cstring(ptr @.str)
+      %s = call ptr @basic_rt_string_literal(ptr @.str, i64 12)
+      call void @basic_rt_print_text(ptr %s)
+      call void @basic_rt_print_newline()
       %x = fadd double 40.0, 2.0
-      call void @basic_rt_print_double(double %x)
+      call void @basic_rt_print_number(double %x)
+      call void @basic_rt_print_newline()
+      call void @basic_rt_finish()
       ret i32 0
     }
 
@@ -45,7 +52,7 @@ struct ToolchainSpikeTests {
 
         let run = try ProcessRunner.run(path("spike"), [])
         #expect(run.exitCode == 0)
-        #expect(run.stdout == "HELLO, WORLD\n 42.0 \n")
+        #expect(run.stdout == "HELLO, WORLD\n42\n")
     }
 }
 
