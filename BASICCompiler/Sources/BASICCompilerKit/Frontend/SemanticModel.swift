@@ -73,6 +73,8 @@ public final class SemanticModel {
         var wasDimensioned = false
     }
 
+    /// Whether `OPTION LOCAL-LET` is in effect for the program.
+    public internal(set) var usesLocalLet = false
     /// Functions by normalized name.
     public private(set) var functions: [String: Function] = [:]
     /// Function names in source order.

@@ -239,14 +239,33 @@ struct SemanticAnalyzer {
         }
     }
 
-    /// `LOCAL` declarations make a name local to its function.
+    /// `LOCAL` declarations make a name local to its function — and under
+    /// `OPTION LOCAL-LET` (anywhere in the program body; the interpreter's
+    /// switch is global), so does every plain assignment, DIM, INPUT, READ,
+    /// and FOR inside a function. `GLOBAL x = …` stays global either way.
     private mutating func collectLocals() {
+        let localLet = lines.enumerated().contains { index, line in
+            guard owner[index] == nil else { return false }
+            var found = false
+            Self.forEachStatement(in: line.statement) { if case .optionLetMode(.local) = $0 { found = true } }
+            return found
+        }
+        model.usesLocalLet = localLet
         for (index, line) in lines.enumerated() {
             guard let function = owner[index], function != Self.declaration else { continue }
             Self.forEachStatement(in: line.statement) { statement in
                 switch statement {
                 case .assignment(.local, let name, _, _), .dim(.local, let name, _, _):
                     model.declareLocal(name.normalized, in: function)
+                case .assignment(.bare, let name, _, _), .assignment(.letValue, let name, _, _),
+                     .dim(.bare, let name, _, _), .dim(.letValue, let name, _, _), .forLoop(let name, _, _, _):
+                    if localLet { model.declareLocal(name.normalized, in: function) }
+                case .input(_, .variable(let name)), .lineInput(_, .variable(let name), _, _, _, _):
+                    if localLet { model.declareLocal(name.normalized, in: function) }
+                case .read(let targets):
+                    if localLet {
+                        for case .variable(let name) in targets { model.declareLocal(name.normalized, in: function) }
+                    }
                 default:
                     break
                 }

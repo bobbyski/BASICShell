@@ -591,6 +591,10 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_fail_missing(ptr \(constants.constant(message)))")
             out.emit("unreachable")
             out.label(out.freshLabel("fail.cont"))
+        case .failType(let message):
+            out.emit("call void @basic_rt_fail_type(ptr \(constants.constant(message)))")
+            out.emit("unreachable")
+            out.label(out.freshLabel("fail.cont"))
         }
     }
 

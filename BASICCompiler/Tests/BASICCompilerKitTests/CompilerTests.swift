@@ -133,7 +133,7 @@ struct DiagnosticTests {
 
     @Test func unsupportedFeaturesSaySo() {
         do {
-            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "OPTION LOCAL-LET", name: "bad")
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "ASYNC FUNCTION F() AS DOUBLE\nEND FUNCTION", name: "bad")
             Issue.record("expected a compile error")
         } catch let error as CompileError {
             #expect(error.description.contains("not supported by basicc yet"))

@@ -325,20 +325,18 @@ final class FunctionBuilder {
             emit(.print(items, newline: !(parts.last?.suppressesNewline ?? false)))
 
         case .assignment(let kind, let name, _, let value):
-            if kind == .letValue || kind == .global, signature != nil, model.isLocal(name.normalized, in: functionName) {
-                throw unsupported("LET/GLOBAL assignment to a local")
+            var target = variable(name)
+            if kind == .global, signature != nil {
+                target = model.variable(name.normalized, in: nil)
             }
-            let target = variable(name)
             guard target.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
             if value == nil, isInterface(target.type) { return }
-            let stored = try value.map { try lowerExpression($0, expecting: target.type, context: "assign to \(name.name)") }
-                ?? defaultValue(for: target.type)
+            guard let stored = try value.map({ try lowerAssigned($0, to: target.type, name: name.name) }) ?? defaultValue(for: target.type) else { return }
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
             let place = try lowerPlace(reference)
-            let stored = try value.map { try lowerExpression($0, expecting: place.type, context: "assign to \(reference.base.name)") }
-                ?? defaultValue(for: place.type)
+            guard let stored = try value.map({ try lowerAssigned($0, to: place.type, name: reference.base.name) }) ?? defaultValue(for: place.type) else { return }
             switch place {
             case .variable(let target): emit(.store(target, stored))
             case .element(let target, let indexes): emit(.storeElement(target, indexes, stored))
@@ -378,6 +376,8 @@ final class FunctionBuilder {
             ))
         case .optionStringSubstitution(let enabled):
             substitutesStrings = enabled
+        case .optionLetMode:
+            break  // Resolved by the analyzer for the whole program.
         case .read(let targets):
             emit(.read(try targets.map(lowerReadTarget)))
         case .restore:
@@ -553,6 +553,25 @@ final class FunctionBuilder {
     private func describe(_ expression: Expression) -> String {
         let text = String(describing: expression)
         return String(text.prefix { $0 != "(" })
+    }
+
+    /// Lowers the right-hand side of an assignment. A value of the wrong
+    /// kind is the interpreter's *runtime* type error — which ON ERROR can
+    /// trap — so it compiles to that failure rather than being refused.
+    /// Returns nil when the statement became the failure.
+    private func lowerAssigned(_ expression: Expression, to type: BIRType, name: String) throws -> BIRExpression? {
+        let lowered = try lowerExpression(expression)
+        if lowered.type == type || model.isAssignable(lowered.type, to: type) { return lowered }
+        let message: String
+        switch type {
+        case .number: message = "Cannot assign non-numeric value to \(name)"
+        case .string: message = "Cannot assign non-string value to \(name)"
+        case .boolean: message = "Boolean \(name) must be FALSE, TRUE, 0, or 1"
+        case .composite(let typeName): message = "Cannot assign non-\(model.types[typeName]?.displayName ?? typeName) value to \(name)"
+        case .void: message = "Cannot assign to \(name)"
+        }
+        emit(.failType(message))
+        return nil
     }
 
     private func isInterface(_ type: BIRType) -> Bool {

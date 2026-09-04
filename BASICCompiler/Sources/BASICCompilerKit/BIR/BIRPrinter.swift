@@ -97,6 +97,8 @@ public struct BIRPrinter {
             return "raise \(render(number))"
         case .failMissing(let message):
             return "fail missing \"\(message)\""
+        case .failType(let message):
+            return "fail type \"\(message)\""
         case .print(let items, let newline):
             let rendered = items.map { item -> String in
                 switch item {
