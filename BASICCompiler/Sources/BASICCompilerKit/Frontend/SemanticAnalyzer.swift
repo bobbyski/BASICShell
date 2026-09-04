@@ -190,6 +190,12 @@ struct SemanticAnalyzer {
         switch expression {
         case .variable(let name):
             note(name, .scalar, at: line, in: function, changed: &changed)
+        case .interpolatedString(let template), .string(let template):
+            // Names inside `${…}` count as references; the builder parses
+            // them properly, this only makes sure they get storage.
+            for inner in Self.interpolatedExpressions(in: template) {
+                try noteReferences(in: inner, at: line, in: function, changed: &changed)
+            }
         case .callOrArray(let name, let arguments):
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty {
@@ -290,6 +296,22 @@ struct SemanticAnalyzer {
         default:
             throw CompileError("\(name) AS \(type.name) is not supported by basicc yet", at: location(of: line))
         }
+    }
+
+    /// The expressions inside a template's `${…}` pieces that parse.
+    static func interpolatedExpressions(in template: String) -> [Expression] {
+        guard template.contains("${") else { return [] }
+        var expressions: [Expression] = []
+        var index = template.startIndex
+        while let start = template[index...].range(of: "${") {
+            guard let end = template[start.upperBound...].firstIndex(of: "}") else { break }
+            let source = String(template[start.upperBound..<end])
+            if var parser = try? Parser(source: source), let expression = try? parser.parseExpressionOnly() {
+                expressions.append(expression)
+            }
+            index = template.index(after: end)
+        }
+        return expressions
     }
 
     /// Visits a statement and the statements nested in it.

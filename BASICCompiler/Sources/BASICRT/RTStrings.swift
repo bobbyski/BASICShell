@@ -135,6 +135,13 @@ func rtNumberText(_ value: Double) -> String {
     return String(value)
 }
 
+/// The text `PRINT` shows for a number, as an owned string — what `${n}`
+/// interpolates.
+@_cdecl("basic_rt_number_text")
+public func basic_rt_number_text(_ value: Double) -> UnsafeMutableRawPointer {
+    rtOwned(rtNumberText(value))
+}
+
 /// `STR$`: the number's text with a leading space when it is not negative.
 @_cdecl("basic_rt_number_str")
 public func basic_rt_number_str(_ value: Double) -> UnsafeMutableRawPointer {

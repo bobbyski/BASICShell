@@ -41,6 +41,8 @@ public indirect enum BIRExpression: Sendable {
     case call(String, [BIRExpression], returns: BIRType)
     /// One element of an array variable.
     case element(BIRVariable, [BIRExpression])
+    /// The text a value shows as — `PRINT`'s rendering — for interpolation.
+    case text(BIRExpression)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -59,6 +61,8 @@ public indirect enum BIRExpression: Sendable {
             return returns
         case .element(let variable, _):
             return variable.type
+        case .text:
+            return .string
         }
     }
 }

@@ -78,6 +78,10 @@ final class FunctionBuilder {
     /// True when main uses ON ERROR: every statement then starts a block and
     /// is marked, so the runtime can report ERL and RESUME NEXT.
     private var tracksStatements = false
+    /// `OPTION STRING-SUB`: whether plain strings interpolate `${…}` too.
+    /// BASICShell turns this on for every program it runs, so a compiled
+    /// program starts the same way; tracked in program order from there.
+    private var substitutesStrings = true
 
     /// One open IF / FOR / SELECT.
     private enum Frame {
@@ -326,6 +330,22 @@ final class FunctionBuilder {
             emit(.input(prompt: promptValue, into: variable(name)))
         case .input:
             throw unsupported("INPUT into an array element or field")
+        case .lineInput(let prompt, .variable(let name), nil, nil, nil, nil):
+            let target = variable(name)
+            guard target.type == .string, target.rank == nil else {
+                throw CompileError("Type error: LINE INPUT needs a string variable, got \(name.name)", at: location)
+            }
+            emit(.lineInput(prompt: try prompt.map { try lowerExpression($0, expecting: .string, context: "LINE INPUT prompt") }, into: target))
+        case .lineInput:
+            throw unsupported("LINE INPUT with EXITVAR, LENGTH, MAX, or DEFAULT")
+        case .printUsing(let format, let values, let trailingSeparator):
+            emit(.printUsing(
+                format: try lowerExpression(format, expecting: .string, context: "PRINT USING"),
+                values: try values.map { try lowerExpression($0) },
+                newline: trailingSeparator == nil
+            ))
+        case .optionStringSubstitution(let enabled):
+            substitutesStrings = enabled
         case .read(let targets):
             emit(.read(try targets.map(lowerReadTarget)))
         case .restore:
@@ -461,8 +481,6 @@ final class FunctionBuilder {
             // Declarations are hoisted by the analyzer; the body is built as
             // its own function and never runs inline.
             break
-        case .printUsing:
-            throw unsupported("PRINT USING")
         case .typeDeclaration, .typeField, .endType:
             throw unsupported("TYPE (Phase 4.2)")
         case .classDeclaration, .classField, .endClass, .interfaceDeclaration, .interfaceFunctionSignature,
@@ -692,7 +710,10 @@ final class FunctionBuilder {
     private func lowerExpression(_ expression: Expression) throws -> BIRExpression {
         switch expression {
         case .number(let value): return .number(value)
-        case .string(let value): return .string(value)
+        case .string(let value):
+            return substitutesStrings ? try lowerInterpolated(value) : .string(value)
+        case .interpolatedString(let value):
+            return try lowerInterpolated(value)
         case .boolean(let value): return .boolean(value)
         case .variable(let name):
             if name.normalized == "ERR" { return .intrinsic(.err, []) }
@@ -710,13 +731,46 @@ final class FunctionBuilder {
             return .intrinsic(.len, [try lowerExpression(inner, expecting: .string, context: "LEN")])
         case .chrFunction(let inner):
             return .intrinsic(.chr, [try lowerExpression(inner, expecting: .number, context: "CHR$")])
-        case .interpolatedString:
-            throw unsupported("string interpolation")
         case .null:
             throw unsupported("NULL")
         default:
             throw unsupported(describe(expression))
         }
+    }
+
+    /// `"Hello ${name}"`: the `${…}` pieces are parsed with the interpreter's
+    /// parser at compile time and joined with the text between them.
+    private func lowerInterpolated(_ template: String) throws -> BIRExpression {
+        var pieces: [BIRExpression] = []
+        var literal = ""
+        var index = template.startIndex
+        while index < template.endIndex {
+            if template[index] == "$", template.index(after: index) < template.endIndex, template[template.index(after: index)] == "{" {
+                let expressionStart = template.index(index, offsetBy: 2)
+                guard let expressionEnd = template[expressionStart...].firstIndex(of: "}") else {
+                    throw CompileError("Unterminated string interpolation", at: location)
+                }
+                let source = String(template[expressionStart..<expressionEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !source.isEmpty else { throw CompileError("Empty string interpolation", at: location) }
+                if !literal.isEmpty { pieces.append(.string(literal)); literal = "" }
+                var parser: Parser
+                let parsed: Expression
+                do {
+                    parser = try Parser(source: source)
+                    parsed = try parser.parseExpressionOnly()
+                } catch let error as BASICError {
+                    throw CompileError(error.description, at: location)
+                }
+                let value = try lowerExpression(parsed)
+                pieces.append(value.type == .string ? value : .text(value))
+                index = template.index(after: expressionEnd)
+            } else {
+                literal.append(template[index])
+                index = template.index(after: index)
+            }
+        }
+        if !literal.isEmpty || pieces.isEmpty { pieces.append(.string(literal)) }
+        return pieces.dropFirst().reduce(pieces[0]) { .concat($0, $1) }
     }
 
     private func lowerBinary(_ left: Expression, _ operation: BinaryOperation, _ right: Expression) throws -> BIRExpression {

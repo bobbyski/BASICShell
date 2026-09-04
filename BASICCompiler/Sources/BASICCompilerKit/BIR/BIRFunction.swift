@@ -57,6 +57,11 @@ public enum BIROperation: Sendable {
     case print([BIRPrintItem], newline: Bool)
     /// Reads one value from the console into a variable.
     case input(prompt: BIRExpression?, into: BIRVariable)
+    /// Reads one whole line into a string variable.
+    case lineInput(prompt: BIRExpression?, into: BIRVariable)
+    /// `PRINT USING format; values` — `newline` is false after a trailing
+    /// separator.
+    case printUsing(format: BIRExpression, values: [BIRExpression], newline: Bool)
     /// `RANDOMIZE [seed]`.
     case randomize(BIRExpression?)
     /// Raises a runtime error unconditionally — the compiler knew this

@@ -98,6 +98,10 @@ public struct BIRPrinter {
             return "print " + rendered.joined(separator: " ") + (newline ? " newline" : "")
         case .input(let prompt, let variable):
             return "input " + (prompt.map { render($0) + " " } ?? "") + "-> \(variable.name)"
+        case .lineInput(let prompt, let variable):
+            return "line input " + (prompt.map { render($0) + " " } ?? "") + "-> \(variable.name)"
+        case .printUsing(let format, let values, let newline):
+            return "print using \(render(format)); " + values.map(render).joined(separator: ", ") + (newline ? " newline" : "")
         case .randomize(let seed):
             return "randomize" + (seed.map { " " + render($0) } ?? "")
         case .fail(let message):
@@ -149,6 +153,8 @@ public struct BIRPrinter {
             return "\(name)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .element(let variable, let indexes):
             return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .text(let value):
+            return "text(\(render(value)))"
         }
     }
 }

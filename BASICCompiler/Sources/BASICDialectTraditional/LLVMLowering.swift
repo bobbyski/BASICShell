@@ -94,6 +94,12 @@ struct LLVMLowering {
     declare void @basic_rt_print_newline()
     declare double @basic_rt_input_number(ptr, ptr)
     declare ptr @basic_rt_input_string(ptr, ptr)
+    declare ptr @basic_rt_line_input(ptr)
+    declare ptr @basic_rt_number_text(double)
+    declare void @basic_rt_using_begin(ptr)
+    declare void @basic_rt_using_number(double)
+    declare void @basic_rt_using_string(ptr)
+    declare void @basic_rt_using_end(i1)
     declare ptr @basic_rt_string_literal(ptr, i64)
     declare void @basic_rt_string_retain(ptr)
     declare void @basic_rt_string_release(ptr)
@@ -400,6 +406,31 @@ struct FunctionEmitter {
                 fail("INPUT into a boolean is not supported")
             }
 
+        case .lineInput(let prompt, let variable):
+            let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_line_input(ptr \(promptValue))")
+            storeString(result, owned: true, into: slotName(variable), isString: true)
+
+        case .printUsing(let format, let values, let newline):
+            out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
+            for value in values {
+                let (result, _) = lowerValue(value)
+                switch value.type {
+                case .number: out.emit("call void @basic_rt_using_number(double \(result))")
+                case .string: out.emit("call void @basic_rt_using_string(ptr \(result))")
+                case .boolean:
+                    let text = out.temp()
+                    out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
+                    let string = out.temp()
+                    out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
+                    owned.append(string)
+                    out.emit("call void @basic_rt_using_string(ptr \(string))")
+                case .void: break
+                }
+            }
+            out.emit("call void @basic_rt_using_end(i1 \(newline ? "true" : "false"))")
+
         case .randomize(let seed):
             if let seed {
                 out.emit("call void @basic_rt_randomize(double \(lowerValue(seed).0))")
@@ -589,6 +620,26 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = fneg double \(lowerValue(inner).0)")
             return (result, false)
+        case .text(let inner):
+            let (value, isOwned) = lowerValue(inner)
+            switch inner.type {
+            case .string:
+                return (value, isOwned)
+            case .number:
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_number_text(double \(value))")
+                owned.append(result)
+                return (result, true)
+            case .boolean, .void:
+                let text = out.temp()
+                out.emit("\(text) = select i1 \(value), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
+                let length = out.temp()
+                out.emit("\(length) = select i1 \(value), i64 4, i64 5")
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_string_literal(ptr \(text), i64 \(length))")
+                owned.append(result)
+                return (result, true)
+            }
         case .arithmetic(let op, let left, let right):
             let l = lowerValue(left).0
             let r = lowerValue(right).0

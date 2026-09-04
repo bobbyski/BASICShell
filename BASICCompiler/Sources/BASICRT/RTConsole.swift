@@ -90,3 +90,11 @@ public func basic_rt_input_string(_ prompt: UnsafeMutableRawPointer?, _ name: Un
     let raw = readInputLine(prompt: prompt, defaultPrompt: "\(String(cString: name))? ") ?? ""
     return rtOwned(raw)
 }
+
+/// `LINE INPUT`: the prompt verbatim (default none), then the whole line.
+@_cdecl("basic_rt_line_input")
+public func basic_rt_line_input(_ prompt: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    let raw = readInputLine(prompt: prompt, defaultPrompt: "") ?? ""
+    RTConsole.column = 0
+    return rtOwned(raw)
+}
