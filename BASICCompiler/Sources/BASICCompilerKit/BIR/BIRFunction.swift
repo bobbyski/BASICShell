@@ -83,6 +83,8 @@ public enum BIROperation: Sendable {
     case restore
     /// `CLS`.
     case cls
+    /// A `File.*` service call used as a statement.
+    case fileService(method: String, arguments: [BIRExpression])
     /// `OPEN path FOR mode AS #n`: mode 0 input, 1 output, 2 append.
     case openFile(path: BIRExpression, mode: Int, number: BIRExpression)
     /// `CLOSE #n`, or every file when nil.

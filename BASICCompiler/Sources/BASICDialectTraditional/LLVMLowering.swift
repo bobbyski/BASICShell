@@ -129,6 +129,8 @@ struct LLVMLowering {
     declare void @basic_rt_print_newline()
     declare double @basic_rt_input_number(ptr, ptr)
     declare ptr @basic_rt_input_string(ptr, ptr)
+    declare i1 @basic_rt_input_boolean(ptr, ptr)
+    declare i1 @basic_rt_file_input_boolean(double)
     declare ptr @basic_rt_line_input(ptr)
     declare ptr @basic_rt_number_text(double)
     declare void @basic_rt_using_begin(ptr)
@@ -204,6 +206,15 @@ struct LLVMLowering {
     declare i1 @basic_rt_file_eof(double)
     declare double @basic_rt_file_lof(double)
     declare double @basic_rt_file_loc(double)
+    declare ptr @basic_rt_file_cwd()
+    declare void @basic_rt_file_chdir(ptr)
+    declare void @basic_rt_file_mkdir(ptr)
+    declare void @basic_rt_file_rm(ptr)
+    declare void @basic_rt_file_rename(ptr, ptr)
+    declare i1 @basic_rt_file_exists(ptr)
+    declare i1 @basic_rt_file_isdir(ptr)
+    declare ptr @basic_rt_file_read_text(ptr)
+    declare void @basic_rt_file_write_text(ptr, ptr)
     declare double @llvm.fabs.f64(double)
     declare double @llvm.floor.f64(double)
     declare double @llvm.trunc.f64(double)
@@ -517,6 +528,8 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_restore()")
         case .cls:
             out.emit("call void @basic_rt_cls()")
+        case .fileService(let method, let arguments):
+            _ = lowerFileService(method, arguments)
         case .openFile(let path, let mode, let number):
             let pathValue = lowerValue(path).0
             let numberValue = lowerValue(number).0
@@ -571,10 +584,14 @@ struct FunctionEmitter {
                 switch target {
                 case .variable(let variable):
                     let value = out.temp()
-                    if variable.type == .string {
+                    switch variable.type {
+                    case .string:
                         out.emit("\(value) = call ptr @basic_rt_file_input_string(double \(numberValue))")
                         storeManaged(value, owned: true, into: slotName(variable), type: .string)
-                    } else {
+                    case .boolean:
+                        out.emit("\(value) = call i1 @basic_rt_file_input_boolean(double \(numberValue))")
+                        out.emit("store i1 \(value), ptr \(slotName(variable))")
+                    default:
                         out.emit("\(value) = call double @basic_rt_file_input_number(double \(numberValue), ptr \(constants.constant(variable.name)))")
                         out.emit("store double \(value), ptr \(slotName(variable))")
                     }
@@ -642,8 +659,12 @@ struct FunctionEmitter {
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_input_string(ptr \(promptValue), ptr \(name))")
                 storeManaged(result, owned: true, into: slotName(variable), type: .string)
-            case .boolean, .void, .composite:
-                fail("INPUT into a boolean or record is not supported")
+            case .boolean:
+                let result = out.temp()
+                out.emit("\(result) = call i1 @basic_rt_input_boolean(ptr \(promptValue), ptr \(name))")
+                out.emit("store i1 \(result), ptr \(slotName(variable))")
+            case .void, .composite:
+                fail("INPUT into a record is not supported")
             }
 
         case .lineInput(let prompt, let variable):
@@ -982,6 +1003,8 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
                 return (result, false)
             }
+        case .fileService(let method, let arguments, _):
+            return lowerFileService(method, arguments)
         case .usingString(let format, let values):
             out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
             feedUsingValues(values)
@@ -1079,6 +1102,32 @@ struct FunctionEmitter {
         case .intrinsic(let intrinsic, let arguments):
             return lowerIntrinsic(intrinsic, arguments)
         }
+    }
+
+    /// Calls one `File.*` runtime entry; strings come back owned.
+    private mutating func lowerFileService(_ method: String, _ arguments: [BIRExpression]) -> (String, owned: Bool) {
+        let values = arguments.map { lowerValue($0).0 }
+        let a = values.first ?? "null"
+        let result = out.temp()
+        switch method {
+        case "CWD":
+            out.emit("\(result) = call ptr @basic_rt_file_cwd()")
+            owned.append(result); return (result, true)
+        case "READTEXT":
+            out.emit("\(result) = call ptr @basic_rt_file_read_text(ptr \(a))")
+            owned.append(result); return (result, true)
+        case "EXISTS":
+            out.emit("\(result) = call i1 @basic_rt_file_exists(ptr \(a))"); return (result, false)
+        case "ISDIR":
+            out.emit("\(result) = call i1 @basic_rt_file_isdir(ptr \(a))"); return (result, false)
+        case "CHDIR": out.emit("call void @basic_rt_file_chdir(ptr \(a))")
+        case "MKDIR": out.emit("call void @basic_rt_file_mkdir(ptr \(a))")
+        case "RM": out.emit("call void @basic_rt_file_rm(ptr \(a))")
+        case "RENAME": out.emit("call void @basic_rt_file_rename(ptr \(values[0]), ptr \(values[1]))")
+        case "WRITETEXT": out.emit("call void @basic_rt_file_write_text(ptr \(values[0]), ptr \(values[1]))")
+        default: break
+        }
+        return ("", false)
     }
 
     /// An `i1` for a comparison of two operands of the same type.

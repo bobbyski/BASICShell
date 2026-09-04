@@ -371,7 +371,10 @@ struct SemanticAnalyzer {
             note(reference.base, reference.indexes.isEmpty ? .scalar : .array(reference.indexes.count), at: line, in: function, changed: &changed)
             for index in reference.indexes { try noteReferences(in: index, at: line, in: function, changed: &changed) }
         case .methodCall(let reference, _, let arguments):
-            note(reference.base, reference.indexes.isEmpty ? .scalar : .array(reference.indexes.count), at: line, in: function, changed: &changed)
+            // `File.X` names the shared file service unless a variable FILE exists.
+            if reference.base.normalized != "FILE" || model.info("FILE", in: function) != nil {
+                note(reference.base, reference.indexes.isEmpty ? .scalar : .array(reference.indexes.count), at: line, in: function, changed: &changed)
+            }
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .newObject(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
@@ -445,6 +448,13 @@ struct SemanticAnalyzer {
         case .newObject(let name, _):
             return model.types[name.uppercased()].map { _ in .composite(name.uppercased()) }
         case .methodCall(let reference, let method, _):
+            if reference.base.normalized == "FILE", model.info("FILE", in: function) == nil {
+                switch method.normalized {
+                case "CWD", "CWD$", "READTEXT", "READTEXT$": return .string
+                case "EXISTS", "ISDIR": return .boolean
+                default: return .void
+                }
+            }
             guard let receiverType = try typeOf(.variableReference(reference), in: function),
                   case .composite(let typeName) = receiverType else { return nil }
             if let member = model.types[typeName]?.members[method.normalized] { return member.returnType }

@@ -49,6 +49,8 @@ public indirect enum BIRExpression: Sendable {
     case construct(String)
     /// `USING$(format, values…)`: PRINT USING's rendering as a string.
     case usingString(format: BIRExpression, values: [BIRExpression])
+    /// A `File.*` service call: `method` is the normalized member name.
+    case fileService(method: String, arguments: [BIRExpression], returns: BIRType)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -75,6 +77,8 @@ public indirect enum BIRExpression: Sendable {
             return .composite(name)
         case .usingString:
             return .string
+        case .fileService(_, _, let returns):
+            return returns
         }
     }
 }

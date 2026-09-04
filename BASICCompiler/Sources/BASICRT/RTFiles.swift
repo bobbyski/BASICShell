@@ -198,6 +198,12 @@ public func basic_rt_file_input_number(_ number: Double, _ name: UnsafePointer<C
     return value
 }
 
+/// `INPUT #` into a boolean: TRUE/FALSE/1/0, else the interpreter's Type Mismatch.
+@_cdecl("basic_rt_file_input_boolean")
+public func basic_rt_file_input_boolean(_ number: Double) -> Bool {
+    rtParseBoolean(RTFiles.nextField(number))
+}
+
 /// `INPUT #` into a string variable; owned.
 @_cdecl("basic_rt_file_input_string")
 public func basic_rt_file_input_string(_ number: Double) -> UnsafeMutableRawPointer {

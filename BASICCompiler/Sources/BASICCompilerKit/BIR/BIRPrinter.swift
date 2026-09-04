@@ -91,6 +91,8 @@ public struct BIRPrinter {
             return "restore"
         case .cls:
             return "cls"
+        case .fileService(let method, let arguments):
+            return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .openFile(let path, let mode, let number):
             return "open \(render(path)) mode \(mode) as \(render(number))"
         case .closeFile(let number):
@@ -210,6 +212,8 @@ public struct BIRPrinter {
             return "new \(name)"
         case .usingString(let format, let values):
             return "USING$(" + ([format] + values).map(render).joined(separator: ", ") + ")"
+        case .fileService(let method, let arguments, _):
+            return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         }
     }
 }

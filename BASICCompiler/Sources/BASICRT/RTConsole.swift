@@ -97,6 +97,22 @@ public func basic_rt_input_number(_ prompt: UnsafeMutableRawPointer?, _ name: Un
     return number
 }
 
+/// The interpreter's reading of a boolean from input text.
+func rtParseBoolean(_ raw: String) -> Bool {
+    switch raw.trimmingCharacters(in: .whitespaces).uppercased() {
+    case "TRUE", "1": return true
+    case "FALSE", "0": return false
+    default: basic_rt_fail("Type Mismatch")
+    }
+}
+
+/// `INPUT` into a boolean variable.
+@_cdecl("basic_rt_input_boolean")
+public func basic_rt_input_boolean(_ prompt: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>) -> Bool {
+    let raw = readInputLine(prompt: prompt, defaultPrompt: "\(String(cString: name))? ") ?? ""
+    return rtParseBoolean(raw)
+}
+
 /// `INPUT` into a string variable.
 @_cdecl("basic_rt_input_string")
 public func basic_rt_input_string(_ prompt: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>) -> UnsafeMutableRawPointer {

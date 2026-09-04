@@ -765,6 +765,39 @@ final class FunctionBuilder {
         return nil
     }
 
+    /// `File.Method(...)` on the shared file service — when no variable of
+    /// that name exists, as the interpreter decides it.
+    private func isFileService(_ reference: VariableReference) -> Bool {
+        reference.base.normalized == "FILE" && reference.indexes.isEmpty && reference.fields.isEmpty
+            && model.info("FILE", in: functionName) == nil
+    }
+
+    /// The service members basicc compiles, with their signatures.
+    private static let fileServiceMembers: [String: (name: String, parameters: [BIRType], returns: BIRType)] = [
+        "CWD": ("CWD", [], .string), "CWD$": ("CWD", [], .string),
+        "CHDIR": ("CHDIR", [.string], .void),
+        "MKDIR": ("MKDIR", [.string], .void),
+        "RM": ("RM", [.string], .void),
+        "RENAME": ("RENAME", [.string, .string], .void),
+        "EXISTS": ("EXISTS", [.string], .boolean),
+        "ISDIR": ("ISDIR", [.string], .boolean),
+        "READTEXT": ("READTEXT", [.string], .string), "READTEXT$": ("READTEXT", [.string], .string),
+        "WRITETEXT": ("WRITETEXT", [.string, .string], .void),
+    ]
+
+    private func lowerFileService(_ method: VariableName, _ arguments: [Expression]) throws -> (String, [BIRExpression], BIRType) {
+        guard let member = Self.fileServiceMembers[method.normalized] else {
+            throw unsupported("File.\(method.name) (Phase 4.9)")
+        }
+        guard arguments.count == member.parameters.count else {
+            throw CompileError("File.\(method.name) expects \(member.parameters.count) argument\(member.parameters.count == 1 ? "" : "s")", at: location)
+        }
+        let lowered = try zip(arguments, member.parameters).map { argument, type in
+            try lowerExpression(argument, expecting: type, context: "File.\(method.name)")
+        }
+        return (member.name, lowered, member.returns)
+    }
+
     /// `NEW Class(args)`: a default instance, then its NEW method if any.
     private func lowerNew(_ className: String, _ arguments: [Expression]) throws -> BIRExpression {
         let typeName = className.uppercased()
@@ -809,6 +842,11 @@ final class FunctionBuilder {
                 return
             }
         case .methodCall(let reference, let method, let arguments):
+            if isFileService(reference) {
+                let (member, lowered, _) = try lowerFileService(method, arguments)
+                emit(.fileService(method: member, arguments: lowered))
+                return
+            }
             _ = try lowerMethodCall(reference, method, arguments, wantsValue: false)
             return
         default:
@@ -993,6 +1031,13 @@ final class FunctionBuilder {
         case .newObject(let className, let arguments):
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
+            if isFileService(reference) {
+                let (member, lowered, returns) = try lowerFileService(method, arguments)
+                guard returns != .void else {
+                    throw CompileError("VOID function File.\(method.name) cannot be used in an expression", at: location)
+                }
+                return .fileService(method: member, arguments: lowered, returns: returns)
+            }
             return try lowerMethodCall(reference, method, arguments, wantsValue: true)!
         case .lenFunction(let inner):
             return .intrinsic(.len, [try lowerExpression(inner, expecting: .string, context: "LEN")])
