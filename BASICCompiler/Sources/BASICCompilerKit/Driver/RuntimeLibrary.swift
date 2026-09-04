@@ -2,8 +2,14 @@ import Foundation
 
 /// Where a dialect's runtime lives and how a compiled program links it.
 ///
-/// The runtime is Swift source compiled to one object (`rt.o`) and cached
-/// beside the compiler's build products. Resolution order for the sources:
+/// Two shapes. The full runtime is a SwiftPM static product,
+/// `libBASICRTHost.a`, which bundles the core (`BASICRT`), the host half
+/// (`BASICRTHost`: VTG graphics, TUIKit, events), and their SDKs; it is
+/// found (or rebuilt, in-tree) by ``archive(environment:)``. When no archive
+/// can be had, the core's Swift sources are compiled to one object (`rt.o`),
+/// cached beside the compiler's build products, with stubs for the host
+/// entry points — a program still builds, and graphics report themselves
+/// unsupported. Resolution order for the sources:
 ///
 /// 1. `BASICC_RT_DIR` in the environment — tests and odd installs.
 /// 2. `<prefix>/share/basicc/<name>` beside the installed `basicc` executable.
@@ -40,15 +46,67 @@ public struct RuntimeLibrary: Sendable {
         return candidates.first { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// Every `.swift` file in ``sourceDirectory(environment:)``, sorted.
+    /// Every `.swift` file in ``sourceDirectory(environment:)``, sorted, plus
+    /// the host stubs beside it (`<name>HostStubs`) when they exist.
     public func sources(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> [String] {
         guard let directory = sourceDirectory(environment: environment) else {
             throw MissingRuntime(name: name)
         }
-        return try FileManager.default.contentsOfDirectory(atPath: directory)
-            .filter { $0.hasSuffix(".swift") }
-            .sorted()
-            .map { (directory as NSString).appendingPathComponent($0) }
+        func swiftFiles(in directory: String) -> [String] {
+            ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
+                .filter { $0.hasSuffix(".swift") }
+                .sorted()
+                .map { (directory as NSString).appendingPathComponent($0) }
+        }
+        let stubs = ((directory as NSString).deletingLastPathComponent as NSString).appendingPathComponent("\(name)HostStubs")
+        return swiftFiles(in: directory) + swiftFiles(in: stubs)
+    }
+
+    /// The full runtime archive, when one can be had:
+    ///
+    /// 1. `BASICC_RT_LIB` in the environment.
+    /// 2. `<prefix>/lib/basicc/lib<name>Host.a` beside the installed `basicc`.
+    /// 3. In-tree: `.build/release/lib<name>Host.a` of this package, rebuilt
+    ///    with `swift build` when it is missing or older than the runtime
+    ///    sources or the manifest.
+    public func archive(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String? {
+        if let override = environment["BASICC_RT_LIB"] {
+            return FileManager.default.fileExists(atPath: override) ? override : nil
+        }
+        if let executableDir = (Bundle.main.executablePath as NSString?)?.deletingLastPathComponent {
+            let installed = ((executableDir as NSString).appendingPathComponent("../lib/basicc") as NSString)
+                .appendingPathComponent("lib\(name)Host.a")
+            if FileManager.default.fileExists(atPath: installed) { return installed }
+        }
+        let root = Self.inTreeSourcesDirectory.deletingLastPathComponent()
+        let manifest = root.appendingPathComponent("Package.swift").path
+        guard FileManager.default.fileExists(atPath: manifest) else { return nil }
+        let archive = root.appendingPathComponent(".build/release/lib\(name)Host.a").path
+        if Self.isStale(archive, against: [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]) {
+            let result = try ProcessRunner.xcrun("swift", ["build", "-c", "release", "--product", "\(name)Host", "--package-path", root.path])
+            guard result.exitCode == 0 else {
+                throw ToolchainError(stage: "swift build (runtime)", exitCode: result.exitCode, stderr: result.stderr)
+            }
+        }
+        return FileManager.default.fileExists(atPath: archive) ? archive : nil
+    }
+
+    /// Whether `archive` is missing or older than anything under `inputs`.
+    private static func isStale(_ archive: String, against inputs: [String]) -> Bool {
+        guard let archiveDate = (try? FileManager.default.attributesOfItem(atPath: archive))?[.modificationDate] as? Date else { return true }
+        for input in inputs {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: input, isDirectory: &isDirectory) else { continue }
+            let files = isDirectory.boolValue
+                ? ((try? FileManager.default.contentsOfDirectory(atPath: input)) ?? []).map { (input as NSString).appendingPathComponent($0) }
+                : [input]
+            for file in files {
+                if let date = (try? FileManager.default.attributesOfItem(atPath: file))?[.modificationDate] as? Date, date > archiveDate {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     /// Raised when no candidate directory holds the runtime sources.

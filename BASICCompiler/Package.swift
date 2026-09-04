@@ -1,6 +1,12 @@
 // swift-tools-version: 6.1
 
+import Foundation
 import PackageDescription
+
+// VectorTerminalSDK is declared the way BASICShell and TUIKit declare it —
+// a local path with the same env override — so SwiftPM sees one package.
+let vectorTerminalSDKPath = ProcessInfo.processInfo.environment["VECTORTERMINALSDK_PATH"]
+    ?? "/Users/bobby/AIResearch/GraphicalTerminal/Code/VectorTerminalSDK"
 
 // BASICCompiler — `basicc`, a BASIC compiler that builds LLVM modules and
 // links against Swift libraries. A sibling of BASICShell and BASICStudio;
@@ -27,12 +33,17 @@ let package = Package(
         .library(name: "BASICCompilerKit", targets: ["BASICCompilerKit"]),
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
+        // The host half of the runtime: VTG graphics (and, later, TUIKit and
+        // events). Built by SwiftPM because it links the host SDKs; linked
+        // into a program when present, else stubbed.
+        .library(name: "BASICRTHost", type: .static, targets: ["BASICRTHost"]),
         // Compile .bas sources inside any package's C-family target
         // (see Plugins/BASICBuildPlugin for the how and why).
         .plugin(name: "BASICBuildPlugin", targets: ["BASICBuildPlugin"]),
     ],
     dependencies: [
         .package(path: "../BASICCore"),
+        .package(path: vectorTerminalSDKPath),
     ],
     targets: [
         .target(
@@ -41,6 +52,7 @@ let package = Package(
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICRT"),
+        .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK")]),
         .executableTarget(
             name: "basicc",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]

@@ -65,7 +65,9 @@ public struct Compilation {
         try toolchain.assemble(llvmIR: lowered.llvmIR, irPath: irPath, objectPath: objectPath, optimizationLevel: options.optimizationLevel)
 
         let runtime = dialect.runtimeLibrary(for: options.target)
-        let runtimeObject = try cachedRuntimeObject(runtime)
+        // The full runtime archive when there is one; else the core compiled
+        // from source with the host half stubbed.
+        let runtimeObject = try runtime.archive() ?? cachedRuntimeObject(runtime)
         try toolchain.link(objects: [objectPath, runtimeObject], output: output, extraArguments: runtime.linkArguments)
     }
 

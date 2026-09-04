@@ -4,7 +4,9 @@
 #
 #   <prefix>/bin/basicc                  the compiler
 #   <prefix>/bin/basictest               the conformance runner
-#   <prefix>/share/basicc/BASICRT/       runtime sources (compiled once, cached)
+#   <prefix>/lib/basicc/libBASICRTHost.a the runtime (core + host half + SDKs)
+#   <prefix>/share/basicc/BASICRT/       runtime sources — the fallback when
+#                                        the archive is absent (host stubbed)
 #
 # Usage:  ./buildAndInstall.sh [--prefix DIR] [--uninstall]
 # Default prefix: /usr/local
@@ -24,7 +26,7 @@ done
 
 if [[ $uninstall -eq 1 ]]; then
   rm -f "$prefix/bin/basicc" "$prefix/bin/basictest"
-  rm -rf "$prefix/share/basicc"
+  rm -rf "$prefix/share/basicc" "$prefix/lib/basicc"
   echo "removed basicc from $prefix"
   exit 0
 fi
@@ -32,20 +34,23 @@ fi
 echo "building basicc (release)…"
 swift build -c release --product basicc 2>&1 | tail -1
 swift build -c release --product basictest 2>&1 | tail -1
+swift build -c release --product BASICRTHost 2>&1 | tail -1
 bin="$(swift build -c release --show-bin-path)"
 
-mkdir -p "$prefix/bin" "$prefix/share/basicc"
+mkdir -p "$prefix/bin" "$prefix/share/basicc" "$prefix/lib/basicc"
 install -m 755 "$bin/basicc" "$prefix/bin/basicc"
 install -m 755 "$bin/basictest" "$prefix/bin/basictest"
-rm -rf "$prefix/share/basicc/BASICRT"
+install -m 644 "$bin/libBASICRTHost.a" "$prefix/lib/basicc/libBASICRTHost.a"
+rm -rf "$prefix/share/basicc/BASICRT" "$prefix/share/basicc/BASICRTHostStubs"
 cp -R Sources/BASICRT "$prefix/share/basicc/BASICRT"
+cp -R Sources/BASICRTHostStubs "$prefix/share/basicc/BASICRTHostStubs"
 
 # Probe: compile a program with the environment cleared, so the installed
 # compiler is proven to find its own runtime.
 probe="$(mktemp -d)"
 printf 'PRINT "basicc ok"\n' > "$probe/probe.bas"
 if env -i PATH=/usr/bin:/bin HOME="$HOME" "$prefix/bin/basicc" build "$probe/probe.bas" -o "$probe/probe" && [[ "$("$probe/probe")" == "basicc ok" ]]; then
-  echo "installed basicc to $prefix/bin (runtime in $prefix/share/basicc)"
+  echo "installed basicc to $prefix/bin (runtime in $prefix/lib/basicc, sources in $prefix/share/basicc)"
 else
   echo "install probe failed" >&2
   exit 1
