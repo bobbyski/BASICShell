@@ -570,7 +570,7 @@ struct SemanticAnalyzer {
             return type
         case .null: return .variant
         case .newObject(let name, _):
-            if SemanticModel.systemClasses[name.uppercased()] != nil, model.types[name.uppercased()] == nil { return .system(name.uppercased()) }
+            if SemanticModel.systemClasses[name.uppercased()] != nil, model.types[name.uppercased()] == nil { return .system(name.uppercased() == "VTG" ? "VECTORTERMINAL" : name.uppercased()) }
             return model.types[name.uppercased()].map { _ in .composite(name.uppercased()) }
         case .methodCall(let reference, let method, let arguments):
             if reference.base.normalized == "FILE", model.info("FILE", in: function) == nil {
@@ -610,7 +610,7 @@ struct SemanticAnalyzer {
             if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$"].contains(name.normalized) { return .string }
             if ["CVI", "CVS", "CVD", "SEEK", "FIELDCOUNT"].contains(name.normalized) { return .number }
             if ["FIELDMETA", "FIELDVALUE", "SETFIELD"].contains(name.normalized) { return .variant }
-            if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized) }
+            if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }

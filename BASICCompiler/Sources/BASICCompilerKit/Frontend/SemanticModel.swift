@@ -106,6 +106,18 @@ public final class SemanticModel {
         "HTTPCLIENT": [
             "HEADER": (2, .void), "GET": (nil, .variant),
         ],
+        // The VTG wrapper: any method name reaches the runtime's dispatcher
+        // (which knows the whole list and its arities); the few that return
+        // a value are typed here.
+        "VECTORTERMINAL": [
+            "*": (nil, .void),
+            "CANVASWIDTH": (nil, .number), "CANVASHEIGHT": (nil, .number),
+            "VECTORTEXTSIZE": (2, .variant), "QUERYCAPABILITIES": (nil, .variant), "QUERYCAPABILITYINFO": (nil, .variant),
+            "QUERYCANVAS": (nil, .variant), "QUERYSIZE": (nil, .variant), "QUERYCURRENTCANVAS": (nil, .variant),
+            "QUERYTERMINALCELLSIZE": (nil, .variant), "QUERYTERMINALWSIZE": (nil, .variant), "READEVENT": (nil, .variant),
+            "PILLBUTTON": (nil, .variant),
+        ],
+        "VTG": [:],
     ]
 
     /// Builtin variables the interpreter assigns at start; read through the
@@ -114,7 +126,8 @@ public final class SemanticModel {
 
     /// The static type of a system member, when the class and member exist.
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
-        systemClasses[typeName]?[member]
+        let name = typeName == "VTG" ? "VECTORTERMINAL" : typeName
+        return systemClasses[name]?[member] ?? systemClasses[name]?["*"]
     }
     /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
     /// anonymous ones by their canonical shape.

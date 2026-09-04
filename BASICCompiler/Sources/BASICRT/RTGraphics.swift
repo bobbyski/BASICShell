@@ -21,6 +21,7 @@ import Foundation
 @_silgen_name("basic_rt_host_gfx_ellipse") func rtHostEllipse(_ id: UnsafePointer<CChar>, _ cx: Int, _ cy: Int, _ rx: Int, _ ry: Int, _ color: UnsafePointer<CChar>, _ lineWidth: Int)
 @_silgen_name("basic_rt_host_gfx_clear") func rtHostClear()
 @_silgen_name("basic_rt_host_gfx_present") func rtHostPresent()
+@_silgen_name("basic_rt_host_gfx_finish") func rtHostFinish()
 
 // MARK: - Colors (the interpreter's BASICColor)
 
@@ -294,8 +295,10 @@ enum RTGraphics {
         rtHostPresent()
     }
 
-    /// What the Shell does when a run finishes: the canvas is cleared.
+    /// What the Shell does when a run finishes: event polling stops and,
+    /// when anything was drawn, the canvas is cleared.
     static func finish() {
+        rtHostFinish()
         guard didUse, availability == true else { return }
         rtHostClear()
         rtHostPresent()

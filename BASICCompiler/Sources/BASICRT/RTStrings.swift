@@ -14,16 +14,16 @@ import Foundation
 // and `CHR$(255)` survive round trips through files and `MKI$`/`CVI`.
 
 /// The interpreter's `BASICString`: text, or raw bytes.
-struct RTText: Equatable {
-    enum Storage: Equatable {
+package struct RTText: Equatable {
+    package enum Storage: Equatable {
         case text(String)
         case data(Data)
     }
 
-    let storage: Storage
+    package let storage: Storage
 
     /// Text; data-backed when it contains a NUL, as the interpreter does.
-    init(_ value: String) {
+    package init(_ value: String) {
         storage = value.utf8.contains(0) ? .data(Data(value.utf8)) : .text(value)
     }
 
@@ -34,7 +34,7 @@ struct RTText: Equatable {
     static let empty = RTText("")
 
     /// What `PRINT` shows: NUL bytes are dropped from data-backed text.
-    var description: String {
+    package var description: String {
         switch storage {
         case .text(let value): return value
         case .data(let data): return String(decoding: data.filter { $0 != 0 }, as: UTF8.self)
@@ -42,7 +42,7 @@ struct RTText: Equatable {
     }
 
     /// The text as characters (a lossy decode of raw bytes).
-    var rawString: String {
+    package var rawString: String {
         switch storage {
         case .text(let value): return value
         case .data(let data): return String(decoding: data, as: UTF8.self)
@@ -85,8 +85,8 @@ struct RTText: Equatable {
 }
 
 /// The runtime's string object.
-public final class RTString {
-    let value: RTText
+package final class RTString {
+    package let value: RTText
 
     /// Wraps text.
     public init(_ text: String) {
@@ -103,20 +103,20 @@ public final class RTString {
 
 /// The text behind a string pointer; nil reads as "".
 @inline(__always)
-func rtString(_ pointer: UnsafeMutableRawPointer?) -> RTText {
+package func rtString(_ pointer: UnsafeMutableRawPointer?) -> RTText {
     guard let pointer else { return .empty }
     return Unmanaged<RTString>.fromOpaque(pointer).takeUnretainedValue().value
 }
 
 /// The characters behind a string pointer; nil reads as "".
 @inline(__always)
-func rtText(_ pointer: UnsafeMutableRawPointer?) -> String {
+package func rtText(_ pointer: UnsafeMutableRawPointer?) -> String {
     rtString(pointer).rawString
 }
 
 /// A new owned (+1) string pointer.
 @inline(__always)
-func rtOwned(_ text: String) -> UnsafeMutableRawPointer {
+package func rtOwned(_ text: String) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(RTString(text)).toOpaque()
 }
 

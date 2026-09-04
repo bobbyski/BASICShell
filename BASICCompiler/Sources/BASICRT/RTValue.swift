@@ -13,7 +13,7 @@ import Foundation
 // deep copy every store makes unless the value is a fresh temporary.
 
 /// The runtime's value.
-indirect enum RTValue {
+package indirect enum RTValue {
     /// Never set (`EMPTY`); prints as "", reads as 0 or "".
     case empty
     /// `NULL`.
@@ -40,7 +40,7 @@ indirect enum RTValue {
     }
 
     /// The interpreter's `description`: what PRINT shows.
-    var description: String {
+    package var description: String {
         switch self {
         case .empty: return ""
         case .null: return "NULL"
@@ -56,7 +56,7 @@ indirect enum RTValue {
     }
 
     /// The interpreter's `truthy`.
-    var truthy: Bool {
+    package var truthy: Bool {
         switch self {
         case .empty, .null: return false
         case .number(let value): return value != 0
@@ -67,7 +67,7 @@ indirect enum RTValue {
     }
 
     /// The interpreter's `number`: what implicitly reads as a number.
-    var number: Double? {
+    package var number: Double? {
         switch self {
         case .empty: return 0
         case .number(let value): return value
@@ -77,7 +77,7 @@ indirect enum RTValue {
     }
 
     /// The interpreter's `string`: what implicitly reads as a string.
-    var string: RTText? {
+    package var string: RTText? {
         switch self {
         case .empty: return .empty
         case .string(let value): return value
@@ -122,16 +122,16 @@ indirect enum RTValue {
 /// A VARIANT's storage: a box the compiled code holds by pointer. Boxes are
 /// never shared between two slots — a store copies — so mutating one in
 /// place (an element or entry assignment through a VARIANT) is safe.
-public final class RTBox {
-    var value: RTValue
-    init(_ value: RTValue) { self.value = value }
+package final class RTBox {
+    package var value: RTValue
+    package init(_ value: RTValue) { self.value = value }
 }
 
 /// The runtime's DICTIONARY: string keys to values, unordered like the
 /// interpreter's; every enumeration sorts the keys.
-public final class RTDictionary {
-    var values: [String: RTValue] = [:]
-    init() {}
+package final class RTDictionary {
+    package var values: [String: RTValue] = [:]
+    package init() {}
     private init(copying other: RTDictionary) {
         values = other.values.mapValues { $0.copied() }
     }
@@ -542,20 +542,20 @@ enum RTJSON {
 // MARK: - Boxes at the ABI
 
 @inline(__always)
-func rtBox(_ pointer: UnsafeMutableRawPointer?) -> RTBox {
+package func rtBox(_ pointer: UnsafeMutableRawPointer?) -> RTBox {
     guard let pointer else { basic_rt_fail("Value was never set") }
     return Unmanaged<RTBox>.fromOpaque(pointer).takeUnretainedValue()
 }
 
 /// The value in a box, or `.empty` for a null pointer (a fresh VARIANT).
 @inline(__always)
-func rtValue(_ pointer: UnsafeMutableRawPointer?) -> RTValue {
+package func rtValue(_ pointer: UnsafeMutableRawPointer?) -> RTValue {
     guard let pointer else { return .empty }
     return Unmanaged<RTBox>.fromOpaque(pointer).takeUnretainedValue().value
 }
 
 @inline(__always)
-func rtOwned(_ value: RTValue) -> UnsafeMutableRawPointer {
+package func rtOwned(_ value: RTValue) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(RTBox(value)).toOpaque()
 }
 

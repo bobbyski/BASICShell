@@ -31,3 +31,11 @@ public func basic_rt_host_gfx_clear() {}
 
 @_cdecl("basic_rt_host_gfx_present")
 public func basic_rt_host_gfx_present() {}
+
+@_cdecl("basic_rt_host_gfx_finish")
+public func basic_rt_host_gfx_finish() {}
+
+@_cdecl("basic_rt_host_vtg_call")
+public func basic_rt_host_vtg_call(_ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    basic_rt_fail("VectorTerminal graphics are not supported by this host")
+}

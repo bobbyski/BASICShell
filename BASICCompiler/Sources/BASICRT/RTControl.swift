@@ -27,7 +27,7 @@ public func basic_rt_fail(_ message: UnsafePointer<CChar>) -> Never {
     basic_rt_fail(String(cString: message))
 }
 
-func basic_rt_fail(_ message: String) -> Never {
+package func basic_rt_fail(_ message: String) -> Never {
     basic_rt_fail(prefix: "Runtime error", message)
 }
 

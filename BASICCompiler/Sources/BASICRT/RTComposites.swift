@@ -12,7 +12,7 @@ import Foundation
 // find fields by name without the compiler emitting per-type code.
 
 /// The runtime's record/object.
-public final class RTComposite {
+package final class RTComposite {
     let typeIndex: Int
     /// One value per field, in the registered slot order.
     var fields: [RTValue]

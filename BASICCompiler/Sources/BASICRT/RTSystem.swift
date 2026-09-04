@@ -11,15 +11,22 @@ import Foundation
 // the result statically from its member table.
 
 /// The runtime's system object.
-final class RTSystemObject {
-    let typeName: String
-    let payload: AnyObject
+package final class RTSystemObject {
+    package let typeName: String
+    package let payload: AnyObject
 
-    init(typeName: String, payload: AnyObject) {
+    package init(typeName: String, payload: AnyObject) {
         self.typeName = typeName
         self.payload = payload
     }
 }
+
+/// The host's VTG dispatcher (BASICRTHost) — or the stub that says no.
+@_silgen_name("basic_rt_host_vtg_call") func rtHostVTGCall(_ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
+
+/// A `VectorTerminal()` object: no state of its own — every instance
+/// shares the host canvas, as the interpreter's do.
+final class RTVectorTerminal {}
 
 /// The `HttpClient` object's state.
 final class RTHTTPClient {
@@ -57,6 +64,14 @@ enum RTSystem {
             return callFile(file, method: method, arguments: arguments)
         case let client as RTHTTPClient:
             return callHTTP(client, method: method, arguments: arguments)
+        case is RTVectorTerminal:
+            var boxes = arguments.map { Optional(rtOwned($0)) }
+            defer { boxes.forEach { basic_rt_value_release($0) } }
+            let result = boxes.withUnsafeBufferPointer { buffer in
+                rtHostVTGCall(method, buffer.count, buffer.baseAddress!)
+            }
+            defer { basic_rt_value_release(result) }
+            return rtValue(result)
         default:
             basic_rt_fail("\(object.typeName) has no method \(method)")
         }
@@ -328,6 +343,9 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     switch String(cString: typeName).uppercased() {
     case "FILE": return rtOwned(RTSystem.newFile(values))
     case "HTTPCLIENT": return rtOwned(RTSystem.newHTTPClient(values))
+    case "VECTORTERMINAL", "VTG":
+        guard values.isEmpty else { basic_rt_fail("VectorTerminal expects 0 arguments") }
+        return rtOwned(RTValue.system(RTSystemObject(typeName: "VectorTerminal", payload: RTVectorTerminal())))
     default: basic_rt_fail("Unknown CLASS \(String(cString: typeName))")
     }
 }

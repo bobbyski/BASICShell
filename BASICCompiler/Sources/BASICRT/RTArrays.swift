@@ -10,7 +10,7 @@ import Foundation
 // takes the shape of whatever is assigned to it.
 
 /// The runtime's array object.
-public final class RTArray {
+package final class RTArray {
     /// Upper bound per dimension; every dimension starts at 0. -1 is an
     /// open (`*`) dimension that has not been given a shape yet.
     var upperBounds: [Int]

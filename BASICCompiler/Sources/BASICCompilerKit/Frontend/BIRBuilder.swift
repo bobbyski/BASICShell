@@ -1381,7 +1381,7 @@ final class FunctionBuilder {
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
             if SemanticModel.systemClasses[className.uppercased()] != nil, model.types[className.uppercased()] == nil {
-                return .systemNew(className.uppercased(), try arguments.map { try lowerExpression($0) })
+                return .systemNew(className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased(), try arguments.map { try lowerExpression($0) })
             }
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
@@ -1710,7 +1710,7 @@ final class FunctionBuilder {
         }
         if let host = try lowerHostBuiltin(name, arguments) { return host }
         if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: functionName) == nil {
-            return .systemNew(name.normalized, try arguments.map { try lowerExpression($0) })
+            return .systemNew(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized, try arguments.map { try lowerExpression($0) })
         }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             throw unsupported("the builtin \(name.name)")
