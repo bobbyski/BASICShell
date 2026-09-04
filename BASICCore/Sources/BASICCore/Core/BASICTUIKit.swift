@@ -983,6 +983,21 @@ extension BASICRuntime {
                     )
                     return .empty
                 }
+                if let sidebar = subject as? SidebarList {
+                    // icon, title, subtitle — the same row shape a master
+                    // detail's `additem` takes, on the standalone list.
+                    let icon = arguments.first?.string?.description
+                    sidebar.items.append(
+                        SidebarItem(
+                            icon: icon.flatMap { $0.count == 1 ? $0.first : nil },
+                            title: (arguments.count > 1
+                                ? arguments[1].string?.description : nil) ?? (icon ?? ""),
+                            subtitle: arguments.count > 2
+                                ? arguments[2].string?.description : nil
+                        )
+                    )
+                    return .empty
+                }
                 if let collection = subject as? CollectionView {
                     guard !collection.sections.isEmpty else {
                         throw BASICError.runtime(
@@ -1451,6 +1466,15 @@ extension BASICRuntime {
                 return .empty
 
             case "THRESHOLDS":
+                // A level indicator's thresholds are counts, not fractions:
+                // `warningLevel = 4, criticalLevel = 5` out of five segments.
+                if let level = subject as? LevelIndicator {
+                    level.warningLevel = Int(arguments.first?.number ?? 0)
+                    level.criticalLevel = Int(
+                        (arguments.count > 1 ? arguments[1].number : nil) ?? 0
+                    )
+                    return .empty
+                }
                 guard let gauge = subject as? Gauge else {
                     throw BASICError.runtime("\(typeName) has no thresholds")
                 }
