@@ -550,7 +550,7 @@ final class BASICRuntime {
         method: String,
         arguments: [BASICValue],
         tuiPresentationHost: (any BASICTUIPresentationHost)? = nil,
-        invokeHandler: @escaping (String) throws -> Void = { _ in },
+        invokeHandler: @escaping (String, [BASICValue]) throws -> Void = { _, _ in },
         fileHost: BASICFileHost? = nil,
         vectorTerminalHost: BASICVectorTerminalHost? = nil,
         timerHost: BASICTimerHost? = nil,

@@ -2828,9 +2828,9 @@ public final class BASICInterpreter {
                 // How a control gets back into the program. The runtime has no
                 // route to the interpreter, and calling a named function is the
                 // entire purpose of a button.
-                invokeHandler: { [weak self] handlerName in
+                invokeHandler: { [weak self] handlerName, handlerArguments in
                     guard let self else { return }
-                    try self.callNamedHandler(handlerName)
+                    try self.callNamedHandler(handlerName, arguments: handlerArguments)
                 },
                 fileHost: host as? BASICFileHost,
                 vectorTerminalHost: host as? BASICVectorTerminalHost,
@@ -3311,18 +3311,20 @@ public final class BASICInterpreter {
     /// Named functions, not closures: a BASIC closure captures by snapshot and
     /// its writes do not escape, so a closure used as a button handler would
     /// run and silently discard everything it did (TUIKIT_PLAN.md §2.1).
-    func callNamedHandler(_ name: String) throws {
+    func callNamedHandler(_ name: String, arguments: [BASICValue] = []) throws {
         guard let definition = functionDefinitions[name.uppercased()] else {
             throw BASICError.runtime("No handler called \(name)")
         }
         guard !definition.isAsync else {
             throw BASICError.runtime("Handler \(definition.displayName) must be synchronous")
         }
+        // A handler that declares no parameter is called as one — a control
+        // that carries a value should not break the handlers that ignore it.
         _ = try callFunctionSynchronously(
             definition: definition,
             receiver: nil,
             receiverClassName: nil,
-            argumentValues: [],
+            argumentValues: definition.parameters.isEmpty ? [] : arguments,
             allowVoid: true
         )
     }

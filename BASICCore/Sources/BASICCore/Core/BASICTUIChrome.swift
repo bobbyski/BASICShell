@@ -37,12 +37,52 @@ extension BASICTUIRegistry {
 /// desktop show around the floating windows. This is that window.
 @MainActor
 final class BASICTUIShellWindow: Window {
+    /// Esc quits from anywhere. Set when the app starts, because that is the
+    /// first moment there is an application to stop.
+    var onQuit: () -> Void = {}
+
+    /// While a dropdown is open, Esc belongs to the menu rather than to us.
+    /// Set when a menu bar is added to this window.
+    weak var menuBar: MenuBar?
+
     override func draw(_ painter: Painter) {
         painter.fill(Rect(x: 0, y: 0, width: bounds.size.width, height: 1), with: .blank)
         painter.fill(
             Rect(x: 0, y: bounds.size.height - 1, width: bounds.size.width, height: 1),
             with: .blank
         )
+    }
+
+    /// Claim only the bar rows and open dropdowns; everywhere else clicks fall
+    /// through to the windows behind.
+    ///
+    /// Without this the shell fills the screen and swallows every click, so a
+    /// floating window under the pointer never sees one — the app draws
+    /// correctly and answers nothing.
+    override func hitTest(_ point: Point) -> (view: TUIView, local: Point)? {
+        guard let hit = super.hitTest(point) else {
+            return nil
+        }
+
+        if hit.view === self, point.y > 0, point.y < bounds.size.height - 1 {
+            return nil
+        }
+
+        return hit
+    }
+
+    /// Esc quits from anywhere — unless a dropdown is open, which owns it.
+    override func handleHotKey(_ key: KeyInput) -> Bool {
+        if key.key == .escape, key.modifiers.isEmpty {
+            if menuBar?.isMenuOpen == true {
+                return false
+            }
+
+            onQuit()
+            return true
+        }
+
+        return super.handleHotKey(key)
     }
 }
 

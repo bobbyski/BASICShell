@@ -647,7 +647,7 @@ extension BASICRuntime {
         method: String,
         arguments: [BASICValue],
         presentationHost: (any BASICTUIPresentationHost)?,
-        invokeHandler: @escaping (String) throws -> Void
+        invokeHandler: @escaping (String, [BASICValue]) throws -> Void
     ) throws -> BASICValue {
         let name = method.uppercased()
 
@@ -696,6 +696,9 @@ extension BASICRuntime {
                     bar.anchors = AnchorSet(leading: 0, trailing: 0, top: 0, height: 1)
                     window.addSubview(bar)
                     registry.windowsWithMenuBars.insert(id)
+                    // A shell window hands Esc to an open dropdown rather than
+                    // quitting under it, so it has to know which bar to ask.
+                    (window as? BASICTUIShellWindow)?.menuBar = bar
                     // Anything already filling the window is covering the bar.
                     // Push it down a row rather than leaving a menu that is
                     // drawn and then painted over — which looks like a menu bar
@@ -855,9 +858,13 @@ extension BASICRuntime {
                 let handler = arguments.count > 1
                     ? arguments[1].string?.description
                     : nil
+                // An optional third argument travels to the handler, so one
+                // function can serve a whole menu — the shape of a Swift item
+                // whose closure captures what it applies.
+                let carried = arguments.count > 2 ? [arguments[2]] : []
                 _ = menu.addItem(label) {
                     guard let handler else { return }
-                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                    BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler, with: carried)
                 }
                 return .empty
 
@@ -1813,7 +1820,7 @@ extension BASICRuntime {
         appID: Int,
         arguments: [BASICValue],
         presentationHost: (any BASICTUIPresentationHost)?,
-        invokeHandler: @escaping (String) throws -> Void
+        invokeHandler: @escaping (String, [BASICValue]) throws -> Void
     ) throws -> BASICValue {
         guard case .systemObject(_, let windowID) = arguments.first else {
             throw BASICError.runtime("TUIApp.run expects a window")

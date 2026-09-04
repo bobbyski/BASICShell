@@ -45,7 +45,7 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
     private init() {}
 
     /// Calls a BASIC function by name. Set for the duration of `run`.
-    var invokeHandler: ((String) throws -> Void)?
+    var invokeHandler: ((String, [BASICValue]) throws -> Void)?
 
     private var failure: BASICError?
 
@@ -98,9 +98,19 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
     /// than an id to look it up by.
     @MainActor
     func invoke(handlerNamed handler: String) {
+        invoke(handlerNamed: handler, with: [])
+    }
+
+    /// Calls a handler with arguments — how a control hands back the thing it
+    /// was carrying.
+    ///
+    /// A Swift closure captures its value (`addItem(name) { apply(theme) }`);
+    /// a BASIC handler is a name, so the value has to travel with the call or
+    /// the program needs one near-identical function per value.
+    func invoke(handlerNamed handler: String, with arguments: [BASICValue]) {
         guard let invoke = invokeHandler else { return }
         do {
-            try invoke(handler)
+            try invoke(handler, arguments)
         } catch let error as BASICError {
             fail(with: error)
         } catch {
@@ -144,6 +154,10 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 // on it would lose a program's window to a mistimed keystroke.
                 app.stopsOnControlC = false
                 registry.apps[appID] = app
+
+                // Esc quits a shell window, which needs the application it is
+                // quitting — so this is the earliest it can be wired.
+                (window as? BASICTUIShellWindow)?.onQuit = { [weak app] in app?.stop() }
 
                 // Everything the program said to its application before there
                 // was one to say it to.
