@@ -38,7 +38,7 @@ enum RTConsole {
 
 @_cdecl("basic_rt_print_text")
 public func basic_rt_print_text(_ pointer: UnsafeMutableRawPointer?) {
-    RTConsole.write(rtText(pointer))
+    RTConsole.write(rtString(pointer).description)
 }
 
 @_cdecl("basic_rt_print_number")

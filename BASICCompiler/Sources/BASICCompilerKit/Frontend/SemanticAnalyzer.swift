@@ -366,6 +366,14 @@ struct SemanticAnalyzer {
             if !dimensions.isEmpty {
                 model.update(name.normalized, in: function) { $0.wasDimensioned = true }
             }
+        case .fieldFile(_, let fields):
+            for field in fields {
+                try record(field.variable, .scalar, .string, at: line, in: function, changed: &changed)
+                if !model.fieldVariables.contains(field.variable.normalized) { model.fieldVariables.append(field.variable.normalized) }
+            }
+        case .setFieldString(.variable(let name), let value, _):
+            try record(name, .scalar, .string, at: line, in: function, changed: &changed)
+            try noteReferences(in: value, at: line, in: function, changed: &changed)
         case .input(_, let target), .lineInput(_, let target, _, _, _, _):
             noteTarget(target, at: line, in: function, changed: &changed)
         case .read(let targets):
@@ -440,7 +448,8 @@ struct SemanticAnalyzer {
             let known = model.info(name.normalized, in: function)?.type
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true,
-               known != .dictionary, known != .variant {
+               known != .dictionary, known != .variant,
+               !(SemanticModel.systemClasses[name.normalized] != nil && known == nil) {
                 note(name, .array(arguments.count), at: line, in: function, changed: &changed)
             }
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
@@ -479,6 +488,7 @@ struct SemanticAnalyzer {
     private mutating func note(_ name: VariableName, _ storage: Storage, at line: ParsedLine, in function: String?, changed: inout Bool) {
         let key = name.normalized
         if key == "ERR" || key == "ERL" { return }
+        if SemanticModel.namedConstants.contains(key), case .scalar = storage, model.info(key, in: function) == nil { return }
         let before = model.info(key, in: function)
         model.update(key, in: function) { info in
             if case .array(let rank) = storage, info.rank == nil { info.rank = rank }
@@ -515,12 +525,15 @@ struct SemanticAnalyzer {
         case .boolean: return .boolean
         case .variable(let name):
             if name.normalized == "ERR" || name.normalized == "ERL" { return .number }
-            return model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
+            if let known = model.info(name.normalized, in: function)?.type { return known }
+            if SemanticModel.namedConstants.contains(name.normalized) { return .string }
+            return Self.suffixType(name.normalized)
         case .variableReference(let reference):
             guard var type = model.info(reference.base.normalized, in: function)?.type ?? Self.suffixType(reference.base.normalized) else { return nil }
             if !reference.indexes.isEmpty, type == .dictionary || type == .variant { return .variant }
             for (position, field) in reference.fields.enumerated() {
                 if type == .variant { return .variant }
+                if case .system(let typeName) = type { return SemanticModel.systemMember(field.uppercased(), of: typeName)?.returns }
                 guard case .composite(let typeName) = type, let found = model.field(field.uppercased(), of: typeName) else { return nil }
                 type = found.field.type
                 if reference.fieldIndexes.indices.contains(position), !reference.fieldIndexes[position].isEmpty {
@@ -531,17 +544,20 @@ struct SemanticAnalyzer {
             return type
         case .null: return .variant
         case .newObject(let name, _):
+            if SemanticModel.systemClasses[name.uppercased()] != nil, model.types[name.uppercased()] == nil { return .system(name.uppercased()) }
             return model.types[name.uppercased()].map { _ in .composite(name.uppercased()) }
         case .methodCall(let reference, let method, let arguments):
             if reference.base.normalized == "FILE", model.info("FILE", in: function) == nil {
                 switch method.normalized {
-                case "CWD", "CWD$", "READTEXT", "READTEXT$": return .string
+                case "CWD", "CWD$", "READTEXT", "READTEXT$", "READBYTES", "READBYTES$": return .string
                 case "EXISTS", "ISDIR": return .boolean
+                case "FILES", "FILES$", "READJSON": return .variant
                 default: return .void
                 }
             }
             guard let receiverType = try typeOf(.variableReference(reference), in: function) else { return nil }
             if receiverType == .variant { return .variant }
+            if case .system(let typeName) = receiverType { return SemanticModel.systemMember(method.normalized, of: typeName)?.returns }
             guard case .composite(let typeName) = receiverType else { return nil }
             if let member = model.types[typeName]?.members[method.normalized] { return member.returnType }
             if let found = model.lookupMethod(method.normalized, in: typeName) { return found.returnType }
@@ -564,6 +580,9 @@ struct SemanticAnalyzer {
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
             if name.normalized == "USING$" || name.normalized == "TOJSONSTRING" { return .string }
             if name.normalized == "FROMJSONSTRING" { return .variant }
+            if ["MKI$", "MKS$", "MKD$", "INPUT$"].contains(name.normalized) { return .string }
+            if ["CVI", "CVS", "CVD", "SEEK"].contains(name.normalized) { return .number }
+            if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
@@ -603,6 +622,7 @@ struct SemanticAnalyzer {
         case .void: return .void
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
+            if SemanticModel.systemClasses[typeName.uppercased()] != nil, model.types[typeName.uppercased()] == nil { return .system(typeName.uppercased()) }
             guard model.types[typeName.uppercased()] != nil else {
                 throw CompileError("\(name) AS \(typeName): unknown TYPE, CLASS, or INTERFACE", at: Self.location(of: line))
             }

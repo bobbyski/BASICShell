@@ -104,3 +104,64 @@ public func basic_rt_file_write_text(_ pathPointer: UnsafeMutableRawPointer?, _ 
         basic_rt_fail("Could not write \(path)")
     }
 }
+
+// MARK: - Bytes, JSON, and listings
+
+/// `File.ReadBytes$(path)`: the file's bytes as a data-backed string; owned.
+@_cdecl("basic_rt_file_read_bytes")
+public func basic_rt_file_read_bytes(_ pathPointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    let path = RTFiles.validated(rtText(pathPointer))
+    return rtOwned(RTText(data: RTFiles.loadData(path)))
+}
+
+/// `File.WriteBytes path, bytes$`.
+@_cdecl("basic_rt_file_write_bytes")
+public func basic_rt_file_write_bytes(_ pathPointer: UnsafeMutableRawPointer?, _ bytesPointer: UnsafeMutableRawPointer?) {
+    let path = RTFiles.validated(rtText(pathPointer))
+    ensureParentDirectory(for: path)
+    RTFiles.saveData(rtString(bytesPointer).rawData, to: path)
+}
+
+/// `File.AppendBytes path, bytes$`: reads, appends, rewrites.
+@_cdecl("basic_rt_file_append_bytes")
+public func basic_rt_file_append_bytes(_ pathPointer: UnsafeMutableRawPointer?, _ bytesPointer: UnsafeMutableRawPointer?) {
+    let path = RTFiles.validated(rtText(pathPointer))
+    var data = FileManager.default.fileExists(atPath: expanded(path)) ? RTFiles.loadData(path) : Data()
+    data.append(rtString(bytesPointer).rawData)
+    ensureParentDirectory(for: path)
+    RTFiles.saveData(data, to: path)
+}
+
+/// `File.ReadJson(path[, permissive])`; owned box.
+@_cdecl("basic_rt_file_read_json")
+public func basic_rt_file_read_json(_ pathPointer: UnsafeMutableRawPointer?, _ permissive: Bool) -> UnsafeMutableRawPointer {
+    let path = RTFiles.validated(rtText(pathPointer))
+    do throws(RTFailure) {
+        return rtOwned(try RTJSON.decode(RTFiles.loadText(path), permissive: permissive))
+    } catch { error.raise() }
+}
+
+/// `File.WriteJson path, value[, pretty]`.
+@_cdecl("basic_rt_file_write_json")
+public func basic_rt_file_write_json(_ pathPointer: UnsafeMutableRawPointer?, _ value: UnsafeMutableRawPointer?, _ pretty: Bool) {
+    let path = RTFiles.validated(rtText(pathPointer))
+    let text: String
+    do throws(RTFailure) {
+        text = try RTJSON.encode(rtValue(value), pretty: pretty)
+    } catch { error.raise() }
+    ensureParentDirectory(for: path)
+    RTFiles.saveText(text, to: path)
+}
+
+/// `File.Files$([dir])`: the names in a directory as a dynamic string
+/// array (no dot-files, natural order), boxed and owned.
+@_cdecl("basic_rt_file_files")
+public func basic_rt_file_files(_ pathPointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    let path = pathPointer.map { RTFiles.validated(rtText($0)) } ?? FileManager.default.currentDirectoryPath
+    guard let entries = try? FileManager.default.contentsOfDirectory(atPath: expanded(path)) else {
+        basic_rt_fail("File Not Found")
+    }
+    let names = entries.filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    let array = RTArray(upperBounds: [names.isEmpty ? -1 : names.count - 1], isDynamic: true, element: .string, values: names.map { .string(RTText($0)) })
+    return rtOwned(RTValue.array(array))
+}

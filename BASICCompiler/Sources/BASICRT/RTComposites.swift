@@ -115,13 +115,13 @@ public func basic_rt_composite_set_boolean(_ pointer: UnsafeMutableRawPointer?, 
 /// Owned (+1); nil when the field is empty.
 @_cdecl("basic_rt_composite_get_string")
 public func basic_rt_composite_get_string(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer? {
-    guard let string = rtComposite(pointer).fields[field].string, !string.isEmpty else { return nil }
+    guard let string = rtComposite(pointer).fields[field].string, string.byteCount > 0 else { return nil }
     return rtOwned(string)
 }
 
 @_cdecl("basic_rt_composite_set_string")
 public func basic_rt_composite_set_string(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: UnsafeMutableRawPointer?) {
-    rtComposite(pointer).fields[field] = .string(rtText(value))
+    rtComposite(pointer).fields[field] = .string(rtString(value))
 }
 
 /// Borrowed: the nested record itself, so `a.b.c = 1` mutates in place.

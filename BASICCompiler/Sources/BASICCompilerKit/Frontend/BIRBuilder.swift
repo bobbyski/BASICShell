@@ -58,6 +58,7 @@ public struct BIRBuilder {
         module.functions.append(contentsOf: closures.functions)
         module.types.append(contentsOf: closures.environmentTypes)
         module.signatures = model.signatures
+        module.fieldVariables = model.fieldVariables
         return module
     }
 
@@ -495,19 +496,53 @@ final class FunctionBuilder {
             emit(.cls)
 
         case .openFile(let path, let mode, let number, let recordLength):
-            guard recordLength == nil else { throw unsupported("OPEN … LEN") }
             let modeCode: Int
             switch mode {
             case .input: modeCode = 0
             case .output: modeCode = 1
             case .append: modeCode = 2
-            case .binary, .random: throw unsupported("OPEN FOR \(mode.rawValue)")
+            case .binary: modeCode = 3
+            case .random: modeCode = 4
             }
             emit(.openFile(
                 path: try lowerExpression(path, expecting: .string, context: "OPEN"),
                 mode: modeCode,
-                number: try lowerExpression(number, expecting: .number, context: "OPEN AS")
+                number: try lowerExpression(number, expecting: .number, context: "OPEN AS"),
+                recordLength: try recordLength.map { try lowerExpression($0, expecting: .number, context: "OPEN LEN") }
             ))
+        case .fieldFile(let number, let fields):
+            emit(.fieldFile(
+                number: try lowerExpression(number, expecting: .number, context: "FIELD"),
+                fields: try fields.map { BIRFieldSpec(width: try lowerExpression($0.width, expecting: .number, context: "FIELD width"), variable: variable($0.variable)) }
+            ))
+        case .setFieldString(let target, let value, let rightAligned):
+            guard case .variable(let name) = target else { throw CompileError("LSET and RSET require a FIELD string variable", at: location) }
+            emit(.setFieldString(variable(name), try lowerExpression(value, expecting: .string, context: rightAligned ? "RSET" : "LSET"), rightAligned: rightAligned))
+        case .putFile(let number, let parts):
+            var record: BIRExpression?
+            if parts.count == 1, case .expression(let expression) = parts[0] {
+                record = try lowerExpression(expression, expecting: .number, context: "PUT")
+            } else if !parts.isEmpty {
+                throw CompileError("PUT expects an optional record number in RANDOM mode", at: location)
+            }
+            emit(.putRecord(number: try lowerExpression(number, expecting: .number, context: "PUT"), record: record))
+        case .getRecordFile(let number, let record):
+            emit(.getRecord(
+                number: try lowerExpression(number, expecting: .number, context: "GET"),
+                record: try record.map { try lowerExpression($0, expecting: .number, context: "GET") }
+            ))
+        case .getFile(let number, let targets):
+            emit(.inputFile(
+                number: try lowerExpression(number, expecting: .number, context: "GET #"),
+                targets: try targets.map(lowerReadTarget)
+            ))
+        case .seekFile(let number, let position):
+            emit(.seekFile(
+                number: try lowerExpression(number, expecting: .number, context: "SEEK"),
+                position: try lowerExpression(position, expecting: .number, context: "SEEK")
+            ))
+        case .resetFile(let number):
+            emit(.resetFile(try lowerExpression(number, expecting: .number, context: "RESET")))
         case .closeFile(let number):
             emit(.closeFile(try number.map { try lowerExpression($0, expecting: .number, context: "CLOSE") }))
         case .printFile(let number, let parts):
@@ -741,6 +776,7 @@ final class FunctionBuilder {
         case .composite(let typeName): message = "Cannot assign non-\(model.types[typeName]?.displayName ?? typeName) value to \(name)"
         case .dictionary: message = "Cannot assign non-dictionary value to \(name)"
         case .closure, .array: message = "Type Mismatch"
+        case .system: message = "Type Mismatch"
         case .void, .variant: message = "Cannot assign to \(name)"
         }
         emit(.failType(message))
@@ -760,6 +796,18 @@ final class FunctionBuilder {
         if type == .variant { return .box(value) }
         if value.type == .variant { return .unbox(value, type, name: name) }
         return value
+    }
+
+    /// `object.Method(args)` on a host-implemented object: typed from the
+    /// class's member table; the runtime does the rest.
+    private func lowerSystemCall(_ receiver: BIRExpression, _ typeName: String, _ method: VariableName, _ arguments: [Expression]) throws -> BIRExpression {
+        guard let member = SemanticModel.systemMember(method.normalized, of: typeName) else {
+            throw CompileError("\(typeName.capitalized) has no method \(method.name)", at: location)
+        }
+        if let count = member.parameters, count != arguments.count {
+            throw CompileError("\(method.name.lowercased()) expects \(count) argument\(count == 1 ? "" : "s")", at: location)
+        }
+        return .systemCall(receiver, method: method.normalized, try arguments.map { try lowerExpression($0) }, returns: member.returns)
     }
 
     /// Stores into any place with the operation its shape needs.
@@ -784,7 +832,7 @@ final class FunctionBuilder {
         case .boolean: return .boolean(false)
         case .composite(let name): return .construct(name)
         case .closure: return .number(0)  // never stored: closure slots start empty
-        case .variant, .array: return .emptyValue
+        case .variant, .array, .system: return .emptyValue
         case .dictionary: return .newDictionary
         }
     }
@@ -960,27 +1008,42 @@ final class FunctionBuilder {
     }
 
     /// The service members basicc compiles, with their signatures.
-    private static let fileServiceMembers: [String: (name: String, parameters: [BIRType], returns: BIRType)] = [
-        "CWD": ("CWD", [], .string), "CWD$": ("CWD", [], .string),
-        "CHDIR": ("CHDIR", [.string], .void),
-        "MKDIR": ("MKDIR", [.string], .void),
-        "RM": ("RM", [.string], .void),
-        "RENAME": ("RENAME", [.string, .string], .void),
-        "EXISTS": ("EXISTS", [.string], .boolean),
-        "ISDIR": ("ISDIR", [.string], .boolean),
-        "READTEXT": ("READTEXT", [.string], .string), "READTEXT$": ("READTEXT", [.string], .string),
-        "WRITETEXT": ("WRITETEXT", [.string, .string], .void),
+    private static let fileServiceMembers: [String: (name: String, parameters: [BIRType], returns: BIRType, minimum: Int, defaults: [BIRExpression])] = [
+        "CWD": ("CWD", [], .string, 0, []), "CWD$": ("CWD", [], .string, 0, []),
+        "CHDIR": ("CHDIR", [.string], .void, 1, []),
+        "MKDIR": ("MKDIR", [.string], .void, 1, []),
+        "RM": ("RM", [.string], .void, 1, []),
+        "RENAME": ("RENAME", [.string, .string], .void, 2, []),
+        "EXISTS": ("EXISTS", [.string], .boolean, 1, []),
+        "ISDIR": ("ISDIR", [.string], .boolean, 1, []),
+        "READTEXT": ("READTEXT", [.string], .string, 1, []), "READTEXT$": ("READTEXT", [.string], .string, 1, []),
+        "WRITETEXT": ("WRITETEXT", [.string, .string], .void, 2, []),
+        "READBYTES": ("READBYTES", [.string], .string, 1, []), "READBYTES$": ("READBYTES", [.string], .string, 1, []),
+        "WRITEBYTES": ("WRITEBYTES", [.string, .string], .void, 2, []),
+        "APPENDBYTES": ("APPENDBYTES", [.string, .string], .void, 2, []),
+        "READJSON": ("READJSON", [.string, .boolean], .variant, 1, [.boolean(true)]),
+        "WRITEJSON": ("WRITEJSON", [.string, .variant, .boolean], .void, 2, [.boolean(false)]),
+        "FILES": ("FILES", [.string], .variant, 0, []), "FILES$": ("FILES", [.string], .variant, 0, []),
     ]
 
     private func lowerFileService(_ method: VariableName, _ arguments: [Expression]) throws -> (String, [BIRExpression], BIRType) {
         guard let member = Self.fileServiceMembers[method.normalized] else {
-            throw unsupported("File.\(method.name) (Phase 4.9)")
+            throw CompileError("File has no shared method \(method.name)", at: location)
         }
-        guard arguments.count == member.parameters.count else {
-            throw CompileError("File.\(method.name) expects \(member.parameters.count) argument\(member.parameters.count == 1 ? "" : "s")", at: location)
+        guard (member.minimum...member.parameters.count).contains(arguments.count) else {
+            if member.minimum == member.parameters.count {
+                throw CompileError("File.\(method.name) expects \(member.parameters.count) argument\(member.parameters.count == 1 ? "" : "s")", at: location)
+            }
+            throw CompileError("File.\(method.name) expects \(member.minimum) to \(member.parameters.count) arguments", at: location)
         }
-        let lowered = try zip(arguments, member.parameters).map { argument, type in
+        var lowered = try zip(arguments, member.parameters).map { argument, type in
             try lowerExpression(argument, expecting: type, context: "File.\(method.name)")
+        }
+        // Trailing optional arguments take their defaults (FILES$ with no
+        // directory stays empty: the runtime uses the current directory).
+        let missing = member.parameters.count - arguments.count
+        if missing > 0, member.defaults.count >= missing {
+            lowered.append(contentsOf: member.defaults.suffix(missing))
         }
         return (member.name, lowered, member.returns)
     }
@@ -1039,6 +1102,10 @@ final class FunctionBuilder {
             if isFileService(reference) {
                 let (member, lowered, _) = try lowerFileService(method, arguments)
                 emit(.fileService(method: member, arguments: lowered))
+                return
+            }
+            if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.isEmpty {
+                emit(.discard(try lowerSystemCall(.load(variable(reference.base)), typeName, method, arguments)))
                 return
             }
             _ = try lowerMethodCall(reference, method, arguments, wantsValue: false)
@@ -1227,6 +1294,9 @@ final class FunctionBuilder {
         case .variable(let name):
             if name.normalized == "ERR" { return .intrinsic(.err, []) }
             if name.normalized == "ERL" { return .intrinsic(.erl, []) }
+            if SemanticModel.namedConstants.contains(name.normalized), model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
+                return .string(name.normalized)
+            }
             let resolved = variable(name)
             if resolved.rank != nil { return .loadArray(resolved) }
             return .load(resolved)
@@ -1237,10 +1307,16 @@ final class FunctionBuilder {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             return try lowerCall(name, arguments)
         case .variableReference(let reference):
+            if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.count == 1 {
+                return try lowerSystemCall(.load(variable(reference.base)), typeName, VariableName(name: reference.fields[0], column: reference.base.column), [])
+            }
             return load(try lowerPlace(reference))
         case .closure(let parameters, let returnType, let captures, let body):
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
+            if SemanticModel.systemClasses[className.uppercased()] != nil, model.types[className.uppercased()] == nil {
+                return .systemNew(className.uppercased(), try arguments.map { try lowerExpression($0) })
+            }
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
             if isFileService(reference) {
@@ -1249,6 +1325,11 @@ final class FunctionBuilder {
                     throw CompileError("VOID function File.\(method.name) cannot be used in an expression", at: location)
                 }
                 return .fileService(method: member, arguments: lowered, returns: returns)
+            }
+            if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.isEmpty {
+                let call = try lowerSystemCall(.load(variable(reference.base)), typeName, method, arguments)
+                guard call.type != .void else { throw CompileError("VOID function \(method.name) cannot be used in an expression", at: location) }
+                return call
             }
             return try lowerMethodCall(reference, method, arguments, wantsValue: true)!
         case .lenFunction(let inner):
@@ -1552,6 +1633,10 @@ final class FunctionBuilder {
         if keyed.rank == nil, keyed.type == .variant, !arguments.isEmpty {
             return .valueIndex(.load(keyed), try arguments.map { try lowerExpression($0) }, name: name.name)
         }
+        if let host = try lowerHostBuiltin(name, arguments) { return host }
+        if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: functionName) == nil {
+            return .systemNew(name.normalized, try arguments.map { try lowerExpression($0) })
+        }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             throw unsupported("the builtin \(name.name)")
         }
@@ -1564,6 +1649,45 @@ final class FunctionBuilder {
         }
         let indexes = try arguments.map { try lowerExpression($0, expecting: .number, context: "\(name.name) index") }
         return .element(array, indexes)
+    }
+
+    /// The builtins with optional arguments, as runtime calls with the
+    /// defaults filled in: `MKI$`, `MKS$`, `MKD$`, `CVI`, `CVS`, `CVD`,
+    /// `INPUT$(n, #f)`, `SEEK(n)`.
+    private func lowerHostBuiltin(_ name: VariableName, _ arguments: [Expression]) throws -> BIRExpression? {
+        func count(_ range: ClosedRange<Int>) throws {
+            guard range.contains(arguments.count) else {
+                if range.lowerBound == range.upperBound {
+                    throw CompileError("\(name.name) expects \(range.lowerBound) argument\(range.lowerBound == 1 ? "" : "s")", at: location)
+                }
+                throw CompileError("\(name.name) expects \(range.lowerBound) \(range.upperBound - range.lowerBound == 1 ? "or" : "to") \(range.upperBound) arguments", at: location)
+            }
+        }
+        func argument(_ index: Int, _ type: BIRType, default value: BIRExpression) throws -> BIRExpression {
+            guard index < arguments.count else { return value }
+            return try lowerExpression(arguments[index], expecting: type, context: name.name)
+        }
+        switch name.normalized {
+        case "MKI$":
+            try count(1...3)
+            return .hostCall("basic_rt_mki", [try argument(0, .number, default: .number(0)), try argument(1, .number, default: .number(16)), try argument(2, .string, default: .string("NATIVE"))], returns: .string)
+        case "MKS$", "MKD$":
+            try count(1...2)
+            return .hostCall(name.normalized == "MKS$" ? "basic_rt_mks" : "basic_rt_mkd", [try argument(0, .number, default: .number(0)), try argument(1, .string, default: .string("NATIVE"))], returns: .string)
+        case "CVI":
+            try count(1...3)
+            return .hostCall("basic_rt_cvi", [try argument(0, .string, default: .string("")), try argument(1, .number, default: .number(16)), try argument(2, .string, default: .string("NATIVE"))], returns: .number)
+        case "CVS", "CVD":
+            try count(1...2)
+            return .hostCall(name.normalized == "CVS" ? "basic_rt_cvs" : "basic_rt_cvd", [try argument(0, .string, default: .string("")), try argument(1, .string, default: .string("NATIVE"))], returns: .number)
+        case "INPUT$" where arguments.count == 2:
+            return .hostCall("basic_rt_file_input_chars", [try argument(0, .number, default: .number(0)), try argument(1, .number, default: .number(0))], returns: .string)
+        case "SEEK":
+            try count(1...1)
+            return .hostCall("basic_rt_file_seek_position", [try argument(0, .number, default: .number(0))], returns: .number)
+        default:
+            return nil
+        }
     }
 
     private func lowerArguments(_ arguments: [Expression], for userFunction: SemanticModel.Function) throws -> [BIRExpression] {

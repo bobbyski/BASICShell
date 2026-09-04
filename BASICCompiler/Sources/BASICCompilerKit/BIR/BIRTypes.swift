@@ -39,6 +39,8 @@ public enum BIRType: Sendable, Hashable {
     /// A whole array of `rank` dimensions, as a value: an array field, or an
     /// array variable used whole (`LEN(a)`, `d("k") = a`, `a = FromJsonString(…)`).
     indirect case array(BIRType, rank: Int)
+    /// A host-implemented class (`File`, …): a reference, held boxed.
+    case system(String)
 
     /// The type as diagnostics spell it.
     public var name: String {
@@ -52,7 +54,14 @@ public enum BIRType: Sendable, Hashable {
         case .variant: return "variant"
         case .dictionary: return "dictionary"
         case .array(let element, _): return "array of \(element.name)"
+        case .system(let name): return name
         }
+    }
+
+    /// Whether this is a host-implemented class.
+    public var isSystem: Bool {
+        if case .system = self { return true }
+        return false
     }
 
     /// Whether this is `VARIANT`.

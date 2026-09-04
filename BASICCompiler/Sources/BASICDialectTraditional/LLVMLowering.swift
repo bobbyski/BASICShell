@@ -84,6 +84,7 @@ struct LLVMLowering {
             case .variant: return ["k": "variant"]
             case .dictionary: return ["k": "dictionary"]
             case .closure: return ["k": "closure"]
+            case .system: return ["k": "variant"]
             case .composite(let name): return ["k": "composite", "i": module.typeIndex(of: name) ?? -1]
             case .array(let element, _):
                 return ["k": "array", "elem": typeObject(element, dimensions: [], isInteger: isInteger), "dims": dimensions.map { $0.map { $0 as Any } ?? NSNull() }]
@@ -254,7 +255,32 @@ struct LLVMLowering {
     declare void @basic_rt_cls()
     declare void @basic_rt_capture_begin()
     declare ptr @basic_rt_capture_end()
-    declare void @basic_rt_file_open(ptr, i64, double)
+    declare void @basic_rt_file_open(ptr, i64, double, double)
+    declare void @basic_rt_file_reset(double)
+    declare ptr @basic_rt_file_input_chars(double, double)
+    declare double @basic_rt_file_seek_position(double)
+    declare void @basic_rt_file_seek(double, double)
+    declare void @basic_rt_file_field_begin(double)
+    declare ptr @basic_rt_file_field(double, double, ptr)
+    declare void @basic_rt_field_mirror(ptr, ptr)
+    declare ptr @basic_rt_field_set(ptr, ptr, i1)
+    declare void @basic_rt_file_put(double, double, i1)
+    declare void @basic_rt_file_get(double, double, i1)
+    declare ptr @basic_rt_field_value_or(ptr, ptr)
+    declare ptr @basic_rt_mki(double, double, ptr)
+    declare ptr @basic_rt_mks(double, ptr)
+    declare ptr @basic_rt_mkd(double, ptr)
+    declare double @basic_rt_cvi(ptr, double, ptr)
+    declare double @basic_rt_cvs(ptr, ptr)
+    declare double @basic_rt_cvd(ptr, ptr)
+    declare ptr @basic_rt_file_read_bytes(ptr)
+    declare void @basic_rt_file_write_bytes(ptr, ptr)
+    declare void @basic_rt_file_append_bytes(ptr, ptr)
+    declare ptr @basic_rt_file_read_json(ptr, i1)
+    declare void @basic_rt_file_write_json(ptr, ptr, i1)
+    declare ptr @basic_rt_file_files(ptr)
+    declare ptr @basic_rt_system_new(ptr, i64, ptr)
+    declare ptr @basic_rt_system_call(ptr, ptr, i64, ptr)
     declare void @basic_rt_file_close(double)
     declare void @basic_rt_file_print(double, ptr)
     declare void @basic_rt_file_write_line(double, ptr)
@@ -386,7 +412,7 @@ struct FunctionEmitter {
                 let copy = out.temp()
                 out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr %p\(index))")
                 value = copy
-            } else if parameter.type == .variant {
+            } else if parameter.type == .variant || parameter.type.isSystem {
                 let copy = out.temp()
                 out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr %p\(index))")
                 value = copy
@@ -482,6 +508,9 @@ struct FunctionEmitter {
             if !Self.isManaged(variable.type) {
                 out.emit("store \(Self.llvmType(of: variable)) \(result), ptr \(slotName(variable))")
             }
+            if variable.type == .string, module.fieldVariables.contains(variable.name) {
+                out.emit("call void @basic_rt_field_mirror(ptr \(constants.constant(variable.name)), ptr \(result))")
+            }
 
         case .storeElement(let variable, let indexes, let value):
             let (result, _) = lowerValue(value)
@@ -498,7 +527,7 @@ struct FunctionEmitter {
             case .boolean: out.emit("call void @basic_rt_composite_set_boolean(ptr \(target), i64 \(index), i1 \(result))")
             case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
             case .composite, .void, .closure: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
-            case .variant, .dictionary: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
+            case .variant, .dictionary, .system: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             case .array: out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             }
 
@@ -618,10 +647,50 @@ struct FunctionEmitter {
             _ = lowerFileService(method, arguments)
         case .callClosure(let closure, let arguments):
             _ = lowerClosureCall(closure, arguments, .void)
-        case .openFile(let path, let mode, let number):
+        case .openFile(let path, let mode, let number, let recordLength):
             let pathValue = lowerValue(path).0
             let numberValue = lowerValue(number).0
-            out.emit("call void @basic_rt_file_open(ptr \(pathValue), i64 \(mode), double \(numberValue))")
+            let lengthValue = recordLength.map { lowerValue($0).0 } ?? "-1.0"
+            out.emit("call void @basic_rt_file_open(ptr \(pathValue), i64 \(mode), double \(numberValue), double \(lengthValue))")
+        case .fieldFile(let number, let fields):
+            let numberValue = lowerValue(number).0
+            out.emit("call void @basic_rt_file_field_begin(double \(numberValue))")
+            for field in fields {
+                let width = lowerValue(field.width).0
+                let value = out.temp()
+                out.emit("\(value) = call ptr @basic_rt_file_field(double \(numberValue), double \(width), ptr \(constants.constant(field.variable.name)))")
+                storeManaged(value, owned: true, into: slotName(field.variable), type: .string)
+            }
+        case .setFieldString(let variable, let value, let rightAligned):
+            let (text, _) = lowerValue(value)
+            let fitted = out.temp()
+            out.emit("\(fitted) = call ptr @basic_rt_field_set(ptr \(constants.constant(variable.name)), ptr \(text), i1 \(rightAligned ? "true" : "false"))")
+            storeManaged(fitted, owned: true, into: slotName(variable), type: .string)
+        case .putRecord(let number, let record):
+            let numberValue = lowerValue(number).0
+            let recordValue = record.map { lowerValue($0).0 } ?? "0.0"
+            out.emit("call void @basic_rt_file_put(double \(numberValue), double \(recordValue), i1 \(record == nil ? "false" : "true"))")
+        case .getRecord(let number, let record):
+            let numberValue = lowerValue(number).0
+            let recordValue = record.map { lowerValue($0).0 } ?? "0.0"
+            out.emit("call void @basic_rt_file_get(double \(numberValue), double \(recordValue), i1 \(record == nil ? "false" : "true"))")
+            // Refresh every FIELD variable from the runtime's mirror.
+            for name in module.fieldVariables {
+                guard let variable = (module.globals + function.locals).first(where: { $0.name == name && $0.type == .string }) else { continue }
+                let old = out.temp(), fresh = out.temp()
+                out.emit("\(old) = load ptr, ptr \(slotName(variable))")
+                out.emit("\(fresh) = call ptr @basic_rt_field_value_or(ptr \(constants.constant(name)), ptr \(old))")
+                out.emit("call void @basic_rt_string_release(ptr \(old))")
+                out.emit("store ptr \(fresh), ptr \(slotName(variable))")
+            }
+        case .seekFile(let number, let position):
+            let numberValue = lowerValue(number).0
+            let positionValue = lowerValue(position).0
+            out.emit("call void @basic_rt_file_seek(double \(numberValue), double \(positionValue))")
+        case .resetFile(let number):
+            out.emit("call void @basic_rt_file_reset(double \(lowerValue(number).0))")
+        case .discard(let value):
+            _ = lowerValue(value)
         case .closeFile(let number):
             out.emit("call void @basic_rt_file_close(double \(number.map { lowerValue($0).0 } ?? "0.0"))")
         case .printFile(let number, let items, let newline):
@@ -649,7 +718,7 @@ struct FunctionEmitter {
                     out.emit("\(length) = select i1 \(result), i64 4, i64 5")
                     out.emit("\(piece) = call ptr @basic_rt_string_literal(ptr \(text), i64 \(length))")
                 case .composite, .void, .closure: out.emit("\(piece) = call ptr @basic_rt_composite_text(ptr \(result))")
-                case .variant: out.emit("\(piece) = call ptr @basic_rt_value_text(ptr \(result))")
+                case .variant, .system: out.emit("\(piece) = call ptr @basic_rt_value_text(ptr \(result))")
                 case .dictionary: out.emit("\(piece) = call ptr @basic_rt_dictionary_text(ptr \(result))")
                 case .array: out.emit("\(piece) = call ptr @basic_rt_array_text(ptr \(result), ptr \(constants.constant("array")))")
                 }
@@ -724,7 +793,7 @@ struct FunctionEmitter {
                     case .string: out.emit("call void @basic_rt_print_text(ptr \(result))")
                     case .boolean: out.emit("call void @basic_rt_print_boolean(i1 \(result))")
                     case .composite: out.emit("call void @basic_rt_print_composite(ptr \(result))")
-                    case .variant: out.emit("call void @basic_rt_print_value(ptr \(result))")
+                    case .variant, .system: out.emit("call void @basic_rt_print_value(ptr \(result))")
                     case .dictionary: out.emit("call void @basic_rt_print_dictionary(ptr \(result))")
                     case .array: out.emit("call void @basic_rt_print_array(ptr \(result), ptr \(constants.constant("array")))")
                     case .closure:
@@ -762,7 +831,7 @@ struct FunctionEmitter {
                 let result = out.temp()
                 out.emit("\(result) = call i1 @basic_rt_input_boolean(ptr \(promptValue), ptr \(name))")
                 out.emit("store i1 \(result), ptr \(slotName(variable))")
-            case .void, .composite, .closure, .variant, .dictionary, .array:
+            case .void, .composite, .closure, .variant, .dictionary, .array, .system:
                 fail("INPUT into a record or closure is not supported")
             }
 
@@ -826,7 +895,7 @@ struct FunctionEmitter {
                     out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
                     owned.append(string)
                     out.emit("call void @basic_rt_using_string(ptr \(string))")
-                case .variant, .dictionary, .array:
+                case .variant, .dictionary, .array, .system:
                     let text = out.temp()
                     out.emit("\(text) = call ptr @basic_rt_value_text(ptr \(boxedPointer(result, value.type)))")
                     owned.append(text)
@@ -852,7 +921,7 @@ struct FunctionEmitter {
 
     /// Types whose values are runtime objects with ownership.
     static func isManaged(_ type: BIRType) -> Bool {
-        type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary
+        type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary || type.isSystem
     }
 
     /// The runtime call that drops one reference of a managed value.
@@ -860,7 +929,7 @@ struct FunctionEmitter {
         switch type {
         case .string: return "basic_rt_string_release"
         case .closure: return "basic_rt_closure_release"
-        case .variant: return "basic_rt_value_release"
+        case .variant, .system: return "basic_rt_value_release"
         case .dictionary: return "basic_rt_dictionary_release"
         default: return "basic_rt_composite_release"
         }
@@ -872,14 +941,14 @@ struct FunctionEmitter {
         owned.append(value)
         if type.isComposite { ownedComposites.insert(value) }
         if type.isClosure { ownedClosures.insert(value) }
-        if type == .variant { ownedValues.insert(value) }
+        if type == .variant || type.isSystem { ownedValues.insert(value) }
         if type == .dictionary { ownedDictionaries.insert(value) }
     }
 
     /// A value as a VARIANT box pointer: itself for a VARIANT, else boxed
     /// (an owned temporary).
     private mutating func boxedPointer(_ value: String, _ type: BIRType) -> String {
-        if type == .variant { return value }
+        if type == .variant || type.isSystem { return value }
         let box = out.temp()
         switch type {
         case .number: out.emit("\(box) = call ptr @basic_rt_value_from_number(double \(value))")
@@ -889,7 +958,7 @@ struct FunctionEmitter {
         case .array: out.emit("\(box) = call ptr @basic_rt_value_from_array(ptr \(value))")
         case .dictionary: out.emit("\(box) = call ptr @basic_rt_value_from_dictionary(ptr \(value))")
         case .closure: out.emit("\(box) = call ptr @basic_rt_value_from_closure(ptr \(value))")
-        case .void, .variant: out.emit("\(box) = call ptr @basic_rt_value_empty()")
+        case .void, .variant, .system: out.emit("\(box) = call ptr @basic_rt_value_empty()")
         }
         own(box, as: .variant)
         return box
@@ -913,7 +982,7 @@ struct FunctionEmitter {
         case .string: out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
         case .composite: out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(result))")
         case .boolean: out.emit("call void @basic_rt_array_store_boolean(ptr \(array), i64 \(offset), i1 \(result))")
-        case .variant, .dictionary, .array, .closure:
+        case .variant, .dictionary, .array, .closure, .system:
             out.emit("call void @basic_rt_array_store_value(ptr \(array), i64 \(offset), ptr \(boxedPointer(result, value.type)), ptr \(constants.constant(name)))")
         case .number, .void: out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(Self.asNumber(result, value.type, &out)))")
         }
@@ -1007,7 +1076,7 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_string_retain(ptr \(value))")
         } else if type.isClosure {
             out.emit("call void @basic_rt_closure_retain(ptr \(value))")
-        } else if type == .variant {
+        } else if type == .variant || type.isSystem {
             let copy = out.temp()
             out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr \(value))")
             stored = copy
@@ -1233,10 +1302,10 @@ struct FunctionEmitter {
                 } else if function.returnType.isClosure {
                     if isOwned { owned.removeAll { $0 == lowered } } else { out.emit("call void @basic_rt_closure_retain(ptr \(lowered))") }
                     result = lowered
-                } else if function.returnType == .variant || function.returnType == .dictionary {
+                } else if function.returnType == .variant || function.returnType == .dictionary || function.returnType.isSystem {
                     if isOwned { owned.removeAll { $0 == lowered }; result = lowered } else {
                         let copy = out.temp()
-                        out.emit("\(copy) = call ptr @\(function.returnType == .variant ? "basic_rt_value_copy" : "basic_rt_dictionary_copy")(ptr \(lowered))")
+                        out.emit("\(copy) = call ptr @\(function.returnType == .dictionary ? "basic_rt_dictionary_copy" : "basic_rt_value_copy")(ptr \(lowered))")
                         result = copy
                     }
                 } else {
@@ -1246,7 +1315,7 @@ struct FunctionEmitter {
                 let fresh = out.temp()
                 out.emit("\(fresh) = call ptr @basic_rt_composite_new(i64 \(module.typeIndex(of: name) ?? -1))")
                 result = fresh
-            } else if function.returnType == .variant {
+            } else if function.returnType == .variant || function.returnType.isSystem {
                 let fresh = out.temp()
                 out.emit("\(fresh) = call ptr @basic_rt_value_empty()")
                 result = fresh
@@ -1274,7 +1343,7 @@ struct FunctionEmitter {
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_closure_release(ptr \(old))")
         }
-        for local in function.locals where (local.type == .variant || local.type == .dictionary) && local.rank == nil && local.name != "ME" {
+        for local in function.locals where (local.type == .variant || local.type == .dictionary || local.type.isSystem) && local.rank == nil && local.name != "ME" {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @\(Self.releaseFunction(local.type))(ptr \(old))")
@@ -1352,7 +1421,7 @@ struct FunctionEmitter {
             case .boolean:
                 out.emit("\(result) = call i1 @basic_rt_array_load_boolean(ptr \(array), i64 \(offset))")
                 return (result, false)
-            case .variant, .array, .closure:
+            case .variant, .array, .closure, .system:
                 out.emit("\(result) = call ptr @basic_rt_array_load_value(ptr \(array), i64 \(offset))")
                 own(result, as: .variant)
                 return (result, true)
@@ -1394,7 +1463,7 @@ struct FunctionEmitter {
             case .array:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_array(ptr \(parent), i64 \(index))")
                 return (result, false)
-            case .variant:
+            case .variant, .system:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_value(ptr \(parent), i64 \(index))")
                 own(result, as: .variant)
                 return (result, true)
@@ -1436,7 +1505,7 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_value_closure(ptr \(box), ptr \(nameArgument))")
                 own(result, as: type)
                 return (result, true)
-            case .variant, .array:
+            case .variant, .array, .system:
                 return (box, false)
             }
         case .dictionaryGet(let dictionary, let key, let name):
@@ -1513,6 +1582,45 @@ struct FunctionEmitter {
             out.emit("\(result) = call ptr @basic_rt_dictionary_new()")
             own(result, as: .dictionary)
             return (result, true)
+        case .hostCall(let name, let arguments, let returns):
+            let values = arguments.map { argument in "\(Self.llvmType(argument.type)) \(lowerValue(argument).0)" }
+            if returns == .void {
+                out.emit("call void @\(name)(\(values.joined(separator: ", ")))")
+                return ("", false)
+            }
+            let result = out.temp()
+            out.emit("\(result) = call \(Self.llvmType(returns)) @\(name)(\(values.joined(separator: ", ")))")
+            if Self.isManaged(returns) { own(result, as: returns); return (result, true) }
+            return (result, false)
+        case .systemNew(let name, let arguments):
+            let list = boxedIndexes(arguments)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_system_new(ptr \(constants.constant(name)), i64 \(arguments.count), ptr \(list))")
+            own(result, as: .variant)
+            return (result, true)
+        case .systemCall(let receiver, let method, let arguments, let returns):
+            let (box, _) = lowerValue(receiver)
+            let list = boxedIndexes(arguments)
+            let raw = out.temp()
+            out.emit("\(raw) = call ptr @basic_rt_system_call(ptr \(box), ptr \(constants.constant(method)), i64 \(arguments.count), ptr \(list))")
+            own(raw, as: .variant)
+            let result = out.temp()
+            switch returns {
+            case .void:
+                return ("", false)
+            case .number:
+                out.emit("\(result) = call double @basic_rt_value_number(ptr \(raw), ptr null)")
+                return (result, false)
+            case .string:
+                out.emit("\(result) = call ptr @basic_rt_value_string(ptr \(raw), ptr null)")
+                owned.append(result)
+                return (result, true)
+            case .boolean:
+                out.emit("\(result) = call i1 @basic_rt_value_boolean(ptr \(raw), ptr null)")
+                return (result, false)
+            default:
+                return (raw, false)
+            }
         case .fileService(let method, let arguments, _):
             return lowerFileService(method, arguments)
         case .makeClosure(let functionName, let environment, let captures, _):
@@ -1529,7 +1637,7 @@ struct FunctionEmitter {
                         out.emit("\(number) = uitofp i1 \(value) to double")
                         out.emit("call void @basic_rt_composite_set_number(ptr \(created), i64 \(index), double \(number))")
                     case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(created), i64 \(index), ptr \(value))")
-                    case .variant, .dictionary:
+                    case .variant, .dictionary, .system:
                         out.emit("call void @basic_rt_composite_set_value(ptr \(created), i64 \(index), ptr \(boxedPointer(value, capture.type)), ptr \(constants.constant("capture")))")
                     default: out.emit("call void @basic_rt_composite_set_composite(ptr \(created), i64 \(index), ptr \(value))")
                     }
@@ -1602,7 +1710,7 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
                 owned.append(result)
                 return (result, true)
-            case .variant, .dictionary, .array:
+            case .variant, .dictionary, .array, .system:
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_value_text(ptr \(boxedPointer(value, inner.type)))")
                 owned.append(result)
@@ -1707,6 +1815,22 @@ struct FunctionEmitter {
         case "RM": out.emit("call void @basic_rt_file_rm(ptr \(a))")
         case "RENAME": out.emit("call void @basic_rt_file_rename(ptr \(values[0]), ptr \(values[1]))")
         case "WRITETEXT": out.emit("call void @basic_rt_file_write_text(ptr \(values[0]), ptr \(values[1]))")
+        case "READBYTES":
+            out.emit("\(result) = call ptr @basic_rt_file_read_bytes(ptr \(a))")
+            owned.append(result); return (result, true)
+        case "WRITEBYTES": out.emit("call void @basic_rt_file_write_bytes(ptr \(values[0]), ptr \(values[1]))")
+        case "APPENDBYTES": out.emit("call void @basic_rt_file_append_bytes(ptr \(values[0]), ptr \(values[1]))")
+        case "READJSON":
+            let permissive = truthiness(of: arguments[1])
+            out.emit("\(result) = call ptr @basic_rt_file_read_json(ptr \(a), i1 \(permissive))")
+            own(result, as: .variant); return (result, true)
+        case "WRITEJSON":
+            let box = boxedPointer(values[1], arguments[1].type)
+            let pretty = truthiness(of: arguments[2])
+            out.emit("call void @basic_rt_file_write_json(ptr \(values[0]), ptr \(box), i1 \(pretty))")
+        case "FILES":
+            out.emit("\(result) = call ptr @basic_rt_file_files(ptr \(values.first ?? "null"))")
+            own(result, as: .variant); return (result, true)
         default: break
         }
         return ("", false)
@@ -1726,7 +1850,7 @@ struct FunctionEmitter {
             out.emit("\(flag) = icmp \(op == .equal ? "eq" : "ne") i1 \(l), \(r)")
         case .composite, .closure:
             out.emit("\(flag) = icmp eq ptr \(l), \(r)")
-        case .variant, .dictionary, .array:
+        case .variant, .dictionary, .array, .system:
             let equal = out.temp()
             out.emit("\(equal) = call i1 @basic_rt_value_equal(ptr \(boxedPointer(l, left.type)), ptr \(boxedPointer(r, right.type)))")
             out.emit("\(flag) = \(op == .equal ? "and i1 \(equal), true" : "xor i1 \(equal), true")")
@@ -1769,7 +1893,7 @@ struct FunctionEmitter {
             let flag = out.temp()
             out.emit("\(flag) = call i1 @basic_rt_string_truthy(ptr \(value))")
             return flag
-        case .composite, .closure, .dictionary, .array:
+        case .composite, .closure, .dictionary, .array, .system:
             return "true"
         case .variant:
             let flag = out.temp()
@@ -1850,7 +1974,7 @@ struct FunctionEmitter {
     static func llvmType(_ type: BIRType) -> String {
         switch type {
         case .number: return "double"
-        case .string, .composite, .closure, .variant, .dictionary, .array: return "ptr"
+        case .string, .composite, .closure, .variant, .dictionary, .array, .system: return "ptr"
         case .boolean: return "i1"
         case .void: return "void"
         }
@@ -1859,7 +1983,7 @@ struct FunctionEmitter {
     static func zero(_ type: BIRType) -> String {
         switch type {
         case .number: return "0.0"
-        case .string, .composite, .closure, .variant, .dictionary, .array: return "null"
+        case .string, .composite, .closure, .variant, .dictionary, .array, .system: return "null"
         case .boolean: return "false"
         case .void: return ""
         }

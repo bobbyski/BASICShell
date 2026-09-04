@@ -97,8 +97,22 @@ public struct BIRPrinter {
             return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .callClosure(let closure, let arguments):
             return "call \(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
-        case .openFile(let path, let mode, let number):
-            return "open \(render(path)) mode \(mode) as \(render(number))"
+        case .openFile(let path, let mode, let number, let recordLength):
+            return "open \(render(path)) mode \(mode) as \(render(number))" + (recordLength.map { " len \(render($0))" } ?? "")
+        case .fieldFile(let number, let fields):
+            return "field \(render(number)), " + fields.map { "\(render($0.width)) as \($0.variable.name)" }.joined(separator: ", ")
+        case .setFieldString(let variable, let value, let rightAligned):
+            return "\(rightAligned ? "rset" : "lset") \(variable.name) <- \(render(value))"
+        case .putRecord(let number, let record):
+            return "put \(render(number))" + (record.map { ", \(render($0))" } ?? "")
+        case .getRecord(let number, let record):
+            return "get \(render(number))" + (record.map { ", \(render($0))" } ?? "")
+        case .seekFile(let number, let position):
+            return "seek \(render(number)), \(render(position))"
+        case .resetFile(let number):
+            return "reset \(render(number))"
+        case .discard(let value):
+            return "discard \(render(value))"
         case .closeFile(let number):
             return "close" + (number.map { " " + render($0) } ?? "")
         case .printFile(let number, let items, let newline):
@@ -261,6 +275,12 @@ public struct BIRPrinter {
             return "NULL"
         case .newDictionary:
             return "new DICTIONARY"
+        case .hostCall(let name, let arguments, _):
+            return "\(name)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .systemNew(let name, let arguments):
+            return "new \(name)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .systemCall(let receiver, let method, let arguments, _):
+            return "\(render(receiver)).\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         }
     }
 }

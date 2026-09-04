@@ -67,6 +67,17 @@ public enum BIRReadTarget: Sendable {
     case element(BIRVariable, [BIRExpression])
 }
 
+/// One `width AS var$` of a FIELD statement.
+public struct BIRFieldSpec: Sendable {
+    public let width: BIRExpression
+    public let variable: BIRVariable
+
+    public init(width: BIRExpression, variable: BIRVariable) {
+        self.width = width
+        self.variable = variable
+    }
+}
+
 /// One `DATA` item.
 public enum BIRDataItem: Sendable {
     case number(Double)
@@ -108,8 +119,23 @@ public enum BIROperation: Sendable {
     case fileService(method: String, arguments: [BIRExpression])
     /// A closure call used as a statement (a VOID closure, or a value dropped).
     case callClosure(BIRExpression, [BIRExpression])
-    /// `OPEN path FOR mode AS #n`: mode 0 input, 1 output, 2 append.
-    case openFile(path: BIRExpression, mode: Int, number: BIRExpression)
+    /// `OPEN path FOR mode AS #n [LEN = k]`: mode 0 input, 1 output,
+    /// 2 append, 3 binary, 4 random.
+    case openFile(path: BIRExpression, mode: Int, number: BIRExpression, recordLength: BIRExpression?)
+    /// `FIELD #n, width AS var$, …`.
+    case fieldFile(number: BIRExpression, fields: [BIRFieldSpec])
+    /// `LSET`/`RSET var$ = value`.
+    case setFieldString(BIRVariable, BIRExpression, rightAligned: Bool)
+    /// `PUT #n[, record]`.
+    case putRecord(number: BIRExpression, record: BIRExpression?)
+    /// `GET #n[, record]`.
+    case getRecord(number: BIRExpression, record: BIRExpression?)
+    /// `SEEK #n, position`.
+    case seekFile(number: BIRExpression, position: BIRExpression)
+    /// `RESET #n`.
+    case resetFile(BIRExpression)
+    /// Evaluates an expression for its effect and drops the value.
+    case discard(BIRExpression)
     /// `CLOSE #n`, or every file when nil.
     case closeFile(BIRExpression?)
     /// `PRINT #n, items` — rendered like PRINT, appended to the file.
@@ -372,6 +398,9 @@ public struct BIRModule: Sendable {
     public var types: [BIRCompositeType]
     /// Every closure signature, by name.
     public var signatures: [String: BIRSignature]
+    /// Every variable named in a FIELD statement, normalized: the runtime
+    /// mirrors their values for PUT and GET.
+    public var fieldVariables: [String] = []
 
     /// Creates an empty module.
     public init(name: String) {

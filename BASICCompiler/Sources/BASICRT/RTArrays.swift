@@ -164,14 +164,14 @@ public func basic_rt_array_store_boolean(_ pointer: UnsafeMutableRawPointer, _ o
 /// Returns the element owned (+1); nil for an empty string.
 @_cdecl("basic_rt_array_load_string")
 public func basic_rt_array_load_string(_ pointer: UnsafeMutableRawPointer, _ offset: Int) -> UnsafeMutableRawPointer? {
-    guard let string = rtArray(pointer).values[offset].string, !string.isEmpty else { return nil }
+    guard let string = rtArray(pointer).values[offset].string, string.byteCount > 0 else { return nil }
     return rtOwned(string)
 }
 
 /// Stores a borrowed string into the element.
 @_cdecl("basic_rt_array_store_string")
 public func basic_rt_array_store_string(_ pointer: UnsafeMutableRawPointer, _ offset: Int, _ value: UnsafeMutableRawPointer?) {
-    rtArray(pointer).values[offset] = .string(rtText(value))
+    rtArray(pointer).values[offset] = .string(rtString(value))
 }
 
 /// Borrowed: the element record itself (created on first touch), so

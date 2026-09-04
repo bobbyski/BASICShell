@@ -93,6 +93,14 @@ public indirect enum BIRExpression: Sendable {
     case nullValue
     /// A fresh, empty DICTIONARY.
     case newDictionary
+    /// A call into the runtime by symbol, with arguments passed by their
+    /// static types — the builtins with optional arguments (`MKI$`, `CVI`,
+    /// `INPUT$(n, #f)`, `SEEK(n)`).
+    case hostCall(String, [BIRExpression], returns: BIRType)
+    /// `File(args…)` / `NEW File(args…)`: a system object.
+    case systemNew(String, [BIRExpression])
+    /// `object.Method(args…)` on a system object, typed by its member table.
+    case systemCall(BIRExpression, method: String, [BIRExpression], returns: BIRType)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -141,6 +149,10 @@ public indirect enum BIRExpression: Sendable {
             return .string
         case .newDictionary:
             return .dictionary
+        case .hostCall(_, _, let returns), .systemCall(_, _, _, let returns):
+            return returns
+        case .systemNew(let name, _):
+            return .system(name)
         }
     }
 }

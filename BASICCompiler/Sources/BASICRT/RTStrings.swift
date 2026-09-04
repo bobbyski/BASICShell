@@ -9,31 +9,120 @@ import Foundation
 // Ownership at the boundary: arguments are borrowed, results are owned (+1).
 // The compiler releases every temporary at the end of its statement.
 //
-// Rev 1 holds text; the exact-byte (`CHR$(0)`-safe) representation the
-// interpreter's BASICString has arrives with legacy file I/O (Phase 4.7).
+// The text is the interpreter's `BASICString`: text-backed until a NUL or
+// a raw byte (CHR$, a RAW file read) turns it data-backed, so `CHR$(0)`
+// and `CHR$(255)` survive round trips through files and `MKI$`/`CVI`.
+
+/// The interpreter's `BASICString`: text, or raw bytes.
+struct RTText: Equatable {
+    enum Storage: Equatable {
+        case text(String)
+        case data(Data)
+    }
+
+    let storage: Storage
+
+    /// Text; data-backed when it contains a NUL, as the interpreter does.
+    init(_ value: String) {
+        storage = value.utf8.contains(0) ? .data(Data(value.utf8)) : .text(value)
+    }
+
+    init(data: Data) {
+        storage = .data(data)
+    }
+
+    static let empty = RTText("")
+
+    /// What `PRINT` shows: NUL bytes are dropped from data-backed text.
+    var description: String {
+        switch storage {
+        case .text(let value): return value
+        case .data(let data): return String(decoding: data.filter { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
+    /// The text as characters (a lossy decode of raw bytes).
+    var rawString: String {
+        switch storage {
+        case .text(let value): return value
+        case .data(let data): return String(decoding: data, as: UTF8.self)
+        }
+    }
+
+    var characterCount: Int { rawString.count }
+
+    var byteCount: Int {
+        switch storage {
+        case .text(let value): return value.utf8.count
+        case .data(let data): return data.count
+        }
+    }
+
+    var rawData: Data {
+        switch storage {
+        case .text(let value): return Data(value.utf8)
+        case .data(let data): return data
+        }
+    }
+
+    var isData: Bool {
+        if case .data = storage { return true }
+        return false
+    }
+
+    func concatenating(_ other: RTText) -> RTText {
+        switch (storage, other.storage) {
+        case (.text(let left), .text(let right)): return RTText(left + right)
+        default: return RTText(data: rawData + other.rawData)
+        }
+    }
+
+    /// `CHR$`: one byte, data-backed.
+    static func character(code: Int) -> RTText {
+        guard (0...255).contains(code) else { basic_rt_fail("CHR$ code must be between 0 and 255") }
+        return RTText(data: Data([UInt8(code)]))
+    }
+}
 
 /// The runtime's string object.
 public final class RTString {
-    /// The characters.
-    public let text: String
+    let value: RTText
 
     /// Wraps text.
     public init(_ text: String) {
-        self.text = text
+        value = RTText(text)
     }
+
+    init(_ value: RTText) {
+        self.value = value
+    }
+
+    /// The characters.
+    public var text: String { value.rawString }
 }
 
 /// The text behind a string pointer; nil reads as "".
 @inline(__always)
+func rtString(_ pointer: UnsafeMutableRawPointer?) -> RTText {
+    guard let pointer else { return .empty }
+    return Unmanaged<RTString>.fromOpaque(pointer).takeUnretainedValue().value
+}
+
+/// The characters behind a string pointer; nil reads as "".
+@inline(__always)
 func rtText(_ pointer: UnsafeMutableRawPointer?) -> String {
-    guard let pointer else { return "" }
-    return Unmanaged<RTString>.fromOpaque(pointer).takeUnretainedValue().text
+    rtString(pointer).rawString
 }
 
 /// A new owned (+1) string pointer.
 @inline(__always)
 func rtOwned(_ text: String) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(RTString(text)).toOpaque()
+}
+
+@inline(__always)
+func rtOwned(_ value: RTText) -> UnsafeMutableRawPointer {
+    Unmanaged.passRetained(RTString(value)).toOpaque()
 }
 
 /// Creates a string from UTF-8 bytes in the program's constant data.
@@ -56,12 +145,14 @@ public func basic_rt_string_release(_ pointer: UnsafeMutableRawPointer?) {
 
 @_cdecl("basic_rt_string_concat")
 public func basic_rt_string_concat(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    rtOwned(rtText(a) + rtText(b))
+    rtOwned(rtString(a).concatenating(rtString(b)))
 }
 
+/// The interpreter's `==` on strings: same storage kind, same contents —
+/// so `CHR$(65) = "A"` is false there, and here.
 @_cdecl("basic_rt_string_equal")
 public func basic_rt_string_equal(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutableRawPointer?) -> Bool {
-    rtText(a) == rtText(b)
+    rtString(a) == rtString(b)
 }
 
 /// `a < b`, with Swift's string ordering — the interpreter's.
@@ -70,20 +161,20 @@ public func basic_rt_string_less(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutab
     rtText(a) < rtText(b)
 }
 
-/// The interpreter's truthiness for a string: non-empty.
+/// The interpreter's truthiness for a string: non-empty as displayed.
 @_cdecl("basic_rt_string_truthy")
 public func basic_rt_string_truthy(_ pointer: UnsafeMutableRawPointer?) -> Bool {
-    !rtText(pointer).isEmpty
+    !rtString(pointer).description.isEmpty
 }
 
 @_cdecl("basic_rt_string_length")
 public func basic_rt_string_length(_ pointer: UnsafeMutableRawPointer?) -> Double {
-    Double(rtText(pointer).count)
+    Double(rtString(pointer).characterCount)
 }
 
 @_cdecl("basic_rt_string_asc")
 public func basic_rt_string_asc(_ pointer: UnsafeMutableRawPointer?) -> Double {
-    guard let byte = rtText(pointer).utf8.first else {
+    guard let byte = rtString(pointer).rawData.first else {
         basic_rt_fail("ASC requires a non-empty string")
     }
     return Double(byte)
@@ -149,13 +240,10 @@ public func basic_rt_number_str(_ value: Double) -> UnsafeMutableRawPointer {
     return rtOwned(value >= 0 ? " " + rendered : rendered)
 }
 
+/// `CHR$`: one byte, 0…255.
 @_cdecl("basic_rt_chr")
 public func basic_rt_chr(_ value: Double) -> UnsafeMutableRawPointer {
-    let code = Int(value.rounded())
-    guard let scalar = UnicodeScalar(max(0, code)) else {
-        basic_rt_fail("CHR$ code out of range")
-    }
-    return rtOwned(String(Character(scalar)))
+    rtOwned(RTText.character(code: Int(value.rounded())))
 }
 
 @_cdecl("basic_rt_string_left")

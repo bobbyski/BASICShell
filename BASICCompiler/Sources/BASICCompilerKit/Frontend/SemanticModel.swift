@@ -84,6 +84,29 @@ public final class SemanticModel {
 
     /// Whether `OPTION LOCAL-LET` is in effect for the program.
     public internal(set) var usesLocalLet = false
+    /// Every variable named in a FIELD statement, normalized, in order.
+    public internal(set) var fieldVariables: [String] = []
+
+    /// The bare identifiers the interpreter evaluates as strings of their
+    /// own names when no variable shadows them: the File and byte-order
+    /// constants.
+    public static let namedConstants: Set<String> = ["READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON", "NATIVE", "LITTLE", "BIG"]
+
+    /// Host-implemented classes and the types of their members.
+    public static let systemClasses: [String: [String: (parameters: Int?, returns: BIRType)]] = [
+        "FILE": [
+            "OPEN": (4, .void), "READ": (nil, .string), "JSON": (0, .variant), "WRITE": (1, .void),
+            "WRITEJSON": (2, .void), "SIZE": (0, .number), "PATH": (0, .string), "PATH$": (0, .string),
+            "ACCESS": (0, .string), "ACCESS$": (0, .string), "TYPE": (0, .string), "TYPE$": (0, .string),
+            "CLOSE": (0, .void), "ISOPEN": (0, .boolean), "POSITION": (0, .number), "EOF": (0, .boolean),
+            "ERROR": (0, .string), "ERROR$": (0, .string),
+        ],
+    ]
+
+    /// The static type of a system member, when the class and member exist.
+    public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
+        systemClasses[typeName]?[member]
+    }
     /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
     /// anonymous ones by their canonical shape.
     public private(set) var signatures: [String: BIRSignature] = [:]
@@ -273,6 +296,7 @@ public final class SemanticModel {
         // Anything boxes into a VARIANT; a VARIANT unboxes into anything,
         // checked at runtime with the interpreter's messages.
         if source == .variant || target == .variant { return true }
+        if case .system(let from) = source, case .system(let to) = target { return from == to }
         if let from = signature(of: source), let to = signature(of: target) {
             return from.parameterTypes == to.parameterTypes && from.returnType == to.returnType
         }

@@ -19,13 +19,15 @@ indirect enum RTValue {
     /// `NULL`.
     case null
     case number(Double)
-    case string(String)
+    case string(RTText)
     case boolean(Bool)
     /// A TYPE record or CLASS object.
     case composite(RTComposite)
     case array(RTArray)
     case dictionary(RTDictionary)
     case closure(RTClosure)
+    /// A host-implemented object (`File`, …), shared by reference.
+    case system(RTSystemObject)
 
     /// A deep copy, so the result shares nothing with `self`.
     func copied() -> RTValue {
@@ -43,10 +45,11 @@ indirect enum RTValue {
         case .empty: return ""
         case .null: return "NULL"
         case .number(let value): return rtNumberText(value)
-        case .string(let value): return value.replacingOccurrences(of: "\0", with: "")
+        case .string(let value): return value.description
         case .boolean(let value): return value ? "TRUE" : "FALSE"
         case .composite(let composite): return "<\(RTTypes.type(composite.typeIndex).name)>"
         case .closure: return "<FUNCTION>"
+        case .system(let object): return "<\(object.typeName)>"
         case .array(let array): return "<ARRAY \(array.element.name)>"
         case .dictionary(let dictionary): return "<DICTIONARY \(dictionary.values.count) entries>"
         }
@@ -57,9 +60,9 @@ indirect enum RTValue {
         switch self {
         case .empty, .null: return false
         case .number(let value): return value != 0
-        case .string(let value): return !value.isEmpty
+        case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .composite, .array, .dictionary, .closure: return true
+        case .composite, .array, .dictionary, .closure, .system: return true
         }
     }
 
@@ -74,9 +77,9 @@ indirect enum RTValue {
     }
 
     /// The interpreter's `string`: what implicitly reads as a string.
-    var string: String? {
+    var string: RTText? {
         switch self {
-        case .empty: return ""
+        case .empty: return .empty
         case .string(let value): return value
         default: return nil
         }
@@ -94,6 +97,7 @@ indirect enum RTValue {
         case (.dictionary(let l), .dictionary(let r)):
             return l.values.count == r.values.count && l.values.allSatisfy { key, value in r.values[key].map { equal(value, $0) } ?? false }
         case (.closure(let l), .closure(let r)): return l === r
+        case (.system(let l), .system(let r)): return l === r
         default: return false
         }
     }
@@ -108,6 +112,7 @@ indirect enum RTValue {
         case .boolean: return "BOOLEAN"
         case .composite(let composite): return RTTypes.type(composite.typeIndex).name
         case .closure: return "FUNCTION"
+        case .system(let object): return object.typeName
         case .array(let array): return "ARRAY OF \(array.element.name)"
         case .dictionary: return "DICTIONARY"
         }
@@ -245,7 +250,7 @@ enum RTTypes {
     static func defaultValue(_ type: RTTypeRef) -> RTValue {
         switch type {
         case .number, .integer: return .number(0)
-        case .string: return .string("")
+        case .string: return .string(.empty)
         case .boolean: return .boolean(false)
         case .variant, .closure: return .empty
         case .dictionary: return .dictionary(RTDictionary())
@@ -270,7 +275,7 @@ enum RTTypes {
             var explicitDefault: RTValue?
             if let defaultObject = field["default"] as? [String: Any] {
                 if let number = defaultObject["n"] as? Double { explicitDefault = .number(number) }
-                else if let text = defaultObject["s"] as? String { explicitDefault = .string(text) }
+                else if let text = defaultObject["s"] as? String { explicitDefault = .string(RTText(text)) }
                 else if let flag = defaultObject["b"] as? Bool { explicitDefault = .boolean(flag) }
                 else if defaultObject["null"] != nil { explicitDefault = .null }
                 else if defaultObject["empty"] != nil { explicitDefault = .empty }
@@ -458,9 +463,9 @@ enum RTJSON {
         switch value {
         case .empty, .null: return NSNull()
         case .number(let number): return number
-        case .string(let string): return string
+        case .string(let string): return string.rawString
         case .boolean(let boolean): return boolean
-        case .closure: throw .runtime("System objects, tasks, and closures cannot be encoded as JSON")
+        case .closure, .system: throw .runtime("System objects, tasks, and closures cannot be encoded as JSON")
         case .array(let array): return try jsonArray(for: array)
         case .dictionary(let dictionary):
             var object: [String: Any] = [:]
@@ -509,7 +514,7 @@ enum RTJSON {
 
     private static func value(fromJSONObject object: Any) throws(RTFailure) -> RTValue {
         if object is NSNull { return .null }
-        if let string = object as? String { return .string(string) }
+        if let string = object as? String { return .string(RTText(string)) }
         if let number = object as? NSNumber {
             if CFGetTypeID(number) == CFBooleanGetTypeID() { return .boolean(number.boolValue) }
             return .number(number.doubleValue)
@@ -583,16 +588,16 @@ public func basic_rt_value_store(_ current: UnsafeMutableRawPointer?, _ value: U
 }
 
 @_cdecl("basic_rt_value_empty")
-public func basic_rt_value_empty() -> UnsafeMutableRawPointer { rtOwned(.empty) }
+public func basic_rt_value_empty() -> UnsafeMutableRawPointer { rtOwned(RTValue.empty) }
 
 @_cdecl("basic_rt_value_null")
-public func basic_rt_value_null() -> UnsafeMutableRawPointer { rtOwned(.null) }
+public func basic_rt_value_null() -> UnsafeMutableRawPointer { rtOwned(RTValue.null) }
 
 @_cdecl("basic_rt_value_from_number")
 public func basic_rt_value_from_number(_ value: Double) -> UnsafeMutableRawPointer { rtOwned(.number(value)) }
 
 @_cdecl("basic_rt_value_from_string")
-public func basic_rt_value_from_string(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer { rtOwned(.string(rtText(pointer))) }
+public func basic_rt_value_from_string(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer { rtOwned(.string(rtString(pointer))) }
 
 @_cdecl("basic_rt_value_from_boolean")
 public func basic_rt_value_from_boolean(_ value: Bool) -> UnsafeMutableRawPointer { rtOwned(.boolean(value)) }
@@ -600,14 +605,14 @@ public func basic_rt_value_from_boolean(_ value: Bool) -> UnsafeMutableRawPointe
 /// Boxes a copy of a record or object.
 @_cdecl("basic_rt_value_from_composite")
 public func basic_rt_value_from_composite(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let pointer else { return rtOwned(.empty) }
+    guard let pointer else { return rtOwned(RTValue.empty) }
     return rtOwned(.composite(rtComposite(pointer).copy()))
 }
 
 /// Boxes a copy of an array.
 @_cdecl("basic_rt_value_from_array")
 public func basic_rt_value_from_array(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let pointer else { return rtOwned(.empty) }
+    guard let pointer else { return rtOwned(RTValue.empty) }
     return rtOwned(.array(Unmanaged<RTArray>.fromOpaque(pointer).takeUnretainedValue().copy()))
 }
 
@@ -620,7 +625,7 @@ public func basic_rt_value_from_dictionary(_ pointer: UnsafeMutableRawPointer?) 
 
 @_cdecl("basic_rt_value_from_closure")
 public func basic_rt_value_from_closure(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let pointer else { return rtOwned(.empty) }
+    guard let pointer else { return rtOwned(RTValue.empty) }
     return rtOwned(.closure(Unmanaged<RTClosure>.fromOpaque(pointer).takeUnretainedValue()))
 }
 
@@ -699,7 +704,7 @@ public func basic_rt_value_equal(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutab
 @_cdecl("basic_rt_value_add")
 public func basic_rt_value_add(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
     let left = rtValue(a), right = rtValue(b)
-    if let l = left.string, let r = right.string { return rtOwned(.string(l + r)) }
+    if let l = left.string, let r = right.string { return rtOwned(.string(l.concatenating(r))) }
     guard let l = left.number, let r = right.number else { basic_rt_fail("Expected a number") }
     return rtOwned(.number(l + r))
 }
@@ -710,7 +715,7 @@ public func basic_rt_value_len(_ pointer: UnsafeMutableRawPointer?) -> Double {
     let value = rtValue(pointer)
     if case .array(let array) = value { return Double(array.values.count) }
     guard let string = value.string else { basic_rt_fail("LEN requires a string or array") }
-    return Double(string.count)
+    return Double(string.characterCount)
 }
 
 /// `v(i, …)` on a VARIANT holding an array or dictionary; owned result.
@@ -817,8 +822,7 @@ func rtOwnedDictionary(_ dictionary: RTDictionary) -> UnsafeMutableRawPointer {
 /// The interpreter's `dictionaryKey`: a string verbatim, a number as PRINT shows it.
 func rtDictionaryKey(_ indexes: [RTValue], name: String) -> String {
     guard indexes.count == 1 else { basic_rt_fail("\(name) expects 1 key") }
-    if case .string(let text) = indexes[0] { return text }
-    if let string = indexes[0].string, case .empty = indexes[0] { return string }
+    if let string = indexes[0].string { return string.description }
     if let number = indexes[0].number { return RTValue.number(number).description }
     basic_rt_fail("\(name) dictionary key must be a string or number")
 }
