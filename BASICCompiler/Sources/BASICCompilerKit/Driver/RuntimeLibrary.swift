@@ -82,13 +82,37 @@ public struct RuntimeLibrary: Sendable {
         let manifest = root.appendingPathComponent("Package.swift").path
         guard FileManager.default.fileExists(atPath: manifest) else { return nil }
         let archive = root.appendingPathComponent(".build/release/lib\(name)Host.a").path
-        if Self.isStale(archive, against: [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]) {
-            let result = try ProcessRunner.xcrun("swift", ["build", "-c", "release", "--product", "\(name)Host", "--package-path", root.path])
-            guard result.exitCode == 0 else {
-                throw ToolchainError(stage: "swift build (runtime)", exitCode: result.exitCode, stderr: result.stderr)
+        let inputs = [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]
+        if Self.isStale(archive, against: inputs) {
+            // Several compilers can run at once (a test sweep, a parallel
+            // build). They would each start their own release build and then
+            // fight over SwiftPM's package lock, so the first one through this
+            // gate does the build and the rest wait and re-check.
+            try Self.whileHoldingLock(at: root.appendingPathComponent(".build/basicc-runtime.lock").path) {
+                guard Self.isStale(archive, against: inputs) else { return }
+                let result = try ProcessRunner.xcrun("swift", ["build", "-c", "release", "--product", "\(name)Host", "--package-path", root.path])
+                guard result.exitCode == 0 else {
+                    throw ToolchainError(stage: "swift build (runtime)", exitCode: result.exitCode, stderr: result.stderr)
+                }
             }
         }
         return FileManager.default.fileExists(atPath: archive) ? archive : nil
+    }
+
+    /// Runs `body` holding an exclusive lock on `path`, so concurrent
+    /// compilers rebuild the runtime once between them rather than each
+    /// starting a build of their own.
+    private static func whileHoldingLock(at path: String, _ body: () throws -> Void) throws {
+        try? FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        let descriptor = open(path, O_CREAT | O_RDWR, 0o644)
+        guard descriptor >= 0 else { return try body() }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX) == 0 else { return try body() }
+        defer { flock(descriptor, LOCK_UN) }
+        try body()
     }
 
     /// Whether `archive` is missing or older than anything under `inputs`.

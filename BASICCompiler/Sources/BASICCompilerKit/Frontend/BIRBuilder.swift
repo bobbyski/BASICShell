@@ -59,6 +59,9 @@ public struct BIRBuilder {
         module.types.append(contentsOf: closures.environmentTypes)
         module.signatures = model.signatures
         module.fieldVariables = model.fieldVariables
+        for name in model.functionOrder where model.functions[name]?.isAsync == true {
+            module.asyncDisplayNames[name] = model.functions[name]?.displayName
+        }
         return module
     }
 
@@ -179,6 +182,7 @@ final class FunctionBuilder {
         if let signature = self.signature {
             self.function = BIRFunction(name: signature.name, parameters: signature.parameters, returnType: signature.returnType)
             self.function.locals = model.localVariables(of: signature.name)
+            self.function.isAsync = signature.isAsync
         } else {
             self.function = BIRFunction(name: "main")
         }
@@ -409,9 +413,31 @@ final class FunctionBuilder {
 
         case .print(let parts):
             // `;` only suppresses spacing and the newline; it renders nothing.
-            let items = try parts
+            var items = try parts
                 .filter { if case .separator(.semicolon) = $0 { return false } else { return true } }
                 .map(lowerPrintPart)
+            // The interpreter renders the whole PRINT before writing it, so
+            // anything an item's code prints comes out first: evaluate every
+            // item into a temporary when one of them may run code.
+            func expression(of item: BIRPrintItem) -> BIRExpression? {
+                switch item {
+                case .value(let e), .tab(let e), .spc(let e): return e
+                case .comma: return nil
+                }
+            }
+            if items.contains(where: { expression(of: $0)?.mayRunCode == true }) {
+                items = items.map { item in
+                    guard let e = expression(of: item), e.type != .void, !e.type.isArray else { return item }
+                    let temp = hidden("print", e.type)
+                    emit(.store(temp, e))
+                    switch item {
+                    case .value: return .value(.load(temp))
+                    case .tab: return .tab(.load(temp))
+                    case .spc: return .spc(.load(temp))
+                    case .comma: return item
+                    }
+                }
+            }
             emit(.print(items, newline: !(parts.last?.suppressesNewline ?? false)))
 
         case .assignment(let kind, let name, let declared, let value):
@@ -796,6 +822,15 @@ final class FunctionBuilder {
             emit(.filesList)
         case .system(let command):
             emit(.systemCommand(try lowerExpression(command, expecting: .string, context: "SYSTEM")))
+        case .yield:
+            // One task at a time: a yield is a point where host events may run.
+            break
+        case .join(let expression):
+            emit(.discard(.hostCall("basic_rt_task_join", [boxed(try lowerExpression(expression))], returns: .void)))
+        case .cancelTask(let expression):
+            emit(.discard(.hostCall("basic_rt_task_cancel", [boxed(try lowerExpression(expression))], returns: .void)))
+        case .background(let expression):
+            emit(.discard(.hostCall("basic_rt_task_background", [boxed(try lowerExpression(expression))], returns: .void)))
         case .load, .save, .cd, .pwd:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
         default:
@@ -1150,6 +1185,12 @@ final class FunctionBuilder {
         switch expression {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             if let userFunction = model.functions[name.normalized] {
+                if userFunction.isAsync {
+                    // A task nobody keeps: the interpreter's error.
+                    let launch = BIRExpression.asyncLaunch(userFunction.name, try lowerArguments(arguments, for: userFunction))
+                    emit(.discard(.hostCall("basic_rt_task_discard", [launch], returns: .void)))
+                    return
+                }
                 emit(.call(userFunction.name, try lowerArguments(arguments, for: userFunction)))
                 return
             }
@@ -1415,10 +1456,15 @@ final class FunctionBuilder {
         case .pointFunction(let point):
             return .hostCall("basic_rt_gfx_point", [try lowerExpression(point.x, expecting: .number, context: "POINT"), try lowerExpression(point.y, expecting: .number, context: "POINT")], returns: .number)
         case .await(let inner):
-            // The compiled runtime finishes host work before returning it, so
-            // AWAIT of anything is the value itself — the interpreter's rule
-            // for a non-task value.
-            return try lowerExpression(inner)
+            // AWAIT runs the task (if it has not run) and yields its value;
+            // a non-task value passes through, the interpreter's rule.
+            let value = try lowerExpression(inner)
+            guard value.type == .variant else { return value }
+            let awaited = BIRExpression.hostCall("basic_rt_task_await", [value], returns: .variant)
+            if case .callOrArray(let name, _) = inner, let userFunction = model.functions[name.normalized], userFunction.isAsync, userFunction.returnType != .void {
+                return convert(awaited, to: userFunction.returnType, name: nil)
+            }
+            return awaited
         default:
             throw unsupported(describe(expression))
         }
@@ -1680,6 +1726,9 @@ final class FunctionBuilder {
             guard userFunction.returnType != .void else {
                 throw CompileError("VOID function \(userFunction.displayName) cannot be used in an expression", at: location)
             }
+            if userFunction.isAsync {
+                return .asyncLaunch(userFunction.name, try lowerArguments(arguments, for: userFunction))
+            }
             return .call(userFunction.name, try lowerArguments(arguments, for: userFunction), returns: userFunction.returnType)
         }
         if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) {
@@ -1763,6 +1812,18 @@ final class FunctionBuilder {
         case "INKEY$":
             try count(0...0)
             return .hostCall("basic_rt_inkey", [], returns: .string)
+        case "ASYNCVALUE":
+            try count(1...1)
+            return .hostCall("basic_rt_task_value", [boxed(try lowerExpression(arguments[0]))], returns: .variant)
+        case "SLEEP":
+            try count(1...1)
+            return .hostCall("basic_rt_task_sleep", [try argument(0, .number, default: .number(0))], returns: .variant)
+        case "TASKSTATUS$":
+            try count(1...1)
+            return .hostCall("basic_rt_task_status", [boxed(try lowerExpression(arguments[0]))], returns: .string)
+        case "TASKERROR$":
+            try count(1...1)
+            return .hostCall("basic_rt_task_error", [boxed(try lowerExpression(arguments[0]))], returns: .string)
         case "FIELDCOUNT":
             try count(1...1)
             return .hostCall("basic_rt_field_count", [boxed(try lowerExpression(arguments[0]))], returns: .number)

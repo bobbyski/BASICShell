@@ -32,7 +32,6 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     // Clock and pauses
     case date = "DATE$"
     case time = "TIME$"
-    case sleep = "SLEEP"
     /// `INPUT$(n)`: the next n characters typed, blocking.
     case inputChars = "INPUT$"
     // Strings → number
@@ -53,7 +52,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     public var returnType: BIRType {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
-             .len, .asc, .val, .instr, .lof, .loc, .fileExists, .sleep:
+             .len, .asc, .val, .instr, .lof, .loc, .fileExists:
             return .number
         case .eof:
             return .boolean
@@ -66,7 +65,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     /// argument; ``lookup(_:argumentCount:)`` checks the count.
     public var parameterTypes: [BIRType] {
         switch self {
-        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .sleep, .inputChars:
+        case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .inputChars:
             return [.number]
         case .rnd, .err, .erl, .date, .time:
             return []

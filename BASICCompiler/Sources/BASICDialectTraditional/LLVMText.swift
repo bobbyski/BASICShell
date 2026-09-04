@@ -19,6 +19,11 @@ struct LLVMText {
         lines.append("\"\(name)\":")
     }
 
+    /// Appends a raw line (a `define`, a closing brace).
+    mutating func raw(_ line: String) {
+        lines.append(line)
+    }
+
     /// A fresh `%tN`.
     mutating func temp() -> String {
         temporaries += 1

@@ -101,6 +101,8 @@ public indirect enum BIRExpression: Sendable {
     case systemNew(String, [BIRExpression])
     /// `object.Method(args…)` on a system object, typed by its member table.
     case systemCall(BIRExpression, method: String, [BIRExpression], returns: BIRType)
+    /// A call of an `ASYNC FUNCTION`: launches a task (a VARIANT handle).
+    case asyncLaunch(String, [BIRExpression])
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -153,6 +155,31 @@ public indirect enum BIRExpression: Sendable {
             return returns
         case .systemNew(let name, _):
             return .system(name)
+        case .asyncLaunch:
+            return .variant
+        }
+    }
+
+    /// Whether evaluating this may run user or host code that writes output —
+    /// what PRINT must evaluate before it writes anything of its own, since
+    /// the interpreter renders a whole PRINT before printing it.
+    public var mayRunCode: Bool {
+        switch self {
+        case .call, .callClosure, .callMethod, .hostCall, .systemNew, .systemCall, .asyncLaunch, .fileService, .construct:
+            return true
+        case .number, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
+            return false
+        case .negate(let a), .text(let a), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
+            return a.mayRunCode
+        case .arithmetic(_, let a, let b), .concat(let a, let b), .compare(_, let a, let b), .logical(_, let a, let b),
+             .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b):
+            return a.mayRunCode || b.mayRunCode
+        case .intrinsic(_, let list), .element(_, let list), .makeClosure(_, _, let list, _):
+            return list.contains(where: \.mayRunCode)
+        case .usingString(let format, let values):
+            return format.mayRunCode || values.contains(where: \.mayRunCode)
+        case .elementOf(let a, let list, _), .valueIndex(let a, let list, _):
+            return a.mayRunCode || list.contains(where: \.mayRunCode)
         }
     }
 }

@@ -273,6 +273,8 @@ public struct BIRFunction: Sendable {
     public var environment: (type: String, locals: [BIRVariable])?
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
+    /// `ASYNC FUNCTION`: called through a task trampoline.
+    public var isAsync = false
     /// For `main` when the program uses `ON ERROR`: the block that begins
     /// statement `id + 1`, i.e. where `RESUME NEXT` after statement `id` goes.
     public var statementResumeBlocks: [BIRBlockID] = []
@@ -444,5 +446,12 @@ public struct BIRModule: Sendable {
     /// The type index of a composite type name.
     public func typeIndex(of name: String) -> Int? {
         types.first { $0.name == name }?.index
+    }
+
+    /// The display name a task shows for an async function (`<TASK #n Name>`).
+    public var asyncDisplayNames: [String: String] = [:]
+
+    public func asyncDisplayName(of function: String) -> String? {
+        asyncDisplayNames[function]
     }
 }

@@ -1,5 +1,10 @@
 import Foundation
 
+// The core's failure entry, by symbol: the stubs are compiled either as
+// their own module (SwiftPM) or alongside the core sources (the driver's
+// fallback), so they import nothing.
+@_silgen_name("basic_rt_fail") private func rtStubFail(_ message: UnsafePointer<CChar>) -> Never
+
 // BASICRTHostStubs — what a program links when the host half of the runtime
 // (BASICRTHost: VTG graphics, TUIKit, events) is not available: every host
 // entry point answers "not supported by this terminal", the interpreter's
@@ -37,5 +42,5 @@ public func basic_rt_host_gfx_finish() {}
 
 @_cdecl("basic_rt_host_vtg_call")
 public func basic_rt_host_vtg_call(_ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
-    basic_rt_fail("VectorTerminal graphics are not supported by this host")
+    rtStubFail("VectorTerminal graphics are not supported by this host")
 }

@@ -15,7 +15,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Hello",
-            dependencies: [.product(name: "BASICRT", package: "BASICCompiler")],
+            dependencies: [
+                .product(name: "BASICRT", package: "BASICCompiler"),
+                .product(name: "BASICRTHostStubs", package: "BASICCompiler"),
+            ],
             exclude: ["main.bas"],
             plugins: [.plugin(name: "BASICBuildPlugin", package: "BASICCompiler")]
         ),

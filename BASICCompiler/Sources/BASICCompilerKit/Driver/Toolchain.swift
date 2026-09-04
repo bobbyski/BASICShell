@@ -45,8 +45,12 @@ public struct Toolchain: Sendable {
     /// Whole-module, optimized: the runtime is compiled once and cached, so
     /// its build time is paid rarely and compiled programs never pay for a
     /// debug runtime.
+    ///
+    /// The sources are one module here, though SwiftPM builds them as
+    /// several, so the compile needs the package name that the runtime's
+    /// `package` declarations are visible within.
     public func compileRuntime(sources: [String], objectPath: String, extraArguments: [String] = []) throws {
-        let arguments = ["-parse-as-library", "-O", "-wmo", "-emit-object"]
+        let arguments = ["-parse-as-library", "-O", "-wmo", "-emit-object", "-package-name", "BASICCompiler"]
             + sources + extraArguments + ["-o", objectPath]
         let result = try ProcessRunner.xcrun("swiftc", arguments)
         guard result.exitCode == 0 else {

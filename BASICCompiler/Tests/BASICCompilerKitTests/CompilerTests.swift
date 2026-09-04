@@ -23,13 +23,27 @@ enum TestBuild {
         let exitCode: Int32
     }
 
+    /// Runs `body` on a thread with a real stack. The lowering recurses
+    /// through an expression's structure, and swift-testing runs a test on
+    /// the cooperative pool, whose stacks are far smaller than the main
+    /// thread `basicc` itself compiles on — a deeply nested expression
+    /// overflows one.
+    static func onDeepStack<T>(_ body: @escaping () throws -> T) throws -> T {
+        var result: Result<T, Error>?
+        let thread = Thread { result = Result { try body() } }
+        thread.stackSize = 16 << 20
+        thread.start()
+        while !thread.isFinished { usleep(200) }
+        return try result!.get()
+    }
+
     /// Compiles the program at `path` and runs it.
     static func run(path: String) throws -> Run {
         let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workDir) }
         let output = workDir.appendingPathComponent("program").path
-        try Compilation(dialect: TraditionalDialect()).build(sourcePath: path, output: output)
+        try onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: path, output: output) }
         let result = try ProcessRunner.run(output, [])
         return Run(stdout: result.stdout, exitCode: result.exitCode)
     }
@@ -133,7 +147,7 @@ struct DiagnosticTests {
 
     @Test func unsupportedFeaturesSaySo() {
         do {
-            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "ASYNC FUNCTION F() AS DOUBLE\nEND FUNCTION", name: "bad")
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "CLASS C\nASYNC FUNCTION F() AS DOUBLE\nEND FUNCTION\nEND CLASS", name: "bad")
             Issue.record("expected a compile error")
         } catch let error as CompileError {
             #expect(error.description.contains("not supported by basicc yet"))

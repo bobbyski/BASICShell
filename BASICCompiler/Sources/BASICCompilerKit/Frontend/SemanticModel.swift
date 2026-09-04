@@ -33,6 +33,8 @@ public final class SemanticModel {
         public let visibility: BASICMemberVisibility
         /// Interface members this method explicitly implements.
         public let explicitImplementations: [BASICExplicitInterfaceImplementation]
+        /// `ASYNC FUNCTION`: a call launches a task; AWAIT yields the value.
+        public var isAsync: Bool = false
     }
 
     /// One field of a `TYPE` or `CLASS`.

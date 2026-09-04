@@ -26,24 +26,24 @@ package final class RTSystemObject {
 
 /// A `VectorTerminal()` object: no state of its own — every instance
 /// shares the host canvas, as the interpreter's do.
-final class RTVectorTerminal {}
+package final class RTVectorTerminal {}
 
 /// The `HttpClient` object's state.
-final class RTHTTPClient {
-    let baseURL: String
-    var headers: [String: String] = [:]
+package final class RTHTTPClient {
+    package let baseURL: String
+    package var headers: [String: String] = [:]
     init(baseURL: String) { self.baseURL = baseURL }
 }
 
 /// The `File` object's state — the interpreter's `BASICOpenFile`.
-final class RTFileObject {
-    var path: String?
-    var access: RTFileAccess?
-    var contentType: RTFileContentType?
-    var isOpen = false
-    var content: RTText = .empty
-    var position = 0
-    var lastError: String?
+package final class RTFileObject {
+    package var path: String?
+    package var access: RTFileAccess?
+    package var contentType: RTFileContentType?
+    package var isOpen = false
+    package var content: RTText = .empty
+    package var position = 0
+    package var lastError: String?
 }
 
 enum RTSystem {

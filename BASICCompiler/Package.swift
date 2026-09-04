@@ -37,6 +37,9 @@ let package = Package(
         // events). Built by SwiftPM because it links the host SDKs; linked
         // into a program when present, else stubbed.
         .library(name: "BASICRTHost", type: .static, targets: ["BASICRTHost"]),
+        // The stand-in for the host half: a program built without the host
+        // SDKs (a SwiftPM package using the plugin) links this instead.
+        .library(name: "BASICRTHostStubs", type: .static, targets: ["BASICRTHostStubs"]),
         // Compile .bas sources inside any package's C-family target
         // (see Plugins/BASICBuildPlugin for the how and why).
         .plugin(name: "BASICBuildPlugin", targets: ["BASICBuildPlugin"]),
@@ -53,6 +56,7 @@ let package = Package(
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICRT"),
         .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK")]),
+        .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]

@@ -45,9 +45,172 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\n"
         }
         text += "\n" + renderDataTables() + "\n"
+        if module.functions.contains(where: \.isAsync) {
+            functions.append(renderTaskSupport())
+        }
         text += constants.definitions.joined(separator: "\n") + "\n\n"
         text += functions.joined(separator: "\n\n")
         return text
+    }
+
+    /// The task plumbing for a module with ASYNC FUNCTIONs: `globals.capture`
+    /// boxes every global into a snapshot, `globals.restore` puts one back,
+    /// and each async function gets a trampoline `A.NAME` that unboxes its
+    /// arguments, runs the body inside an error boundary, and boxes the
+    /// result (nil when the body failed).
+    private func renderTaskSupport() -> String {
+        var out = LLVMText()
+        var counter = 0
+        func temp() -> String { counter += 1; return "%s\(counter)" }
+        func box(_ value: String, _ type: BIRType, rank: Int?) -> String {
+            let result = temp()
+            if rank != nil { out.emit("\(result) = call ptr @basic_rt_value_from_array(ptr \(value))"); return result }
+            switch type {
+            case .number: out.emit("\(result) = call ptr @basic_rt_value_from_number(double \(value))")
+            case .string: out.emit("\(result) = call ptr @basic_rt_value_from_string(ptr \(value))")
+            case .boolean: out.emit("\(result) = call ptr @basic_rt_value_from_boolean(i1 \(value))")
+            case .composite: out.emit("\(result) = call ptr @basic_rt_value_from_composite(ptr \(value))")
+            case .dictionary: out.emit("\(result) = call ptr @basic_rt_value_from_dictionary(ptr \(value))")
+            case .closure: out.emit("\(result) = call ptr @basic_rt_value_from_closure(ptr \(value))")
+            case .variant, .system: out.emit("\(result) = call ptr @basic_rt_value_copy(ptr \(value))")
+            case .void, .array: out.emit("\(result) = call ptr @basic_rt_value_empty()")
+            }
+            return result
+        }
+        /// Unboxes `boxValue` as `type` into `slot`, releasing the slot's old managed value.
+        func unboxInto(_ boxValue: String, _ type: BIRType, rank: Int?, slot: String) {
+            let old = temp()
+            if rank != nil {
+                let copy = temp()
+                out.emit("\(copy) = call ptr @basic_rt_value_array_copy(ptr \(boxValue))")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_array_release(ptr \(old))")
+                out.emit("store ptr \(copy), ptr \(slot)")
+                return
+            }
+            switch type {
+            case .number, .void:
+                let value = temp()
+                out.emit("\(value) = call double @basic_rt_value_number(ptr \(boxValue), ptr null)")
+                out.emit("store double \(value), ptr \(slot)")
+            case .boolean:
+                let value = temp()
+                out.emit("\(value) = call i1 @basic_rt_value_boolean(ptr \(boxValue), ptr null)")
+                out.emit("store i1 \(value), ptr \(slot)")
+            case .string:
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_value_string(ptr \(boxValue), ptr null)")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_string_release(ptr \(old))")
+                out.emit("store ptr \(value), ptr \(slot)")
+            case .composite(let name):
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_value_composite(ptr \(boxValue), i64 \(module.typeIndex(of: name) ?? -1), ptr null)")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_composite_release(ptr \(old))")
+                out.emit("store ptr \(value), ptr \(slot)")
+            case .dictionary:
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_value_dictionary(ptr \(boxValue), ptr null)")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_dictionary_release(ptr \(old))")
+                out.emit("store ptr \(value), ptr \(slot)")
+            case .closure:
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_value_closure(ptr \(boxValue), ptr null)")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_closure_release(ptr \(old))")
+                out.emit("store ptr \(value), ptr \(slot)")
+            case .variant, .system, .array:
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_value_copy(ptr \(boxValue))")
+                out.emit("\(old) = load ptr, ptr \(slot)")
+                out.emit("call void @basic_rt_value_release(ptr \(old))")
+                out.emit("store ptr \(value), ptr \(slot)")
+            }
+        }
+
+        // globals.capture
+        out.raw("define ptr @\"globals.capture\"() {")
+        out.label("entry")
+        let snap = temp()
+        out.emit("\(snap) = call ptr @basic_rt_snapshot_new(i64 \(module.globals.count))")
+        for (index, global) in module.globals.enumerated() {
+            let value = temp()
+            out.emit("\(value) = load \(FunctionEmitter.llvmType(of: global)), ptr @\"G.\(global.name)\"")
+            let boxed = box(value, global.type, rank: global.rank)
+            out.emit("call void @basic_rt_snapshot_set(ptr \(snap), i64 \(index), ptr \(boxed))")
+            out.emit("call void @basic_rt_value_release(ptr \(boxed))")
+        }
+        out.emit("ret ptr \(snap)")
+        out.raw("}")
+        out.raw("")
+
+        // globals.restore
+        out.raw("define void @\"globals.restore\"(ptr %snap) {")
+        out.label("entry")
+        for (index, global) in module.globals.enumerated() {
+            let boxed = temp()
+            out.emit("\(boxed) = call ptr @basic_rt_snapshot_get(ptr %snap, i64 \(index))")
+            unboxInto(boxed, global.type, rank: global.rank, slot: "@\"G.\(global.name)\"")
+            out.emit("call void @basic_rt_value_release(ptr \(boxed))")
+        }
+        out.emit("ret void")
+        out.raw("}")
+        out.raw("")
+
+        // trampolines
+        for function in module.functions where function.isAsync {
+            out.raw("define ptr @\"A.\(function.name)\"(ptr %args) {")
+            out.label("entry")
+            out.emit("%jmpbuf = alloca [64 x i64]")
+            out.emit("call void @basic_rt_task_boundary_push(ptr %jmpbuf)")
+            out.emit("%landed = call i32 @setjmp(ptr %jmpbuf)")
+            out.emit("%failed = icmp ne i32 %landed, 0")
+            out.emit("br i1 %failed, label %fail, label %run")
+            out.label("run")
+            var arguments: [String] = []
+            var owned: [(String, String)] = []
+            for (index, parameter) in function.parameters.enumerated() {
+                let boxed = temp()
+                out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 \(index))")
+                owned.append((boxed, "basic_rt_value_release"))
+                let value = temp()
+                switch parameter.type {
+                case .number, .void: out.emit("\(value) = call double @basic_rt_value_number(ptr \(boxed), ptr null)")
+                case .boolean: out.emit("\(value) = call i1 @basic_rt_value_boolean(ptr \(boxed), ptr null)")
+                case .string: out.emit("\(value) = call ptr @basic_rt_value_string(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_string_release"))
+                case .composite(let name): out.emit("\(value) = call ptr @basic_rt_value_composite(ptr \(boxed), i64 \(module.typeIndex(of: name) ?? -1), ptr null)"); owned.append((value, "basic_rt_composite_release"))
+                case .dictionary: out.emit("\(value) = call ptr @basic_rt_value_dictionary(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_dictionary_release"))
+                case .closure: out.emit("\(value) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_closure_release"))
+                case .variant, .system, .array: out.emit("\(value) = call ptr @basic_rt_value_copy(ptr \(boxed))"); owned.append((value, "basic_rt_value_release"))
+                }
+                arguments.append("\(FunctionEmitter.llvmType(of: parameter)) \(value)")
+            }
+            let call = "call \(FunctionEmitter.llvmType(function.returnType)) @\"F.\(function.name)\"(\(arguments.joined(separator: ", ")))"
+            var resultBox: String
+            if function.returnType == .void {
+                out.emit(call)
+                resultBox = temp()
+                out.emit("\(resultBox) = call ptr @basic_rt_value_empty()")
+            } else {
+                let result = temp()
+                out.emit("\(result) = \(call)")
+                resultBox = box(result, function.returnType, rank: nil)
+                if FunctionEmitter.isManaged(function.returnType) {
+                    out.emit("call void @\(FunctionEmitter.releaseFunction(function.returnType))(ptr \(result))")
+                }
+            }
+            for (value, release) in owned { out.emit("call void @\(release)(ptr \(value))") }
+            out.emit("call void @basic_rt_task_boundary_pop()")
+            out.emit("ret ptr \(resultBox)")
+            out.label("fail")
+            out.emit("call void @basic_rt_task_boundary_pop()")
+            out.emit("ret ptr null")
+            out.raw("}")
+            out.raw("")
+        }
+        return out.lines.joined(separator: "\n")
     }
 
     /// The DATA items as three parallel constant tables.
@@ -283,6 +446,24 @@ struct LLVMLowering {
     declare void @basic_rt_file_write_json(ptr, ptr, i1)
     declare ptr @basic_rt_file_files(ptr)
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
+    declare ptr @basic_rt_snapshot_new(i64)
+    declare void @basic_rt_snapshot_set(ptr, i64, ptr)
+    declare ptr @basic_rt_snapshot_get(ptr, i64)
+    declare void @basic_rt_snapshot_release(ptr)
+    declare ptr @basic_rt_value_array_copy(ptr)
+    declare void @basic_rt_tasks_install(ptr, ptr)
+    declare ptr @basic_rt_task_launch(ptr, ptr, ptr)
+    declare ptr @basic_rt_task_value(ptr)
+    declare ptr @basic_rt_task_sleep(double)
+    declare ptr @basic_rt_task_await(ptr)
+    declare void @basic_rt_task_join(ptr)
+    declare void @basic_rt_task_cancel(ptr)
+    declare void @basic_rt_task_background(ptr)
+    declare void @basic_rt_task_discard(ptr)
+    declare ptr @basic_rt_task_status(ptr)
+    declare ptr @basic_rt_task_error(ptr)
+    declare void @basic_rt_task_boundary_push(ptr)
+    declare void @basic_rt_task_boundary_pop()
     declare ptr @basic_rt_inkey()
     declare void @basic_rt_files_list()
     declare ptr @basic_rt_system(ptr)
@@ -457,6 +638,9 @@ struct FunctionEmitter {
                 out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
             }
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
+            if module.functions.contains(where: \.isAsync) {
+                out.emit("call void @basic_rt_tasks_install(ptr @\"globals.capture\", ptr @\"globals.restore\")")
+            }
         }
         if usesGosub {
             out.emit("%\"gosub.base\" = call i64 @basic_rt_gosub_depth()")
@@ -1668,6 +1852,20 @@ struct FunctionEmitter {
             out.emit("\(result) = call \(Self.llvmType(returns)) @\(name)(\(values.joined(separator: ", ")))")
             if Self.isManaged(returns) { own(result, as: returns); return (result, true) }
             return (result, false)
+        case .asyncLaunch(let name, let arguments):
+            let args = out.temp()
+            out.emit("\(args) = call ptr @basic_rt_snapshot_new(i64 \(arguments.count))")
+            for (index, argument) in arguments.enumerated() {
+                let (value, _) = lowerValue(argument)
+                let box = boxedPointer(value, argument.type)
+                out.emit("call void @basic_rt_snapshot_set(ptr \(args), i64 \(index), ptr \(box))")
+            }
+            let displayName = name.split(separator: ".").last.map(String.init) ?? name
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_task_launch(ptr \(constants.constant(module.asyncDisplayName(of: name) ?? displayName)), ptr @\"A.\(name)\", ptr \(args))")
+            out.emit("call void @basic_rt_snapshot_release(ptr \(args))")
+            own(result, as: .variant)
+            return (result, true)
         case .systemNew(let name, let arguments):
             let list = boxedIndexes(arguments)
             let result = out.temp()
@@ -2007,7 +2205,6 @@ struct FunctionEmitter {
         case .erl: return number("call double @basic_rt_erl()")
         case .lof: return number("call double @basic_rt_file_lof(double \(a))")
         case .fileExists: return number("call double @basic_rt_file_exists_number(ptr \(a))")
-        case .sleep: return number("call double @basic_rt_sleep(double \(a))")
         case .date: return string("call ptr @basic_rt_date()")
         case .inputChars: return string("call ptr @basic_rt_input_chars(double \(a))")
         case .time: return string("call ptr @basic_rt_time()")

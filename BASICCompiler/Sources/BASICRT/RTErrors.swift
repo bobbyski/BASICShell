@@ -38,6 +38,11 @@ enum RTError {
     /// Records the error and, when a handler can take it, jumps there.
     /// `prefix` nil prints the message bare (the interpreter's "Missing line").
     static func raise(number: Int, message: String, prefix: String?) -> Never {
+        // Inside an async body, a failure is the task's, not the program's.
+        if let boundary = RTTasks.boundaries.last {
+            RTTasks.boundaryError = (prefix.map { "\($0): " } ?? "") + message
+            rt_longjmp(boundary, 1)
+        }
         lastNumber = number
         lastLine = line
         if let jumpBuffer, handler >= 0, !isHandling {

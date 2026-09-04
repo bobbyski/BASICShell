@@ -15,8 +15,8 @@ import Foundation
 // value — the compiler updates it on each store to such a variable and
 // reads it back after GET.
 
-enum RTFileAccess: String { case read = "READ", write = "WRITE", both = "BOTH" }
-enum RTFileContentType: String { case text = "TEXT", raw = "RAW", json = "JSON" }
+package enum RTFileAccess: String { case read = "READ", write = "WRITE", both = "BOTH" }
+package enum RTFileContentType: String { case text = "TEXT", raw = "RAW", json = "JSON" }
 enum RTLegacyMode { case input, output, append, binary, random }
 
 final class RTOpenFile {

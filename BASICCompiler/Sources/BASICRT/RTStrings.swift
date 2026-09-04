@@ -31,7 +31,7 @@ package struct RTText: Equatable {
         storage = .data(data)
     }
 
-    static let empty = RTText("")
+    package static let empty = RTText("")
 
     /// What `PRINT` shows: NUL bytes are dropped from data-backed text.
     package var description: String {

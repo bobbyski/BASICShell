@@ -147,7 +147,7 @@ struct SemanticAnalyzer {
                     let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name.name, at: line)
                     model.updateType(typeName) { $0.members[name.normalized] = (parameterTypes, resolvedReturn) }
                 case .functionDeclaration(let name, let parameters, let returnType, let isAsync, let visibility, _, let explicit):
-                    guard !isAsync else { throw CompileError("ASYNC FUNCTION is not supported by basicc yet", at: location) }
+                    guard !isAsync else { throw CompileError("ASYNC methods are not supported by basicc yet", at: location) }
                     guard let end = Self.matchingEndFunction(after: index, in: lines) else {
                         throw CompileError("FUNCTION without END FUNCTION", at: location)
                     }
@@ -239,7 +239,6 @@ struct SemanticAnalyzer {
             guard owner[index] == nil else { index += 1; continue }
             switch line.statement {
             case .functionDeclaration(let name, let parameters, let returnType, let isAsync, _, _, _):
-                guard !isAsync else { throw CompileError("ASYNC FUNCTION is not supported by basicc yet", at: location) }
                 guard let end = Self.matchingEndFunction(after: index, in: lines) else {
                     throw CompileError("FUNCTION without END FUNCTION", at: location)
                 }
@@ -250,11 +249,13 @@ struct SemanticAnalyzer {
                     BIRVariable(name: $0.variable.normalized, type: try map($0.type, for: $0.variable.name, at: line), scope: .local)
                 }
                 let birReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name.name, at: line)
-                model.addFunction(SemanticModel.Function(
+                var function = SemanticModel.Function(
                     name: name.normalized, displayName: name.name, parameters: birParameters,
                     returnType: birReturn, body: (index + 1)..<end, expression: nil, location: location,
                     owner: nil, visibility: .public, explicitImplementations: []
-                ))
+                )
+                function.isAsync = isAsync
+                model.addFunction(function)
                 for bodyIndex in index...end { owner[bodyIndex] = name.normalized }
                 index = end + 1
                 continue
@@ -416,7 +417,8 @@ struct SemanticAnalyzer {
             }
         case .printUsing(let format, let values, _):
             for expression in [format] + values { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
-        case .expression(let expression), .returnValue(let expression), .selectCase(let expression), .blockIf(let expression), .elseIf(let expression), .system(let expression):
+        case .expression(let expression), .returnValue(let expression), .selectCase(let expression), .blockIf(let expression), .elseIf(let expression), .system(let expression),
+             .join(let expression), .cancelTask(let expression), .background(let expression):
             try noteReferences(in: expression, at: line, in: function, changed: &changed)
         case .caseClause(let clauses):
             for clause in clauses {
@@ -592,7 +594,12 @@ struct SemanticAnalyzer {
             }
             return nil
         case .unaryMinus: return .number
-        case .await(let inner): return try typeOf(inner, in: function)
+        case .await(let inner):
+            // AWAIT of an async call is the function's value; of anything
+            // else, the value itself (a task handle stays a VARIANT).
+            if case .callOrArray(let name, _) = inner, let userFunction = model.functions[name.normalized], userFunction.isAsync { return userFunction.returnType }
+            if case .functionCall(let name, _) = inner, let userFunction = model.functions[name.normalized], userFunction.isAsync { return userFunction.returnType }
+            return try typeOf(inner, in: function)
         case .binary(let left, let operation, let right):
             switch operation {
             case .add:
@@ -603,13 +610,13 @@ struct SemanticAnalyzer {
                 return .number
             }
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
-            if let userFunction = model.functions[name.normalized] { return userFunction.returnType }
+            if let userFunction = model.functions[name.normalized] { return userFunction.isAsync ? .variant : userFunction.returnType }
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
             if name.normalized == "USING$" || name.normalized == "TOJSONSTRING" { return .string }
             if name.normalized == "FROMJSONSTRING" { return .variant }
-            if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$"].contains(name.normalized) { return .string }
+            if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$", "TASKSTATUS$", "TASKERROR$"].contains(name.normalized) { return .string }
             if ["CVI", "CVS", "CVD", "SEEK", "FIELDCOUNT"].contains(name.normalized) { return .number }
-            if ["FIELDMETA", "FIELDVALUE", "SETFIELD"].contains(name.normalized) { return .variant }
+            if ["FIELDMETA", "FIELDVALUE", "SETFIELD", "ASYNCVALUE", "SLEEP"].contains(name.normalized) { return .variant }
             if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
@@ -645,7 +652,7 @@ struct SemanticAnalyzer {
         case .scalar(.integer), .scalar(.double): return .number
         case .scalar(.string): return .string
         case .scalar(.boolean): return .boolean
-        case .scalar(.variant): return .variant
+        case .scalar(.variant), .scalar(.task): return .variant
         case .dictionary: return .dictionary
         case .void: return .void
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):

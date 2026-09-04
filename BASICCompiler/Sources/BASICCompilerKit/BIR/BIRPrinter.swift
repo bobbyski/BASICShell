@@ -307,6 +307,8 @@ public struct BIRPrinter {
             return "new \(name)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .systemCall(let receiver, let method, let arguments, _):
             return "\(render(receiver)).\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .asyncLaunch(let name, let arguments):
+            return "launch \(name)(" + arguments.map(render).joined(separator: ", ") + ")"
         }
     }
 }
