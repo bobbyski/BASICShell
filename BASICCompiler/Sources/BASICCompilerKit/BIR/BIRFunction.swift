@@ -90,6 +90,9 @@ public enum BIROperation: Sendable {
     case onError(handler: Int?)
     /// `ERROR n`: raise error number n.
     case raise(BIRExpression)
+    /// A GOTO/GOSUB to a line or label that does not exist: the
+    /// interpreter's "Missing line N" error (number 8), raised when reached.
+    case failMissing(String)
     /// Prints items; `newline` is false when the statement ended in `;` or `,`.
     case print([BIRPrintItem], newline: Bool)
     /// Reads one value from the console into a variable.

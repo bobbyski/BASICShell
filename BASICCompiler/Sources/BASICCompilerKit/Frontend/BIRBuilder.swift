@@ -114,12 +114,14 @@ final class FunctionBuilder {
         }
     }
 
-    /// The parsed-line indexes this function executes.
+    /// The parsed-line indexes this function executes. Imported files
+    /// contribute their declarations only; the interpreter skips their
+    /// top-level statements.
     private var ownedLines: [Int] {
         if let signature {
             return Array(signature.body)
         }
-        return lines.indices.filter { owner[$0] == nil }
+        return lines.indices.filter { owner[$0] == nil && !lines[$0].isImported }
     }
 
     func run() throws {
@@ -224,16 +226,30 @@ final class FunctionBuilder {
         }
     }
 
+    /// Blocks that raise "Missing line N" for targets that do not exist.
+    private var missingTargetBlocks: [String: BIRBlockID] = [:]
+
+    /// A block that fails the way the interpreter does when a jump names a
+    /// line or label the program lacks — at the jump, not at compile time.
+    private func missingTargetBlock(_ message: String) -> BIRBlockID {
+        if let existing = missingTargetBlocks[message] { return existing }
+        let block = newBlock("missing")
+        function.blocks[block].instructions.append(BIRInstruction(.failMissing(message), at: location))
+        function.blocks[block].terminator = .end
+        missingTargetBlocks[message] = block
+        return block
+    }
+
     private func blockForTarget(_ target: BranchTarget) throws -> BIRBlockID {
         let index: Int
         let label: String
         switch target {
         case .line(let number):
-            guard let found = lineIndexByNumber[number] else { throw CompileError("Missing line \(number)", at: location) }
+            guard let found = lineIndexByNumber[number] else { return missingTargetBlock("Missing line \(number)") }
             index = found
             label = "L\(number)"
         case .label(let name):
-            guard let found = lineIndexByLabel[name.uppercased()] else { throw CompileError("Missing label \(name)", at: location) }
+            guard let found = lineIndexByLabel[name.uppercased()] else { return missingTargetBlock("Missing label \(name)") }
             index = found
             label = "label.\(name.uppercased())"
         }
@@ -506,7 +522,7 @@ final class FunctionBuilder {
         case .closureAssignment:
             throw unsupported("closures (Phase 4.4)")
         case .importDirective:
-            throw unsupported("IMPORT (Phase 4.7)")
+            break  // Expanded by SourceLoader before the builder sees the program.
         case .onErrorGoto(let target):
             guard signature == nil else { throw unsupported("ON ERROR inside a FUNCTION") }
             guard let target else { emit(.onError(handler: nil)); return }

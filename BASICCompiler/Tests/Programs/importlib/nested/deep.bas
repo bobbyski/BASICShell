@@ -1,0 +1,4 @@
+FUNCTION Deep$() AS STRING
+  RETURN "deep"
+END FUNCTION
+IMPORT "../util.bas"

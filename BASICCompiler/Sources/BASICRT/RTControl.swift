@@ -33,6 +33,12 @@ func basic_rt_fail_type(_ message: String) -> Never {
     basic_rt_fail(prefix: "Type error", message)
 }
 
+/// "Missing line N": the interpreter prints it bare, and numbers it 8.
+@_cdecl("basic_rt_fail_missing")
+public func basic_rt_fail_missing(_ message: UnsafePointer<CChar>) -> Never {
+    RTError.raise(number: 8, message: String(cString: message), prefix: nil)
+}
+
 private func basic_rt_fail(prefix: String, _ message: String) -> Never {
     RTError.raise(number: RTError.number(for: message, isTypeError: prefix == "Type error"), message: message, prefix: prefix)
 }

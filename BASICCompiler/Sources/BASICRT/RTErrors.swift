@@ -36,7 +36,8 @@ enum RTError {
     }
 
     /// Records the error and, when a handler can take it, jumps there.
-    static func raise(number: Int, message: String, prefix: String) -> Never {
+    /// `prefix` nil prints the message bare (the interpreter's "Missing line").
+    static func raise(number: Int, message: String, prefix: String?) -> Never {
         lastNumber = number
         lastLine = line
         if let jumpBuffer, handler >= 0, !isHandling {
@@ -46,7 +47,7 @@ enum RTError {
         }
         fflush(stdout)
         if RTConsole.column != 0 { fputs("\n", stdout) }
-        fputs("\(prefix): \(message)\n", stdout)
+        fputs((prefix.map { "\($0): " } ?? "") + message + "\n", stdout)
         fflush(stdout)
         exit(1)
     }

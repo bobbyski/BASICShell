@@ -113,6 +113,7 @@ struct LLVMLowering {
     declare void @basic_rt_finish()
     declare void @basic_rt_fail(ptr)
     declare void @basic_rt_fail_type(ptr)
+    declare void @basic_rt_fail_missing(ptr)
     declare void @basic_rt_gosub_push(i64)
     declare i64 @basic_rt_gosub_pop()
     declare i64 @basic_rt_gosub_depth()
@@ -586,6 +587,10 @@ struct FunctionEmitter {
 
         case .fail(let message):
             fail(message)
+        case .failMissing(let message):
+            out.emit("call void @basic_rt_fail_missing(ptr \(constants.constant(message)))")
+            out.emit("unreachable")
+            out.label(out.freshLabel("fail.cont"))
         }
     }
 

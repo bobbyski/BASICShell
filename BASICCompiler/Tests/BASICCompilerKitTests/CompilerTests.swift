@@ -125,21 +125,15 @@ struct DiagnosticTests {
         }
     }
 
-    @Test func missingLineIsReported() {
-        do {
-            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "10 GOTO 99", name: "bad")
-            Issue.record("expected a compile error")
-        } catch let error as CompileError {
-            #expect(error.description.contains("Missing line 99"))
-            #expect(error.description.contains("bad.bas:1"))
-        } catch {
-            Issue.record("unexpected \(error)")
-        }
+    @Test func missingLineFailsWhenReachedLikeTheInterpreter() throws {
+        let run = try TestBuild.run(source: "10 PRINT \"A\"\n20 GOTO 99\n30 PRINT \"B\"")
+        #expect(run.stdout == "A\nMissing line 99\n")
+        #expect(run.exitCode == 1)
     }
 
     @Test func unsupportedFeaturesSaySo() {
         do {
-            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "IMPORT \"lib.bas\"", name: "bad")
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "OPTION LOCAL-LET", name: "bad")
             Issue.record("expected a compile error")
         } catch let error as CompileError {
             #expect(error.description.contains("not supported by basicc yet"))
