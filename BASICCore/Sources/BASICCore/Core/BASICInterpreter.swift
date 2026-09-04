@@ -270,94 +270,17 @@ public final class BASICInterpreter {
         return parsed.first.map { ($0.fileName, $0.sourceLineNumber) }
     }
 
+
+    /// Flattens program lines into statements through the shared
+    /// ``ProgramParser``, remembering where a parse error was for diagnostics.
     private func parsedProgramLines(from sourceLines: [ProgramLine]) throws -> [ParsedLine] {
         lastParseErrorLocation = nil
-        var parsed: [ParsedLine] = []
-        var index = 0
-        while index < sourceLines.count {
-            let line = sourceLines[index]
-            var headerParser = try Parser(source: line.source)
-            let header: (
-                kind: AssignmentKind,
-                variable: VariableName,
-                declaredType: BASICType?,
-                parameters: [FunctionParameter],
-                returnType: BASICType,
-                captures: [ClosureCaptureSpec]
-            )?
-            do {
-                header = try headerParser.parseClosureBlockAssignmentHeader()
-            } catch let error as BASICError {
-                lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? index + 1)
-                throw error
-            }
-            if let header {
-                var body: [ClosureBodyLine] = []
-                index += 1
-                var foundEnd = false
-                while index < sourceLines.count {
-                    let bodyLine = sourceLines[index]
-                    var parser = try Parser(source: bodyLine.source)
-                    let statement: Statement
-                    do {
-                        statement = try parser.parseStatement()
-                    } catch let error as BASICError {
-                        lastParseErrorLocation = (bodyLine.fileName, bodyLine.sourceLineNumber ?? index + 1)
-                        throw error
-                    }
-                    if case .endFunction = statement {
-                        foundEnd = true
-                        break
-                    }
-                    body.append(
-                        ClosureBodyLine(
-                            fileName: bodyLine.fileName,
-                            sourceLineNumber: bodyLine.sourceLineNumber ?? index + 1,
-                            statement: statement
-                        )
-                    )
-                    index += 1
-                }
-                guard foundEnd else {
-                    throw BASICError.runtime("FUNCTION closure without END FUNCTION")
-                }
-                parsed += ParsedLine.flatten(
-                    number: line.number,
-                    fileName: line.fileName,
-                    sourceLineNumber: line.sourceLineNumber ?? parsed.count + 1,
-                    isImported: line.isImported,
-                    statement: .closureAssignment(
-                        header.kind,
-                        header.variable,
-                        header.declaredType,
-                        header.parameters,
-                        header.returnType,
-                        header.captures,
-                        body
-                    )
-                )
-                index += 1
-                continue
-            }
-
-            var parser = try Parser(source: line.source)
-            let statement: Statement
-            do {
-                statement = try parser.parseStatement()
-            } catch let error as BASICError {
-                lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? index + 1)
-                throw error
-            }
-            parsed += ParsedLine.flatten(
-                number: line.number,
-                fileName: line.fileName,
-                sourceLineNumber: line.sourceLineNumber ?? index + 1,
-                isImported: line.isImported,
-                statement: statement
-            )
-            index += 1
+        do {
+            return try ProgramParser.parse(sourceLines)
+        } catch let failure as ProgramParser.Failure {
+            lastParseErrorLocation = (failure.fileName, failure.lineNumber)
+            throw failure.error
         }
-        return parsed
     }
 
     func prepare(startLine: Int?) throws {
@@ -6543,49 +6466,6 @@ public final class BASICInterpreter {
             parts.append("48;2;\(background.red);\(background.green);\(background.blue)")
         }
         return "\u{001B}[\(parts.joined(separator: ";"))m"
-    }
-}
-
-struct ParsedLine {
-    let number: Int?
-    let displayLineNumber: Int
-    let fileName: String?
-    let sourceLineNumber: Int
-    let statementNumber: Int
-    let isImported: Bool
-    let statement: Statement
-
-    var breakpointLocation: BASICBreakpointLocation {
-        BASICBreakpointLocation(fileName: fileName, lineNumber: sourceLineNumber, statementNumber: statementNumber)
-    }
-
-    static func flatten(number: Int?, fileName: String?, sourceLineNumber: Int, isImported: Bool, statement: Statement) -> [ParsedLine] {
-        let displayLineNumber = number ?? sourceLineNumber
-        guard case .sequence(let statements) = statement else {
-            return [
-                ParsedLine(
-                    number: number,
-                    displayLineNumber: displayLineNumber,
-                    fileName: fileName,
-                    sourceLineNumber: sourceLineNumber,
-                    statementNumber: 0,
-                    isImported: isImported,
-                    statement: statement
-                )
-            ]
-        }
-
-        return statements.enumerated().map { index, statement in
-            ParsedLine(
-                number: index == 0 ? number : nil,
-                displayLineNumber: displayLineNumber,
-                fileName: fileName,
-                sourceLineNumber: sourceLineNumber,
-                statementNumber: index,
-                isImported: isImported,
-                statement: statement
-            )
-        }
     }
 }
 

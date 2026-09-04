@@ -29,7 +29,7 @@ public final class BASICProgram: @unchecked Sendable {
 
     /// Replaces the program with line-numbered or line-number-free source.
     public func loadSource(_ source: String, fileName: String? = nil) {
-        lines = Self.parseLines(from: source, fileName: fileName, isImported: false)
+        lines = ProgramLine.parse(source, fileName: fileName, isImported: false)
     }
 
     /// Removes all program lines.
@@ -117,126 +117,7 @@ public final class BASICProgram: @unchecked Sendable {
     }
 
     static func importedLines(from source: String, fileName: String) -> [ProgramLine] {
-        parseLines(from: source, fileName: fileName, isImported: true)
-    }
-
-    private static func splitNumberedLine(_ source: String) -> (number: Int, source: String)? {
-        var digits = ""
-        var index = source.startIndex
-        while index < source.endIndex, source[index].isWhitespace {
-            index = source.index(after: index)
-        }
-        while index < source.endIndex, source[index].isNumber {
-            digits.append(source[index])
-            index = source.index(after: index)
-        }
-        guard !digits.isEmpty, let number = Int(digits) else { return nil }
-        if index < source.endIndex, source[index].isWhitespace {
-            index = source.index(after: index)
-        }
-        let rest = String(source[index...])
-        return (number, rest)
-    }
-
-    private static func parseLines(from source: String, fileName: String?, isImported: Bool) -> [ProgramLine] {
-        var sourceLines = source
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-
-        var sourceLineOffset = 0
-        if let firstLine = sourceLines.first,
-           firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("#!") {
-            sourceLines.removeFirst()
-            sourceLineOffset = 1
-        }
-
-        let physicalLineRecords = sourceLines.enumerated().map {
-            (lineNumber: $0.offset + 1 + sourceLineOffset, source: $0.element)
-        }
-        let lineRecords = joinContinuationLines(joinTripleQuotedLines(physicalLineRecords))
-
-        return lineRecords
-            .filter { !$0.source.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { record in
-                if let numbered = splitNumberedLine(record.source) {
-                    return ProgramLine(number: numbered.number, source: numbered.source, fileName: fileName, sourceLineNumber: record.lineNumber, isImported: isImported)
-                }
-                return ProgramLine(number: nil, source: record.source, fileName: fileName, sourceLineNumber: record.lineNumber, isImported: isImported)
-            }
-    }
-
-    private static func joinContinuationLines(_ sourceLines: [(lineNumber: Int, source: String)]) -> [(lineNumber: Int, source: String)] {
-        var joinedLines: [(lineNumber: Int, source: String)] = []
-        var pending: (lineNumber: Int, source: String)?
-
-        for sourceLine in sourceLines {
-            let line = sourceLine.source
-            let combined = [pending?.source, line]
-                .compactMap { $0 }
-                .joined(separator: pending == nil ? "" : " ")
-
-            if let continued = removingTrailingContinuation(from: combined) {
-                pending = (lineNumber: pending?.lineNumber ?? sourceLine.lineNumber, source: continued)
-            } else {
-                joinedLines.append((lineNumber: pending?.lineNumber ?? sourceLine.lineNumber, source: combined))
-                pending = nil
-            }
-        }
-
-        if let pending {
-            joinedLines.append(pending)
-        }
-
-        return joinedLines
-    }
-
-    private static func joinTripleQuotedLines(_ sourceLines: [(lineNumber: Int, source: String)]) -> [(lineNumber: Int, source: String)] {
-        var joinedLines: [(lineNumber: Int, source: String)] = []
-        var pending: (lineNumber: Int, source: String)?
-        var insideTripleQuotedString = false
-
-        for sourceLine in sourceLines {
-            if var pendingRecord = pending {
-                pendingRecord.source += "\n" + sourceLine.source
-                insideTripleQuotedString.toggleIfNeeded(forTripleQuotesIn: sourceLine.source)
-                if insideTripleQuotedString {
-                    pending = pendingRecord
-                } else {
-                    joinedLines.append(pendingRecord)
-                    pending = nil
-                }
-                continue
-            }
-
-            var isInside = false
-            isInside.toggleIfNeeded(forTripleQuotesIn: sourceLine.source)
-            if isInside {
-                insideTripleQuotedString = true
-                pending = sourceLine
-            } else {
-                joinedLines.append(sourceLine)
-            }
-        }
-
-        if let pending {
-            joinedLines.append(pending)
-        }
-
-        return joinedLines
-    }
-
-    private static func removingTrailingContinuation(from line: String) -> String? {
-        var index = line.endIndex
-        while index > line.startIndex {
-            let previous = line.index(before: index)
-            if line[previous].isWhitespace {
-                index = previous
-                continue
-            }
-            guard line[previous] == "\\" else { return nil }
-            return String(line[..<previous]).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
+        ProgramLine.parse(source, fileName: fileName, isImported: true)
     }
 
     private static let ansiReset = "\u{001B}[0m"
@@ -536,29 +417,5 @@ public final class BASICProgram: @unchecked Sendable {
             index = source.index(after: index)
         }
         return output + ansiReset
-    }
-}
-
-private extension Bool {
-    mutating func toggleIfNeeded(forTripleQuotesIn source: String) {
-        var index = source.startIndex
-        while index < source.endIndex {
-            guard source[index] == "\"" else {
-                index = source.index(after: index)
-                continue
-            }
-            let second = source.index(after: index)
-            guard second < source.endIndex, source[second] == "\"" else {
-                index = second
-                continue
-            }
-            let third = source.index(after: second)
-            guard third < source.endIndex, source[third] == "\"" else {
-                index = third
-                continue
-            }
-            toggle()
-            index = source.index(after: third)
-        }
     }
 }
