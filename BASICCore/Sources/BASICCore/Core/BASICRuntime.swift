@@ -571,19 +571,13 @@ final class BASICRuntime {
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
-        case "TUIAPP", "TUIWINDOW", "TUISTACK", "TUIBUTTON", "TUILABEL", "TUIFIELD",
-            "TUILIST", "TUITABLE", "TUICHECK", "TUITEXT", "TUIGAUGE", "TUIMENU",
-            "TUIDIALOG", "TUIFLOATWINDOW", "TUISHELL", "TUITOOLBAR", "TUITABS", "TUIPANEL",
-            "TUISTATUS", "TUIDIVIDER", "TUISIDEBAR", "TUITOGGLE", "TUIRADIO",
-            "TUISEGMENTS", "TUICOMBO", "TUIPOPUP", "TUISLIDER", "TUISTEPPER",
-            "TUILEVEL", "TUIPROGRESS", "TUIDATE", "TUICOLOR", "TUIMATRIX", "TUISEARCH", "TUIPASTE",
-            "TUITOKENS", "TUICOMPLETIONS", "TUIRANGE", "TUITREE", "TUIDIRTREE",
-            "TUIBROWSER", "TUIPATH", "TUIFAVORITES", "TUIMASTERDETAIL",
-            "TUICOLLECTION", "TUISYNTAX", "TUIMARKDOWN", "TUIRICH", "TUISPLIT", "TUISCROLL",
-            "TUIDISCLOSURE", "TUIRIBBON", "TUIFLOW", "TUITOOLBOX", "TUISCROLLER", "TUIVIEWTHATFITS", "TUIPAGES",
-            "TUIACCORDION", "TUISPARKLINE", "TUIBARCHART", "TUILINECHART",
-            "TUIPIECHART", "TUISCATTER", "TUITIMELINE", "TUIIMAGE", "TUICANVAS",
-            "TUIWIZARD", "TUIBOARD", "TUIDIAGRAM", "TUILOG":
+        // Every TUI pseudo class, by rule rather than by list. This was a
+        // spelled-out roster of seventy names, which is a fourth place to
+        // remember when one is added — and the one that was forgotten: a class
+        // missing from here constructs, then reports "has no method" for
+        // everything, which reads like a broken binding rather than a missing
+        // registration.
+        case let name where name.hasPrefix("TUI"):
             return try callTUIMethod(
                 typeName: typeName,
                 id: id,

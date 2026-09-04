@@ -101,11 +101,41 @@ struct BASICKeywordTests {
             let session = BASICSession(host: TestHost())
             session.program.loadSource("LET Handle = \(name)()")
             session.submit("RUN")
+            // "array index must be numeric" belongs here too: a name the
+            // constructor does not know is parsed as an array subscript, so a
+            // missing registration reports a subscript complaint rather than an
+            // unknown class. Checking only for "Unknown CLASS" let three
+            // unregistered classes through.
             let complaints = (session.diagnostics().map { $0.message } + TestHost().output)
-                .filter { $0.contains("Unknown CLASS") }
+                .filter {
+                    $0.contains("Unknown CLASS") || $0.contains("array index must be numeric")
+                }
             #expect(
                 complaints.isEmpty,
                 "\(name) is listed as a pseudo class but the interpreter does not know it"
+            )
+        }
+    }
+
+    /// Every TUI pseudo class is registered where construction looks for it.
+    ///
+    /// The vocabulary and ``BASICInterpreter/tuiClassNames`` are separate
+    /// lists, and a name in the first but not the second constructs as an array
+    /// subscript. Compared directly, so the failure names the missing entry
+    /// rather than leaving it to be inferred from a runtime message.
+    @Test("every TUI pseudo class has a constructor entry")
+    func tuiPseudoClassesAreRegistered() {
+        let listed = BASICKeywords.pseudoClasses.filter { $0.hasPrefix("TUI") }
+        for name in listed.sorted() {
+            #expect(
+                BASICInterpreter.tuiClassNames[name] != nil,
+                "\(name) is in BASICKeywords.pseudoClasses but not in tuiClassNames"
+            )
+        }
+        for name in BASICInterpreter.tuiClassNames.keys.sorted() {
+            #expect(
+                BASICKeywords.pseudoClasses.contains(name),
+                "\(name) is in tuiClassNames but not in BASICKeywords.pseudoClasses"
             )
         }
     }

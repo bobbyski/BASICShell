@@ -113,6 +113,12 @@ final class BASICTUIRegistry {
 
     /// One-shot work asked for before there was an application to ask.
     var pendingSchedules: [(milliseconds: Int, handler: String)] = []
+
+    /// Preferences stores, aligned forms and paged dialogs — see
+    /// BASICTUIPreferences.swift.
+    var preferences: [Int: Preferences] = [:]
+    var formFields: [Int: [(title: String, view: TUIView)]] = [:]
+    var preferencesDialogs: [Int: PreferencesDialog] = [:]
     /// Windows to present once the app is up.
     var pendingPresents: [Int] = []
     /// The BASIC function each control calls, by handle.
@@ -630,6 +636,8 @@ extension BASICRuntime {
             default:
                 guard try BASICRuntime.tuiChromeObject(
                     typeName: typeName, title: title, registry: registry
+                ) || BASICRuntime.tuiPreferencesObject(
+                    typeName: typeName, title: title, registry: registry
                 ) else {
                     throw BASICError.runtime("Unknown TUI class \(typeName)")
                 }
@@ -674,6 +682,18 @@ extension BASICRuntime {
                     throw BASICError.runtime("\(typeName) is not a view")
                 }
                 return subject
+            }
+
+            // Preferences handles are dispatched before the control switch,
+            // not after it. Their method names overlap the controls' — a
+            // store's `text` is not a label's, a form's `field` is not a
+            // TUIField — and a shared switch would hand the call to whichever
+            // case happens to come first.
+            if let answer = try BASICRuntime.callTUIPreferencesMethod(
+                typeName: typeName, id: id, method: name,
+                arguments: arguments, registry: registry
+            ) {
+                return answer
             }
 
             switch name {
@@ -1785,8 +1805,21 @@ extension BASICRuntime {
                 guard let app = registry.apps[id] else {
                     throw BASICError.runtime("\(typeName) is not an application")
                 }
-                guard case .systemObject(_, let dialogID)? = arguments.first,
-                      let spec = registry.dialogs[dialogID] else {
+                guard case .systemObject(_, let dialogID)? = arguments.first else {
+                    throw BASICError.runtime("\(typeName).show expects a dialog")
+                }
+                // A preferences dialog builds itself as it is described, so it
+                // is presented as it stands rather than assembled from a spec.
+                if let preferences = registry.preferencesDialogs[dialogID] {
+                    preferences.onDismiss = { [weak app, weak preferences] in
+                        if let app, let preferences { app.dismiss(preferences) }
+                    }
+                    preferences.sizeToFit(in: app.desktop.bounds.size)
+                    app.present(preferences)
+                    preferences.sizeToFit(in: app.desktop.bounds.size)
+                    return .empty
+                }
+                guard let spec = registry.dialogs[dialogID] else {
                     throw BASICError.runtime("\(typeName).show expects a dialog")
                 }
                 let dialog = Dialog(title: spec.title, message: spec.message)
