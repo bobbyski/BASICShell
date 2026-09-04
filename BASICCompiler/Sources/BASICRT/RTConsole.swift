@@ -135,11 +135,13 @@ public func basic_rt_line_input(_ prompt: UnsafeMutableRawPointer?) -> UnsafeMut
     return rtOwned(raw)
 }
 
-/// `CLS`: the ANSI clear the interpreter prints, then column 0.
+/// `CLS`: the ANSI clear the interpreter prints, the graphics cleared when
+/// the terminal has them, then column 0.
 @_cdecl("basic_rt_cls")
 public func basic_rt_cls() {
     RTConsole.write("\u{001B}[2J\u{001B}[H\n")
     RTConsole.column = 0
+    if RTGraphics.isAvailable { RTGraphics.clear() }
 }
 
 /// Renders PRINT items into a string instead of the console, for PRINT #.

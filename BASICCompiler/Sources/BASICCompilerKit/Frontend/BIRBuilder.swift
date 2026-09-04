@@ -495,6 +495,30 @@ final class FunctionBuilder {
             }
         case .locate(let row, let column):
             emit(.locate(try lowerExpression(row, expecting: .number, context: "LOCATE"), try lowerExpression(column, expecting: .number, context: "LOCATE")))
+        case .screen(let mode):
+            emit(.screen(try lowerExpression(mode, expecting: .number, context: "SCREEN")))
+        case .color(let colors):
+            guard !colors.isEmpty, colors.count <= 2 else { throw CompileError("COLOR expects foreground and optional background", at: location) }
+            emit(.color(boxed(try lowerExpression(colors[0])), colors.count == 2 ? boxed(try lowerExpression(colors[1])) : nil))
+        case .pset(let point, let color), .preset(let point, let color):
+            var reset = false
+            if case .preset = statement { reset = true }
+            emit(.pset(x: try lowerExpression(point.x, expecting: .number, context: "PSET"), y: try lowerExpression(point.y, expecting: .number, context: "PSET"),
+                       color: try color.map { boxed(try lowerExpression($0)) }, reset: reset))
+        case .line(let start, let end, let color):
+            emit(.gline(x1: try lowerExpression(start.x, expecting: .number, context: "LINE"), y1: try lowerExpression(start.y, expecting: .number, context: "LINE"),
+                        x2: try lowerExpression(end.x, expecting: .number, context: "LINE"), y2: try lowerExpression(end.y, expecting: .number, context: "LINE"),
+                        color: try color.map { boxed(try lowerExpression($0)) }))
+        case .circle(let center, let radius, let color, let aspect):
+            emit(.circle(x: try lowerExpression(center.x, expecting: .number, context: "CIRCLE"), y: try lowerExpression(center.y, expecting: .number, context: "CIRCLE"),
+                         radius: try lowerExpression(radius, expecting: .number, context: "CIRCLE"),
+                         color: try color.map { boxed(try lowerExpression($0)) },
+                         aspect: try aspect.map { try lowerExpression($0, expecting: .number, context: "CIRCLE aspect") }))
+        case .paint(let point, let color, let border):
+            emit(.paint(x: try lowerExpression(point.x, expecting: .number, context: "PAINT"), y: try lowerExpression(point.y, expecting: .number, context: "PAINT"),
+                        color: boxed(try lowerExpression(color)), border: try border.map { boxed(try lowerExpression($0)) }))
+        case .draw(let program):
+            emit(.draw(try lowerExpression(program, expecting: .string, context: "DRAW")))
         case .printUsing(let format, let values, let trailingSeparator):
             emit(.printUsing(
                 format: try lowerExpression(format, expecting: .string, context: "PRINT USING"),
@@ -1388,6 +1412,8 @@ final class FunctionBuilder {
             return .nullValue
         case .systemFunction(let inner):
             return .hostCall("basic_rt_system", [try lowerExpression(inner, expecting: .string, context: "SYSTEM$")], returns: .string)
+        case .pointFunction(let point):
+            return .hostCall("basic_rt_gfx_point", [try lowerExpression(point.x, expecting: .number, context: "POINT"), try lowerExpression(point.y, expecting: .number, context: "POINT")], returns: .number)
         case .await(let inner):
             // The compiled runtime finishes host work before returning it, so
             // AWAIT of anything is the value itself — the interpreter's rule

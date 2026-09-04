@@ -121,6 +121,20 @@ public struct BIRPrinter {
             return "files"
         case .systemCommand(let command):
             return "system \(render(command))"
+        case .screen(let mode):
+            return "screen \(render(mode))"
+        case .color(let foreground, let background):
+            return "color \(render(foreground))" + (background.map { ", \(render($0))" } ?? "")
+        case .pset(let x, let y, let color, let reset):
+            return "\(reset ? "preset" : "pset") (\(render(x)), \(render(y)))" + (color.map { ", \(render($0))" } ?? "")
+        case .gline(let x1, let y1, let x2, let y2, let color):
+            return "line (\(render(x1)), \(render(y1)))-(\(render(x2)), \(render(y2)))" + (color.map { ", \(render($0))" } ?? "")
+        case .circle(let x, let y, let radius, let color, let aspect):
+            return "circle (\(render(x)), \(render(y))), \(render(radius))" + (color.map { ", \(render($0))" } ?? "") + (aspect.map { ", \(render($0))" } ?? "")
+        case .paint(let x, let y, let color, let border):
+            return "paint (\(render(x)), \(render(y))), \(render(color))" + (border.map { ", \(render($0))" } ?? "")
+        case .draw(let program):
+            return "draw \(render(program))"
         case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
             return "line input field " + (prompt.map { render($0) + ", " } ?? "") + into.name
                 + (length.map { " length \(render($0))" } ?? "") + (maximum.map { " max \(render($0))" } ?? "")

@@ -286,6 +286,15 @@ struct LLVMLowering {
     declare ptr @basic_rt_inkey()
     declare void @basic_rt_files_list()
     declare ptr @basic_rt_system(ptr)
+    declare void @basic_rt_gfx_screen(double)
+    declare void @basic_rt_gfx_color(ptr, ptr)
+    declare void @basic_rt_gfx_pset(double, double, ptr)
+    declare void @basic_rt_gfx_preset(double, double, ptr)
+    declare void @basic_rt_gfx_line(double, double, double, double, ptr)
+    declare void @basic_rt_gfx_circle(double, double, double, ptr, double, i1)
+    declare void @basic_rt_gfx_paint(double, double, ptr, ptr)
+    declare void @basic_rt_gfx_draw(ptr)
+    declare double @basic_rt_gfx_point(double, double)
     declare double @basic_rt_field_count(ptr)
     declare ptr @basic_rt_field_name(ptr, ptr)
     declare ptr @basic_rt_field_meta(ptr, ptr)
@@ -720,6 +729,31 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_files_list()")
         case .systemCommand(let command):
             out.emit("call void @basic_rt_system_print(ptr \(lowerValue(command).0))")
+        case .screen(let mode):
+            out.emit("call void @basic_rt_gfx_screen(double \(lowerValue(mode).0))")
+        case .color(let foreground, let background):
+            let fg = lowerValue(foreground).0
+            let bg = background.map { lowerValue($0).0 } ?? "null"
+            out.emit("call void @basic_rt_gfx_color(ptr \(fg), ptr \(bg))")
+        case .pset(let x, let y, let color, let reset):
+            let xv = lowerValue(x).0, yv = lowerValue(y).0
+            let cv = color.map { lowerValue($0).0 } ?? "null"
+            out.emit("call void @basic_rt_gfx_\(reset ? "preset" : "pset")(double \(xv), double \(yv), ptr \(cv))")
+        case .gline(let x1, let y1, let x2, let y2, let color):
+            let a = lowerValue(x1).0, b = lowerValue(y1).0, c = lowerValue(x2).0, d = lowerValue(y2).0
+            let cv = color.map { lowerValue($0).0 } ?? "null"
+            out.emit("call void @basic_rt_gfx_line(double \(a), double \(b), double \(c), double \(d), ptr \(cv))")
+        case .circle(let x, let y, let radius, let color, let aspect):
+            let xv = lowerValue(x).0, yv = lowerValue(y).0, rv = lowerValue(radius).0
+            let cv = color.map { lowerValue($0).0 } ?? "null"
+            let av = aspect.map { lowerValue($0).0 } ?? "0.0"
+            out.emit("call void @basic_rt_gfx_circle(double \(xv), double \(yv), double \(rv), ptr \(cv), double \(av), i1 \(aspect == nil ? "false" : "true"))")
+        case .paint(let x, let y, let color, let border):
+            let xv = lowerValue(x).0, yv = lowerValue(y).0, cv = lowerValue(color).0
+            let bv = border.map { lowerValue($0).0 } ?? "null"
+            out.emit("call void @basic_rt_gfx_paint(double \(xv), double \(yv), ptr \(cv), ptr \(bv))")
+        case .draw(let program):
+            out.emit("call void @basic_rt_gfx_draw(ptr \(lowerValue(program).0))")
         case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
             let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
             let lengthValue = length.map { lowerValue($0).0 } ?? "-1.0"

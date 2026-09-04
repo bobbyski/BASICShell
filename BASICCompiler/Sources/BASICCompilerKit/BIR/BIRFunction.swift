@@ -142,6 +142,20 @@ public enum BIROperation: Sendable {
     case filesList
     /// `SYSTEM command`: runs it through the shell and prints its output.
     case systemCommand(BIRExpression)
+    /// `SCREEN n`.
+    case screen(BIRExpression)
+    /// `COLOR fg[, bg]` — colors are strings or palette numbers, boxed.
+    case color(BIRExpression, BIRExpression?)
+    /// `PSET (x,y)[, color]` / `PRESET`.
+    case pset(x: BIRExpression, y: BIRExpression, color: BIRExpression?, reset: Bool)
+    /// `LINE (x1,y1)-(x2,y2)[, color]`.
+    case gline(x1: BIRExpression, y1: BIRExpression, x2: BIRExpression, y2: BIRExpression, color: BIRExpression?)
+    /// `CIRCLE (x,y), radius[, color][, aspect]`.
+    case circle(x: BIRExpression, y: BIRExpression, radius: BIRExpression, color: BIRExpression?, aspect: BIRExpression?)
+    /// `PAINT (x,y), color[, border]`.
+    case paint(x: BIRExpression, y: BIRExpression, color: BIRExpression, border: BIRExpression?)
+    /// `DRAW program$`.
+    case draw(BIRExpression)
     /// `OPTION AIBASIC-KEYS` (0) / `OPTION IBM-KEYS` (1).
     case keyMode(Int)
     /// `LINE INPUT` with LENGTH/MAX/DEFAULT/EXITVAR: the text lands in

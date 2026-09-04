@@ -385,6 +385,18 @@ struct SemanticAnalyzer {
         case .locate(let row, let column):
             try noteReferences(in: row, at: line, in: function, changed: &changed)
             try noteReferences(in: column, at: line, in: function, changed: &changed)
+        case .screen(let mode), .draw(let mode):
+            try noteReferences(in: mode, at: line, in: function, changed: &changed)
+        case .color(let colors):
+            for color in colors { try noteReferences(in: color, at: line, in: function, changed: &changed) }
+        case .pset(let point, let color), .preset(let point, let color):
+            for expression in [point.x, point.y] + (color.map { [$0] } ?? []) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
+        case .line(let start, let end, let color):
+            for expression in [start.x, start.y, end.x, end.y] + (color.map { [$0] } ?? []) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
+        case .circle(let center, let radius, let color, let aspect):
+            for expression in [center.x, center.y, radius] + [color, aspect].compactMap({ $0 }) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
+        case .paint(let point, let color, let border):
+            for expression in [point.x, point.y, color] + (border.map { [$0] } ?? []) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
         case .read(let targets):
             for target in targets { noteTarget(target, at: line, in: function, changed: &changed) }
         case .forLoop(let variable, let start, let end, let step):
@@ -468,6 +480,9 @@ struct SemanticAnalyzer {
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .unaryMinus(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner), .systemFunction(let inner), .environmentFunction(let inner):
             try noteReferences(in: inner, at: line, in: function, changed: &changed)
+        case .pointFunction(let point):
+            try noteReferences(in: point.x, at: line, in: function, changed: &changed)
+            try noteReferences(in: point.y, at: line, in: function, changed: &changed)
         case .binary(let left, _, let right):
             try noteReferences(in: left, at: line, in: function, changed: &changed)
             try noteReferences(in: right, at: line, in: function, changed: &changed)
@@ -602,7 +617,7 @@ struct SemanticAnalyzer {
             return variableType
         case .closure(let parameters, let returnType, _, _):
             return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
-        case .lenFunction: return .number
+        case .lenFunction, .pointFunction: return .number
         case .chrFunction, .systemFunction, .environmentFunction, .pwdFunction: return .string
         default: return nil
         }
