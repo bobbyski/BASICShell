@@ -101,27 +101,29 @@ struct SemanticAnalyzer {
                 case .endType, .endClass, .endInterface:
                     index = lines.count
                     continue
-                case .typeField(let fieldName, let fieldType, _, let dimensions, let json, _, let defaultValue),
-                     .classField(let fieldName, let fieldType, _, let dimensions, let json, _, let defaultValue):
+                case .typeField(let fieldName, let fieldType, _, let dimensions, let json, let metadata, let defaultValue),
+                     .classField(let fieldName, let fieldType, _, let dimensions, let json, let metadata, let defaultValue):
                     var visibility = BASICMemberVisibility.public
                     if case .classField(_, _, let declared, _, _, _, _) = line.statement { visibility = declared }
                     var resolved = try map(fieldType, for: fieldName, at: line)
                     if !dimensions.isEmpty { resolved = .array(resolved, rank: dimensions.count) }
-                    var defaultLiteral: BIRDefault?
-                    switch defaultValue {
-                    case .number(let value)?: defaultLiteral = .number(value)
-                    case .boolean(let value)?: defaultLiteral = .boolean(value)
-                    case .string(let value)?: defaultLiteral = .string(value)
-                    case .null?: defaultLiteral = .null
-                    case .empty?: defaultLiteral = .empty
-                    case nil: break
+                    func literal(_ value: BASICLiteral) -> BIRDefault {
+                        switch value {
+                        case .number(let value): return .number(value)
+                        case .boolean(let value): return .boolean(value)
+                        case .string(let value): return .string(value)
+                        case .null: return .null
+                        case .empty: return .empty
+                        }
                     }
+                    let defaultLiteral = defaultValue.map(literal)
                     model.updateType(typeName) {
                         $0.fields.append(SemanticModel.Field(
                             name: fieldName.uppercased(), displayName: fieldName, type: resolved,
                             visibility: visibility, owner: typeName, dimensions: dimensions,
                             jsonName: json?.name, defaultValue: defaultLiteral,
-                            isInteger: fieldType == .scalar(.integer)
+                            isInteger: fieldType == .scalar(.integer),
+                            metadata: metadata.mapValues(literal)
                         ))
                     }
                 case .inheritsDeclaration(let baseName):
@@ -402,7 +404,7 @@ struct SemanticAnalyzer {
             }
         case .printUsing(let format, let values, _):
             for expression in [format] + values { try noteReferences(in: expression, at: line, in: function, changed: &changed) }
-        case .expression(let expression), .returnValue(let expression), .selectCase(let expression), .blockIf(let expression), .elseIf(let expression):
+        case .expression(let expression), .returnValue(let expression), .selectCase(let expression), .blockIf(let expression), .elseIf(let expression), .system(let expression):
             try noteReferences(in: expression, at: line, in: function, changed: &changed)
         case .caseClause(let clauses):
             for clause in clauses {
@@ -464,7 +466,7 @@ struct SemanticAnalyzer {
             noteClosureReferences(parameters: parameters, captures: captures, names: Self.freeVariables(in: body, model: model), bodyLines: [], at: line, in: function, changed: &changed)
         case .functionCall(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
-        case .unaryMinus(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner):
+        case .unaryMinus(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner), .systemFunction(let inner), .environmentFunction(let inner):
             try noteReferences(in: inner, at: line, in: function, changed: &changed)
         case .binary(let left, _, let right):
             try noteReferences(in: left, at: line, in: function, changed: &changed)
@@ -590,8 +592,9 @@ struct SemanticAnalyzer {
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
             if name.normalized == "USING$" || name.normalized == "TOJSONSTRING" { return .string }
             if name.normalized == "FROMJSONSTRING" { return .variant }
-            if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$"].contains(name.normalized) { return .string }
-            if ["CVI", "CVS", "CVD", "SEEK"].contains(name.normalized) { return .number }
+            if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$"].contains(name.normalized) { return .string }
+            if ["CVI", "CVS", "CVD", "SEEK", "FIELDCOUNT"].contains(name.normalized) { return .number }
+            if ["FIELDMETA", "FIELDVALUE", "SETFIELD"].contains(name.normalized) { return .variant }
             if SemanticModel.systemClasses[name.normalized] != nil, model.info(name.normalized, in: function) == nil { return .system(name.normalized) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
@@ -600,7 +603,7 @@ struct SemanticAnalyzer {
         case .closure(let parameters, let returnType, _, _):
             return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
         case .lenFunction: return .number
-        case .chrFunction: return .string
+        case .chrFunction, .systemFunction, .environmentFunction, .pwdFunction: return .string
         default: return nil
         }
     }

@@ -52,6 +52,8 @@ public final class SemanticModel {
         public let defaultValue: BIRDefault?
         /// Whether a numeric field was declared INTEGER.
         public let isInteger: Bool
+        /// The field's `meta { … }` entries.
+        public let metadata: [String: BIRDefault]
     }
 
     /// A `TYPE`, `CLASS`, or `INTERFACE`.

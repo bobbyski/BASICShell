@@ -465,6 +465,42 @@ public func basic_rt_files_list() {
     RTConsole.column = 0
 }
 
+/// `SYSTEM cmd` / `SYSTEM$(cmd)`: `/bin/sh -lc` in the working directory
+/// with COLUMNS/LINES set, stdout and stderr combined; owned.
+@_cdecl("basic_rt_system")
+public func basic_rt_system(_ command: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-lc", rtText(command)]
+    process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    var environment = ProcessInfo.processInfo.environment
+    let size = rtTerminalSize()
+    environment["COLUMNS"] = String(size.columns)
+    environment["LINES"] = String(size.rows)
+    process.environment = environment
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+    } catch {
+        basic_rt_fail("Could not execute command: \(error.localizedDescription)")
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return rtOwned(String(decoding: data, as: UTF8.self))
+}
+
+/// The `SYSTEM` statement: runs the command and prints what it wrote.
+@_cdecl("basic_rt_system_print")
+public func basic_rt_system_print(_ command: UnsafeMutableRawPointer?) {
+    fflush(stdout)
+    let output = basic_rt_system(command)
+    defer { basic_rt_string_release(output) }
+    let text = rtText(output)
+    if !text.isEmpty { RTConsole.write(text) }
+}
+
 /// `CURRENTDIR$`: the working directory at start.
 @_cdecl("basic_rt_current_dir")
 public func basic_rt_current_dir() -> UnsafeMutableRawPointer {
@@ -482,10 +518,11 @@ public func basic_rt_key_mode(_ mode: Int) {
     RTKeys.encoding = mode == 1 ? .ibm : .aibasic
 }
 
-private func rtTerminalSize() -> (columns: Int, rows: Int) {
+/// The Shell's `terminalSize`: 80×25 when the query fails, else at least 1×1.
+func rtTerminalSize() -> (columns: Int, rows: Int) {
     var size = winsize()
-    guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else { return (80, 25) }
-    return (Int(size.ws_col), Int(size.ws_row) > 0 ? Int(size.ws_row) : 25)
+    guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 else { return (80, 25) }
+    return (max(1, Int(size.ws_col)), max(1, Int(size.ws_row)))
 }
 
 @_cdecl("basic_rt_screen_width")

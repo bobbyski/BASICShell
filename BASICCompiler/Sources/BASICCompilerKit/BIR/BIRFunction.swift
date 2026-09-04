@@ -140,6 +140,8 @@ public enum BIROperation: Sendable {
     case locate(BIRExpression, BIRExpression)
     /// `FILES` inside a program: lists the working directory.
     case filesList
+    /// `SYSTEM command`: runs it through the shell and prints its output.
+    case systemCommand(BIRExpression)
     /// `OPTION AIBASIC-KEYS` (0) / `OPTION IBM-KEYS` (1).
     case keyMode(Int)
     /// `LINE INPUT` with LENGTH/MAX/DEFAULT/EXITVAR: the text lands in
@@ -341,8 +343,10 @@ public struct BIRField: Sendable {
     public let defaultValue: BIRDefault?
     /// Whether a numeric field (or array of numbers) was declared INTEGER.
     public let isInteger: Bool
+    /// The field's `meta { … }` entries.
+    public let metadata: [String: BIRDefault]
 
-    public init(name: String, displayName: String? = nil, type: BIRType, dimensions: [Int?] = [], jsonName: String? = nil, defaultValue: BIRDefault? = nil, isInteger: Bool = false) {
+    public init(name: String, displayName: String? = nil, type: BIRType, dimensions: [Int?] = [], jsonName: String? = nil, defaultValue: BIRDefault? = nil, isInteger: Bool = false, metadata: [String: BIRDefault] = [:]) {
         self.name = name
         self.displayName = displayName ?? name
         self.type = type
@@ -350,6 +354,7 @@ public struct BIRField: Sendable {
         self.jsonName = jsonName
         self.defaultValue = defaultValue
         self.isInteger = isInteger
+        self.metadata = metadata
     }
 }
 

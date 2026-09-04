@@ -78,7 +78,14 @@ public func basic_rt_print_newline() {
 
 /// Shows the prompt and reads one line; nil at end of input.
 private func readInputLine(prompt: UnsafeMutableRawPointer?, defaultPrompt: String) -> String? {
-    RTConsole.write(prompt.map(rtText) ?? defaultPrompt)
+    let promptText = prompt.map { rtString($0).description } ?? defaultPrompt
+    if isatty(STDIN_FILENO) == 1 {
+        // On a terminal the Shell reads through its line editor.
+        let result = RTKeys.readField(prompt: promptText, exitOnSpecialKey: false, fieldLength: nil, maxLength: nil, defaultText: nil)
+        RTConsole.column = 0
+        return result.text
+    }
+    RTConsole.write(promptText)
     fflush(stdout)
     guard let line = readLine(strippingNewline: true) else { return nil }
     RTConsole.column = 0

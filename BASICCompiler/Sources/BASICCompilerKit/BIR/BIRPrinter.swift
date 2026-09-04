@@ -119,6 +119,8 @@ public struct BIRPrinter {
             return "option \(mode == 1 ? "ibm" : "aibasic")-keys"
         case .filesList:
             return "files"
+        case .systemCommand(let command):
+            return "system \(render(command))"
         case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
             return "line input field " + (prompt.map { render($0) + ", " } ?? "") + into.name
                 + (length.map { " length \(render($0))" } ?? "") + (maximum.map { " max \(render($0))" } ?? "")

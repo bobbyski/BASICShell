@@ -213,6 +213,8 @@ struct RTFieldInfo {
     let jsonName: String?
     /// The declared default; nil means the type's default.
     let explicitDefault: RTValue?
+    /// The field's `meta { … }` entries.
+    let metadata: [String: RTValue]
 }
 
 /// One registered TYPE or CLASS.
@@ -271,21 +273,23 @@ enum RTTypes {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             basic_rt_fail("Bad type descriptor for TYPE #\(index)")
         }
+        func literal(_ object: [String: Any]) -> RTValue {
+            if let number = object["n"] as? Double { return .number(number) }
+            if let text = object["s"] as? String { return .string(RTText(text)) }
+            if let flag = object["b"] as? Bool { return .boolean(flag) }
+            if object["null"] != nil { return .null }
+            return .empty
+        }
         let fields = (object["fields"] as? [[String: Any]] ?? []).map { field -> RTFieldInfo in
-            var explicitDefault: RTValue?
-            if let defaultObject = field["default"] as? [String: Any] {
-                if let number = defaultObject["n"] as? Double { explicitDefault = .number(number) }
-                else if let text = defaultObject["s"] as? String { explicitDefault = .string(RTText(text)) }
-                else if let flag = defaultObject["b"] as? Bool { explicitDefault = .boolean(flag) }
-                else if defaultObject["null"] != nil { explicitDefault = .null }
-                else if defaultObject["empty"] != nil { explicitDefault = .empty }
-            }
+            let explicitDefault = (field["default"] as? [String: Any]).map(literal)
+            let metadata = (field["meta"] as? [String: [String: Any]] ?? [:]).mapValues(literal)
             return RTFieldInfo(
                 name: field["name"] as? String ?? "",
                 displayName: field["display"] as? String ?? (field["name"] as? String ?? ""),
                 type: RTTypeRef(descriptor: field["type"] as? [String: Any] ?? [:]),
                 jsonName: field["json"] as? String,
-                explicitDefault: explicitDefault
+                explicitDefault: explicitDefault,
+                metadata: metadata
             )
         }
         while registry.count <= index { registry.append(nil) }

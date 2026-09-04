@@ -37,7 +37,7 @@ public struct BIRBuilder {
             return BIRCompositeType(
                 name: name, displayName: type.displayName, index: type.index,
                 fields: model.allFields(of: name).map {
-                    BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger)
+                    BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger, metadata: $0.metadata)
                 },
                 isClass: type.kind == .classType,
                 base: type.base.flatMap { model.types[$0]?.index }
@@ -770,6 +770,8 @@ final class FunctionBuilder {
             terminate(.resumeNext)
         case .files:
             emit(.filesList)
+        case .system(let command):
+            emit(.systemCommand(try lowerExpression(command, expecting: .string, context: "SYSTEM")))
         case .load, .save, .cd, .pwd:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
         default:
@@ -1384,6 +1386,8 @@ final class FunctionBuilder {
             return .intrinsic(.chr, [try lowerExpression(inner, expecting: .number, context: "CHR$")])
         case .null:
             return .nullValue
+        case .systemFunction(let inner):
+            return .hostCall("basic_rt_system", [try lowerExpression(inner, expecting: .string, context: "SYSTEM$")], returns: .string)
         case .await(let inner):
             // The compiled runtime finishes host work before returning it, so
             // AWAIT of anything is the value itself — the interpreter's rule
@@ -1733,6 +1737,24 @@ final class FunctionBuilder {
         case "INKEY$":
             try count(0...0)
             return .hostCall("basic_rt_inkey", [], returns: .string)
+        case "FIELDCOUNT":
+            try count(1...1)
+            return .hostCall("basic_rt_field_count", [boxed(try lowerExpression(arguments[0]))], returns: .number)
+        case "FIELDNAME$":
+            try count(2...2)
+            return .hostCall("basic_rt_field_name", [boxed(try lowerExpression(arguments[0])), boxed(try lowerExpression(arguments[1]))], returns: .string)
+        case "FIELDMETA":
+            try count(2...2)
+            return .hostCall("basic_rt_field_meta", [boxed(try lowerExpression(arguments[0])), boxed(try lowerExpression(arguments[1]))], returns: .variant)
+        case "FIELDVALUE":
+            try count(2...2)
+            return .hostCall("basic_rt_field_value", [boxed(try lowerExpression(arguments[0])), boxed(try lowerExpression(arguments[1]))], returns: .variant)
+        case "FIELDVALUE$":
+            try count(2...2)
+            return .unbox(.hostCall("basic_rt_field_value", [boxed(try lowerExpression(arguments[0])), boxed(try lowerExpression(arguments[1]))], returns: .variant), .string, name: nil)
+        case "SETFIELD":
+            try count(3...3)
+            return .hostCall("basic_rt_set_field", [boxed(try lowerExpression(arguments[0])), boxed(try lowerExpression(arguments[1])), boxed(try lowerExpression(arguments[2]))], returns: .variant)
         default:
             return nil
         }

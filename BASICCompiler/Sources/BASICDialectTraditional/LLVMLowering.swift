@@ -94,14 +94,17 @@ struct LLVMLowering {
         for field in type.fields {
             var object: [String: Any] = ["name": field.name, "display": field.displayName, "type": typeObject(field.type, dimensions: field.dimensions, isInteger: field.isInteger)]
             if let json = field.jsonName { object["json"] = json }
-            switch field.defaultValue {
-            case .number(let value)?: object["default"] = ["n": value]
-            case .string(let value)?: object["default"] = ["s": value]
-            case .boolean(let value)?: object["default"] = ["b": value]
-            case .null?: object["default"] = ["null": true]
-            case .empty?: object["default"] = ["empty": true]
-            case nil: break
+            func literal(_ value: BIRDefault) -> [String: Any] {
+                switch value {
+                case .number(let value): return ["n": value]
+                case .string(let value): return ["s": value]
+                case .boolean(let value): return ["b": value]
+                case .null: return ["null": true]
+                case .empty: return ["empty": true]
+                }
             }
+            if let value = field.defaultValue { object["default"] = literal(value) }
+            if !field.metadata.isEmpty { object["meta"] = field.metadata.mapValues(literal) }
             fields.append(object)
         }
         var object: [String: Any] = ["name": type.displayName, "kind": type.isClass ? "class" : "record", "fields": fields]
@@ -282,6 +285,13 @@ struct LLVMLowering {
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
     declare ptr @basic_rt_inkey()
     declare void @basic_rt_files_list()
+    declare ptr @basic_rt_system(ptr)
+    declare double @basic_rt_field_count(ptr)
+    declare ptr @basic_rt_field_name(ptr, ptr)
+    declare ptr @basic_rt_field_meta(ptr, ptr)
+    declare ptr @basic_rt_field_value(ptr, ptr)
+    declare ptr @basic_rt_set_field(ptr, ptr, ptr)
+    declare void @basic_rt_system_print(ptr)
     declare ptr @basic_rt_current_dir()
     declare void @basic_rt_key_mode(i64)
     declare double @basic_rt_screen_width()
@@ -708,6 +718,8 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_key_mode(i64 \(mode))")
         case .filesList:
             out.emit("call void @basic_rt_files_list()")
+        case .systemCommand(let command):
+            out.emit("call void @basic_rt_system_print(ptr \(lowerValue(command).0))")
         case .lineInputField(let prompt, let into, let exitInto, let length, let maximum, let defaultText):
             let promptValue = prompt.map { lowerValue($0).0 } ?? "null"
             let lengthValue = length.map { lowerValue($0).0 } ?? "-1.0"
