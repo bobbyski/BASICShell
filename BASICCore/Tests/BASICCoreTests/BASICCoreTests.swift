@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BASICCore
+@testable import BASICSyntax
 
 private final class ThreadSafeStringLog: @unchecked Sendable {
     private let lock = NSLock()

@@ -3,19 +3,19 @@ import Foundation
 import Darwin
 #endif
 
-struct Parser {
+public struct Parser {
     private let source: String
     private var tokens: [LexedToken] = []
     private var current = 0
     private var stopsAtElse = false
 
-    init(source: String) throws {
+    public init(source: String) throws {
         self.source = source
         var lexer = Lexer(source: source)
         self.tokens = try lexer.tokenize()
     }
 
-    mutating func parseStatement() throws -> Statement {
+    public mutating func parseStatement() throws -> Statement {
         var statements: [Statement] = []
         while !isAtEnd {
             statements.append(try parseSingleStatement())
@@ -30,13 +30,13 @@ struct Parser {
         return .sequence(statements)
     }
 
-    mutating func parseExpressionOnly() throws -> Expression {
+    public mutating func parseExpressionOnly() throws -> Expression {
         let expression = try parseExpression()
         try consumeEnd()
         return expression
     }
 
-    mutating func parseClosureBlockAssignmentHeader() throws -> (
+    public mutating func parseClosureBlockAssignmentHeader() throws -> (
         kind: AssignmentKind,
         variable: VariableName,
         declaredType: BASICType?,
@@ -783,10 +783,10 @@ struct Parser {
         return BASICJSONFieldOptions(name: defaultName)
     }
 
-    private mutating func parseOptionalFieldMetadata() throws -> BASICMetadata {
+    private mutating func parseOptionalFieldMetadata() throws -> BASICLiteralMetadata {
         guard matchIdentifier("META") else { return [:] }
         guard match(.leftBrace) else { throw syntax("Expected { after META") }
-        var metadata: BASICMetadata = [:]
+        var metadata: BASICLiteralMetadata = [:]
         if !match(.rightBrace) {
             repeat {
                 let key: String
@@ -804,12 +804,12 @@ struct Parser {
         return metadata
     }
 
-    private mutating func parseMetadataLiteral() throws -> BASICValue {
+    private mutating func parseMetadataLiteral() throws -> BASICLiteral {
         switch advance() {
         case .number(let value):
             return .number(value)
         case .string(let value):
-            return .string(BASICString(value))
+            return .string(value)
         case .identifier(let name):
             switch name.uppercased() {
             case "TRUE": return .boolean(true)
@@ -823,13 +823,13 @@ struct Parser {
         }
     }
 
-    private mutating func parseOptionalFieldDefault() throws -> BASICValue? {
+    private mutating func parseOptionalFieldDefault() throws -> BASICLiteral? {
         guard match(.equals) else { return nil }
         switch advance() {
         case .number(let value):
             return .number(value)
         case .string(let value):
-            return .string(BASICString(value))
+            return .string(value)
         case .identifier(let name):
             switch name.uppercased() {
             case "TRUE": return .boolean(true)
@@ -1211,11 +1211,11 @@ struct Parser {
         return (format, values, trailingSeparator)
     }
 
-    private mutating func parseDataValues() throws -> [BASICValue] {
-        var values: [BASICValue] = []
+    private mutating func parseDataValues() throws -> [BASICLiteral] {
+        var values: [BASICLiteral] = []
         repeat {
             if isStatementEnd {
-                values.append(.string(BASICString("")))
+                values.append(.string(""))
                 break
             }
             values.append(try parseDataValue())
@@ -1223,7 +1223,7 @@ struct Parser {
         return values
     }
 
-    private mutating func parseDataValue() throws -> BASICValue {
+    private mutating func parseDataValue() throws -> BASICLiteral {
         if match(.minus) {
             guard case .number(let value) = advance() else { throw syntax("Expected number after - in DATA") }
             return .number(-value)
@@ -1232,11 +1232,11 @@ struct Parser {
         case .number(let value):
             return .number(value)
         case .string(let value):
-            return .string(BASICString(value))
+            return .string(value)
         case .identifier(let value):
             if value.uppercased() == "TRUE" { return .boolean(true) }
             if value.uppercased() == "FALSE" { return .boolean(false) }
-            return .string(BASICString(value))
+            return .string(value)
         default:
             throw syntax("Expected DATA value")
         }

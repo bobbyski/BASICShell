@@ -249,14 +249,6 @@ enum BASICFileContentType: String, Equatable {
     case json = "JSON"
 }
 
-enum BASICLegacyFileMode: String, Equatable {
-    case input = "INPUT"
-    case output = "OUTPUT"
-    case append = "APPEND"
-    case binary = "BINARY"
-    case random = "RANDOM"
-}
-
 struct BASICOpenFile: Equatable {
     var path: String?
     var access: BASICFileAccess?
@@ -376,34 +368,6 @@ public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
     public let isOverride: Bool
 }
 
-enum BASICScalarType: String, Equatable, Sendable {
-    case integer = "INTEGER"
-    case double = "DOUBLE"
-    case string = "STRING"
-    case boolean = "BOOLEAN"
-    case variant = "VARIANT"
-    case task = "TASK"
-}
-
-enum BASICType: Equatable, Sendable {
-    case scalar(BASICScalarType)
-    case void
-    case record(String)
-    case classType(String)
-    case interfaceType(String)
-    case functionType(String)
-    case dictionary
-}
-
-struct BASICTypeSpec: Equatable {
-    let type: BASICType
-    let fixedLength: Int?
-}
-
-struct BASICJSONFieldOptions: Equatable {
-    let name: String
-}
-
 typealias BASICMetadata = [String: BASICValue]
 
 protocol BASICFieldDefinition {
@@ -450,19 +414,6 @@ struct BASICFunctionTypeDefinition: Equatable {
     let isAsync: Bool
 }
 
-struct BASICExplicitInterfaceImplementation: Equatable {
-    let interfaceName: String
-    let normalizedInterfaceName: String
-    let memberName: String
-    let normalizedMemberName: String
-}
-
-enum BASICMemberVisibility: String, Equatable {
-    case `public` = "PUBLIC"
-    case `private` = "PRIVATE"
-    case `protected` = "PROTECTED"
-}
-
 struct BASICClassField: Equatable, BASICFieldDefinition {
     let displayName: String
     let normalizedName: String
@@ -484,42 +435,6 @@ struct BASICClassDefinition: Equatable {
     let methods: [String: FunctionDefinition]
 }
 
-enum LetMode: Equatable {
-    case global
-    case local
-}
-
-enum BASICKeyMode: Equatable {
-    case aibasic
-    case ibm
-}
-
-enum BASICEventInputMode: Equatable {
-    case auto
-    case on
-    case off
-}
-
-/// BASIC-visible event selector registered with `ON <type> [subtype] CALL`.
-public struct BASICEventSelector: Hashable, Sendable, CustomStringConvertible {
-    /// Primary event type, normalized to uppercase.
-    public let type: String
-    /// Optional subtype, normalized to uppercase.
-    public let subtype: String?
-
-    /// Creates an event selector.
-    public init(type: String, subtype: String? = nil) {
-        self.type = type.uppercased()
-        let trimmedSubtype = subtype?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.subtype = trimmedSubtype?.isEmpty == false ? trimmedSubtype?.uppercased() : nil
-    }
-
-    /// Stable display name used by diagnostics and host bridges.
-    public var description: String {
-        [type, subtype].compactMap { $0 }.joined(separator: " ")
-    }
-}
-
 /// Snapshot of a registered BASIC event handler.
 public struct BASICEventHandlerRegistration: Equatable, Sendable {
     /// Event selector handled by the registered function.
@@ -530,58 +445,10 @@ public struct BASICEventHandlerRegistration: Equatable, Sendable {
     public let normalizedHandlerName: String
 }
 
-enum AssignmentKind: Equatable {
-    case bare
-    case letValue
-    case global
-    case local
-}
-
-struct VariableName: Equatable {
-    let name: String
-    let column: Int
-
-    var normalized: String { name.uppercased() }
-}
-
-struct VariableReference: Equatable {
-    let base: VariableName
-    var indexes: [Expression]
-    var declarationDimensions: [Expression?]
-    var fields: [String]
-    var fieldIndexes: [[Expression]]
-    var hasEmptyIndexList: Bool
-
-    init(base: VariableName, indexes: [Expression] = [], declarationDimensions: [Expression?] = [], fields: [String] = [], fieldIndexes: [[Expression]] = [], hasEmptyIndexList: Bool = false) {
-        self.base = base
-        self.indexes = indexes
-        self.declarationDimensions = declarationDimensions
-        self.fields = fields
-        self.fieldIndexes = fields.enumerated().map { index, _ in
-            fieldIndexes.indices.contains(index) ? fieldIndexes[index] : []
-        }
-        self.hasEmptyIndexList = hasEmptyIndexList
-    }
-
-    var isSimple: Bool {
-        indexes.isEmpty && declarationDimensions.isEmpty && fields.isEmpty && fieldIndexes.isEmpty && !hasEmptyIndexList
-    }
-}
-
 struct VariableBinding: Equatable, Sendable {
     var displayName: String
     var type: BASICType
     var value: BASICValue
-}
-
-/// How an async/captured-value reference is allowed to interact with storage.
-public enum BASICCapturedReferenceAccess: String, Sendable {
-    /// The reference may read and update the target value.
-    case strongMutable = "Strong Mutable"
-    /// The reference may read the target value but should not update it.
-    case readOnly = "Read Only"
-    /// Reserved for future object references that should not keep the target alive.
-    case weak = "Weak"
 }
 
 /// Debugger-facing summary of a shared captured value cell.
@@ -864,16 +731,6 @@ struct BASICRuntimeSnapshot: Sendable {
     var keyMode: BASICKeyMode
 }
 
-struct FunctionParameter: Equatable {
-    let variable: VariableName
-    let type: BASICType
-}
-
-struct ClosureCaptureSpec: Equatable {
-    let variable: VariableName
-    let access: BASICCapturedReferenceAccess
-}
-
 struct FunctionDefinition: Equatable {
     let displayName: String
     let normalizedName: String
@@ -984,7 +841,20 @@ struct BASICAsyncFunctionJob: @unchecked Sendable {
     }
 }
 
-enum ReadTarget: Equatable {
-    case variable(VariableName)
-    case reference(VariableReference)
+extension BASICValue {
+    /// The runtime value of a literal the parser produced.
+    init(_ literal: BASICLiteral) {
+        switch literal {
+        case .number(let value):
+            self = .number(value)
+        case .string(let value):
+            self = .string(BASICString(value))
+        case .boolean(let value):
+            self = .boolean(value)
+        case .null:
+            self = .null
+        case .empty:
+            self = .empty
+        }
+    }
 }

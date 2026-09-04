@@ -3,40 +3,29 @@ import Foundation
 import Darwin
 #endif
 
-struct ForFrame {
-    let variable: VariableName
-    let endValue: Double
-    let stepValue: Double
-    let loopStartIndex: Int
+public struct BASICPipelineStage: Equatable {
+    public let command: Expression
+    public let arguments: [Expression]
+
+    /// Creates a value from its parts.
+    public init(command: Expression, arguments: [Expression]) {
+        self.command = command
+        self.arguments = arguments
+    }
 }
 
-enum LoopEvent {
-    case forLoop
-    case nextLoop
+public struct BASICLegacyFieldSpec: Equatable {
+    public let width: Expression
+    public let variable: VariableName
+
+    /// Creates a value from its parts.
+    public init(width: Expression, variable: VariableName) {
+        self.width = width
+        self.variable = variable
+    }
 }
 
-enum Flow: Equatable {
-    case next
-    case jump(Int)
-    case goto(Int)
-    case gotoLabel(String)
-    case returnTo(Int)
-    case exitSelect
-    case functionReturn
-    case end
-}
-
-struct BASICPipelineStage: Equatable {
-    let command: Expression
-    let arguments: [Expression]
-}
-
-struct BASICLegacyFieldSpec: Equatable {
-    let width: Expression
-    let variable: VariableName
-}
-
-indirect enum Statement: Equatable {
+public indirect enum Statement: Equatable {
     case empty
     case remark
     case label(String)
@@ -44,7 +33,7 @@ indirect enum Statement: Equatable {
     case sequence([Statement])
     case importDirective(String)
     case typeDeclaration(name: String)
-    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICMetadata, defaultValue: BASICValue?)
+    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endType
     case interfaceDeclaration(name: String)
     case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
@@ -53,7 +42,7 @@ indirect enum Statement: Equatable {
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
-    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICMetadata, defaultValue: BASICValue?)
+    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endClass
     case functionDeclaration(
         name: VariableName,
@@ -66,7 +55,7 @@ indirect enum Statement: Equatable {
     )
     case defFunction(name: VariableName, parameter: FunctionParameter, returnType: BASICType, body: Expression)
     case endFunction
-    case data([BASICValue])
+    case data([BASICLiteral])
     case read([ReadTarget])
     case restore
     case print([PrintPart])
@@ -160,51 +149,65 @@ indirect enum Statement: Equatable {
     case exitSelect
     case end
 
-    var label: String? {
+    public var label: String? {
         if case .label(let name) = self { return name }
         if case .labeled(let name, _) = self { return name }
         return nil
     }
 }
 
-struct ClosureBodyLine: Equatable {
-    let fileName: String?
-    let sourceLineNumber: Int
-    let statement: Statement
+public struct ClosureBodyLine: Equatable {
+    public let fileName: String?
+    public let sourceLineNumber: Int
+    public let statement: Statement
+
+    /// Creates a value from its parts.
+    public init(fileName: String?, sourceLineNumber: Int, statement: Statement) {
+        self.fileName = fileName
+        self.sourceLineNumber = sourceLineNumber
+        self.statement = statement
+    }
 }
 
-enum CaseClause: Equatable {
+public enum CaseClause: Equatable {
     case equals(Expression)
     case range(Expression, Expression)
     case comparison(BinaryOperation, Expression)
 }
 
-enum PrintPart: Equatable {
+public enum PrintPart: Equatable {
     case expression(Expression)
     case separator(PrintSeparator)
 
-    var suppressesNewline: Bool {
+    public var suppressesNewline: Bool {
         if case .separator = self { return true }
         return false
     }
 }
 
-enum PrintSeparator: Equatable {
+public enum PrintSeparator: Equatable {
     case comma
     case semicolon
 }
 
-struct PrintOutput: Equatable {
-    let text: String
-    let terminator: String
-    let endColumn: Int
+public struct PrintOutput: Equatable {
+    public let text: String
+    public let terminator: String
+    public let endColumn: Int
+
+    /// Creates a value from its parts.
+    public init(text: String, terminator: String, endColumn: Int) {
+        self.text = text
+        self.terminator = terminator
+        self.endColumn = endColumn
+    }
 }
 
-enum BranchTarget: Equatable {
+public enum BranchTarget: Equatable {
     case line(Int)
     case label(String)
 
-    var flow: Flow {
+    public var flow: Flow {
         switch self {
         case .line(let line): return .goto(line)
         case .label(let label): return .gotoLabel(label)
@@ -212,12 +215,12 @@ enum BranchTarget: Equatable {
     }
 }
 
-indirect enum ConditionalAction: Equatable {
+public indirect enum ConditionalAction: Equatable {
     case branch(BranchTarget)
     case statement(Statement)
 }
 
-indirect enum Expression: Equatable {
+public indirect enum Expression: Equatable {
     case number(Double)
     case string(String)
     case interpolatedString(String)
@@ -241,18 +244,24 @@ indirect enum Expression: Equatable {
     case systemFunction(Expression)
 }
 
-struct GraphicsPoint: Equatable {
-    let x: Expression
-    let y: Expression
+public struct GraphicsPoint: Equatable {
+    public let x: Expression
+    public let y: Expression
+
+    /// Creates a value from its parts.
+    public init(x: Expression, y: Expression) {
+        self.x = x
+        self.y = y
+    }
 }
 
-enum BinaryOperation: Equatable {
+public enum BinaryOperation: Equatable {
     case add, subtract, multiply, divide
     case equal, notEqual, less, lessEqual, greater, greaterEqual
     case and, or
 }
 
-enum Token: Equatable {
+public enum Token: Equatable {
     case number(Double)
     case string(String)
     case interpolatedString(String)
@@ -279,7 +288,13 @@ enum Token: Equatable {
     case eof
 }
 
-struct LexedToken: Equatable {
-    let token: Token
-    let column: Int
+public struct LexedToken: Equatable {
+    public let token: Token
+    public let column: Int
+
+    /// Creates a value from its parts.
+    public init(token: Token, column: Int) {
+        self.token = token
+        self.column = column
+    }
 }

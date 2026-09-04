@@ -1,6 +1,7 @@
 import Testing
 import TUIKit
 @testable import BASICCore
+@testable import BASICSyntax
 
 @Suite("TUI desktop colour")
 struct BASICTUIDesktopTests {

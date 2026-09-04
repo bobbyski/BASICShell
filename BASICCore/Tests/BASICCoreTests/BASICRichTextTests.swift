@@ -7,6 +7,7 @@
 
 import Testing
 @testable import BASICCore
+@testable import BASICSyntax
 
 @Suite("Rich pseudo classes")
 struct BASICRichTextTests {

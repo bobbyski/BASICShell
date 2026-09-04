@@ -3,17 +3,17 @@ import Foundation
 import Darwin
 #endif
 
-struct Lexer {
+public struct Lexer {
     private let source: String
     private var index: String.Index
     private var atStatementStart = true
 
-    init(source: String) {
+    public init(source: String) {
         self.source = source
         self.index = source.startIndex
     }
 
-    mutating func tokenize() throws -> [LexedToken] {
+    public mutating func tokenize() throws -> [LexedToken] {
         var tokens: [LexedToken] = []
         while let token = try nextToken() {
             tokens.append(token)

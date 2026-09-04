@@ -60,7 +60,7 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
         }
     }
 
-    var eventHandlerMessage: String {
+    public var eventHandlerMessage: String {
         switch self {
         case .runtime(let message):
             return message
@@ -112,7 +112,7 @@ public struct BASICDiagnostic: Codable, Equatable, Sendable {
 }
 
 extension BASICError {
-    var isDebugPause: Bool {
+    public var isDebugPause: Bool {
         switch self {
         case .breakRequested, .breakpoint, .stepComplete:
             return true

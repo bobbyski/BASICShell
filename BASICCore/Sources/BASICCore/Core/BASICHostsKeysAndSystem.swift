@@ -29,20 +29,6 @@ enum BASICFileListFormatter {
     }
 }
 
-extension BASICType {
-    var name: String {
-        switch self {
-        case .scalar(let scalar): return scalar.rawValue
-        case .void: return "VOID"
-        case .record(let name): return name
-        case .classType(let name): return name
-        case .interfaceType(let name): return name
-        case .functionType(let name): return name
-        case .dictionary: return "DICTIONARY"
-        }
-    }
-}
-
 /// Minimal host interface used by the interpreter for terminal-like I/O.
 public protocol BASICHost: AnyObject {
     /// Writes text without forcing a line break.

@@ -1767,7 +1767,7 @@ public final class BASICInterpreter {
             .filter { !$0.isImported }
             .flatMap { line -> [BASICValue] in
                 if case .data(let values) = line.statement {
-                    return values
+                    return values.map(BASICValue.init)
                 }
                 return []
             }
@@ -1826,8 +1826,8 @@ public final class BASICInterpreter {
                             fixedLength: fixedLength,
                             arrayDimensions: arrayDimensions,
                             json: json,
-                            metadata: metadata,
-                            defaultValue: defaultValue
+                            metadata: metadata.mapValues(BASICValue.init),
+                            defaultValue: defaultValue.map(BASICValue.init)
                         )
                     )
                 case .endType:
@@ -1974,13 +1974,13 @@ public final class BASICInterpreter {
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, metadata: metadata, defaultValue: defaultValue))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
                 case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, metadata: metadata, defaultValue: defaultValue))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
                 case .inheritsDeclaration(let baseClassName):
@@ -2247,17 +2247,9 @@ public final class BASICInterpreter {
         return nil
     }
 
-    // Internal rather than private so ``BASICKeywords`` can *be* this set
-    // rather than keep a copy of it — a builtin added here is highlighted and
-    // completed without anyone touching a second list.
-    static let intrinsicFunctionNames: Set<String> = [
-        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
-        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
-        "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
-        "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
-        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
-        "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
-    ]
+    /// The builtin function names, owned by ``BASICKeywords`` so the syntax
+    /// module (highlighting, completion) and the compiler share one list.
+    static let intrinsicFunctionNames: Set<String> = BASICKeywords.intrinsicFunctionNames
 
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
         let normalized = name.normalized
@@ -6597,8 +6589,4 @@ struct ParsedLine {
     }
 }
 
-extension Array {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
+

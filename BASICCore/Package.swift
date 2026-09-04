@@ -9,7 +9,11 @@ let package = Package(
     // already .macOS("16.0"). It does close the door on a macOS 14 consumer.
     platforms: [.macOS("16.0")],
     products: [
-        .library(name: "BASICCore", targets: ["BASICCore"])
+        .library(name: "BASICCore", targets: ["BASICCore"]),
+        // The shared front end: lexer, parser, AST, types, keywords,
+        // diagnostics. The interpreter and basicc both consume it, so the
+        // language stays one language (BASIC_COMPILER.md, decision D2).
+        .library(name: "BASICSyntax", targets: ["BASICSyntax"]),
     ],
     dependencies: [
         // RichSwift renders rich *content* — markdown, tables, panels — and is
@@ -31,9 +35,11 @@ let package = Package(
         .package(path: "../../../frameworks/UILess/Code/TUIDiagram")
     ],
     targets: [
+        .target(name: "BASICSyntax"),
         .target(
             name: "BASICCore",
             dependencies: [
+                "BASICSyntax",
                 .product(name: "RichSwift", package: "RichSwift"),
                 .product(name: "TUIKit", package: "TUIKit"),
                 .product(name: "TUIBoards", package: "TUIBoards"),

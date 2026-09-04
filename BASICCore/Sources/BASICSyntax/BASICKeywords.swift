@@ -30,7 +30,7 @@
 //  Not from a fifth hand-written list. Each category was derived from what the
 //  implementation actually accepts:
 //
-//  - `functions` **is** ``BASICInterpreter/intrinsicFunctionNames``, not a copy
+//  - `functions` **is** ``intrinsicFunctionNames``, not a copy
 //    of it. A builtin added to the interpreter is highlighted and completed the
 //    same day, by nobody.
 //  - The statement categories were taken from every `matchIdentifier("…")` in
@@ -43,6 +43,20 @@
 //  a keyword nobody wrote is worse than not advertising it: completion offers
 //  it, an editor colours it, and the program still does not run.
 public enum BASICKeywords {
+    /// Every intrinsic function the interpreter implements, uppercase.
+    ///
+    /// Owned here so the interpreter, the highlighter, completion, and the
+    /// compiler all read one list — a builtin added here is highlighted and
+    /// completed without anyone touching a second list.
+    public static let intrinsicFunctionNames: Set<String> = [
+        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
+        "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
+        "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
+        "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
+        "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
+        "FIELDCOUNT", "FIELDNAME$", "FIELDMETA", "FIELDVALUE", "FIELDVALUE$", "SETFIELD"
+    ]
+
 
     /// What a word is, which is what a highlighter needs in order to colour it.
     ///
@@ -183,7 +197,7 @@ public enum BASICKeywords {
     /// the one builtin that is not in the interpreter's list, and exactly the
     /// kind of thing a hand-maintained copy would have lost.
     public static let functions: Set<String> =
-        BASICInterpreter.intrinsicFunctionNames.union(["LEN"])
+        intrinsicFunctionNames.union(["LEN"])
 
     /// Every word in the language.
     public static let all: Set<String> =

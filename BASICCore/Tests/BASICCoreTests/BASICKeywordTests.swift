@@ -10,6 +10,7 @@
 
 import Testing
 @testable import BASICCore
+@testable import BASICSyntax
 
 @Suite("BASIC keyword vocabulary")
 struct BASICKeywordTests {
