@@ -23,5 +23,6 @@ OPEN F$ FOR INPUT AS #3
 LINE INPUT #3, L$
 PRINT "FIRST LINE: "; L$
 CLOSE
+File.Rm F$
 OPEN "missing-file.txt" FOR INPUT AS #4
 PRINT "NEVER"

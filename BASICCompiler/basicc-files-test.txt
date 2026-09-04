@@ -1,4 +1,0 @@
-Ada,16
-Grace,17
-"Kath B",18,TRUE
-Linus,19
