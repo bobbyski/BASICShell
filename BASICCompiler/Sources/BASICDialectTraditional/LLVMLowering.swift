@@ -45,7 +45,6 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\n"
         }
         text += "\n" + renderDataTables() + "\n"
-        text += renderTypeTables() + "\n"
         text += constants.definitions.joined(separator: "\n") + "\n\n"
         text += functions.joined(separator: "\n\n")
         return text
@@ -75,37 +74,39 @@ struct LLVMLowering {
         """
     }
 
-    /// Per-type field tables the runtime reads at registration.
-    private func renderTypeTables() -> String {
-        var text = ""
-        for type in module.types {
-            let count = max(type.fields.count, 1)
-            var kinds: [String] = [], subtypes: [String] = [], numbers: [String] = [], strings: [String] = []
-            for field in type.fields {
-                switch field.type {
-                case .number: kinds.append("i8 0")
-                case .string: kinds.append("i8 1")
-                case .boolean: kinds.append("i8 2")
-                case .composite, .void, .closure: kinds.append("i8 3")
-                }
-                if case .composite(let name) = field.type {
-                    subtypes.append("i64 \(module.typeIndex(of: name) ?? -1)")
-                } else {
-                    subtypes.append("i64 -1")
-                }
-                numbers.append("double \(FunctionEmitter.double(field.defaultNumber ?? 0))")
-                strings.append(field.defaultString.map { "ptr \(constants.constant($0))" } ?? "ptr null")
+    /// The JSON descriptor the runtime registers a type from.
+    static func typeDescriptor(_ type: BIRCompositeType, module: BIRModule) -> String {
+        func typeObject(_ type: BIRType, dimensions: [Int?], isInteger: Bool = false) -> [String: Any] {
+            switch type {
+            case .number, .void: return ["k": isInteger ? "integer" : "number"]
+            case .string: return ["k": "string"]
+            case .boolean: return ["k": "boolean"]
+            case .variant: return ["k": "variant"]
+            case .dictionary: return ["k": "dictionary"]
+            case .closure: return ["k": "closure"]
+            case .composite(let name): return ["k": "composite", "i": module.typeIndex(of: name) ?? -1]
+            case .array(let element, _):
+                return ["k": "array", "elem": typeObject(element, dimensions: [], isInteger: isInteger), "dims": dimensions.map { $0.map { $0 as Any } ?? NSNull() }]
             }
-            if type.fields.isEmpty { kinds.append("i8 0"); subtypes.append("i64 -1"); numbers.append("double 0.0"); strings.append("ptr null") }
-            text += """
-            @type.\(type.index).kinds = private constant [\(count) x i8] [\(kinds.joined(separator: ", "))]
-            @type.\(type.index).subtypes = private constant [\(count) x i64] [\(subtypes.joined(separator: ", "))]
-            @type.\(type.index).numbers = private constant [\(count) x double] [\(numbers.joined(separator: ", "))]
-            @type.\(type.index).strings = private constant [\(count) x ptr] [\(strings.joined(separator: ", "))]
-
-            """
         }
-        return text
+        var fields: [[String: Any]] = []
+        for field in type.fields {
+            var object: [String: Any] = ["name": field.name, "display": field.displayName, "type": typeObject(field.type, dimensions: field.dimensions, isInteger: field.isInteger)]
+            if let json = field.jsonName { object["json"] = json }
+            switch field.defaultValue {
+            case .number(let value)?: object["default"] = ["n": value]
+            case .string(let value)?: object["default"] = ["s": value]
+            case .boolean(let value)?: object["default"] = ["b": value]
+            case .null?: object["default"] = ["null": true]
+            case .empty?: object["default"] = ["empty": true]
+            case nil: break
+            }
+            fields.append(object)
+        }
+        var object: [String: Any] = ["name": type.displayName, "kind": type.isClass ? "class" : "record", "fields": fields]
+        if let base = type.base { object["base"] = base }
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
     }
 
     static let runtimeDeclarations = """
@@ -160,7 +161,59 @@ struct LLVMLowering {
     declare ptr @basic_rt_array_dim(i64, ptr, i64, i64)
     declare ptr @basic_rt_array_load_composite(ptr, i64)
     declare void @basic_rt_array_store_composite(ptr, i64, ptr)
-    declare void @basic_rt_type_register(i64, ptr, i64, ptr, ptr, ptr, ptr)
+    declare void @basic_rt_type_register(i64, ptr)
+    declare i1 @basic_rt_composite_get_boolean(ptr, i64)
+    declare void @basic_rt_composite_set_boolean(ptr, i64, i1)
+    declare ptr @basic_rt_composite_get_array(ptr, i64)
+    declare void @basic_rt_composite_set_array(ptr, i64, ptr, ptr)
+    declare ptr @basic_rt_composite_get_value(ptr, i64)
+    declare void @basic_rt_composite_set_value(ptr, i64, ptr, ptr)
+    declare ptr @basic_rt_composite_get_dictionary(ptr, i64)
+    declare double @basic_rt_array_count(ptr, ptr)
+    declare void @basic_rt_array_assign(ptr, ptr, ptr)
+    declare i1 @basic_rt_array_load_boolean(ptr, i64)
+    declare void @basic_rt_array_store_boolean(ptr, i64, i1)
+    declare ptr @basic_rt_array_load_value(ptr, i64)
+    declare void @basic_rt_array_store_value(ptr, i64, ptr, ptr)
+    declare ptr @basic_rt_array_load_dictionary(ptr, i64)
+    declare void @basic_rt_print_array(ptr, ptr)
+    declare ptr @basic_rt_array_text(ptr, ptr)
+    declare void @basic_rt_value_release(ptr)
+    declare ptr @basic_rt_value_copy(ptr)
+    declare ptr @basic_rt_value_store(ptr, ptr, ptr)
+    declare ptr @basic_rt_value_empty()
+    declare ptr @basic_rt_value_null()
+    declare ptr @basic_rt_value_from_number(double)
+    declare ptr @basic_rt_value_from_string(ptr)
+    declare ptr @basic_rt_value_from_boolean(i1)
+    declare ptr @basic_rt_value_from_composite(ptr)
+    declare ptr @basic_rt_value_from_array(ptr)
+    declare ptr @basic_rt_value_from_dictionary(ptr)
+    declare ptr @basic_rt_value_from_closure(ptr)
+    declare double @basic_rt_value_number(ptr, ptr)
+    declare ptr @basic_rt_value_string(ptr, ptr)
+    declare i1 @basic_rt_value_boolean(ptr, ptr)
+    declare ptr @basic_rt_value_composite(ptr, i64, ptr)
+    declare ptr @basic_rt_value_dictionary(ptr, ptr)
+    declare ptr @basic_rt_value_closure(ptr, ptr)
+    declare i1 @basic_rt_value_truthy(ptr)
+    declare i1 @basic_rt_value_equal(ptr, ptr)
+    declare ptr @basic_rt_value_add(ptr, ptr)
+    declare double @basic_rt_value_len(ptr)
+    declare ptr @basic_rt_value_index(ptr, i64, ptr, ptr)
+    declare void @basic_rt_value_set_index(ptr, i64, ptr, ptr, ptr)
+    declare ptr @basic_rt_value_field(ptr, ptr, ptr)
+    declare void @basic_rt_print_value(ptr)
+    declare ptr @basic_rt_value_text(ptr)
+    declare ptr @basic_rt_json_encode(ptr, i1)
+    declare ptr @basic_rt_json_decode(ptr, i1)
+    declare ptr @basic_rt_dictionary_new()
+    declare ptr @basic_rt_dictionary_copy(ptr)
+    declare void @basic_rt_dictionary_release(ptr)
+    declare ptr @basic_rt_dictionary_get(ptr, ptr, ptr)
+    declare void @basic_rt_dictionary_set(ptr, ptr, ptr, ptr)
+    declare void @basic_rt_print_dictionary(ptr)
+    declare ptr @basic_rt_dictionary_text(ptr)
     declare ptr @basic_rt_composite_new(i64)
     declare ptr @basic_rt_composite_copy(ptr)
     declare void @basic_rt_composite_assign(ptr, ptr)
@@ -272,6 +325,12 @@ struct FunctionEmitter {
     private var ownedComposites: Set<String> = []
     /// Which owned temporaries are closures.
     private var ownedClosures: Set<String> = []
+    /// Which owned temporaries are VARIANT boxes.
+    private var ownedValues: Set<String> = []
+    /// Which owned temporaries are dictionaries.
+    private var ownedDictionaries: Set<String> = []
+    /// Slots for boxed indexes handed to the runtime.
+    private let scratchValues = 8
     private var gosubResumes: [BIRBlockID] = []
     private var usesGosub = false
     private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
@@ -310,6 +369,7 @@ struct FunctionEmitter {
     private mutating func lowerBody() {
         out.label("prologue")
         out.emit("%\"scratch.indexes\" = alloca [\(scratchRank) x double]")
+        out.emit("%\"scratch.values\" = alloca [\(scratchValues) x ptr]")
         for local in function.locals {
             out.emit("%\"L.\(local.name)\" = alloca \(Self.llvmType(of: local))")
             out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
@@ -326,13 +386,21 @@ struct FunctionEmitter {
                 let copy = out.temp()
                 out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr %p\(index))")
                 value = copy
+            } else if parameter.type == .variant {
+                let copy = out.temp()
+                out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr %p\(index))")
+                value = copy
+            } else if parameter.type == .dictionary {
+                let copy = out.temp()
+                out.emit("\(copy) = call ptr @basic_rt_dictionary_copy(ptr %p\(index))")
+                value = copy
             }
             out.emit("store \(Self.llvmType(of: parameter)) \(value), ptr %\"L.\(parameter.name)\"")
         }
         if isMain {
             out.emit("call void @basic_rt_start()")
             for type in module.types {
-                out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(type.displayName)), i64 \(type.fields.count), ptr @type.\(type.index).kinds, ptr @type.\(type.index).subtypes, ptr @type.\(type.index).numbers, ptr @type.\(type.index).strings)")
+                out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
             }
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
         }
@@ -400,6 +468,16 @@ struct FunctionEmitter {
         switch operation {
         case .store(let variable, let value):
             let (result, isOwned) = lowerValue(value)
+            if variable.type == .variant, variable.rank == nil {
+                // The interpreter's assign: a VARIANT holding an array keeps
+                // its shape, coercing what is assigned into it.
+                let old = out.temp(), stored = out.temp()
+                out.emit("\(old) = load ptr, ptr \(slotName(variable))")
+                out.emit("\(stored) = call ptr @basic_rt_value_store(ptr \(old), ptr \(result), ptr \(constants.constant(variable.name)))")
+                out.emit("call void @basic_rt_value_release(ptr \(old))")
+                out.emit("store ptr \(stored), ptr \(slotName(variable))")
+                break
+            }
             storeManaged(result, owned: isOwned, into: slotName(variable), type: variable.type)
             if !Self.isManaged(variable.type) {
                 out.emit("store \(Self.llvmType(of: variable)) \(result), ptr \(slotName(variable))")
@@ -408,24 +486,55 @@ struct FunctionEmitter {
         case .storeElement(let variable, let indexes, let value):
             let (result, _) = lowerValue(value)
             let (array, offset) = elementOffset(variable, indexes)
-            switch variable.type {
-            case .string: out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
-            case .composite: out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(result))")
-            default: out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(Self.asNumber(result, value.type, &out)))")
-            }
+            storeElement(array, offset, result, value: value, elementType: variable.type, name: variable.name)
 
         case .storeField(let place, let value):
             guard case .field(let base, let index, let type) = place else { break }
             let (result, _) = lowerValue(value)
             let target = placePointer(base)
+            let fieldName = constants.constant(fieldDisplayName(of: place))
             switch type {
             case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(result))")
-            case .boolean:
-                let number = out.temp()
-                out.emit("\(number) = uitofp i1 \(result) to double")
-                out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(number))")
+            case .boolean: out.emit("call void @basic_rt_composite_set_boolean(ptr \(target), i64 \(index), i1 \(result))")
             case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
             case .composite, .void, .closure: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
+            case .variant, .dictionary: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
+            case .array: out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
+            }
+
+        case .storePlace(let place, let value):
+            let (result, _) = lowerValue(value)
+            switch place {
+            case .arrayElement(let base, let indexes, let name):
+                let (array, offset) = elementOffset(arrayPointer(base), name, indexes)
+                storeElement(array, offset, result, value: value, elementType: place.type, name: name)
+            case .dictionaryEntry(let base, let key, let name):
+                let dictionary = dictionaryPointer(base)
+                let (keyValue, _) = lowerValue(key)
+                out.emit("call void @basic_rt_dictionary_set(ptr \(dictionary), ptr \(boxedPointer(keyValue, key.type)), ptr \(boxedPointer(result, value.type)), ptr \(constants.constant(name)))")
+            case .valueEntry(let base, let indexes, let name):
+                let box = valuePointer(base)
+                let list = boxedIndexes(indexes)
+                out.emit("call void @basic_rt_value_set_index(ptr \(box), i64 \(indexes.count), ptr \(list), ptr \(boxedPointer(result, value.type)), ptr \(constants.constant(name)))")
+            case .valueField:
+                fail("Assigning a field through a VARIANT is not supported")
+            case .variable, .element, .field:
+                break
+            }
+
+        case .assignArray(let place, let value):
+            let (result, _) = lowerValue(value)
+            let box = boxedPointer(result, value.type)
+            switch place {
+            case .variable(let variable):
+                let array = out.temp()
+                out.emit("\(array) = load ptr, ptr \(slotName(variable))")
+                out.emit("call void @basic_rt_array_assign(ptr \(array), ptr \(box), ptr \(constants.constant(variable.name)))")
+            case .field(let base, let index, _):
+                let target = placePointer(base)
+                out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(box), ptr \(constants.constant(fieldDisplayName(of: place))))")
+            default:
+                fail("Cannot assign an array here")
             }
 
         case .callMethod(let receiver, let candidates, let arguments, let result):
@@ -446,7 +555,7 @@ struct FunctionEmitter {
             }
 
         case .dim(let variable, let bounds):
-            let values = bounds.map { lowerValue($0).0 }
+            let values = bounds.map { $0.map { lowerValue($0).0 } ?? "-1.0" }
             for (index, value) in values.enumerated() {
                 let slot = out.temp()
                 out.emit("\(slot) = getelementptr [\(scratchRank) x double], ptr %\"scratch.indexes\", i64 0, i64 \(index)")
@@ -456,7 +565,11 @@ struct FunctionEmitter {
             var kind = 0, elementType = -1
             switch variable.type {
             case .string: kind = 1
+            case .boolean: kind = 2
             case .composite(let name): kind = 3; elementType = module.typeIndex(of: name) ?? -1
+            case .variant: kind = 4
+            case .dictionary: kind = 5
+            case .number where variable.isInteger: kind = 6
             default: break
             }
             out.emit("\(array) = call ptr @basic_rt_array_dim(i64 \(values.count), ptr %\"scratch.indexes\", i64 \(kind), i64 \(elementType))")
@@ -474,7 +587,7 @@ struct FunctionEmitter {
             } else {
                 let result = out.temp()
                 out.emit("\(result) = call \(Self.llvmType(callee.returnType)) @\"F.\(name)\"(\(argumentList))")
-                if callee.returnType == .string { owned.append(result) }
+                if Self.isManaged(callee.returnType) { own(result, as: callee.returnType) }
             }
 
         case .read(let targets):
@@ -536,6 +649,9 @@ struct FunctionEmitter {
                     out.emit("\(length) = select i1 \(result), i64 4, i64 5")
                     out.emit("\(piece) = call ptr @basic_rt_string_literal(ptr \(text), i64 \(length))")
                 case .composite, .void, .closure: out.emit("\(piece) = call ptr @basic_rt_composite_text(ptr \(result))")
+                case .variant: out.emit("\(piece) = call ptr @basic_rt_value_text(ptr \(result))")
+                case .dictionary: out.emit("\(piece) = call ptr @basic_rt_dictionary_text(ptr \(result))")
+                case .array: out.emit("\(piece) = call ptr @basic_rt_array_text(ptr \(result), ptr \(constants.constant("array")))")
                 }
                 owned.append(piece)
                 if let previous = line {
@@ -608,6 +724,9 @@ struct FunctionEmitter {
                     case .string: out.emit("call void @basic_rt_print_text(ptr \(result))")
                     case .boolean: out.emit("call void @basic_rt_print_boolean(i1 \(result))")
                     case .composite: out.emit("call void @basic_rt_print_composite(ptr \(result))")
+                    case .variant: out.emit("call void @basic_rt_print_value(ptr \(result))")
+                    case .dictionary: out.emit("call void @basic_rt_print_dictionary(ptr \(result))")
+                    case .array: out.emit("call void @basic_rt_print_array(ptr \(result), ptr \(constants.constant("array")))")
                     case .closure:
                         let text = out.temp()
                         out.emit("\(text) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
@@ -643,7 +762,7 @@ struct FunctionEmitter {
                 let result = out.temp()
                 out.emit("\(result) = call i1 @basic_rt_input_boolean(ptr \(promptValue), ptr \(name))")
                 out.emit("store i1 \(result), ptr \(slotName(variable))")
-            case .void, .composite, .closure:
+            case .void, .composite, .closure, .variant, .dictionary, .array:
                 fail("INPUT into a record or closure is not supported")
             }
 
@@ -707,6 +826,11 @@ struct FunctionEmitter {
                     out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
                     owned.append(string)
                     out.emit("call void @basic_rt_using_string(ptr \(string))")
+                case .variant, .dictionary, .array:
+                    let text = out.temp()
+                    out.emit("\(text) = call ptr @basic_rt_value_text(ptr \(boxedPointer(result, value.type)))")
+                    owned.append(text)
+                    out.emit("call void @basic_rt_using_string(ptr \(text))")
                 case .void, .closure: break
                 }
             }
@@ -728,7 +852,7 @@ struct FunctionEmitter {
 
     /// Types whose values are runtime objects with ownership.
     static func isManaged(_ type: BIRType) -> Bool {
-        type == .string || type.isComposite || type.isClosure
+        type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary
     }
 
     /// The runtime call that drops one reference of a managed value.
@@ -736,7 +860,137 @@ struct FunctionEmitter {
         switch type {
         case .string: return "basic_rt_string_release"
         case .closure: return "basic_rt_closure_release"
+        case .variant: return "basic_rt_value_release"
+        case .dictionary: return "basic_rt_dictionary_release"
         default: return "basic_rt_composite_release"
+        }
+    }
+
+    /// Records an owned temporary of a managed type so the instruction
+    /// releases it.
+    private mutating func own(_ value: String, as type: BIRType) {
+        owned.append(value)
+        if type.isComposite { ownedComposites.insert(value) }
+        if type.isClosure { ownedClosures.insert(value) }
+        if type == .variant { ownedValues.insert(value) }
+        if type == .dictionary { ownedDictionaries.insert(value) }
+    }
+
+    /// A value as a VARIANT box pointer: itself for a VARIANT, else boxed
+    /// (an owned temporary).
+    private mutating func boxedPointer(_ value: String, _ type: BIRType) -> String {
+        if type == .variant { return value }
+        let box = out.temp()
+        switch type {
+        case .number: out.emit("\(box) = call ptr @basic_rt_value_from_number(double \(value))")
+        case .string: out.emit("\(box) = call ptr @basic_rt_value_from_string(ptr \(value))")
+        case .boolean: out.emit("\(box) = call ptr @basic_rt_value_from_boolean(i1 \(value))")
+        case .composite: out.emit("\(box) = call ptr @basic_rt_value_from_composite(ptr \(value))")
+        case .array: out.emit("\(box) = call ptr @basic_rt_value_from_array(ptr \(value))")
+        case .dictionary: out.emit("\(box) = call ptr @basic_rt_value_from_dictionary(ptr \(value))")
+        case .closure: out.emit("\(box) = call ptr @basic_rt_value_from_closure(ptr \(value))")
+        case .void, .variant: out.emit("\(box) = call ptr @basic_rt_value_empty()")
+        }
+        own(box, as: .variant)
+        return box
+    }
+
+    /// Boxes each index into the scratch slots and returns the slot array.
+    private mutating func boxedIndexes(_ indexes: [BIRExpression]) -> String {
+        for (position, index) in indexes.enumerated() {
+            let (value, _) = lowerValue(index)
+            let box = boxedPointer(value, index.type)
+            let slot = out.temp()
+            out.emit("\(slot) = getelementptr [\(scratchValues) x ptr], ptr %\"scratch.values\", i64 0, i64 \(position)")
+            out.emit("store ptr \(box), ptr \(slot)")
+        }
+        return "%\"scratch.values\""
+    }
+
+    /// Stores a lowered value into an array element by element type.
+    private mutating func storeElement(_ array: String, _ offset: String, _ result: String, value: BIRExpression, elementType: BIRType, name: String) {
+        switch elementType {
+        case .string: out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
+        case .composite: out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(result))")
+        case .boolean: out.emit("call void @basic_rt_array_store_boolean(ptr \(array), i64 \(offset), i1 \(result))")
+        case .variant, .dictionary, .array, .closure:
+            out.emit("call void @basic_rt_array_store_value(ptr \(array), i64 \(offset), ptr \(boxedPointer(result, value.type)), ptr \(constants.constant(name)))")
+        case .number, .void: out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(Self.asNumber(result, value.type, &out)))")
+        }
+    }
+
+    /// The display name of the field a `.field` place names, for messages.
+    private func fieldDisplayName(of place: BIRPlace) -> String {
+        guard case .field(let base, let index, _) = place, case .composite(let typeName) = base.type,
+              let type = module.types.first(where: { $0.name == typeName }), index < type.fields.count else { return "field" }
+        return type.fields[index].displayName
+    }
+
+    /// The array behind an array-typed place, borrowed.
+    private mutating func arrayPointer(_ place: BIRPlace) -> String {
+        switch place {
+        case .variable(let variable):
+            let result = out.temp()
+            out.emit("\(result) = load ptr, ptr \(slotName(variable))")
+            return result
+        case .field(let base, let index, _):
+            let parent = placePointer(base)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_composite_get_array(ptr \(parent), i64 \(index))")
+            return result
+        default:
+            fail("Not an array")
+            return "null"
+        }
+    }
+
+    /// The dictionary behind a dictionary-typed place, borrowed.
+    private mutating func dictionaryPointer(_ place: BIRPlace) -> String {
+        switch place {
+        case .variable(let variable):
+            let result = out.temp()
+            out.emit("\(result) = load ptr, ptr \(slotName(variable))")
+            return result
+        case .field(let base, let index, _):
+            let parent = placePointer(base)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_composite_get_dictionary(ptr \(parent), i64 \(index))")
+            return result
+        case .element(let variable, let indexes):
+            let (array, offset) = elementOffset(variable, indexes)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_array_load_dictionary(ptr \(array), i64 \(offset))")
+            return result
+        default:
+            fail("Not a dictionary")
+            return "null"
+        }
+    }
+
+    /// The VARIANT box a place holds, borrowed (its own storage, so an
+    /// in-place mutation lands in the variable).
+    private mutating func valuePointer(_ place: BIRPlace) -> String {
+        switch place {
+        case .variable(let variable):
+            let result = out.temp()
+            out.emit("\(result) = load ptr, ptr \(slotName(variable))")
+            return result
+        default:
+            let (value, _) = lowerValue(loadExpression(place))
+            return value
+        }
+    }
+
+    /// The value a place holds, as an expression.
+    private func loadExpression(_ place: BIRPlace) -> BIRExpression {
+        switch place {
+        case .variable(let variable): return variable.rank == nil ? .load(variable) : .loadArray(variable)
+        case .element(let variable, let indexes): return .element(variable, indexes)
+        case .field(let base, let index, let type): return .field(loadExpression(base), index: index, type: type)
+        case .arrayElement(let base, let indexes, let name): return .elementOf(loadExpression(base), indexes, name: name)
+        case .dictionaryEntry(let base, let key, let name): return .dictionaryGet(loadExpression(base), key: key, name: name)
+        case .valueEntry(let base, let indexes, let name): return .valueIndex(loadExpression(base), indexes, name: name)
+        case .valueField(let base, let field, let name): return .valueField(loadExpression(base), field: field, name: name)
         }
     }
 
@@ -753,6 +1007,14 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_string_retain(ptr \(value))")
         } else if type.isClosure {
             out.emit("call void @basic_rt_closure_retain(ptr \(value))")
+        } else if type == .variant {
+            let copy = out.temp()
+            out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr \(value))")
+            stored = copy
+        } else if type == .dictionary {
+            let copy = out.temp()
+            out.emit("\(copy) = call ptr @basic_rt_dictionary_copy(ptr \(value))")
+            stored = copy
         } else {
             let copy = out.temp()
             out.emit("\(copy) = call ptr @basic_rt_composite_copy(ptr \(value))")
@@ -782,6 +1044,14 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
             return result
+        case .arrayElement(let base, let indexes, let name):
+            let (array, offset) = elementOffset(arrayPointer(base), name, indexes)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_array_load_composite(ptr \(array), i64 \(offset))")
+            return result
+        case .dictionaryEntry, .valueEntry, .valueField:
+            fail("A record reached through a VARIANT or DICTIONARY cannot be mutated in place")
+            return "null"
         }
     }
 
@@ -855,6 +1125,11 @@ struct FunctionEmitter {
         case .field(let base, let index, _):
             let parent = placePointer(base)
             out.emit("call void @basic_rt_composite_set_composite(ptr \(parent), i64 \(index), ptr \(value))")
+        case .arrayElement(let base, let indexes, let name):
+            let (array, offset) = elementOffset(arrayPointer(base), name, indexes)
+            out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(value))")
+        case .dictionaryEntry, .valueEntry, .valueField:
+            break
         }
     }
 
@@ -868,16 +1143,21 @@ struct FunctionEmitter {
 
     /// Loads the array pointer and computes the bounds-checked element offset.
     private mutating func elementOffset(_ variable: BIRVariable, _ indexes: [BIRExpression]) -> (array: String, offset: String) {
+        let array = out.temp()
+        out.emit("\(array) = load ptr, ptr \(slotName(variable))")
+        return elementOffset(array, variable.name, indexes)
+    }
+
+    /// The bounds-checked element offset into an array pointer.
+    private mutating func elementOffset(_ array: String, _ name: String, _ indexes: [BIRExpression]) -> (array: String, offset: String) {
         let values = indexes.map { lowerValue($0).0 }
         for (index, value) in values.enumerated() {
             let slot = out.temp()
             out.emit("\(slot) = getelementptr [\(scratchRank) x double], ptr %\"scratch.indexes\", i64 0, i64 \(index)")
             out.emit("store double \(value), ptr \(slot)")
         }
-        let array = out.temp()
-        out.emit("\(array) = load ptr, ptr \(slotName(variable))")
         let offset = out.temp()
-        out.emit("\(offset) = call i64 @basic_rt_array_offset(ptr \(array), ptr \(constants.constant(variable.name)), i64 \(values.count), ptr %\"scratch.indexes\")")
+        out.emit("\(offset) = call i64 @basic_rt_array_offset(ptr \(array), ptr \(constants.constant(name)), i64 \(values.count), ptr %\"scratch.indexes\")")
         return (array, offset)
     }
 
@@ -953,12 +1233,26 @@ struct FunctionEmitter {
                 } else if function.returnType.isClosure {
                     if isOwned { owned.removeAll { $0 == lowered } } else { out.emit("call void @basic_rt_closure_retain(ptr \(lowered))") }
                     result = lowered
+                } else if function.returnType == .variant || function.returnType == .dictionary {
+                    if isOwned { owned.removeAll { $0 == lowered }; result = lowered } else {
+                        let copy = out.temp()
+                        out.emit("\(copy) = call ptr @\(function.returnType == .variant ? "basic_rt_value_copy" : "basic_rt_dictionary_copy")(ptr \(lowered))")
+                        result = copy
+                    }
                 } else {
                     result = lowered
                 }
             } else if function.returnType.isComposite, case .composite(let name) = function.returnType {
                 let fresh = out.temp()
                 out.emit("\(fresh) = call ptr @basic_rt_composite_new(i64 \(module.typeIndex(of: name) ?? -1))")
+                result = fresh
+            } else if function.returnType == .variant {
+                let fresh = out.temp()
+                out.emit("\(fresh) = call ptr @basic_rt_value_empty()")
+                result = fresh
+            } else if function.returnType == .dictionary {
+                let fresh = out.temp()
+                out.emit("\(fresh) = call ptr @basic_rt_dictionary_new()")
                 result = fresh
             } else {
                 result = Self.zero(function.returnType)
@@ -980,6 +1274,11 @@ struct FunctionEmitter {
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_closure_release(ptr \(old))")
         }
+        for local in function.locals where (local.type == .variant || local.type == .dictionary) && local.rank == nil && local.name != "ME" {
+            let old = out.temp()
+            out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
+            out.emit("call void @\(Self.releaseFunction(local.type))(ptr \(old))")
+        }
         for local in function.locals where local.rank != nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
@@ -995,12 +1294,16 @@ struct FunctionEmitter {
     private mutating func releaseOwned() {
         for temporary in owned {
             let release = ownedComposites.contains(temporary) ? "basic_rt_composite_release"
-                : ownedClosures.contains(temporary) ? "basic_rt_closure_release" : "basic_rt_string_release"
+                : ownedClosures.contains(temporary) ? "basic_rt_closure_release"
+                : ownedValues.contains(temporary) ? "basic_rt_value_release"
+                : ownedDictionaries.contains(temporary) ? "basic_rt_dictionary_release" : "basic_rt_string_release"
             out.emit("call void @\(release)(ptr \(temporary))")
         }
         owned.removeAll()
         ownedComposites.removeAll()
         ownedClosures.removeAll()
+        ownedValues.removeAll()
+        ownedDictionaries.removeAll()
     }
 
     // MARK: - Expressions
@@ -1025,6 +1328,18 @@ struct FunctionEmitter {
             return (result, false)
         case .element(let variable, let indexes):
             let (array, offset) = elementOffset(variable, indexes)
+            return lowerValue(.element(variable, indexes), fromArray: array, offset: offset)
+        case .intrinsic(let intrinsic, let arguments):
+            return lowerIntrinsic(intrinsic, arguments)
+        default:
+            return lowerValueRest(expression)
+        }
+    }
+
+    /// Loads an element of `variable`'s element type from a computed slot.
+    private mutating func lowerValue(_ expression: BIRExpression, fromArray array: String, offset: String) -> (String, owned: Bool) {
+        guard case .element(let variable, _) = expression else { return ("", false) }
+        do {
             let result = out.temp()
             switch variable.type {
             case .string:
@@ -1035,14 +1350,30 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_array_load_composite(ptr \(array), i64 \(offset))")
                 return (result, false)
             case .boolean:
-                let number = out.temp()
-                out.emit("\(number) = call double @basic_rt_array_load_number(ptr \(array), i64 \(offset))")
-                out.emit("\(result) = fcmp une double \(number), 0.0")
+                out.emit("\(result) = call i1 @basic_rt_array_load_boolean(ptr \(array), i64 \(offset))")
+                return (result, false)
+            case .variant, .array, .closure:
+                out.emit("\(result) = call ptr @basic_rt_array_load_value(ptr \(array), i64 \(offset))")
+                own(result, as: .variant)
+                return (result, true)
+            case .dictionary:
+                out.emit("\(result) = call ptr @basic_rt_array_load_dictionary(ptr \(array), i64 \(offset))")
                 return (result, false)
             default:
                 out.emit("\(result) = call double @basic_rt_array_load_number(ptr \(array), i64 \(offset))")
                 return (result, false)
             }
+        }
+    }
+
+    /// The remaining expression forms.
+    private mutating func lowerValueRest(_ expression: BIRExpression) -> (String, owned: Bool) {
+        switch expression {
+        case .elementOf(let arrayExpression, let indexes, let name):
+            let (arrayPointer, _) = lowerValue(arrayExpression)
+            let (array, offset) = elementOffset(arrayPointer, name, indexes)
+            let elementType = arrayExpression.type.elementType ?? .number
+            return lowerValue(.element(BIRVariable(name: name, type: elementType, scope: .local, storage: .array(rank: indexes.count)), indexes), fromArray: array, offset: offset)
         case .field(let base, let index, let type):
             let (parent, _) = lowerValue(base)
             let result = out.temp()
@@ -1051,9 +1382,7 @@ struct FunctionEmitter {
                 out.emit("\(result) = call double @basic_rt_composite_get_number(ptr \(parent), i64 \(index))")
                 return (result, false)
             case .boolean:
-                let number = out.temp()
-                out.emit("\(number) = call double @basic_rt_composite_get_number(ptr \(parent), i64 \(index))")
-                out.emit("\(result) = fcmp une double \(number), 0.0")
+                out.emit("\(result) = call i1 @basic_rt_composite_get_boolean(ptr \(parent), i64 \(index))")
                 return (result, false)
             case .string:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_string(ptr \(parent), i64 \(index))")
@@ -1062,7 +1391,128 @@ struct FunctionEmitter {
             case .composite, .void, .closure:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
                 return (result, false)
+            case .array:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_array(ptr \(parent), i64 \(index))")
+                return (result, false)
+            case .variant:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_value(ptr \(parent), i64 \(index))")
+                own(result, as: .variant)
+                return (result, true)
+            case .dictionary:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_dictionary(ptr \(parent), i64 \(index))")
+                return (result, false)
             }
+        case .loadArray(let variable):
+            let result = out.temp()
+            out.emit("\(result) = load ptr, ptr \(slotName(variable))")
+            return (result, false)
+        case .box(let inner):
+            let (value, _) = lowerValue(inner)
+            return (boxedPointer(value, inner.type), true)
+        case .unbox(let inner, let type, let name):
+            let (box, _) = lowerValue(inner)
+            let nameArgument = name.map { constants.constant($0) } ?? "null"
+            let result = out.temp()
+            switch type {
+            case .number, .void:
+                out.emit("\(result) = call double @basic_rt_value_number(ptr \(box), ptr \(nameArgument))")
+                return (result, false)
+            case .string:
+                out.emit("\(result) = call ptr @basic_rt_value_string(ptr \(box), ptr \(nameArgument))")
+                owned.append(result)
+                return (result, true)
+            case .boolean:
+                out.emit("\(result) = call i1 @basic_rt_value_boolean(ptr \(box), ptr \(nameArgument))")
+                return (result, false)
+            case .composite(let typeName):
+                out.emit("\(result) = call ptr @basic_rt_value_composite(ptr \(box), i64 \(module.typeIndex(of: typeName) ?? -1), ptr \(nameArgument))")
+                own(result, as: type)
+                return (result, true)
+            case .dictionary:
+                out.emit("\(result) = call ptr @basic_rt_value_dictionary(ptr \(box), ptr \(nameArgument))")
+                own(result, as: .dictionary)
+                return (result, true)
+            case .closure:
+                out.emit("\(result) = call ptr @basic_rt_value_closure(ptr \(box), ptr \(nameArgument))")
+                own(result, as: type)
+                return (result, true)
+            case .variant, .array:
+                return (box, false)
+            }
+        case .dictionaryGet(let dictionary, let key, let name):
+            let (pointer, _) = lowerValue(dictionary)
+            let (keyValue, _) = lowerValue(key)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_dictionary_get(ptr \(pointer), ptr \(boxedPointer(keyValue, key.type)), ptr \(constants.constant(name)))")
+            own(result, as: .variant)
+            return (result, true)
+        case .valueIndex(let value, let indexes, let name):
+            let (box, _) = lowerValue(value)
+            let list = boxedIndexes(indexes)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_index(ptr \(box), i64 \(indexes.count), ptr \(list), ptr \(constants.constant(name)))")
+            own(result, as: .variant)
+            return (result, true)
+        case .valueField(let value, let field, let name):
+            let (box, _) = lowerValue(value)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_field(ptr \(box), ptr \(constants.constant(field)), ptr \(constants.constant(name)))")
+            own(result, as: .variant)
+            return (result, true)
+        case .valueAdd(let left, let right):
+            let l = lowerValue(left).0
+            let r = lowerValue(right).0
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_add(ptr \(l), ptr \(r))")
+            own(result, as: .variant)
+            return (result, true)
+        case .valueEqual(let left, let right):
+            let l = lowerValue(left).0
+            let r = lowerValue(right).0
+            let flag = out.temp()
+            out.emit("\(flag) = call i1 @basic_rt_value_equal(ptr \(l), ptr \(r))")
+            let result = out.temp()
+            out.emit("\(result) = uitofp i1 \(flag) to double")
+            return (result, false)
+        case .valueLen(let value):
+            let (box, _) = lowerValue(value)
+            let result = out.temp()
+            out.emit("\(result) = call double @basic_rt_value_len(ptr \(box))")
+            return (result, false)
+        case .arrayLen(let array, let name):
+            let (pointer, _) = lowerValue(array)
+            let result = out.temp()
+            out.emit("\(result) = call double @basic_rt_array_count(ptr \(pointer), ptr \(constants.constant(name)))")
+            return (result, false)
+        case .jsonEncode(let value, let pretty):
+            let (box, _) = lowerValue(value)
+            let flag = truthiness(of: pretty)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_json_encode(ptr \(box), i1 \(flag))")
+            owned.append(result)
+            return (result, true)
+        case .jsonDecode(let source, let permissive):
+            let (text, _) = lowerValue(source)
+            let flag = truthiness(of: permissive)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_json_decode(ptr \(text), i1 \(flag))")
+            own(result, as: .variant)
+            return (result, true)
+        case .emptyValue:
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_empty()")
+            own(result, as: .variant)
+            return (result, true)
+        case .nullValue:
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_value_null()")
+            own(result, as: .variant)
+            return (result, true)
+        case .newDictionary:
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_dictionary_new()")
+            own(result, as: .dictionary)
+            return (result, true)
         case .fileService(let method, let arguments, _):
             return lowerFileService(method, arguments)
         case .makeClosure(let functionName, let environment, let captures, _):
@@ -1079,6 +1529,8 @@ struct FunctionEmitter {
                         out.emit("\(number) = uitofp i1 \(value) to double")
                         out.emit("call void @basic_rt_composite_set_number(ptr \(created), i64 \(index), double \(number))")
                     case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(created), i64 \(index), ptr \(value))")
+                    case .variant, .dictionary:
+                        out.emit("call void @basic_rt_composite_set_value(ptr \(created), i64 \(index), ptr \(boxedPointer(value, capture.type)), ptr \(constants.constant("capture")))")
                     default: out.emit("call void @basic_rt_composite_set_composite(ptr \(created), i64 \(index), ptr \(value))")
                     }
                 }
@@ -1150,6 +1602,11 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
                 owned.append(result)
                 return (result, true)
+            case .variant, .dictionary, .array:
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_value_text(ptr \(boxedPointer(value, inner.type)))")
+                owned.append(result)
+                return (result, true)
             case .boolean, .void:
                 let text = out.temp()
                 out.emit("\(text) = select i1 \(value), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
@@ -1201,8 +1658,8 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = uitofp i1 \(flag) to double")
             return (result, false)
-        case .intrinsic(let intrinsic, let arguments):
-            return lowerIntrinsic(intrinsic, arguments)
+        default:
+            return ("", false)
         }
     }
 
@@ -1269,6 +1726,10 @@ struct FunctionEmitter {
             out.emit("\(flag) = icmp \(op == .equal ? "eq" : "ne") i1 \(l), \(r)")
         case .composite, .closure:
             out.emit("\(flag) = icmp eq ptr \(l), \(r)")
+        case .variant, .dictionary, .array:
+            let equal = out.temp()
+            out.emit("\(equal) = call i1 @basic_rt_value_equal(ptr \(boxedPointer(l, left.type)), ptr \(boxedPointer(r, right.type)))")
+            out.emit("\(flag) = \(op == .equal ? "and i1 \(equal), true" : "xor i1 \(equal), true")")
         case .string, .void:
             switch op {
             case .equal:
@@ -1308,8 +1769,12 @@ struct FunctionEmitter {
             let flag = out.temp()
             out.emit("\(flag) = call i1 @basic_rt_string_truthy(ptr \(value))")
             return flag
-        case .composite, .closure:
+        case .composite, .closure, .dictionary, .array:
             return "true"
+        case .variant:
+            let flag = out.temp()
+            out.emit("\(flag) = call i1 @basic_rt_value_truthy(ptr \(value))")
+            return flag
         }
     }
 
@@ -1385,7 +1850,7 @@ struct FunctionEmitter {
     static func llvmType(_ type: BIRType) -> String {
         switch type {
         case .number: return "double"
-        case .string, .composite, .closure: return "ptr"
+        case .string, .composite, .closure, .variant, .dictionary, .array: return "ptr"
         case .boolean: return "i1"
         case .void: return "void"
         }
@@ -1394,7 +1859,7 @@ struct FunctionEmitter {
     static func zero(_ type: BIRType) -> String {
         switch type {
         case .number: return "0.0"
-        case .string, .composite, .closure: return "null"
+        case .string, .composite, .closure, .variant, .dictionary, .array: return "null"
         case .boolean: return "false"
         case .void: return ""
         }

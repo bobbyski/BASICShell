@@ -1,0 +1,43 @@
+JSON TEST SUITE
+CLASS DEFAULTS
+{"badge":"defaultBadge","enabled":true,"missing":null}
+CLASS ALIASES AND EXCLUDES
+{"badge":"READY","count":7,"enabled":true,"missing":null,"title":"Quarterly"}
+PRETTY JSON
+HAS TITLE =   1
+HAS LOCALONLY =             0
+RECORD JSON
+{"age":0,"grade":0,"name":"Unknown"}
+{"age":16,"grade":99.5,"name":"Ada"}
+DICTIONARY JSON
+{"active":true,"missing":null,"name":"Grace","score":98.5}
+ARRAY JSON
+[10,20,30]
+{"active":true,"missing":null,"name":"Grace","score":98.5,"scores":[10,20,30]}
+PARSE OBJECT
+Katherine
+TRUE
+NULL
+88
+TYPED DECODE
+Katherine
+15
+91.5
+{"badge":"OK","count":4,"enabled":true,"missing":null,"title":"Decoded"}
+12
+OS
+2
+2
+{"name":"OS","students":[{"age":0,"grade":0,"name":"Ada"},{"age":0,"grade":0,"name":"Grace"}],"studentsByRowAndSeat":[[{"age":0,"grade":0,"name":"Ada"}],[{"age":0,"grade":0,"name":"Grace"}]]}
+4
+4
+PARSE ARRAY
+1
+NULL
+two
+TRUE
+PARSE FRAGMENTS
+NULL
+123
+solo
+JSON TESTS COMPLETE

@@ -70,14 +70,16 @@ public struct BIRPrinter {
             return "store \(variable.name) <- \(render(value))"
         case .storeElement(let variable, let indexes, let value):
             return "store \(variable.name)(\(indexes.map(render).joined(separator: ", "))) <- \(render(value))"
-        case .storeField(let place, let value):
+        case .storeField(let place, let value), .storePlace(let place, let value):
             return "store \(render(place)) <- \(render(value))"
+        case .assignArray(let place, let value):
+            return "assign array \(render(place)) <- \(render(value))"
         case .callMethod(let receiver, let candidates, let arguments, let result):
             let target = candidates.count == 1 ? candidates[0].function : "virtual[" + candidates.map(\.function).joined(separator: "|") + "]"
             let call = "call \(render(receiver)).\(target)(" + arguments.map(render).joined(separator: ", ") + ")"
             return result.map { "store \($0.name) <- " + call } ?? call
         case .dim(let variable, let bounds):
-            return "dim \(variable.name)(\(bounds.map(render).joined(separator: ", ")))"
+            return "dim \(variable.name)(\(bounds.map { $0.map(render) ?? "*" }.joined(separator: ", ")))"
         case .call(let name, let arguments):
             return "call \(name)(\(arguments.map(render).joined(separator: ", ")))"
         case .read(let targets):
@@ -174,6 +176,10 @@ public struct BIRPrinter {
         case .variable(let variable): return variable.name
         case .element(let variable, let indexes): return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
         case .field(let base, let index, _): return "\(render(base)).#\(index)"
+        case .arrayElement(let base, let indexes, _): return "\(render(base))(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .dictionaryEntry(let base, let key, _): return "\(render(base))(\(render(key)))"
+        case .valueEntry(let base, let indexes, _): return "\(render(base))(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .valueField(let base, let field, _): return "\(render(base)).\(field)"
         }
     }
 
@@ -223,6 +229,38 @@ public struct BIRPrinter {
         case .callMethod(let receiver, let candidates, let arguments, _):
             let target = candidates.count == 1 ? candidates[0].function : "virtual[" + candidates.map(\.function).joined(separator: "|") + "]"
             return "\(render(receiver)).\(target)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .loadArray(let variable):
+            return "\(variable.name)()"
+        case .elementOf(let array, let indexes, _):
+            return "\(render(array))(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .box(let value):
+            return "box(\(render(value)))"
+        case .unbox(let value, let type, _):
+            return "unbox<\(type.name)>(\(render(value)))"
+        case .dictionaryGet(let dictionary, let key, _):
+            return "\(render(dictionary))(\(render(key)))"
+        case .valueIndex(let value, let indexes, _):
+            return "\(render(value))(" + indexes.map(render).joined(separator: ", ") + ")"
+        case .valueField(let value, let field, _):
+            return "\(render(value)).\(field)"
+        case .valueAdd(let left, let right):
+            return "(\(render(left)) + \(render(right)))"
+        case .valueEqual(let left, let right):
+            return "(\(render(left)) = \(render(right)))"
+        case .valueLen(let value):
+            return "LEN(\(render(value)))"
+        case .arrayLen(let array, _):
+            return "LEN(\(render(array)))"
+        case .jsonEncode(let value, let pretty):
+            return "TOJSONSTRING(\(render(value)), \(render(pretty)))"
+        case .jsonDecode(let source, let permissive):
+            return "FROMJSONSTRING(\(render(source)), \(render(permissive)))"
+        case .emptyValue:
+            return "EMPTY"
+        case .nullValue:
+            return "NULL"
+        case .newDictionary:
+            return "new DICTIONARY"
         }
     }
 }

@@ -32,6 +32,13 @@ public enum BIRType: Sendable, Hashable {
     /// A closure with the named signature (a `FUNCTION TYPE`, or one the
     /// compiler made for a closure literal).
     case closure(String)
+    /// `VARIANT`: any runtime value, boxed — the interpreter's `BASICValue`.
+    case variant
+    /// `DICTIONARY`: string keys to variant values.
+    case dictionary
+    /// A whole array of `rank` dimensions, as a value: an array field, or an
+    /// array variable used whole (`LEN(a)`, `d("k") = a`, `a = FromJsonString(…)`).
+    indirect case array(BIRType, rank: Int)
 
     /// The type as diagnostics spell it.
     public var name: String {
@@ -42,7 +49,28 @@ public enum BIRType: Sendable, Hashable {
         case .void: return "void"
         case .composite(let typeName): return typeName
         case .closure(let signature): return signature
+        case .variant: return "variant"
+        case .dictionary: return "dictionary"
+        case .array(let element, _): return "array of \(element.name)"
         }
+    }
+
+    /// Whether this is `VARIANT`.
+    public var isVariant: Bool { self == .variant }
+
+    /// Whether this is `DICTIONARY`.
+    public var isDictionary: Bool { self == .dictionary }
+
+    /// Whether this is a whole array.
+    public var isArray: Bool {
+        if case .array = self { return true }
+        return false
+    }
+
+    /// For an array type, its element type.
+    public var elementType: BIRType? {
+        if case .array(let element, _) = self { return element }
+        return nil
     }
 
     /// Whether values of this type live in the runtime (pointers).
@@ -84,13 +112,18 @@ public struct BIRVariable: Sendable, Hashable {
     public let scope: BIRScope
     /// Scalar or array.
     public let storage: BIRStorage
+    /// Whether a `.number` was declared `INTEGER` (or has the `%` suffix):
+    /// the runtime names it so and checks whole values on stores into
+    /// arrays, as the interpreter does.
+    public let isInteger: Bool
 
     /// Creates a variable.
-    public init(name: String, type: BIRType, scope: BIRScope, storage: BIRStorage = .scalar) {
+    public init(name: String, type: BIRType, scope: BIRScope, storage: BIRStorage = .scalar, isInteger: Bool = false) {
         self.name = name
         self.type = type
         self.scope = scope
         self.storage = storage
+        self.isInteger = isInteger
     }
 
     /// The rank when this is an array, else nil.

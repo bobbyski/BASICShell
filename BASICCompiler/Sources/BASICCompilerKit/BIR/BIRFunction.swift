@@ -21,13 +21,27 @@ public indirect enum BIRPlace: Sendable {
     case variable(BIRVariable)
     case element(BIRVariable, [BIRExpression])
     case field(BIRPlace, index: Int, type: BIRType)
+    /// An element of an array-typed place (an array field, or an array
+    /// variable as a place).
+    case arrayElement(BIRPlace, [BIRExpression], name: String)
+    /// `d(key)` of a dictionary-typed place.
+    case dictionaryEntry(BIRPlace, key: BIRExpression, name: String)
+    /// `v(i, …)` of a VARIANT-typed place holding an array or dictionary.
+    case valueEntry(BIRPlace, [BIRExpression], name: String)
+    /// `v.Field` of a VARIANT-typed place holding a record or object.
+    case valueField(BIRPlace, field: String, name: String)
 
-    /// The type of the value the place holds.
+    /// The type of the value the place holds. An array variable as a place
+    /// has its whole-array type.
     public var type: BIRType {
         switch self {
-        case .variable(let variable): return variable.type
+        case .variable(let variable):
+            if let rank = variable.rank { return .array(variable.type, rank: rank) }
+            return variable.type
         case .element(let variable, _): return variable.type
         case .field(_, _, let type): return type
+        case .arrayElement(let base, _, _): return base.type.elementType ?? .number
+        case .dictionaryEntry, .valueEntry, .valueField: return .variant
         }
     }
 }
@@ -68,13 +82,20 @@ public enum BIROperation: Sendable {
     case storeElement(BIRVariable, [BIRExpression], BIRExpression)
     /// Stores a value into a field, mutating the record in place.
     case storeField(BIRPlace, BIRExpression)
+    /// Stores a value into any other place: an element of an array field, a
+    /// dictionary entry, or an entry reached through a VARIANT.
+    case storePlace(BIRPlace, BIRExpression)
+    /// `a = value` for a whole array (a variable or an array field): the
+    /// boxed value is coerced to the array's declared shape, in place.
+    case assignArray(BIRPlace, BIRExpression)
     /// Calls a method on the record at `receiver`: the receiver is copied
     /// in as `ME`, and written back afterwards — the interpreter's value
     /// semantics. The result, if any, lands in `result`. `candidates` has one
     /// entry for a statically bound call, more for a virtual one.
     case callMethod(receiver: BIRPlace, candidates: [BIRMethodCandidate], arguments: [BIRExpression], result: BIRVariable?)
-    /// `DIM`: (re)creates an array with the given upper bounds.
-    case dim(BIRVariable, [BIRExpression])
+    /// `DIM`: (re)creates an array with the given upper bounds; nil is an
+    /// open `*` dimension (a dynamic array, empty until assigned).
+    case dim(BIRVariable, [BIRExpression?])
     /// Calls a `FUNCTION` for its effect, discarding any value.
     case call(String, [BIRExpression])
     /// `READ` the next DATA items into the targets.
@@ -260,19 +281,40 @@ public struct BIRFunction: Sendable {
     }
 }
 
+/// A field's declared default value.
+public enum BIRDefault: Sendable, Hashable {
+    case number(Double)
+    case string(String)
+    case boolean(Bool)
+    case null
+    case empty
+}
+
 /// One field of a composite type.
 public struct BIRField: Sendable {
+    /// The normalized name.
     public let name: String
+    /// The name as written.
+    public let displayName: String
+    /// The field's type; an array field has an `.array` type.
     public let type: BIRType
+    /// Declared bounds for an array field (nil entries are `*`).
+    public let dimensions: [Int?]
+    /// The `json name`, when the field takes part in JSON.
+    public let jsonName: String?
     /// The declared default, when the field has one.
-    public let defaultNumber: Double?
-    public let defaultString: String?
+    public let defaultValue: BIRDefault?
+    /// Whether a numeric field (or array of numbers) was declared INTEGER.
+    public let isInteger: Bool
 
-    public init(name: String, type: BIRType, defaultNumber: Double? = nil, defaultString: String? = nil) {
+    public init(name: String, displayName: String? = nil, type: BIRType, dimensions: [Int?] = [], jsonName: String? = nil, defaultValue: BIRDefault? = nil, isInteger: Bool = false) {
         self.name = name
+        self.displayName = displayName ?? name
         self.type = type
-        self.defaultNumber = defaultNumber
-        self.defaultString = defaultString
+        self.dimensions = dimensions
+        self.jsonName = jsonName
+        self.defaultValue = defaultValue
+        self.isInteger = isInteger
     }
 }
 
@@ -299,12 +341,18 @@ public struct BIRCompositeType: Sendable {
     public let index: Int
     /// All fields, inherited ones first.
     public let fields: [BIRField]
+    /// Whether this is a CLASS (else a TYPE record).
+    public let isClass: Bool
+    /// The base class's type index, when there is one.
+    public let base: Int?
 
-    public init(name: String, displayName: String, index: Int, fields: [BIRField]) {
+    public init(name: String, displayName: String, index: Int, fields: [BIRField], isClass: Bool = false, base: Int? = nil) {
         self.name = name
         self.displayName = displayName
         self.index = index
         self.fields = fields
+        self.isClass = isClass
+        self.base = base
     }
 }
 

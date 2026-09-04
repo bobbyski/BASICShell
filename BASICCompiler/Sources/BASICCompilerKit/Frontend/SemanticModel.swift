@@ -43,8 +43,15 @@ public final class SemanticModel {
         public let visibility: BASICMemberVisibility
         /// The class or record that declared it.
         public let owner: String
-        public let defaultNumber: Double?
-        public let defaultString: String?
+        /// Declared bounds for an array field (nil entries are `*`); empty
+        /// for a scalar field.
+        public let dimensions: [Int?]
+        /// The `json name`, when the field takes part in JSON.
+        public let jsonName: String?
+        /// The declared default, when the field has one.
+        public let defaultValue: BIRDefault?
+        /// Whether a numeric field was declared INTEGER.
+        public let isInteger: Bool
     }
 
     /// A `TYPE`, `CLASS`, or `INTERFACE`.
@@ -71,6 +78,8 @@ public final class SemanticModel {
         var type: BIRType?
         var rank: Int?
         var wasDimensioned = false
+        /// Declared INTEGER (or `%`-suffixed).
+        var isInteger = false
     }
 
     /// Whether `OPTION LOCAL-LET` is in effect for the program.
@@ -174,7 +183,7 @@ public final class SemanticModel {
         let known = info(name, in: function)
         let type = known?.type ?? SemanticAnalyzer.suffixType(name) ?? .number
         let storage: BIRStorage = known?.rank.map { .array(rank: $0) } ?? .scalar
-        return BIRVariable(name: name, type: type, scope: scope, storage: storage)
+        return BIRVariable(name: name, type: type, scope: scope, storage: storage, isInteger: (known?.isInteger ?? false) || name.hasSuffix("%"))
     }
 
     /// All globals, in first-seen order.
@@ -261,6 +270,9 @@ public final class SemanticModel {
     /// an interface.
     public func isAssignable(_ source: BIRType, to target: BIRType) -> Bool {
         if source == target { return true }
+        // Anything boxes into a VARIANT; a VARIANT unboxes into anything,
+        // checked at runtime with the interpreter's messages.
+        if source == .variant || target == .variant { return true }
         if let from = signature(of: source), let to = signature(of: target) {
             return from.parameterTypes == to.parameterTypes && from.returnType == to.returnType
         }

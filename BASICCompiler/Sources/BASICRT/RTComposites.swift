@@ -4,67 +4,30 @@ import Foundation
 //
 // In the interpreter both are dictionaries held *by value*: assigning one
 // copies it, and a method call copies the receiver in and writes it back.
-// The runtime keeps that shape: an RTComposite is a typed slot list, copied
-// deeply on every store that is not a transfer of a fresh value.
+// The runtime keeps that shape: an RTComposite is a slot list of RTValues,
+// copied deeply on every store that is not a transfer of a fresh value.
 //
-// Types are registered at program start from the compiler's tables, so the
-// runtime can build defaults, copy, and print `<Name>` without the compiler
-// emitting per-type code.
-
-/// One registered TYPE or CLASS.
-final class RTCompositeType {
-    let name: String
-    /// Field kinds: 0 number, 1 string, 2 boolean, 3 composite.
-    let kinds: [UInt8]
-    /// For composite fields, the field's type index; else -1.
-    let subtypes: [Int]
-    let defaultNumbers: [Double]
-    let defaultStrings: [String?]
-
-    init(name: String, kinds: [UInt8], subtypes: [Int], defaultNumbers: [Double], defaultStrings: [String?]) {
-        self.name = name
-        self.kinds = kinds
-        self.subtypes = subtypes
-        self.defaultNumbers = defaultNumbers
-        self.defaultStrings = defaultStrings
-    }
-}
-
-enum RTTypes {
-    nonisolated(unsafe) static var registry: [RTCompositeType?] = []
-
-    static func type(_ index: Int) -> RTCompositeType {
-        guard index >= 0, index < registry.count, let type = registry[index] else {
-            basic_rt_fail("Unknown TYPE or CLASS #\(index)")
-        }
-        return type
-    }
-}
+// Types are registered at program start from the compiler's descriptors, so
+// the runtime can build defaults, copy, print `<Name>`, decode JSON, and
+// find fields by name without the compiler emitting per-type code.
 
 /// The runtime's record/object.
 public final class RTComposite {
     let typeIndex: Int
-    var numbers: [Double]
-    var strings: [RTString?]
-    var composites: [RTComposite?]
+    /// One value per field, in the registered slot order.
+    var fields: [RTValue]
 
-    /// A default instance: numbers 0 (or the field default), strings ""
-    /// (or the default), nested composites built eagerly.
+    /// A default instance: every field its declared default (or its
+    /// type's), nested records and arrays built eagerly.
     init(typeIndex: Int) {
         let type = RTTypes.type(typeIndex)
         self.typeIndex = typeIndex
-        numbers = type.defaultNumbers
-        strings = type.defaultStrings.map { $0.map(RTString.init) }
-        composites = type.kinds.enumerated().map { index, kind in
-            kind == 3 ? RTComposite(typeIndex: type.subtypes[index]) : nil
-        }
+        fields = type.fields.map { RTTypes.defaultValue(for: $0) }
     }
 
     private init(copying other: RTComposite) {
         typeIndex = other.typeIndex
-        numbers = other.numbers
-        strings = other.strings
-        composites = other.composites.map { $0.map { RTComposite(copying: $0) } }
+        fields = other.fields.map { $0.copied() }
     }
 
     /// A deep copy — value semantics.
@@ -74,9 +37,7 @@ public final class RTComposite {
 
     /// Take another instance's contents, keeping this identity.
     func assign(from other: RTComposite) {
-        numbers = other.numbers
-        strings = other.strings
-        composites = other.composites.map { $0.map { RTComposite(copying: $0) } }
+        fields = other.fields.map { $0.copied() }
     }
 }
 
@@ -91,21 +52,10 @@ func rtOwned(_ composite: RTComposite) -> UnsafeMutableRawPointer {
     Unmanaged.passRetained(composite).toOpaque()
 }
 
-/// Registers type `index`. Tables are the compiler's constants and stay alive.
+/// Registers type `index` from its JSON descriptor.
 @_cdecl("basic_rt_type_register")
-public func basic_rt_type_register(
-    _ index: Int, _ name: UnsafePointer<CChar>, _ fieldCount: Int,
-    _ kinds: UnsafePointer<UInt8>, _ subtypes: UnsafePointer<Int>,
-    _ defaultNumbers: UnsafePointer<Double>, _ defaultStrings: UnsafePointer<UnsafePointer<CChar>?>
-) {
-    while RTTypes.registry.count <= index { RTTypes.registry.append(nil) }
-    RTTypes.registry[index] = RTCompositeType(
-        name: String(cString: name),
-        kinds: (0..<fieldCount).map { kinds[$0] },
-        subtypes: (0..<fieldCount).map { subtypes[$0] },
-        defaultNumbers: (0..<fieldCount).map { defaultNumbers[$0] },
-        defaultStrings: (0..<fieldCount).map { defaultStrings[$0].map { String(cString: $0) } }
-    )
+public func basic_rt_type_register(_ index: Int, _ descriptor: UnsafePointer<CChar>) {
+    RTTypes.register(index: index, descriptor: String(cString: descriptor))
 }
 
 @_cdecl("basic_rt_composite_new")
@@ -144,37 +94,108 @@ public func basic_rt_composite_type(_ pointer: UnsafeMutableRawPointer?) -> Int 
 
 @_cdecl("basic_rt_composite_get_number")
 public func basic_rt_composite_get_number(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> Double {
-    rtComposite(pointer).numbers[field]
+    rtComposite(pointer).fields[field].number ?? 0
 }
 
 @_cdecl("basic_rt_composite_set_number")
 public func basic_rt_composite_set_number(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: Double) {
-    rtComposite(pointer).numbers[field] = value
+    rtComposite(pointer).fields[field] = .number(value)
+}
+
+@_cdecl("basic_rt_composite_get_boolean")
+public func basic_rt_composite_get_boolean(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> Bool {
+    rtComposite(pointer).fields[field].truthy
+}
+
+@_cdecl("basic_rt_composite_set_boolean")
+public func basic_rt_composite_set_boolean(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: Bool) {
+    rtComposite(pointer).fields[field] = .boolean(value)
 }
 
 /// Owned (+1); nil when the field is empty.
 @_cdecl("basic_rt_composite_get_string")
 public func basic_rt_composite_get_string(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer? {
-    guard let string = rtComposite(pointer).strings[field] else { return nil }
-    return Unmanaged.passRetained(string).toOpaque()
+    guard let string = rtComposite(pointer).fields[field].string, !string.isEmpty else { return nil }
+    return rtOwned(string)
 }
 
 @_cdecl("basic_rt_composite_set_string")
 public func basic_rt_composite_set_string(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: UnsafeMutableRawPointer?) {
-    rtComposite(pointer).strings[field] = value.map { Unmanaged<RTString>.fromOpaque($0).takeUnretainedValue() }
+    rtComposite(pointer).fields[field] = .string(rtText(value))
 }
 
 /// Borrowed: the nested record itself, so `a.b.c = 1` mutates in place.
+/// A NULL or EMPTY object field is materialized as a default instance.
 @_cdecl("basic_rt_composite_get_composite")
 public func basic_rt_composite_get_composite(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer? {
-    guard let nested = rtComposite(pointer).composites[field] else { return nil }
+    let composite = rtComposite(pointer)
+    if case .composite(let nested) = composite.fields[field] {
+        return Unmanaged.passUnretained(nested).toOpaque()
+    }
+    guard case .composite(let index) = RTTypes.type(composite.typeIndex).fields[field].type else { return nil }
+    let nested = RTComposite(typeIndex: index)
+    composite.fields[field] = .composite(nested)
     return Unmanaged.passUnretained(nested).toOpaque()
 }
 
 /// Stores a deep copy of `value` into the field.
 @_cdecl("basic_rt_composite_set_composite")
 public func basic_rt_composite_set_composite(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: UnsafeMutableRawPointer?) {
-    rtComposite(pointer).composites[field] = value.map { rtComposite($0).copy() }
+    rtComposite(pointer).fields[field] = value.map { .composite(rtComposite($0).copy()) } ?? .empty
+}
+
+/// Borrowed: the array held by an array field, so elements mutate in place.
+@_cdecl("basic_rt_composite_get_array")
+public func basic_rt_composite_get_array(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer {
+    let composite = rtComposite(pointer)
+    if case .array(let array) = composite.fields[field] {
+        return Unmanaged.passUnretained(array).toOpaque()
+    }
+    let fieldType = RTTypes.type(composite.typeIndex).fields[field].type
+    guard case .array(let element, let dims) = fieldType else { basic_rt_fail("Field is not an array") }
+    let array = RTArray(element: element, dims: dims)
+    composite.fields[field] = .array(array)
+    return Unmanaged.passUnretained(array).toOpaque()
+}
+
+/// `rec.Items = value`: the value (a boxed array) coerced to the field's
+/// declared shape, as assigning to an array variable does.
+@_cdecl("basic_rt_composite_set_array")
+public func basic_rt_composite_set_array(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>) {
+    let composite = rtComposite(pointer)
+    let info = RTTypes.type(composite.typeIndex).fields[field]
+    do throws(RTFailure) {
+        composite.fields[field] = try RTCoerce.coerce(rtValue(value), to: info.type, name: String(cString: name))
+    } catch { error.raise() }
+}
+
+/// A VARIANT or DICTIONARY field, boxed and owned (a copy).
+@_cdecl("basic_rt_composite_get_value")
+public func basic_rt_composite_get_value(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer {
+    rtOwned(rtComposite(pointer).fields[field].copied())
+}
+
+/// Stores a boxed value into a VARIANT field (a copy), or into a DICTIONARY
+/// field with the interpreter's coercion.
+@_cdecl("basic_rt_composite_set_value")
+public func basic_rt_composite_set_value(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ value: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>) {
+    let composite = rtComposite(pointer)
+    let info = RTTypes.type(composite.typeIndex).fields[field]
+    do throws(RTFailure) {
+        composite.fields[field] = try RTCoerce.coerce(rtValue(value).copied(), to: info.type, name: String(cString: name))
+    } catch { error.raise() }
+}
+
+/// Borrowed dictionary held by a DICTIONARY field.
+@_cdecl("basic_rt_composite_get_dictionary")
+public func basic_rt_composite_get_dictionary(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer {
+    let composite = rtComposite(pointer)
+    if case .dictionary(let dictionary) = composite.fields[field] {
+        return Unmanaged.passUnretained(dictionary).toOpaque()
+    }
+    let dictionary = RTDictionary()
+    composite.fields[field] = .dictionary(dictionary)
+    return Unmanaged.passUnretained(dictionary).toOpaque()
 }
 
 /// `PRINT` of a record or object: `<Name>`.

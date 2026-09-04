@@ -34,9 +34,14 @@ public struct BIRBuilder {
         module.types = model.typeOrder.compactMap { name -> BIRCompositeType? in
             let type = model.types[name]!
             guard type.kind != .interface else { return nil }
-            return BIRCompositeType(name: name, displayName: type.displayName, index: type.index, fields: model.allFields(of: name).map {
-                BIRField(name: $0.name, type: $0.type, defaultNumber: $0.defaultNumber, defaultString: $0.defaultString)
-            })
+            return BIRCompositeType(
+                name: name, displayName: type.displayName, index: type.index,
+                fields: model.allFields(of: name).map {
+                    BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger)
+                },
+                isClass: type.kind == .classType,
+                base: type.base.flatMap { model.types[$0]?.index }
+            )
         }
 
         let closures = ClosureContext(firstTypeIndex: module.types.count)
@@ -138,6 +143,22 @@ final class FunctionBuilder {
     /// BASICShell turns this on for every program it runs, so a compiled
     /// program starts the same way; tracked in program order from there.
     var substitutesStrings = true
+    /// The function's result slot: `Name = value` inside `FUNCTION Name`
+    /// sets the value the function returns when it falls off the end (the
+    /// interpreter's frame `returnValue`).
+    private var resultSlot: BIRVariable?
+    /// The bare (class-less) normalized name of the function being built.
+    private var shortFunctionName: String? {
+        guard let signature else { return nil }
+        return signature.name.split(separator: ".").last.map(String.init)
+    }
+
+    /// The value a fall-off return yields: the result slot when the body
+    /// assigned to the function's name, else the type's default.
+    private func fallOffReturn() -> BIRTerminator {
+        if let resultSlot { return .ret(.load(resultSlot)) }
+        return .ret(nil)
+    }
 
     /// One open IF / FOR / SELECT.
     private enum Frame {
@@ -222,7 +243,7 @@ final class FunctionBuilder {
             }
             try lower(line.statement)
         }
-        terminate(signature == nil && closureLines == nil ? .end : .ret(nil))
+        terminate(signature == nil && closureLines == nil ? .end : fallOffReturn())
         guard frames.isEmpty else {
             throw CompileError(unterminatedFrameMessage(), at: location)
         }
@@ -252,6 +273,8 @@ final class FunctionBuilder {
                 }
             } else if case .composite(let typeName) = variable.type, model.types[typeName] != nil, model.types[typeName]?.kind != .interface {
                 emit(.store(variable, .construct(typeName)))
+            } else if variable.type == .dictionary {
+                emit(.store(variable, .newDictionary))
             }
         }
     }
@@ -390,33 +413,46 @@ final class FunctionBuilder {
                 .map(lowerPrintPart)
             emit(.print(items, newline: !(parts.last?.suppressesNewline ?? false)))
 
-        case .assignment(let kind, let name, _, let value):
+        case .assignment(let kind, let name, let declared, let value):
+            if let signature, kind != .global, name.normalized == shortFunctionName, signature.returnType != .void {
+                // `Name = value` inside FUNCTION Name sets the result.
+                guard declared == nil else { throw CompileError("Type error: Cannot redeclare function return \(name.name)", at: location) }
+                if resultSlot == nil { resultSlot = hidden("result", signature.returnType) }
+                guard let value, let stored = try lowerAssigned(value, to: signature.returnType, name: signature.displayName) else { return }
+                emit(.store(resultSlot!, stored))
+                return
+            }
             var target = variable(name)
             if kind == .global, signature != nil {
                 target = model.variable(name.normalized, in: nil)
             }
-            guard target.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
+            if target.rank != nil {
+                // `a = value` for a whole array: the interpreter's coerceArray.
+                guard let value else { return }
+                emit(.assignArray(.variable(target), boxed(try lowerExpression(value))))
+                return
+            }
             if value == nil, isInterface(target.type) || target.type.isClosure { return }
             guard let stored = try value.map({ try lowerAssigned($0, to: target.type, name: name.name) }) ?? defaultValue(for: target.type) else { return }
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
             let place = try lowerPlace(reference)
-            guard let stored = try value.map({ try lowerAssigned($0, to: place.type, name: reference.base.name) }) ?? defaultValue(for: place.type) else { return }
-            switch place {
-            case .variable(let target): emit(.store(target, stored))
-            case .element(let target, let indexes): emit(.storeElement(target, indexes, stored))
-            case .field: emit(.storeField(place, stored))
+            if place.type.isArray {
+                guard let value else { return }
+                emit(.assignArray(place, boxed(try lowerExpression(value))))
+                return
             }
+            guard let stored = try value.map({ try lowerAssigned($0, to: place.type, name: reference.base.name) }) ?? defaultValue(for: place.type) else { return }
+            emitStore(place, stored)
         case .dim(_, let name, let dimensions, _):
             let target = variable(name)
             if dimensions.isEmpty {
                 // An interface- or closure-typed slot starts empty, like the interpreter's.
                 if !isInterface(target.type), !target.type.isClosure { emit(.store(target, defaultValue(for: target.type))) }
             } else {
-                let bounds = try dimensions.map { dimension -> BIRExpression in
-                    guard let dimension else { throw unsupported("DIM with an open dimension") }
-                    return try lowerExpression(dimension, expecting: .number, context: "DIM \(name.name)")
+                let bounds = try dimensions.map { dimension -> BIRExpression? in
+                    try dimension.map { try lowerExpression($0, expecting: .number, context: "DIM \(name.name)") }
                 }
                 emit(.dim(target, bounds))
             }
@@ -523,7 +559,7 @@ final class FunctionBuilder {
         case .computedGosub(let targets, let selector):
             try lowerComputedJump(targets: targets, selector: selector, isGosub: true)
         case .end:
-            terminate(.end)
+            terminate(signature != nil ? fallOffReturn() : .end)
 
         case .returnValue(let expression):
             if closureLines != nil, let closureReturn = closureSignatureReturn {
@@ -538,7 +574,7 @@ final class FunctionBuilder {
             terminate(.ret(try lowerExpression(expression, expecting: signature.returnType, context: "RETURN")))
         case .exitFunction:
             guard signature != nil || closureLines != nil else { emit(.fail("EXIT FUNCTION outside FUNCTION")); return }
-            terminate(.ret(nil))
+            terminate(fallOffReturn())
         case .expression(let expression):
             try lowerExpressionStatement(expression)
 
@@ -694,18 +730,46 @@ final class FunctionBuilder {
     /// Returns nil when the statement became the failure.
     private func lowerAssigned(_ expression: Expression, to type: BIRType, name: String) throws -> BIRExpression? {
         let lowered = try lowerExpression(expression)
-        if lowered.type == type || model.isAssignable(lowered.type, to: type) { return lowered }
+        if lowered.type == type { return lowered }
+        if type == .variant || lowered.type == .variant { return convert(lowered, to: type, name: name) }
+        if model.isAssignable(lowered.type, to: type) { return lowered }
         let message: String
         switch type {
         case .number: message = "Cannot assign non-numeric value to \(name)"
         case .string: message = "Cannot assign non-string value to \(name)"
         case .boolean: message = "Boolean \(name) must be FALSE, TRUE, 0, or 1"
         case .composite(let typeName): message = "Cannot assign non-\(model.types[typeName]?.displayName ?? typeName) value to \(name)"
-        case .closure: message = "Type Mismatch"
-        case .void: message = "Cannot assign to \(name)"
+        case .dictionary: message = "Cannot assign non-dictionary value to \(name)"
+        case .closure, .array: message = "Type Mismatch"
+        case .void, .variant: message = "Cannot assign to \(name)"
         }
         emit(.failType(message))
         return nil
+    }
+
+    /// A value as a VARIANT: itself when it already is one, else boxed.
+    private func boxed(_ value: BIRExpression) -> BIRExpression {
+        value.type == .variant ? value : .box(value)
+    }
+
+    /// Converts across the VARIANT boundary: boxes into it, unboxes out of
+    /// it (checked at runtime). `name` makes the failure the assignment's
+    /// type error; nil makes it the expression's runtime error.
+    private func convert(_ value: BIRExpression, to type: BIRType, name: String?) -> BIRExpression {
+        if value.type == type { return value }
+        if type == .variant { return .box(value) }
+        if value.type == .variant { return .unbox(value, type, name: name) }
+        return value
+    }
+
+    /// Stores into any place with the operation its shape needs.
+    private func emitStore(_ place: BIRPlace, _ value: BIRExpression) {
+        switch place {
+        case .variable(let target): emit(.store(target, value))
+        case .element(let target, let indexes): emit(.storeElement(target, indexes, value))
+        case .field: emit(.storeField(place, value))
+        case .arrayElement, .dictionaryEntry, .valueEntry, .valueField: emit(.storePlace(place, value))
+        }
     }
 
     private func isInterface(_ type: BIRType) -> Bool {
@@ -720,6 +784,8 @@ final class FunctionBuilder {
         case .boolean: return .boolean(false)
         case .composite(let name): return .construct(name)
         case .closure: return .number(0)  // never stored: closure slots start empty
+        case .variant, .array: return .emptyValue
+        case .dictionary: return .newDictionary
         }
     }
 
@@ -729,19 +795,35 @@ final class FunctionBuilder {
         let base = variable(reference.base)
         var place: BIRPlace
         if reference.indexes.isEmpty {
-            guard base.rank == nil else { throw CompileError("Type error: \(reference.base.name) is an array", at: location) }
             place = .variable(base)
+        } else if base.rank == nil, base.type == .dictionary {
+            guard reference.indexes.count == 1 else { throw CompileError("\(reference.base.name) expects 1 key", at: location) }
+            place = .dictionaryEntry(.variable(base), key: try lowerExpression(reference.indexes[0]), name: reference.base.name)
+        } else if base.rank == nil, base.type == .variant {
+            place = .valueEntry(.variable(base), try reference.indexes.map { try lowerExpression($0) }, name: reference.base.name)
         } else {
             guard let rank = base.rank else { throw CompileError("\(reference.base.name) is not an array", at: location) }
             guard rank == reference.indexes.count else { throw CompileError("\(reference.base.name) expects \(rank) indexes", at: location) }
             place = .element(base, try reference.indexes.map { try lowerExpression($0, expecting: .number, context: "\(reference.base.name) index") })
         }
         for (position, fieldName) in reference.fields.enumerated() {
-            if reference.fieldIndexes.indices.contains(position), !reference.fieldIndexes[position].isEmpty {
-                throw unsupported("indexed fields")
+            let indexes = reference.fieldIndexes.indices.contains(position) ? reference.fieldIndexes[position] : []
+            if place.type == .variant {
+                place = .valueField(place, field: fieldName, name: reference.base.name)
+                if !indexes.isEmpty {
+                    place = .valueEntry(place, try indexes.map { try lowerExpression($0) }, name: fieldName)
+                }
+                continue
             }
             let found = try resolveField(fieldName, on: place.type, baseName: reference.base.name)
             place = .field(place, index: found.index, type: found.field.type)
+            if !indexes.isEmpty {
+                guard case .array(_, let rank) = found.field.type else {
+                    throw CompileError("\(fieldName) is not an array", at: location)
+                }
+                guard rank == indexes.count else { throw CompileError("\(fieldName) expects \(rank) indexes", at: location) }
+                place = .arrayElement(place, try indexes.map { try lowerExpression($0, expecting: .number, context: "\(fieldName) index") }, name: found.field.displayName)
+            }
         }
         return place
     }
@@ -775,9 +857,13 @@ final class FunctionBuilder {
     /// A place as a value: loads, element reads, and field reads.
     private func load(_ place: BIRPlace) -> BIRExpression {
         switch place {
-        case .variable(let variable): return .load(variable)
+        case .variable(let variable): return variable.rank == nil ? .load(variable) : .loadArray(variable)
         case .element(let variable, let indexes): return .element(variable, indexes)
         case .field(let base, let index, let type): return .field(load(base), index: index, type: type)
+        case .arrayElement(let base, let indexes, let name): return .elementOf(load(base), indexes, name: name)
+        case .dictionaryEntry(let base, let key, let name): return .dictionaryGet(load(base), key: key, name: name)
+        case .valueEntry(let base, let indexes, let name): return .valueIndex(load(base), indexes, name: name)
+        case .valueField(let base, let field, let name): return .valueField(load(base), field: field, name: name)
         }
     }
 
@@ -828,6 +914,26 @@ final class FunctionBuilder {
     /// Lowers a method call; the receiver is copied in and written back.
     private func lowerMethodCall(_ reference: VariableReference, _ method: VariableName, _ arguments: [Expression], wantsValue: Bool) throws -> BIRExpression? {
         let place = try lowerPlace(reference)
+        // `rec.Items(i)` parses as a method call; when no such method exists
+        // but a field does, it is the field (indexed when it is an array) —
+        // the interpreter's fallback in callMethod.
+        if case .composite(let typeName) = place.type, let composite = model.types[typeName],
+           (composite.kind == .record || model.lookupMethod(method.normalized, in: typeName) == nil),
+           let found = model.field(method.normalized, of: typeName) {
+            try checkAccess(found.field.visibility, owner: found.field.owner, what: method.name)
+            var fieldPlace = BIRPlace.field(place, index: found.index, type: found.field.type)
+            if !arguments.isEmpty {
+                guard case .array(_, let rank) = found.field.type else { throw CompileError("\(method.name) is not an array", at: location) }
+                guard rank == arguments.count else { throw CompileError("\(method.name) expects \(rank) indexes", at: location) }
+                fieldPlace = .arrayElement(fieldPlace, try arguments.map { try lowerExpression($0, expecting: .number, context: "\(method.name) index") }, name: found.field.displayName)
+            }
+            return load(fieldPlace)
+        }
+        if place.type == .variant {
+            var valuePlace = BIRPlace.valueField(place, field: method.name, name: reference.base.name)
+            if !arguments.isEmpty { valuePlace = .valueEntry(valuePlace, try arguments.map { try lowerExpression($0) }, name: method.name) }
+            return load(valuePlace)
+        }
         let (candidates, signature) = try candidates(for: method, on: place.type)
         let parameters = Array(signature.parameters.dropFirst())
         guard arguments.count == parameters.count else {
@@ -1039,6 +1145,20 @@ final class FunctionBuilder {
     }
 
     private func lowerCaseClause(_ clause: CaseClause, subject: BIRVariable) throws -> BIRExpression {
+        if subject.type == .variant {
+            switch clause {
+            case .equals(let expression):
+                return .valueEqual(.load(subject), boxed(try lowerExpression(expression)))
+            case .range(let lower, let upper):
+                let value = BIRExpression.unbox(.load(subject), .number, name: nil)
+                return .logical(.and,
+                    .compare(.greaterEqual, value, try lowerExpression(lower, expecting: .number, context: "CASE")),
+                    .compare(.lessEqual, value, try lowerExpression(upper, expecting: .number, context: "CASE")))
+            case .comparison(let operation, let expression):
+                guard let comparison = Self.comparison(for: operation) else { throw CompileError("Invalid CASE comparison", at: location) }
+                return .compare(comparison, .unbox(.load(subject), .number, name: nil), try lowerExpression(expression, expecting: .number, context: "CASE IS"))
+            }
+        }
         switch clause {
         case .equals(let expression):
             return .compare(.equal, .load(subject), try lowerExpression(expression, expecting: subject.type, context: "CASE"))
@@ -1085,7 +1205,9 @@ final class FunctionBuilder {
     /// Lowers an expression, checking it against the type the context needs.
     func lowerExpression(_ expression: Expression, expecting: BIRType?, context: String) throws -> BIRExpression {
         let lowered = try lowerExpression(expression)
-        if let expecting, lowered.type != expecting, !model.isAssignable(lowered.type, to: expecting) {
+        guard let expecting, lowered.type != expecting else { return lowered }
+        if expecting == .variant || lowered.type == .variant { return convert(lowered, to: expecting, name: nil) }
+        if !model.isAssignable(lowered.type, to: expecting) {
             throw CompileError(
                 "Type error: \(context) expects \(expecting.name), got \(lowered.type.name)",
                 at: location
@@ -1106,7 +1228,7 @@ final class FunctionBuilder {
             if name.normalized == "ERR" { return .intrinsic(.err, []) }
             if name.normalized == "ERL" { return .intrinsic(.erl, []) }
             let resolved = variable(name)
-            guard resolved.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
+            if resolved.rank != nil { return .loadArray(resolved) }
             return .load(resolved)
         case .unaryMinus(let inner):
             return .negate(try lowerExpression(inner, expecting: .number, context: "unary minus"))
@@ -1130,11 +1252,17 @@ final class FunctionBuilder {
             }
             return try lowerMethodCall(reference, method, arguments, wantsValue: true)!
         case .lenFunction(let inner):
-            return .intrinsic(.len, [try lowerExpression(inner, expecting: .string, context: "LEN")])
+            let value = try lowerExpression(inner)
+            switch value.type {
+            case .string: return .intrinsic(.len, [value])
+            case .variant: return .valueLen(value)
+            case .array: return .arrayLen(value, name: describe(inner))
+            default: throw CompileError("Type error: LEN requires a string or array", at: location)
+            }
         case .chrFunction(let inner):
             return .intrinsic(.chr, [try lowerExpression(inner, expecting: .number, context: "CHR$")])
         case .null:
-            throw unsupported("NULL")
+            return .nullValue
         default:
             throw unsupported(describe(expression))
         }
@@ -1176,25 +1304,33 @@ final class FunctionBuilder {
     }
 
     private func lowerBinary(_ left: Expression, _ operation: BinaryOperation, _ right: Expression) throws -> BIRExpression {
-        let l = try lowerExpression(left)
-        let r = try lowerExpression(right)
+        var l = try lowerExpression(left)
+        var r = try lowerExpression(right)
+        // With a VARIANT on either side the kind is only known at runtime;
+        // the runtime then applies the interpreter's rules.
+        let dynamic = l.type == .variant || r.type == .variant
         switch operation {
         case .add:
             if l.type == .string && r.type == .string { return .concat(l, r) }
+            if dynamic { return .valueAdd(boxed(l), boxed(r)) }
             try requireNumbers(l, r, "+")
             return .arithmetic(.add, l, r)
-        case .subtract:
-            try requireNumbers(l, r, "-"); return .arithmetic(.subtract, l, r)
-        case .multiply:
-            try requireNumbers(l, r, "*"); return .arithmetic(.multiply, l, r)
-        case .divide:
-            try requireNumbers(l, r, "/"); return .arithmetic(.divide, l, r)
+        case .subtract, .multiply, .divide:
+            if dynamic { l = convert(l, to: .number, name: nil); r = convert(r, to: .number, name: nil) }
+            let symbol = ["subtract": "-", "multiply": "*", "divide": "/"][String(describing: operation)] ?? "?"
+            try requireNumbers(l, r, symbol)
+            let op: BIRArithmetic = operation == .subtract ? .subtract : operation == .multiply ? .multiply : .divide
+            return .arithmetic(op, l, r)
         case .equal, .notEqual:
+            if dynamic || l.type.isComposite || l.type == .dictionary || l.type.isArray || r.type.isComposite || r.type == .dictionary || r.type.isArray {
+                let equal = BIRExpression.valueEqual(boxed(l), boxed(r))
+                return operation == .equal ? equal : .arithmetic(.subtract, .number(1), equal)
+            }
             // The interpreter compares values of different kinds as simply unequal.
             if l.type != r.type { return .number(operation == .equal ? 0 : 1) }
-            if l.type.isComposite { throw unsupported("comparing records or objects") }
             return .compare(Self.comparison(for: operation)!, l, r)
         case .less, .lessEqual, .greater, .greaterEqual:
+            if dynamic { l = convert(l, to: .number, name: nil); r = convert(r, to: .number, name: nil) }
             // The interpreter orders numbers only; anything else is its
             // "Expected a number" runtime error, reported here instead.
             guard l.type == .number, r.type == .number else {
@@ -1400,6 +1536,22 @@ final class FunctionBuilder {
                 values: try arguments.dropFirst().map { try lowerExpression($0) }
             )
         }
+        if name.normalized == "TOJSONSTRING" {
+            guard arguments.count == 2 else { throw CompileError("\(name.name) expects 2 arguments", at: location) }
+            return .jsonEncode(boxed(try lowerExpression(arguments[0])), pretty: try lowerExpression(arguments[1]))
+        }
+        if name.normalized == "FROMJSONSTRING" {
+            guard arguments.count == 2 else { throw CompileError("\(name.name) expects 2 arguments", at: location) }
+            return .jsonDecode(try lowerExpression(arguments[0], expecting: .string, context: name.name), permissive: try lowerExpression(arguments[1]))
+        }
+        let keyed = variable(name)
+        if keyed.rank == nil, keyed.type == .dictionary, !arguments.isEmpty {
+            guard arguments.count == 1 else { throw CompileError("\(name.name) expects 1 key", at: location) }
+            return .dictionaryGet(.load(keyed), key: try lowerExpression(arguments[0]), name: name.name)
+        }
+        if keyed.rank == nil, keyed.type == .variant, !arguments.isEmpty {
+            return .valueIndex(.load(keyed), try arguments.map { try lowerExpression($0) }, name: name.name)
+        }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             throw unsupported("the builtin \(name.name)")
         }
@@ -1434,6 +1586,9 @@ final class FunctionBuilder {
         case .instr where lowered.count == 2: lowered.insert(.number(1), at: 0)
         case .rnd: lowered = []
         default: break
+        }
+        for (index, expected) in intrinsic.parameterTypes.enumerated() where index < lowered.count && lowered[index].type == .variant {
+            lowered[index] = .unbox(lowered[index], expected, name: nil)
         }
         for (argument, expected) in zip(lowered, intrinsic.parameterTypes) where argument.type != expected {
             throw CompileError(

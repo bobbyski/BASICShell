@@ -60,6 +60,39 @@ public indirect enum BIRExpression: Sendable {
     /// and written back. An expression, not an operation, so it evaluates in
     /// source order with the reads beside it.
     case callMethod(receiver: BIRPlace, candidates: [BIRMethodCandidate], arguments: [BIRExpression], returns: BIRType)
+    /// A whole array variable as a value (borrowed).
+    case loadArray(BIRVariable)
+    /// An element of an array-typed expression (an array field, say).
+    case elementOf(BIRExpression, [BIRExpression], name: String)
+    /// A statically typed value boxed as a VARIANT.
+    case box(BIRExpression)
+    /// A VARIANT read as `type`. With a variable `name` the failure is the
+    /// assignment's type error; without, the expression's runtime error.
+    case unbox(BIRExpression, BIRType, name: String?)
+    /// `d(key)` on a dictionary: the entry, or EMPTY.
+    case dictionaryGet(BIRExpression, key: BIRExpression, name: String)
+    /// `v(i, …)` on a VARIANT holding an array or dictionary.
+    case valueIndex(BIRExpression, [BIRExpression], name: String)
+    /// `v.Field` on a VARIANT holding a record or object.
+    case valueField(BIRExpression, field: String, name: String)
+    /// `+` with a VARIANT operand: concatenation or addition, decided at runtime.
+    case valueAdd(BIRExpression, BIRExpression)
+    /// `=` with a VARIANT operand: the interpreter's strict equality, as 1 or 0.
+    case valueEqual(BIRExpression, BIRExpression)
+    /// `LEN` of a VARIANT (a string's characters or an array's elements).
+    case valueLen(BIRExpression)
+    /// `LEN` of an array.
+    case arrayLen(BIRExpression, name: String)
+    /// `ToJsonString(value, pretty)`.
+    case jsonEncode(BIRExpression, pretty: BIRExpression)
+    /// `FromJsonString(source, permissive)`.
+    case jsonDecode(BIRExpression, permissive: BIRExpression)
+    /// `EMPTY`.
+    case emptyValue
+    /// `NULL`.
+    case nullValue
+    /// A fresh, empty DICTIONARY.
+    case newDictionary
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -94,6 +127,20 @@ public indirect enum BIRExpression: Sendable {
             return returns
         case .callMethod(_, _, _, let returns):
             return returns
+        case .loadArray(let variable):
+            return .array(variable.type, rank: variable.rank ?? 1)
+        case .elementOf(let array, _, _):
+            return array.type.elementType ?? .number
+        case .box, .valueIndex, .valueField, .valueAdd, .jsonDecode, .emptyValue, .nullValue, .dictionaryGet:
+            return .variant
+        case .unbox(_, let type, _):
+            return type
+        case .valueEqual, .valueLen, .arrayLen:
+            return .number
+        case .jsonEncode:
+            return .string
+        case .newDictionary:
+            return .dictionary
         }
     }
 }

@@ -1,0 +1,35 @@
+[]
+1
+x
+571542.5
+10010
+abcabcdef31
+TRUE2
+[NULL]1
+7
+text
+1secondTRUETRUE[]
+<DICTIONARY 3 entries>
+<DICTIONARY 3 entries>
+second
+{"3":true,"one":1,"two":"second"}
+3<ARRAY INTEGER>
+{"3":true,"list":[4,5,6],"one":1,"two":"second"}
+320
+{"b":false,"k":[1,{"z":null}]}
+{
+  "b" : false,
+  "k" : [
+    1,
+    {
+      "z" : null
+    }
+  ]
+}
+truthy
+empty is false
+false case
+42abab
+got  5
+ERR13
+ERR13
