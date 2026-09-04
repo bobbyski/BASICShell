@@ -5,10 +5,11 @@ import Foundation
 
 @_cdecl("basic_rt_start")
 public func basic_rt_start() {
-    // On a terminal, write as the Shell does — immediately — so prompts,
-    // LOCATE, and INKEY$ loops behave; on a pipe, buffer for speed.
+    // On a terminal, text is line-buffered as the Shell's is (VTG bytes go
+    // straight to the descriptor, so they interleave the same way); the
+    // reads flush first. On a pipe, buffer for speed.
     if isatty(STDOUT_FILENO) == 1 {
-        setvbuf(stdout, nil, _IONBF, 0)
+        setvbuf(stdout, nil, _IOLBF, 1 << 12)
     } else {
         setvbuf(stdout, nil, _IOFBF, 1 << 16)
     }

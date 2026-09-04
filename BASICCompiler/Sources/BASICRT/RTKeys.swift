@@ -300,7 +300,6 @@ enum RTKeys {
 
     /// `INKEY$`: the next key if one is waiting, else "".
     static func inkey() -> String {
-        fflush(stdout)
         let raw: String? = withRawTerminal(blocking: false) { fd -> String? in
             var byte: UInt8 = 0
             guard Darwin.read(fd, &byte, 1) == 1 else { return nil }

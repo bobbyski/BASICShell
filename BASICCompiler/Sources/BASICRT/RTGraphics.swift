@@ -430,7 +430,7 @@ public func basic_rt_gfx_color(_ foreground: UnsafeMutableRawPointer?, _ backgro
     let back = background.map { RTColor.resolve(rtValue($0)) }
     var parts = ["38;2;\(color.red);\(color.green);\(color.blue)"]
     if let back { parts.append("48;2;\(back.red);\(back.green);\(back.blue)") }
-    RTConsole.write("\u{1B}[\(parts.joined(separator: ";"))m")
+    RTConsole.writeRaw("\u{1B}[\(parts.joined(separator: ";"))m")
     RTGraphics.currentColor = color
 }
 

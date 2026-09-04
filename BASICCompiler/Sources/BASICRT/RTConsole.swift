@@ -31,6 +31,13 @@ enum RTConsole {
         }
     }
 
+    /// Writes control text that does not move the column (the Shell prints
+    /// COLOR's SGR without updating its column).
+    static func writeRaw(_ text: String) {
+        if RTCapture.active { RTCapture.text += text; return }
+        fputs(text, stdout)
+    }
+
     /// The column PRINT's `,` and TAB measure against: the capture's while
     /// rendering for a file, else the console's.
     static var effectiveColumn: Int { RTCapture.active ? RTCapture.column : column }
@@ -172,7 +179,6 @@ public func basic_rt_capture_end() -> UnsafeMutableRawPointer {
 @_cdecl("basic_rt_input_chars")
 public func basic_rt_input_chars(_ countValue: Double) -> UnsafeMutableRawPointer {
     let count = max(0, Int(countValue.rounded()))
-    fflush(stdout)
     var original = termios()
     guard isatty(STDIN_FILENO) == 1, tcgetattr(STDIN_FILENO, &original) == 0 else { return rtOwned("") }
     var raw = original
