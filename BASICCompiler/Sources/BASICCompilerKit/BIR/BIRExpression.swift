@@ -56,6 +56,10 @@ public indirect enum BIRExpression: Sendable {
     case makeClosure(function: String, environment: String?, captures: [BIRExpression], signature: String)
     /// Calls a closure value.
     case callClosure(BIRExpression, [BIRExpression], returns: BIRType)
+    /// Calls a method on a record or object place: the receiver is copied in
+    /// and written back. An expression, not an operation, so it evaluates in
+    /// source order with the reads beside it.
+    case callMethod(receiver: BIRPlace, candidates: [BIRMethodCandidate], arguments: [BIRExpression], returns: BIRType)
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -87,6 +91,8 @@ public indirect enum BIRExpression: Sendable {
         case .makeClosure(_, _, _, let signature):
             return .closure(signature)
         case .callClosure(_, _, let returns):
+            return returns
+        case .callMethod(_, _, _, let returns):
             return returns
         }
     }

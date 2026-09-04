@@ -220,6 +220,9 @@ public struct BIRPrinter {
             return "closure \(function)[" + captures.map(render).joined(separator: ", ") + "]"
         case .callClosure(let closure, let arguments, _):
             return "\(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .callMethod(let receiver, let candidates, let arguments, _):
+            let target = candidates.count == 1 ? candidates[0].function : "virtual[" + candidates.map(\.function).joined(separator: "|") + "]"
+            return "\(render(receiver)).\(target)(" + arguments.map(render).joined(separator: ", ") + ")"
         }
     }
 }

@@ -840,9 +840,7 @@ final class FunctionBuilder {
             guard signature.returnType != .void else {
                 throw CompileError("VOID function \(signature.displayName) cannot be used in an expression", at: location)
             }
-            let result = hidden("call", signature.returnType)
-            emit(.callMethod(receiver: place, candidates: candidates, arguments: lowered, result: result))
-            return .load(result)
+            return .callMethod(receiver: place, candidates: candidates, arguments: lowered, returns: signature.returnType)
         }
         emit(.callMethod(receiver: place, candidates: candidates, arguments: lowered, result: nil))
         return nil

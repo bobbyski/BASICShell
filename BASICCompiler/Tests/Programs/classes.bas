@@ -47,3 +47,18 @@ PRINT S.Area(); S.Describe$()
 S = A
 PRINT S.Area(); S.Describe$()
 PRINT A
+' A method that calls another method on ME must not free the caller's object.
+CLASS Chain
+    PUBLIC Count AS INTEGER
+    FUNCTION Bump() AS INTEGER
+        ME.Count = ME.Count + 1
+        RETURN ME.Count
+    END FUNCTION
+    FUNCTION Twice() AS INTEGER
+        LET first = ME.Bump()
+        LET second = ME.Bump()
+        RETURN first + second
+    END FUNCTION
+END CLASS
+DIM K AS Chain
+PRINT K.Twice(); K.Count; K.Twice(); K.Count

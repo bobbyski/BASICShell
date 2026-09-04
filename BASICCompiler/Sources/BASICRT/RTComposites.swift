@@ -71,6 +71,13 @@ public final class RTComposite {
     func copy() -> RTComposite {
         RTComposite(copying: self)
     }
+
+    /// Take another instance's contents, keeping this identity.
+    func assign(from other: RTComposite) {
+        numbers = other.numbers
+        strings = other.strings
+        composites = other.composites.map { $0.map { RTComposite(copying: $0) } }
+    }
 }
 
 @inline(__always)
@@ -109,6 +116,18 @@ public func basic_rt_composite_new(_ typeIndex: Int) -> UnsafeMutableRawPointer 
 @_cdecl("basic_rt_composite_copy")
 public func basic_rt_composite_copy(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
     rtOwned(rtComposite(pointer).copy())
+}
+
+/// Assign in place: `destination` takes `source`'s contents (deep copy) but
+/// keeps its identity. Used to write a method's `ME` back when the slot is
+/// borrowed from the caller — replacing the pointer would free the caller's
+/// object.
+@_cdecl("basic_rt_composite_assign")
+public func basic_rt_composite_assign(_ destination: UnsafeMutableRawPointer?, _ source: UnsafeMutableRawPointer?) {
+    let target = rtComposite(destination)
+    let value = rtComposite(source)
+    guard target !== value else { return }
+    target.assign(from: value)
 }
 
 @_cdecl("basic_rt_composite_release")

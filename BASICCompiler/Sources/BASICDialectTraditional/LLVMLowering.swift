@@ -163,6 +163,7 @@ struct LLVMLowering {
     declare void @basic_rt_type_register(i64, ptr, i64, ptr, ptr, ptr, ptr)
     declare ptr @basic_rt_composite_new(i64)
     declare ptr @basic_rt_composite_copy(ptr)
+    declare void @basic_rt_composite_assign(ptr, ptr)
     declare void @basic_rt_composite_release(ptr)
     declare i64 @basic_rt_composite_type(ptr)
     declare double @basic_rt_composite_get_number(ptr, i64)
@@ -429,52 +430,13 @@ struct FunctionEmitter {
 
         case .callMethod(let receiver, let candidates, let arguments, let result):
             let callee = module.functions.first { $0.name == candidates[0].function }!
-            let receiverPointer = placePointer(receiver)
-            let me = out.temp()
-            out.emit("\(me) = call ptr @basic_rt_composite_copy(ptr \(receiverPointer))")
-            let values = arguments.map { lowerValue($0).0 }
-            let argumentList = ([("ptr", me)] + zip(callee.parameters.dropFirst(), values).map { (Self.llvmType(of: $0), $1) })
-                .map { "\($0) \($1)" }.joined(separator: ", ")
-            let returnType = Self.llvmType(callee.returnType)
-            let call: String
-            if candidates.count == 1 {
-                call = "call \(returnType) @\"F.\(candidates[0].function)\"(\(argumentList))"
-            } else {
-                // Virtual: switch on the receiver's runtime type.
-                let typeIndex = out.temp()
-                out.emit("\(typeIndex) = call i64 @basic_rt_composite_type(ptr \(me))")
-                let join = out.freshLabel("dispatch.join")
-                var incoming: [String] = []
-                let cases = candidates.map { candidate -> (String, BIRMethodCandidate) in (out.freshLabel("dispatch.\(candidate.typeIndex)"), candidate) }
-                out.emit("switch i64 \(typeIndex), label %\"\(cases[0].0)\" [ " + cases.map { "i64 \($0.1.typeIndex), label %\"\($0.0)\"" }.joined(separator: " ") + " ]")
-                for (label, candidate) in cases {
-                    out.label(label)
-                    if callee.returnType == .void {
-                        out.emit("call void @\"F.\(candidate.function)\"(\(argumentList))")
-                    } else {
-                        let partial = out.temp()
-                        out.emit("\(partial) = call \(returnType) @\"F.\(candidate.function)\"(\(argumentList))")
-                        incoming.append("[ \(partial), %\"\(label)\" ]")
-                    }
-                    out.emit("br label %\"\(join)\"")
-                }
-                out.label(join)
-                if callee.returnType == .void {
-                    call = ""
-                } else {
-                    call = "phi \(returnType) " + incoming.joined(separator: ", ")
-                }
-            }
-            if callee.returnType == .void {
-                if !call.isEmpty { out.emit(call) }
-            } else {
-                let value = out.temp()
-                out.emit("\(value) = \(call)")
+            let value = lowerMethodCall(receiver, candidates, arguments)
+            if callee.returnType != .void, let value {
                 if let result {
                     if Self.isManaged(callee.returnType) {
                         storeManaged(value, owned: true, into: slotName(result), type: callee.returnType)
                     } else {
-                        out.emit("store \(returnType) \(value), ptr \(slotName(result))")
+                        out.emit("store \(Self.llvmType(callee.returnType)) \(value), ptr \(slotName(result))")
                     }
                 } else if Self.isManaged(callee.returnType) {
                     owned.append(value)
@@ -482,10 +444,6 @@ struct FunctionEmitter {
                     if callee.returnType.isClosure { ownedClosures.insert(value) }
                 }
             }
-            // Write the receiver back — a method's changes to ME are the
-            // interpreter's, and so is the copy.
-            writeBack(me, to: receiver)
-            out.emit("call void @basic_rt_composite_release(ptr \(me))")
 
         case .dim(let variable, let bounds):
             let values = bounds.map { lowerValue($0).0 }
@@ -827,9 +785,68 @@ struct FunctionEmitter {
         }
     }
 
+    /// Calls a method: copies the receiver in as ME, dispatches (statically or
+    /// on the runtime type), writes ME back, and returns the raw result
+    /// (owned when managed) or nil for VOID.
+    private mutating func lowerMethodCall(_ receiver: BIRPlace, _ candidates: [BIRMethodCandidate], _ arguments: [BIRExpression]) -> String? {
+        let callee = module.functions.first { $0.name == candidates[0].function }!
+        let receiverPointer = placePointer(receiver)
+        let me = out.temp()
+        out.emit("\(me) = call ptr @basic_rt_composite_copy(ptr \(receiverPointer))")
+        let values = arguments.map { lowerValue($0).0 }
+        let argumentList = ([("ptr", me)] + zip(callee.parameters.dropFirst(), values).map { (Self.llvmType(of: $0), $1) })
+            .map { "\($0) \($1)" }.joined(separator: ", ")
+        let returnType = Self.llvmType(callee.returnType)
+        var value: String? = nil
+        if candidates.count == 1 {
+            if callee.returnType == .void {
+                out.emit("call void @\"F.\(candidates[0].function)\"(\(argumentList))")
+            } else {
+                let result = out.temp()
+                out.emit("\(result) = call \(returnType) @\"F.\(candidates[0].function)\"(\(argumentList))")
+                value = result
+            }
+        } else {
+            // Virtual: switch on the receiver's runtime type.
+            let typeIndex = out.temp()
+            out.emit("\(typeIndex) = call i64 @basic_rt_composite_type(ptr \(me))")
+            let join = out.freshLabel("dispatch.join")
+            var incoming: [String] = []
+            let cases = candidates.map { candidate -> (String, BIRMethodCandidate) in (out.freshLabel("dispatch.\(candidate.typeIndex)"), candidate) }
+            out.emit("switch i64 \(typeIndex), label %\"\(cases[0].0)\" [ " + cases.map { "i64 \($0.1.typeIndex), label %\"\($0.0)\"" }.joined(separator: " ") + " ]")
+            for (label, candidate) in cases {
+                out.label(label)
+                if callee.returnType == .void {
+                    out.emit("call void @\"F.\(candidate.function)\"(\(argumentList))")
+                } else {
+                    let partial = out.temp()
+                    out.emit("\(partial) = call \(returnType) @\"F.\(candidate.function)\"(\(argumentList))")
+                    incoming.append("[ \(partial), %\"\(label)\" ]")
+                }
+                out.emit("br label %\"\(join)\"")
+            }
+            out.label(join)
+            if callee.returnType != .void {
+                let result = out.temp()
+                out.emit("\(result) = phi \(returnType) " + incoming.joined(separator: ", "))
+                value = result
+            }
+        }
+        // Write the receiver back — a method's changes to ME are the
+        // interpreter's, and so is the copy.
+        writeBack(me, to: receiver)
+        out.emit("call void @basic_rt_composite_release(ptr \(me))")
+        return value
+    }
+
     /// Stores a copy of the record `value` (borrowed) into a place.
     private mutating func writeBack(_ value: String, to place: BIRPlace) {
         switch place {
+        case .variable(let variable) where variable.name == "ME" && variable.scope == .local:
+            // ME is borrowed from the caller: assign in place, never replace.
+            let current = out.temp()
+            out.emit("\(current) = load ptr, ptr \(slotName(variable))")
+            out.emit("call void @basic_rt_composite_assign(ptr \(current), ptr \(value))")
         case .variable(let variable):
             storeManaged(value, owned: false, into: slotName(variable), type: variable.type)
         case .element(let variable, let indexes):
@@ -1076,6 +1093,14 @@ struct FunctionEmitter {
             return (result, true)
         case .callClosure(let closure, let arguments, let returns):
             return lowerClosureCall(closure, arguments, returns)
+        case .callMethod(let receiver, let candidates, let arguments, let returns):
+            let result = lowerMethodCall(receiver, candidates, arguments)!
+            if Self.isManaged(returns) {
+                owned.append(result)
+                if returns.isComposite { ownedComposites.insert(result) }
+                if returns.isClosure { ownedClosures.insert(result) }
+            }
+            return (result, Self.isManaged(returns))
         case .usingString(let format, let values):
             out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
             feedUsingValues(values)
