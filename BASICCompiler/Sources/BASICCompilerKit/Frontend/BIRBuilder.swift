@@ -55,6 +55,9 @@ public struct BIRBuilder {
             try builder.run()
             module.functions.append(builder.function)
         }
+        for index in module.functions.indices where model.eventHandlers.contains(module.functions[index].name) {
+            module.functions[index].isEventHandler = true
+        }
         module.functions.append(contentsOf: closures.functions)
         module.types.append(contentsOf: closures.environmentTypes)
         module.signatures = model.signatures
@@ -199,6 +202,14 @@ final class FunctionBuilder {
         return lines.indices.filter { owner[$0] == nil && !lines[$0].isImported }
     }
 
+    /// Whether the program registers any event handler at all.
+    private lazy var programUsesEvents: Bool = lines.contains { line in
+        switch line.statement {
+        case .onEventCall, .onTimerEvent: return true
+        default: return false
+        }
+    }
+
     /// The statements being built: the program's, or a closure body's.
     private var sourceLines: [ParsedLine] { closureLines ?? lines }
 
@@ -247,6 +258,9 @@ final class FunctionBuilder {
                 emit(.markStatement(id: position, line: line.displayLineNumber))
             }
             try lower(line.statement)
+            // The interpreter runs up to sixteen queued events after every
+            // statement. A program with no handler has nothing to run.
+            if programUsesEvents { emit(.drainEvents(limit: 16)) }
         }
         terminate(signature == nil && closureLines == nil ? .end : fallOffReturn())
         guard frames.isEmpty else {
@@ -464,6 +478,11 @@ final class FunctionBuilder {
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
+            if case .system = variable(reference.base).type, reference.fields.count == 1, reference.indexes.isEmpty {
+                guard let value else { return }
+                emit(.systemSet(.load(variable(reference.base)), property: reference.fields[0], boxed(try lowerExpression(value))))
+                return
+            }
             let place = try lowerPlace(reference)
             if place.type.isArray {
                 guard let value else { return }
@@ -823,8 +842,19 @@ final class FunctionBuilder {
         case .system(let command):
             emit(.systemCommand(try lowerExpression(command, expecting: .string, context: "SYSTEM")))
         case .yield:
-            // One task at a time: a yield is a point where host events may run.
-            break
+            // A yield is where the interpreter runs up to eight queued events.
+            emit(.drainEvents(limit: 8))
+        case .onEventCall(let selector, let handler):
+            let (name, payload) = try eventHandler(handler)
+            emit(.onEvent(type: selector.type, subtype: selector.subtype ?? "", handler: name, payloadType: payload))
+        case .onTimerEvent(let timer, let ticks, let handler):
+            let (name, payload) = try eventHandler(handler)
+            let object = BIRExpression.load(variable(timer))
+            guard case .system("SECONDSTIMER") = object.type else {
+                throw CompileError("\(timer.name) is not a SecondsTimer", at: location)
+            }
+            let count = try ticks.map { try lowerExpression($0, expecting: .number, context: "ON TIMER") } ?? .number(1)
+            emit(.onTimer(object, ticks: count, handler: name, payloadType: payload))
         case .join(let expression):
             emit(.discard(.hostCall("basic_rt_task_join", [boxed(try lowerExpression(expression))], returns: .void)))
         case .cancelTask(let expression):
@@ -1181,6 +1211,23 @@ final class FunctionBuilder {
 
     /// A call used as a statement runs for its effect; anything else is
     /// evaluated and dropped, as the interpreter does.
+    /// The function an `ON …` names, and the type index of the event object
+    /// its parameter asks for (-1 for a VARIANT or DICTIONARY).
+    private func eventHandler(_ handler: VariableName) throws -> (name: String, payloadType: Int) {
+        guard let function = model.functions[handler.normalized] else {
+            throw CompileError("Function \(handler.name) is not defined", at: location)
+        }
+        guard !function.isAsync else {
+            throw CompileError("Event handler \(handler.name) must be synchronous", at: location)
+        }
+        model.noteEventHandler(function.name)
+        guard let parameter = function.parameters.first else { return (function.name, -1) }
+        guard case .composite(let typeName) = parameter.type, let type = model.types[typeName] else {
+            return (function.name, -1)
+        }
+        return (function.name, type.index)
+    }
+
     private func lowerExpressionStatement(_ expression: Expression) throws {
         switch expression {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):

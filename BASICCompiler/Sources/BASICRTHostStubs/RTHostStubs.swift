@@ -44,3 +44,6 @@ public func basic_rt_host_gfx_finish() {}
 public func basic_rt_host_vtg_call(_ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
     rtStubFail("VectorTerminal graphics are not supported by this host")
 }
+
+@_cdecl("basic_rt_host_mouse_reporting")
+public func basic_rt_host_mouse_reporting(_ enabled: Bool) {}

@@ -86,6 +86,13 @@ public final class SemanticModel {
         var isInteger = false
     }
 
+    /// The functions an `ON …` registered as event handlers, normalized.
+    public private(set) var eventHandlers: Set<String> = []
+
+    func noteEventHandler(_ name: String) {
+        eventHandlers.insert(name)
+    }
+
     /// Whether `OPTION LOCAL-LET` is in effect for the program.
     public internal(set) var usesLocalLet = false
     /// Every variable named in a FIELD statement, normalized, in order.
@@ -120,6 +127,9 @@ public final class SemanticModel {
             "PILLBUTTON": (nil, .variant),
         ],
         "VTG": [:],
+        "SECONDSTIMER": [
+            "START": (0, .void), "STOP": (0, .void), "CANCEL": (0, .void),
+        ],
     ]
 
     /// Builtin variables the interpreter assigns at start; read through the

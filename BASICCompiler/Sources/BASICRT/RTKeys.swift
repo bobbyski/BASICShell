@@ -249,8 +249,42 @@ enum RTKeys {
         return Darwin.read(fd, &byte, 1) == 1 ? byte : nil
     }
 
+    /// The Shell's rule for a complete *terminal* escape — a VTG response, a
+    /// mouse report — which runs to its own terminator however long it is.
+    static func isCompleteTerminalEscape(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
+        if bytes[1] == UInt8(ascii: "_") {
+            if bytes.last == 0x07 { return true }
+            return bytes.count >= 3 && bytes[bytes.count - 2] == 0x1b && bytes.last == UInt8(ascii: "\\")
+        }
+        if bytes.count >= 3, bytes[1] == UInt8(ascii: "["), bytes[2] == UInt8(ascii: "M") { return bytes.count >= 6 }
+        if bytes[1] == UInt8(ascii: "[") {
+            guard bytes.count >= 3, let last = bytes.last else { return false }
+            if bytes[2] == UInt8(ascii: "<") { return last == UInt8(ascii: "M") || last == UInt8(ascii: "m") }
+            return last >= 0x40 && last <= 0x7e
+        }
+        if bytes[1] == UInt8(ascii: "O"), let last = bytes.last { return bytes.count >= 3 && last >= 0x40 && last <= 0x7e }
+        return bytes.count > 1
+    }
+
+    /// Whether these bytes are the start of a terminal escape still being read.
+    static func isPartialTerminalEscape(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 2, bytes[0] == 0x1b, !isCompleteTerminalEscape(bytes) else { return false }
+        return bytes[1] == UInt8(ascii: "_") || bytes[1] == UInt8(ascii: "[")
+    }
+
+    /// A terminal escape whose bytes have not all arrived yet.
+    nonisolated(unsafe) static var partialEscape: [UInt8] = []
+
+    /// A VTG response is worth waiting longer for than a key.
+    static func escapeContinuationTimeout(_ bytes: [UInt8]) -> Int32 {
+        bytes.count >= 2 && bytes[1] == UInt8(ascii: "_") ? 150_000 : 25_000
+    }
+
     static func isCompleteEscapeSequence(_ bytes: [UInt8]) -> Bool {
         guard bytes.count >= 2 else { return false }
+        // A VTG response is never a key: it ends at its own terminator.
+        if bytes[1] == UInt8(ascii: "_") { return isCompleteTerminalEscape(bytes) }
         if bytes[1] == UInt8(ascii: "O") { return bytes.count >= 3 }
         if bytes[1] == UInt8(ascii: "["), let last = bytes.last {
             if (65...90).contains(last) || (97...122).contains(last) || last == UInt8(ascii: "~") { return true }
@@ -298,20 +332,43 @@ enum RTKeys {
         return body(fd)
     }
 
-    /// `INKEY$`: the next key if one is waiting, else "".
+    /// `INKEY$`: the next key if one is waiting, else "". An escape sequence
+    /// that is a terminal event — a VTG response, a mouse report — is posted
+    /// as an event and read past, the way the Shell reads its own.
     static func inkey() -> String {
         let raw: String? = withRawTerminal(blocking: false) { fd -> String? in
-            var byte: UInt8 = 0
-            guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
-            var bytes = [byte]
-            if byte == 27 {
-                while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: 25_000) {
-                    bytes.append(next)
-                    if isCompleteEscapeSequence(bytes) { break }
+            while true {
+                var byte: UInt8 = 0
+                var bytes: [UInt8]
+                if partialEscape.isEmpty {
+                    guard Darwin.read(fd, &byte, 1) == 1 else { return nil }
+                    bytes = [byte]
+                } else {
+                    // A terminal escape that had not all arrived last time.
+                    bytes = partialEscape
+                    partialEscape = []
+                    byte = 27
                 }
+                if byte == 27 {
+                    while let next = readByteIfAvailable(fd: fd, timeoutMicroseconds: escapeContinuationTimeout(bytes)) {
+                        bytes.append(next)
+                        if isCompleteTerminalEscape(bytes) || isCompleteEscapeSequence(bytes) { break }
+                    }
+                }
+                if byte == 3 { exit(130) }
+                if byte == 27, isPartialTerminalEscape(bytes) {
+                    // Wait for the rest of it rather than reading its bytes
+                    // as keys, the way the Shell buffers a partial escape.
+                    partialEscape = bytes
+                    return nil
+                }
+                if byte == 27, let handled = RTTerminalEvents.handle(bytes) {
+                    // An event, not a key: post it and look for a real key.
+                    if !handled.isEmpty { return handled }
+                    continue
+                }
+                return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
             }
-            if byte == 3 { exit(130) }
-            return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
         }
         return normalize(raw ?? "", encoding: encoding)
     }

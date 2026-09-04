@@ -1,0 +1,5 @@
+BEFORE START
+TICK type TIMER ticks 1 interval 50 handled FALSE
+TICK positive 1 elapsed 1
+EVERY 3 REMAINDER 303
+DONE

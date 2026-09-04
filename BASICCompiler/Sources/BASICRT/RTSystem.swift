@@ -58,12 +58,58 @@ enum RTSystem {
         return .system(object)
     }
 
+    /// A timer property's number, the interpreter's coercion.
+    static func timerNumber(_ value: RTValue, _ what: String) -> Double {
+        guard let number = value.number else { basic_rt_fail("\(what) expects a number") }
+        return number
+    }
+
+    /// A timer property's flag.
+    static func timerBoolean(_ value: RTValue, _ what: String) -> Bool {
+        if case .boolean(let flag) = value { return flag }
+        guard let number = value.number else { basic_rt_fail("\(what) expects a boolean") }
+        return number != 0
+    }
+
+    /// `timer.start()` / `timer.stop()`.
+    static func callTimer(_ timer: RTTimer, method: String, arguments: [RTValue]) -> RTValue {
+        switch method.uppercased() {
+        case "START":
+            guard arguments.isEmpty else { basic_rt_fail("SecondsTimer.start expects 0 arguments") }
+            guard timer.intervalSeconds > 0 else { basic_rt_fail("SecondsTimer interval must be greater than zero") }
+            timer.isRunning = true
+            timer.nextFire = RTEvents.now() + timer.intervalSeconds
+        case "STOP", "CANCEL":
+            guard arguments.isEmpty else { basic_rt_fail("SecondsTimer.stop expects 0 arguments") }
+            timer.isRunning = false
+        default:
+            basic_rt_fail("SecondsTimer has no method \(method)")
+        }
+        return .empty
+    }
+
+    /// A writable property of a system object — only the timer has any.
+    static func set(_ object: RTSystemObject, property: String, to value: RTValue) {
+        guard let timer = object.payload as? RTTimer else {
+            basic_rt_fail("\(object.typeName) has no writable property \(property)")
+        }
+        switch property.uppercased() {
+        case "INTERVAL", "INTERVALSECONDS": timer.intervalSeconds = timerNumber(value, "SecondsTimer interval")
+        case "REPEATING": timer.repeating = timerBoolean(value, "SecondsTimer repeating")
+        case "RUNNING", "ISRUNNING": timer.isRunning = timerBoolean(value, "SecondsTimer running")
+        case "HANDLER": basic_rt_fail("Timer handler assignment is not implemented; use ON timer GOSUB handler")
+        default: basic_rt_fail("SecondsTimer has no property \(property)")
+        }
+    }
+
     static func call(_ object: RTSystemObject, method: String, arguments: [RTValue]) -> RTValue {
         switch object.payload {
         case let file as RTFileObject:
             return callFile(file, method: method, arguments: arguments)
         case let client as RTHTTPClient:
             return callHTTP(client, method: method, arguments: arguments)
+        case let timer as RTTimer:
+            return callTimer(timer, method: method, arguments: arguments)
         case is RTVectorTerminal:
             var boxes = arguments.map { Optional(rtOwned($0)) }
             defer { boxes.forEach { basic_rt_value_release($0) } }
@@ -346,6 +392,9 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     case "VECTORTERMINAL", "VTG":
         guard values.isEmpty else { basic_rt_fail("VectorTerminal expects 0 arguments") }
         return rtOwned(RTValue.system(RTSystemObject(typeName: "VectorTerminal", payload: RTVectorTerminal())))
+    case "SECONDSTIMER":
+        guard values.count == 1 else { basic_rt_fail("SecondsTimer expects 1 argument") }
+        return basic_rt_timer_new(RTSystem.timerNumber(values[0], "SecondsTimer interval"))
     default: basic_rt_fail("Unknown CLASS \(String(cString: typeName))")
     }
 }
@@ -356,4 +405,12 @@ public func basic_rt_system_call(_ pointer: UnsafeMutableRawPointer?, _ method: 
     guard case .system(let object) = rtValue(pointer) else { basic_rt_fail("Bad file object") }
     let values = (0..<count).map { rtValue(arguments[$0]) }
     return rtOwned(RTSystem.call(object, method: String(cString: method), arguments: values))
+}
+
+
+/// `object.property = value` on a system object.
+@_cdecl("basic_rt_system_set")
+public func basic_rt_system_set(_ pointer: UnsafeMutableRawPointer?, _ property: UnsafePointer<CChar>, _ value: UnsafeMutableRawPointer?) {
+    guard case .system(let object) = rtValue(pointer) else { basic_rt_fail("Not a system object") }
+    RTSystem.set(object, property: String(cString: property), to: rtValue(value))
 }

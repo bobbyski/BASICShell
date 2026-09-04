@@ -178,3 +178,21 @@ public func basic_rt_host_vtg_call(_ method: UnsafePointer<CChar>, _ count: Int,
 public func basic_rt_host_gfx_finish() {
     RTHostVTG.stopPolling()
 }
+
+/// Mouse reporting: what the Shell turns on when a program registers an
+/// `ON MOUSE … CALL` handler — the VTG stream and the ANSI modes together.
+@_cdecl("basic_rt_host_mouse_reporting")
+public func basic_rt_host_mouse_reporting(_ enabled: Bool) {
+    guard let canvas = RTHostCanvas.probe() else { return }
+    if enabled {
+        // The Shell's `requireVectorTerminal`: a program reading events keeps
+        // the terminal raw, so a report is never held back by the line
+        // discipline waiting for a newline.
+        RTHostVTG.startPolling(canvas)
+        canvas.enableMouseReporting(mode: "all")
+        FileHandle.standardOutput.write(Data("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h".utf8))
+    } else {
+        canvas.disableMouseReporting()
+        FileHandle.standardOutput.write(Data("\u{1B}[?1003l\u{1B}[?1002l\u{1B}[?1000l\u{1B}[?1006l".utf8))
+    }
+}

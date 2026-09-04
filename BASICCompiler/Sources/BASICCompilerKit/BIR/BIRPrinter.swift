@@ -119,6 +119,14 @@ public struct BIRPrinter {
             return "option \(mode == 1 ? "ibm" : "aibasic")-keys"
         case .filesList:
             return "files"
+        case .onEvent(let type, let subtype, let handler, _):
+            return "on \(type)\(subtype.isEmpty ? "" : "." + subtype) call \(handler)"
+        case .onTimer(let timer, let ticks, let handler, _):
+            return "on timer \(render(timer)) every \(render(ticks)) call \(handler)"
+        case .systemSet(let object, let property, let value):
+            return "\(render(object)).\(property) <- \(render(value))"
+        case .drainEvents(let limit):
+            return "drain events \(limit)"
         case .systemCommand(let command):
             return "system \(render(command))"
         case .screen(let mode):

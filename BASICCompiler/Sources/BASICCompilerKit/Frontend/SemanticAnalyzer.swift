@@ -86,6 +86,38 @@ struct SemanticAnalyzer {
             for bodyIndex in index...end { owner[bodyIndex] = Self.declaration }
             index = end + 1
         }
+        declareReferencedEventTypes()
+    }
+
+    /// Declares every built-in event class the program names in a declared
+    /// type — a handler's parameter, a DIM, a field. A program that names
+    /// none pays for none.
+    private mutating func declareReferencedEventTypes() {
+        func note(_ type: BASICType?) {
+            guard let type else { return }
+            switch type {
+            case .record(let name), .classType(let name), .interfaceType(let name):
+                declareBuiltInEventType(name.uppercased())
+            default: break
+            }
+        }
+        for line in lines {
+            switch line.statement {
+            case .functionDeclaration(_, let parameters, let returnType, _, _, _, _):
+                parameters.forEach { note($0.type) }
+                note(returnType)
+            case .functionTypeDeclaration(_, let parameters, let returnType, _):
+                parameters.forEach { note($0.type) }
+                note(returnType)
+            case .dim(_, _, _, let declaredType):
+                note(declaredType)
+            case .assignment(_, _, let declared, _):
+                note(declared)
+            case .typeField(_, let fieldType, _, _, _, _, _):
+                note(fieldType)
+            default: break
+            }
+        }
     }
 
     /// Second pass: fields, bases, interfaces, interface members, methods.
@@ -647,6 +679,80 @@ struct SemanticAnalyzer {
 
     /// Maps BASIC's declared types onto BIR's, resolving record, class, and
     /// interface names through the model.
+
+    // MARK: - Built-in event classes
+
+    /// The event classes the interpreter defines for `ON … CALL` handlers:
+    /// their own fields, in the interpreter's order. Every one of them
+    /// inherits `BASICEvent`.
+    static let builtInEventFields: [String: (display: String, fields: [(String, BASICType)])] = [
+        "BASICEVENT": ("BASICEvent", []),
+        "BASICRESIZEEVENT": ("BASICResizeEvent", [("Width", .scalar(.integer)), ("Height", .scalar(.integer))]),
+        "BASICMOUSEEVENT": ("BASICMouseEvent", [
+            ("X", .scalar(.integer)), ("Y", .scalar(.integer)), ("Button", .scalar(.integer)),
+            ("Buttons", .scalar(.integer)), ("ButtonFlags", .scalar(.integer)), ("Duration", .scalar(.double)),
+            ("DeltaX", .scalar(.double)), ("DeltaY", .scalar(.double)), ("HitId", .scalar(.string)),
+        ]),
+        "BASICTIMEREVENT": ("BASICTimerEvent", [
+            ("TimerID", .scalar(.integer)), ("Sequence", .scalar(.integer)), ("Tick", .scalar(.integer)),
+            ("Ticks", .scalar(.integer)), ("Interval", .scalar(.integer)), ("BaseInterval", .scalar(.integer)),
+            ("Elapsed", .scalar(.double)),
+        ]),
+        "BASICGAMEPADEVENT": ("BASICGamepadEvent", [
+            ("Controller", .scalar(.integer)), ("Control", .scalar(.string)), ("Value", .scalar(.double)),
+        ]),
+        "BASICFRAMEEVENT": ("BASICFrameEvent", [
+            ("FrameID", .scalar(.string)), ("FrameType", .scalar(.string)), ("Reason", .scalar(.string)),
+            ("Timeout", .scalar(.integer)), ("Raw", .scalar(.string)),
+        ]),
+        "BASICROUTEEVENT": ("BASICRouteEvent", [
+            ("RequestID", .scalar(.string)), ("Method", .scalar(.string)), ("Path", .scalar(.string)),
+            ("Route", .scalar(.string)), ("Query", .scalar(.string)), ("Body", .scalar(.string)),
+            ("Status", .scalar(.integer)),
+        ]),
+        "BASICNETWORKEVENT": ("BASICNetworkEvent", [
+            ("Operation", .scalar(.string)), ("Url", .scalar(.string)), ("Status", .scalar(.integer)),
+            ("Bytes", .scalar(.integer)), ("Error", .scalar(.string)), ("RequestID", .scalar(.string)),
+        ]),
+    ]
+
+    /// The base fields every event carries.
+    static let builtInEventBaseFields: [(String, BASICType)] = [
+        ("Type", .scalar(.string)), ("Subtype", .scalar(.string)), ("Timestamp", .scalar(.double)),
+        ("Target", .scalar(.string)), ("Handled", .scalar(.boolean)),
+    ]
+
+    /// A built-in event field's BIR type.
+    static func builtInFieldType(_ type: BASICType) -> BIRType {
+        switch type {
+        case .scalar(.string): return .string
+        case .scalar(.boolean): return .boolean
+        default: return .number
+        }
+    }
+
+    /// Declares a built-in event class (and `BASICEvent` under it) the first
+    /// time a program names one. A program that names none pays nothing.
+    mutating func declareBuiltInEventType(_ normalized: String) {
+        guard model.types[normalized] == nil, let shape = Self.builtInEventFields[normalized] else { return }
+        if normalized != "BASICEVENT" { declareBuiltInEventType("BASICEVENT") }
+        let index = (model.types.values.map(\.index).max() ?? -1) + 1
+        let own = normalized == "BASICEVENT" ? Self.builtInEventBaseFields : shape.fields
+        model.addType(SemanticModel.CompositeType(
+            name: normalized, displayName: shape.display, kind: .classType, index: index,
+            fields: own.map { field in
+                SemanticModel.Field(
+                    name: field.0.uppercased(), displayName: field.0,
+                    type: Self.builtInFieldType(field.1),
+                    visibility: .public, owner: normalized, dimensions: [], jsonName: nil,
+                    defaultValue: nil, isInteger: field.1 == .scalar(.integer), metadata: [:]
+                )
+            },
+            methods: [:], base: normalized == "BASICEVENT" ? nil : "BASICEVENT",
+            interfaces: [], members: [:], location: BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
+        ))
+    }
+
     func map(_ type: BASICType, for name: String, at line: ParsedLine) throws -> BIRType {
         switch type {
         case .scalar(.integer), .scalar(.double): return .number

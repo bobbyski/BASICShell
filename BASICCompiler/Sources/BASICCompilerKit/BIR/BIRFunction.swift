@@ -142,6 +142,14 @@ public enum BIROperation: Sendable {
     case filesList
     /// `SYSTEM command`: runs it through the shell and prints its output.
     case systemCommand(BIRExpression)
+    /// `ON <selector> CALL handler`: registers the handler's trampoline.
+    case onEvent(type: String, subtype: String, handler: String, payloadType: Int)
+    /// `ON timer[, ticks] GOSUB handler`.
+    case onTimer(BIRExpression, ticks: BIRExpression, handler: String, payloadType: Int)
+    /// `object.property = value` on a system object.
+    case systemSet(BIRExpression, property: String, BIRExpression)
+    /// The event drain the compiler puts between statements.
+    case drainEvents(limit: Int)
     /// `SCREEN n`.
     case screen(BIRExpression)
     /// `COLOR fg[, bg]` — colors are strings or palette numbers, boxed.
@@ -273,6 +281,9 @@ public struct BIRFunction: Sendable {
     public var environment: (type: String, locals: [BIRVariable])?
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
+    /// A handler an `ON … CALL` registered: called through an event
+    /// trampoline that hands it the payload.
+    public var isEventHandler = false
     /// `ASYNC FUNCTION`: called through a task trampoline.
     public var isAsync = false
     /// For `main` when the program uses `ON ERROR`: the block that begins

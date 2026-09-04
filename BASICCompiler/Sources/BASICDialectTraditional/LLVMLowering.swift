@@ -48,9 +48,55 @@ struct LLVMLowering {
         if module.functions.contains(where: \.isAsync) {
             functions.append(renderTaskSupport())
         }
+        if module.functions.contains(where: \.isEventHandler) {
+            functions.append(renderEventSupport())
+        }
         text += constants.definitions.joined(separator: "\n") + "\n\n"
         text += functions.joined(separator: "\n\n")
         return text
+    }
+
+    /// A trampoline per event handler: it takes the payload the runtime
+    /// built (a boxed dictionary, or a boxed event object when the handler's
+    /// parameter names an event class), unboxes it to the parameter's type,
+    /// and calls the handler. A handler that declares no parameter is called
+    /// as one, the way the interpreter calls it.
+    private func renderEventSupport() -> String {
+        var out = LLVMText()
+        for function in module.functions where function.isEventHandler {
+            out.raw("define void @\"E.\(function.name)\"(ptr %payload) {")
+            out.label("entry")
+            var arguments: [String] = []
+            var owned: [(String, String)] = []
+            if let parameter = function.parameters.first {
+                let value = out.temp()
+                switch parameter.type {
+                case .number, .void: out.emit("\(value) = call double @basic_rt_value_number(ptr %payload, ptr null)")
+                case .boolean: out.emit("\(value) = call i1 @basic_rt_value_boolean(ptr %payload, ptr null)")
+                case .string: out.emit("\(value) = call ptr @basic_rt_value_string(ptr %payload, ptr null)"); owned.append((value, "basic_rt_string_release"))
+                case .composite(let name): out.emit("\(value) = call ptr @basic_rt_value_composite(ptr %payload, i64 \(module.typeIndex(of: name) ?? -1), ptr null)"); owned.append((value, "basic_rt_composite_release"))
+                case .dictionary: out.emit("\(value) = call ptr @basic_rt_value_dictionary(ptr %payload, ptr null)"); owned.append((value, "basic_rt_dictionary_release"))
+                case .closure: out.emit("\(value) = call ptr @basic_rt_value_closure(ptr %payload, ptr null)"); owned.append((value, "basic_rt_closure_release"))
+                case .variant, .system, .array: out.emit("\(value) = call ptr @basic_rt_value_copy(ptr %payload)"); owned.append((value, "basic_rt_value_release"))
+                }
+                arguments.append("\(FunctionEmitter.llvmType(of: parameter)) \(value)")
+            }
+            let call = "call \(FunctionEmitter.llvmType(function.returnType)) @\"F.\(function.name)\"(\(arguments.joined(separator: ", ")))"
+            if function.returnType == .void {
+                out.emit(call)
+            } else {
+                let result = out.temp()
+                out.emit("\(result) = \(call)")
+                if FunctionEmitter.isManaged(function.returnType) {
+                    out.emit("call void @\(FunctionEmitter.releaseFunction(function.returnType))(ptr \(result))")
+                }
+            }
+            for (value, release) in owned { out.emit("call void @\(release)(ptr \(value))") }
+            out.emit("ret void")
+            out.raw("}")
+            out.raw("")
+        }
+        return out.lines.joined(separator: "\n")
     }
 
     /// The task plumbing for a module with ASYNC FUNCTIONs: `globals.capture`
@@ -446,6 +492,11 @@ struct LLVMLowering {
     declare void @basic_rt_file_write_json(ptr, ptr, i1)
     declare ptr @basic_rt_file_files(ptr)
     declare ptr @basic_rt_system_new(ptr, i64, ptr)
+    declare void @basic_rt_event_register(ptr, ptr, ptr, i64)
+    declare void @basic_rt_event_post(ptr, ptr, ptr)
+    declare void @basic_rt_events_drain(i64)
+    declare void @basic_rt_timer_on(ptr, double, ptr, i64)
+    declare void @basic_rt_system_set(ptr, ptr, ptr)
     declare ptr @basic_rt_snapshot_new(i64)
     declare void @basic_rt_snapshot_set(ptr, i64, ptr)
     declare ptr @basic_rt_snapshot_get(ptr, i64)
@@ -911,6 +962,18 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_key_mode(i64 \(mode))")
         case .filesList:
             out.emit("call void @basic_rt_files_list()")
+        case .onEvent(let type, let subtype, let handler, let payloadType):
+            out.emit("call void @basic_rt_event_register(ptr \(constants.constant(type)), ptr \(constants.constant(subtype)), ptr @\"E.\(handler)\", i64 \(payloadType))")
+        case .onTimer(let timer, let ticks, let handler, let payloadType):
+            let object = lowerValue(timer).0
+            let count = lowerValue(ticks).0
+            out.emit("call void @basic_rt_timer_on(ptr \(object), double \(count), ptr @\"E.\(handler)\", i64 \(payloadType))")
+        case .systemSet(let object, let property, let value):
+            let receiver = lowerValue(object).0
+            let boxed = lowerValue(value).0
+            out.emit("call void @basic_rt_system_set(ptr \(receiver), ptr \(constants.constant(property)), ptr \(boxed))")
+        case .drainEvents(let limit):
+            out.emit("call void @basic_rt_events_drain(i64 \(limit))")
         case .systemCommand(let command):
             out.emit("call void @basic_rt_system_print(ptr \(lowerValue(command).0))")
         case .screen(let mode):
