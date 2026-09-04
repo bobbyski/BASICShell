@@ -165,3 +165,9 @@ public func basic_rt_using_end(_ newline: Bool) {
     RTConsole.write(RTUsing.render(format: RTUsing.format, values: RTUsing.values))
     if newline { RTConsole.write("\n") }
 }
+
+/// `USING$`: the rendered line as an owned string.
+@_cdecl("basic_rt_using_render")
+public func basic_rt_using_render() -> UnsafeMutableRawPointer {
+    rtOwned(RTUsing.render(format: RTUsing.format, values: RTUsing.values))
+}

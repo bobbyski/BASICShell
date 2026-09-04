@@ -409,6 +409,13 @@ final class FunctionBuilder {
                 number: try lowerExpression(number, expecting: .number, context: "PRINT #"),
                 items: items, newline: !(parts.last?.suppressesNewline ?? false)
             ))
+        case .printFileUsing(let number, let format, let values, let trailingSeparator):
+            emit(.printFileUsing(
+                number: try lowerExpression(number, expecting: .number, context: "PRINT #"),
+                format: try lowerExpression(format, expecting: .string, context: "PRINT # USING"),
+                values: try values.map { try lowerExpression($0) },
+                newline: trailingSeparator == nil
+            ))
         case .writeFile(let number, let values):
             emit(.writeFile(
                 number: try lowerExpression(number, expecting: .number, context: "WRITE #"),
@@ -1095,6 +1102,13 @@ final class FunctionBuilder {
         }
         if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) {
             return try lowerIntrinsic(intrinsic, name, arguments)
+        }
+        if name.normalized == "USING$" {
+            guard arguments.count >= 2 else { throw CompileError("USING$ expects at least 2 arguments", at: location) }
+            return .usingString(
+                format: try lowerExpression(arguments[0], expecting: .string, context: "USING$"),
+                values: try arguments.dropFirst().map { try lowerExpression($0) }
+            )
         }
         if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             throw unsupported("the builtin \(name.name)")

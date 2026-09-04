@@ -89,6 +89,8 @@ public enum BIROperation: Sendable {
     case closeFile(BIRExpression?)
     /// `PRINT #n, items` — rendered like PRINT, appended to the file.
     case printFile(number: BIRExpression, items: [BIRPrintItem], newline: Bool)
+    /// `PRINT #n USING format; values`.
+    case printFileUsing(number: BIRExpression, format: BIRExpression, values: [BIRExpression], newline: Bool)
     /// `WRITE #n, values` — quoted, comma-separated, one line.
     case writeFile(number: BIRExpression, values: [BIRExpression])
     /// `INPUT #n, targets`.

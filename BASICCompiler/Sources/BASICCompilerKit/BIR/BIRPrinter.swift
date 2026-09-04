@@ -104,6 +104,8 @@ public struct BIRPrinter {
                 case .spc(let value): return "spc(\(render(value)))"
                 }
             }.joined(separator: " ") + (newline ? " newline" : "")
+        case .printFileUsing(let number, let format, let values, let newline):
+            return "print #\(render(number)) using \(render(format)); " + values.map(render).joined(separator: ", ") + (newline ? " newline" : "")
         case .writeFile(let number, let values):
             return "write #\(render(number)) " + values.map(render).joined(separator: ", ")
         case .inputFile(let number, let targets):
@@ -206,6 +208,8 @@ public struct BIRPrinter {
             return "\(render(base)).#\(index)"
         case .construct(let name):
             return "new \(name)"
+        case .usingString(let format, let values):
+            return "USING$(" + ([format] + values).map(render).joined(separator: ", ") + ")"
         }
     }
 }

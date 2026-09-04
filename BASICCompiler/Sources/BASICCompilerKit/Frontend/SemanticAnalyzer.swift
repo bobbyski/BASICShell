@@ -461,6 +461,7 @@ struct SemanticAnalyzer {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             if let userFunction = model.functions[name.normalized] { return userFunction.returnType }
             if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) { return intrinsic.returnType }
+            if name.normalized == "USING$" { return .string }
             return model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
         case .lenFunction: return .number
         case .chrFunction: return .string

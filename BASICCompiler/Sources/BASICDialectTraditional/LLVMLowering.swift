@@ -135,6 +135,7 @@ struct LLVMLowering {
     declare void @basic_rt_using_number(double)
     declare void @basic_rt_using_string(ptr)
     declare void @basic_rt_using_end(i1)
+    declare ptr @basic_rt_using_render()
     declare ptr @basic_rt_string_literal(ptr, i64)
     declare void @basic_rt_string_retain(ptr)
     declare void @basic_rt_string_release(ptr)
@@ -651,28 +652,18 @@ struct FunctionEmitter {
             out.emit("\(result) = call ptr @basic_rt_line_input(ptr \(promptValue))")
             storeManaged(result, owned: true, into: slotName(variable), type: .string)
 
+        case .printFileUsing(let number, let format, let values, let newline):
+            let numberValue = lowerValue(number).0
+            out.emit("call void @basic_rt_capture_begin()")
+            lower(.printUsing(format: format, values: values, newline: newline))
+            let text = out.temp()
+            out.emit("\(text) = call ptr @basic_rt_capture_end()")
+            owned.append(text)
+            out.emit("call void @basic_rt_file_print(double \(numberValue), ptr \(text))")
+
         case .printUsing(let format, let values, let newline):
             out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
-            for value in values {
-                let (result, _) = lowerValue(value)
-                switch value.type {
-                case .number: out.emit("call void @basic_rt_using_number(double \(result))")
-                case .string: out.emit("call void @basic_rt_using_string(ptr \(result))")
-                case .composite:
-                    let text = out.temp()
-                    out.emit("\(text) = call ptr @basic_rt_composite_text(ptr \(result))")
-                    owned.append(text)
-                    out.emit("call void @basic_rt_using_string(ptr \(text))")
-                case .boolean:
-                    let text = out.temp()
-                    out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
-                    let string = out.temp()
-                    out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
-                    owned.append(string)
-                    out.emit("call void @basic_rt_using_string(ptr \(string))")
-                case .void: break
-                }
-            }
+            feedUsingValues(values)
             out.emit("call void @basic_rt_using_end(i1 \(newline ? "true" : "false"))")
 
         case .randomize(let seed):
@@ -694,6 +685,33 @@ struct FunctionEmitter {
             out.label(out.freshLabel("fail.cont"))
         }
     }
+
+    /// Hands PRINT USING's values to the runtime, one call per value.
+    private mutating func feedUsingValues(_ values: [BIRExpression]) {
+        do {
+            for value in values {
+                let (result, _) = lowerValue(value)
+                switch value.type {
+                case .number: out.emit("call void @basic_rt_using_number(double \(result))")
+                case .string: out.emit("call void @basic_rt_using_string(ptr \(result))")
+                case .composite:
+                    let text = out.temp()
+                    out.emit("\(text) = call ptr @basic_rt_composite_text(ptr \(result))")
+                    owned.append(text)
+                    out.emit("call void @basic_rt_using_string(ptr \(text))")
+                case .boolean:
+                    let text = out.temp()
+                    out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
+                    let string = out.temp()
+                    out.emit("\(string) = call ptr @basic_rt_string_literal(ptr \(text), i64 5)")
+                    owned.append(string)
+                    out.emit("call void @basic_rt_using_string(ptr \(string))")
+                case .void: break
+                }
+            }
+        }
+    }
+
 
     /// `READ` one item for a variable; strings come back owned.
     private mutating func readValue(_ variable: BIRVariable) -> String {
@@ -964,6 +982,13 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
                 return (result, false)
             }
+        case .usingString(let format, let values):
+            out.emit("call void @basic_rt_using_begin(ptr \(lowerValue(format).0))")
+            feedUsingValues(values)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_using_render()")
+            owned.append(result)
+            return (result, true)
         case .construct(let name):
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_composite_new(i64 \(module.typeIndex(of: name) ?? -1))")

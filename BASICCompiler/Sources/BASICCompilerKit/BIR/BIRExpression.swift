@@ -47,6 +47,8 @@ public indirect enum BIRExpression: Sendable {
     case field(BIRExpression, index: Int, type: BIRType)
     /// A default instance of a `TYPE` or `CLASS` (before any `NEW` runs).
     case construct(String)
+    /// `USING$(format, values…)`: PRINT USING's rendering as a string.
+    case usingString(format: BIRExpression, values: [BIRExpression])
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -71,6 +73,8 @@ public indirect enum BIRExpression: Sendable {
             return type
         case .construct(let name):
             return .composite(name)
+        case .usingString:
+            return .string
         }
     }
 }
