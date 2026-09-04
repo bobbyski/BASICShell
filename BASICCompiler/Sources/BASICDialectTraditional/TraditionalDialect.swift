@@ -23,7 +23,7 @@ public struct TraditionalDialect: DialectCompiler {
     public init() {}
 
     public func lower(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
-        var lowering = LLVMLowering(module: module, options: options)
+        let lowering = LLVMLowering(module: module, options: options)
         return LoweredModule(name: module.name, llvmIR: lowering.render())
     }
 

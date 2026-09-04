@@ -23,16 +23,33 @@ public struct BIRPrinter {
     public func render(_ module: BIRModule) -> String {
         var lines: [String] = ["module \(module.name)"]
         for variable in module.globals {
-            lines.append("global \(variable.name) : \(variable.type.rawValue)")
+            lines.append("global " + render(variable))
+        }
+        if !module.data.isEmpty {
+            lines.append("data " + module.data.map { item -> String in
+                switch item {
+                case .number(let value): return render(.number(value))
+                case .string(let value): return render(.string(value))
+                }
+            }.joined(separator: ", "))
         }
         lines.append(contentsOf: render(module.main))
+        for function in module.functions {
+            lines.append(contentsOf: render(function))
+        }
         return lines.joined(separator: "\n") + "\n"
     }
 
+    private func render(_ variable: BIRVariable) -> String {
+        let suffix = variable.rank.map { "(\($0))" } ?? ""
+        return "\(variable.name)\(suffix) : \(variable.type.rawValue)"
+    }
+
     private func render(_ function: BIRFunction) -> [String] {
-        var lines = ["function \(function.name)"]
-        for variable in function.locals {
-            lines.append("  local \(variable.name) : \(variable.type.rawValue)")
+        let parameters = function.parameters.map(render).joined(separator: ", ")
+        var lines = ["function \(function.name)(\(parameters)) : \(function.returnType.rawValue)"]
+        for variable in function.locals where !function.parameters.contains(variable) {
+            lines.append("  local " + render(variable))
         }
         for block in function.blocks {
             lines.append("  \(block.label):")
@@ -48,6 +65,21 @@ public struct BIRPrinter {
         switch operation {
         case .store(let variable, let value):
             return "store \(variable.name) <- \(render(value))"
+        case .storeElement(let variable, let indexes, let value):
+            return "store \(variable.name)(\(indexes.map(render).joined(separator: ", "))) <- \(render(value))"
+        case .dim(let variable, let bounds):
+            return "dim \(variable.name)(\(bounds.map(render).joined(separator: ", ")))"
+        case .call(let name, let arguments):
+            return "call \(name)(\(arguments.map(render).joined(separator: ", ")))"
+        case .read(let targets):
+            return "read " + targets.map { target -> String in
+                switch target {
+                case .variable(let variable): return variable.name
+                case .element(let variable, let indexes): return "\(variable.name)(\(indexes.map(render).joined(separator: ", ")))"
+                }
+            }.joined(separator: ", ")
+        case .restore:
+            return "restore"
         case .print(let items, let newline):
             let rendered = items.map { item -> String in
                 switch item {
@@ -76,6 +108,7 @@ public struct BIRPrinter {
         case .gosub(let target, let resume): return "gosub \(label(target)) resume \(label(resume))"
         case .returnFromGosub: return "return"
         case .end: return "end"
+        case .ret(let value): return "ret" + (value.map { " " + render($0) } ?? "")
         case .unterminated: return "<unterminated>"
         }
     }
@@ -105,6 +138,10 @@ public struct BIRPrinter {
             return "(\(render(left)) \(op.rawValue.uppercased()) \(render(right)))"
         case .intrinsic(let intrinsic, let arguments):
             return "\(intrinsic.rawValue)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .call(let name, let arguments, _):
+            return "\(name)(" + arguments.map(render).joined(separator: ", ") + ")"
+        case .element(let variable, let indexes):
+            return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
         }
     }
 }

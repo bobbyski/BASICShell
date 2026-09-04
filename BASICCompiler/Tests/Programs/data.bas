@@ -1,0 +1,19 @@
+DATA 10, 20, "thirty", 40.5
+DATA -5, "last"
+DATA 1, 2, 3
+READ A, B
+PRINT A; B
+READ C$
+PRINT C$
+READ D, E, F$
+PRINT D; E; F$
+RESTORE
+READ G, G2, C2$, D2, E2, F2$
+PRINT G; G2; C2$; D2; E2; F2$
+DIM V(3)
+FOR I = 1 TO 3
+  READ V(I)
+NEXT I
+PRINT V(1); V(2); V(3)
+READ H$
+PRINT "NEVER"

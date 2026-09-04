@@ -15,11 +15,35 @@ public enum BIRPrintItem: Sendable {
     case spc(BIRExpression)
 }
 
+/// Where a `READ` puts a value.
+public enum BIRReadTarget: Sendable {
+    /// A scalar variable.
+    case variable(BIRVariable)
+    /// An array element.
+    case element(BIRVariable, [BIRExpression])
+}
+
+/// One `DATA` item.
+public enum BIRDataItem: Sendable {
+    case number(Double)
+    case string(String)
+}
+
 /// What an instruction does. Instructions never transfer control; that is
 /// the terminator's job.
 public enum BIROperation: Sendable {
     /// Stores a value into a variable.
     case store(BIRVariable, BIRExpression)
+    /// Stores a value into an array element.
+    case storeElement(BIRVariable, [BIRExpression], BIRExpression)
+    /// `DIM`: (re)creates an array with the given upper bounds.
+    case dim(BIRVariable, [BIRExpression])
+    /// Calls a `FUNCTION` for its effect, discarding any value.
+    case call(String, [BIRExpression])
+    /// `READ` the next DATA items into the targets.
+    case read([BIRReadTarget])
+    /// `RESTORE`: rewind DATA.
+    case restore
     /// Prints items; `newline` is false when the statement ended in `;` or `,`.
     case print([BIRPrintItem], newline: Bool)
     /// Reads one value from the console into a variable.
@@ -58,6 +82,8 @@ public enum BIRTerminator: Sendable {
     case returnFromGosub
     /// `END`, or falling off the end of the program.
     case end
+    /// Return from a `FUNCTION`, with the value when it has one.
+    case ret(BIRExpression?)
     /// The block was never finished — a builder bug if it survives.
     case unterminated
 }
@@ -82,19 +108,25 @@ public struct BIRBlock: Sendable {
     }
 }
 
-/// A function: `main` for the program body, one per `FUNCTION` later.
+/// A function: `main` for the program body, one per `FUNCTION`.
 public struct BIRFunction: Sendable {
     /// The name as it appears in IR.
     public let name: String
-    /// Frame-local variables (hidden loop temporaries included).
+    /// Parameters, in order; each is also a local.
+    public var parameters: [BIRVariable]
+    /// The value returned, or `.void`.
+    public var returnType: BIRType
+    /// Frame-local variables (parameters and hidden temporaries included).
     public var locals: [BIRVariable]
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
 
     /// Creates a function with an empty entry block.
-    public init(name: String) {
+    public init(name: String, parameters: [BIRVariable] = [], returnType: BIRType = .void) {
         self.name = name
-        self.locals = []
+        self.parameters = parameters
+        self.returnType = returnType
+        self.locals = parameters
         self.blocks = [BIRBlock(id: 0, label: "entry")]
     }
 
@@ -104,7 +136,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return [target]
         case .branch(_, let then, let otherwise): return [then, otherwise]
         case .gosub(let target, let resume): return [target, resume]
-        case .returnFromGosub, .end, .unterminated: return []
+        case .returnFromGosub, .end, .ret, .unterminated: return []
         }
     }
 
@@ -132,7 +164,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return .jump(map[target]!)
         case .branch(let condition, let then, let otherwise): return .branch(condition, then: map[then]!, else: map[otherwise]!)
         case .gosub(let target, let resume): return .gosub(map[target]!, resume: map[resume]!)
-        case .returnFromGosub, .end: return terminator
+        case .returnFromGosub, .end, .ret: return terminator
         case .unterminated: return .end
         }
     }
@@ -146,11 +178,17 @@ public struct BIRModule: Sendable {
     public var globals: [BIRVariable]
     /// The program body.
     public var main: BIRFunction
+    /// User functions, in source order.
+    public var functions: [BIRFunction]
+    /// Every `DATA` item, in source order.
+    public var data: [BIRDataItem]
 
     /// Creates an empty module.
     public init(name: String) {
         self.name = name
         self.globals = []
         self.main = BIRFunction(name: "main")
+        self.functions = []
+        self.data = []
     }
 }

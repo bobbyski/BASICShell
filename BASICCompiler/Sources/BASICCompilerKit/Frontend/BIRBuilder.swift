@@ -4,47 +4,67 @@ import Foundation
 /// Turns parsed statements into a ``BIRModule``.
 ///
 /// ```text
-///   [ParsedLine] ──► VariableTyper (types) ──► block construction ──► BIRModule
-///                    ▲                         │
-///                    │                         ├─ a line that is a GOTO/GOSUB target
-///                    │                         │  starts a block
-///                    │                         ├─ IF / FOR / SELECT are matched
-///                    │                         │  lexically with a frame stack
-///                    │                         └─ anything the compiler cannot
-///                    │                            do yet is a CompileError, never
-///                    │                            a silent difference
-///                    └── suffix, AS type, or what is assigned
+///   [ParsedLine] ──► SemanticAnalyzer ──► FunctionBuilder (main) ──► BIRModule
+///                    functions, scopes,    FunctionBuilder (each FUNCTION)
+///                    types, arrays         │
+///                                          ├─ a line that is a GOTO/GOSUB target
+///                                          │  starts a block
+///                                          ├─ IF / FOR / SELECT are matched
+///                                          │  lexically with a frame stack
+///                                          └─ anything the compiler cannot do
+///                                             yet is a CompileError, never a
+///                                             silent difference
 /// ```
-///
-/// This is the whole front end for the program body. `FUNCTION`s, arrays,
-/// records, and classes arrive with Phase 4 of BASIC_COMPILER.md.
 public struct BIRBuilder {
     /// Creates a builder.
     public init() {}
 
     /// Builds the module for a program.
     public func build(_ lines: [ParsedLine], moduleName: String) throws -> BIRModule {
-        var typer = VariableTyper()
-        try typer.run(lines)
-        let builder = FunctionBuilder(lines: lines, typer: typer)
-        try builder.run()
+        var analyzer = SemanticAnalyzer(lines: lines)
+        let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
-        // Variables that are only ever read still need a slot; the builder
-        // saw every reference.
-        let referencedOnly = builder.referencedGlobals.filter { !typer.order.contains($0.name) }
-        module.globals = typer.order.map { BIRVariable(name: $0, type: typer.type(of: $0), scope: .global) }
-            + referencedOnly.sorted { $0.name < $1.name }
-        module.main = builder.function
+        module.globals = model.globalVariables
+        module.data = Self.collectData(lines)
+
+        let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner)
+        try main.run()
+        module.main = main.function
+
+        for name in model.functionOrder {
+            let builder = FunctionBuilder(lines: lines, model: model, function: name, owner: analyzer.owner)
+            try builder.run()
+            module.functions.append(builder.function)
+        }
         return module
+    }
+
+    /// Every DATA item in source order, as the interpreter collects them.
+    private static func collectData(_ lines: [ParsedLine]) -> [BIRDataItem] {
+        lines.filter { !$0.isImported }.flatMap { line -> [BIRDataItem] in
+            guard case .data(let literals) = line.statement else { return [] }
+            return literals.map { literal in
+                switch literal {
+                case .number(let value): return .number(value)
+                case .string(let value): return .string(value)
+                case .boolean(let value): return .number(value ? 1 : 0)
+                case .null, .empty: return .string("")
+                }
+            }
+        }
     }
 }
 
-/// Builds one function's blocks. A class so the many helpers can share
-/// mutable state without `inout` threading.
+/// Builds one function's blocks — `main` or a `FUNCTION`. A class so the
+/// many helpers can share mutable state without `inout` threading.
 final class FunctionBuilder {
     private let lines: [ParsedLine]
-    private let typer: VariableTyper
-    private(set) var function = BIRFunction(name: "main")
+    private let model: SemanticModel
+    /// The function being built; nil for the program body.
+    private let functionName: String?
+    private let signature: SemanticModel.Function?
+    private let owner: [String?]
+    private(set) var function: BIRFunction
 
     /// The block instructions are currently appended to.
     private var current: BIRBlockID = 0
@@ -55,8 +75,6 @@ final class FunctionBuilder {
     private var location = BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
     private var frames: [Frame] = []
     private var hiddenCounter = 0
-    /// Every global the function touched, so read-only variables get storage.
-    private(set) var referencedGlobals: Set<BIRVariable> = []
 
     /// One open IF / FOR / SELECT.
     private enum Frame {
@@ -65,40 +83,74 @@ final class FunctionBuilder {
         case select(subject: BIRVariable, next: BIRBlockID, elseBlock: BIRBlockID?, end: BIRBlockID)
     }
 
-    init(lines: [ParsedLine], typer: VariableTyper) {
+    init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?]) {
         self.lines = lines
-        self.typer = typer
+        self.model = model
+        self.functionName = function
+        self.signature = function.flatMap { model.functions[$0] }
+        self.owner = owner
+        if let signature = self.signature {
+            self.function = BIRFunction(name: signature.name, parameters: signature.parameters, returnType: signature.returnType)
+            self.function.locals = model.localVariables(of: signature.name)
+        } else {
+            self.function = BIRFunction(name: "main")
+        }
+    }
+
+    /// The parsed-line indexes this function executes.
+    private var ownedLines: [Int] {
+        if let signature {
+            return Array(signature.body)
+        }
+        return lines.indices.filter { owner[$0] == nil }
     }
 
     func run() throws {
+        if let signature, let expression = signature.expression {
+            location = signature.location
+            terminate(.ret(try lowerExpression(expression, expecting: signature.returnType, context: "DEF \(signature.displayName)")))
+            function.pruneUnreachableBlocks()
+            return
+        }
         try indexTargets()
-        for (index, line) in lines.enumerated() {
-            location = BIRLocation(file: line.fileName, line: line.sourceLineNumber, statement: line.statementNumber, lineNumber: line.number)
+        emitImplicitDimensions()
+        for index in ownedLines {
+            let line = lines[index]
+            location = SemanticAnalyzer.location(of: line)
             if let block = blockForLine[index] {
                 terminate(.jump(block))
                 current = block
             }
             try lower(line.statement)
         }
-        terminate(.end)
+        terminate(signature == nil ? .end : .ret(nil))
         guard frames.isEmpty else {
             throw CompileError(unterminatedFrameMessage(), at: location)
         }
         function.pruneUnreachableBlocks()
     }
 
+    /// Arrays the interpreter would create on first use (0...10 per
+    /// dimension) are created up front instead.
+    private func emitImplicitDimensions() {
+        guard signature == nil else { return }
+        for variable in model.globalVariables {
+            guard let rank = variable.rank, model.globals[variable.name]?.wasDimensioned == false else { continue }
+            emit(.dim(variable, Array(repeating: .number(10), count: rank)))
+        }
+    }
+
     // MARK: - Targets
 
-    /// Maps line numbers and labels to line indexes, then gives every
-    /// referenced target its own block.
     private func indexTargets() throws {
-        for (index, line) in lines.enumerated() {
+        for index in ownedLines {
+            let line = lines[index]
             if let number = line.number { lineIndexByNumber[number] = index }
             if let label = line.statement.label { lineIndexByLabel[label.uppercased()] = index }
         }
-        for line in lines {
-            location = BIRLocation(file: line.fileName, line: line.sourceLineNumber, statement: line.statementNumber, lineNumber: line.number)
-            try collectTargets(in: line.statement)
+        for index in ownedLines {
+            location = SemanticAnalyzer.location(of: lines[index])
+            try collectTargets(in: lines[index].statement)
         }
     }
 
@@ -171,11 +223,6 @@ final class FunctionBuilder {
         current = newBlock("after")
     }
 
-    private var currentIsOpen: Bool {
-        if case .unterminated = function.blocks[current].terminator { return true }
-        return false
-    }
-
     private func hidden(_ purpose: String, _ type: BIRType) -> BIRVariable {
         hiddenCounter += 1
         let variable = BIRVariable(name: "$\(purpose).\(hiddenCounter)", type: type, scope: .local)
@@ -184,9 +231,7 @@ final class FunctionBuilder {
     }
 
     private func variable(_ name: VariableName) -> BIRVariable {
-        let variable = BIRVariable(name: name.normalized, type: typer.type(of: name.normalized), scope: .global)
-        referencedGlobals.insert(variable)
-        return variable
+        model.variable(name.normalized, in: functionName)
     }
 
     private func unsupported(_ what: String) -> CompileError {
@@ -197,7 +242,7 @@ final class FunctionBuilder {
 
     private func lower(_ statement: Statement) throws {
         switch statement {
-        case .empty, .remark, .label:
+        case .empty, .remark, .label, .data:
             break
         case .labeled(_, let inner):
             try lower(inner)
@@ -211,21 +256,48 @@ final class FunctionBuilder {
                 .map(lowerPrintPart)
             emit(.print(items, newline: !(parts.last?.suppressesNewline ?? false)))
 
-        case .assignment(_, let name, _, let value):
+        case .assignment(let kind, let name, _, let value):
+            if kind == .letValue || kind == .global, signature != nil, model.isLocal(name.normalized, in: functionName) {
+                throw unsupported("LET/GLOBAL assignment to a local")
+            }
             let target = variable(name)
+            guard target.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
             let stored = try value.map { try lowerExpression($0, expecting: target.type, context: "assign to \(name.name)") }
                 ?? defaultValue(for: target.type)
             emit(.store(target, stored))
+        case .referenceAssignment(let reference, let value):
+            guard reference.fields.isEmpty else { throw unsupported("field assignment") }
+            guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
+            let target = variable(reference.base)
+            let indexes = try reference.indexes.map { try lowerExpression($0, expecting: .number, context: "\(reference.base.name) index") }
+            let stored = try value.map { try lowerExpression($0, expecting: target.type, context: "assign to \(reference.base.name)") }
+                ?? defaultValue(for: target.type)
+            if indexes.isEmpty {
+                emit(.store(target, stored))
+            } else {
+                emit(.storeElement(target, indexes, stored))
+            }
         case .dim(_, let name, let dimensions, _):
-            guard dimensions.isEmpty else { throw unsupported("DIM of an array") }
             let target = variable(name)
-            emit(.store(target, defaultValue(for: target.type)))
+            if dimensions.isEmpty {
+                emit(.store(target, defaultValue(for: target.type)))
+            } else {
+                let bounds = try dimensions.map { dimension -> BIRExpression in
+                    guard let dimension else { throw unsupported("DIM with an open dimension") }
+                    return try lowerExpression(dimension, expecting: .number, context: "DIM \(name.name)")
+                }
+                emit(.dim(target, bounds))
+            }
 
         case .input(let prompt, .variable(let name)):
             let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
             emit(.input(prompt: promptValue, into: variable(name)))
         case .input:
             throw unsupported("INPUT into an array element or field")
+        case .read(let targets):
+            emit(.read(try targets.map(lowerReadTarget)))
+        case .restore:
+            emit(.restore)
 
         case .goto(let number):
             terminate(.jump(try blockForTarget(.line(number))))
@@ -243,6 +315,18 @@ final class FunctionBuilder {
             try lowerComputedJump(targets: targets, selector: selector, isGosub: true)
         case .end:
             terminate(.end)
+
+        case .returnValue(let expression):
+            guard let signature else { emit(.fail("RETURN value outside FUNCTION")); return }
+            guard signature.returnType != .void else {
+                throw CompileError("Type error: VOID function \(signature.displayName) cannot return a value", at: location)
+            }
+            terminate(.ret(try lowerExpression(expression, expecting: signature.returnType, context: "RETURN")))
+        case .exitFunction:
+            guard signature != nil else { emit(.fail("EXIT FUNCTION outside FUNCTION")); return }
+            terminate(.ret(nil))
+        case .expression(let expression):
+            try lowerExpressionStatement(expression)
 
         case .ifThen(let condition, let thenAction, let elseAction):
             try lowerSingleLineIf(condition, thenAction, elseAction)
@@ -341,26 +425,19 @@ final class FunctionBuilder {
         case .randomize(let seed):
             emit(.randomize(try seed.map { try lowerExpression($0, expecting: .number, context: "RANDOMIZE") }))
 
-        case .exitFunction:
-            emit(.fail("EXIT FUNCTION outside FUNCTION"))
-        case .returnValue:
-            emit(.fail("RETURN value outside FUNCTION"))
-
-        case .expression(let expression):
-            throw unsupported("a bare expression statement (\(describe(expression)))")
+        case .functionDeclaration, .endFunction, .defFunction:
+            // Declarations are hoisted by the analyzer; the body is built as
+            // its own function and never runs inline.
+            break
         case .printUsing:
             throw unsupported("PRINT USING")
-        case .functionDeclaration, .endFunction, .defFunction:
-            throw unsupported("FUNCTION (Phase 4.1)")
         case .typeDeclaration, .typeField, .endType:
             throw unsupported("TYPE (Phase 4.2)")
         case .classDeclaration, .classField, .endClass, .interfaceDeclaration, .interfaceFunctionSignature,
              .endInterface, .implementsDeclaration, .inheritsDeclaration, .functionTypeDeclaration:
             throw unsupported("CLASS and INTERFACE (Phase 4.3)")
-        case .closureAssignment, .referenceAssignment:
-            throw unsupported("closures and references (Phase 4.4)")
-        case .data, .read, .restore:
-            throw unsupported("DATA/READ/RESTORE (Phase 4.7)")
+        case .closureAssignment:
+            throw unsupported("closures (Phase 4.4)")
         case .importDirective:
             throw unsupported("IMPORT (Phase 4.7)")
         case .onErrorGoto, .error, .resumeNext:
@@ -388,6 +465,32 @@ final class FunctionBuilder {
         case .string: return .string("")
         case .boolean: return .boolean(false)
         }
+    }
+
+    private func lowerReadTarget(_ target: ReadTarget) throws -> BIRReadTarget {
+        switch target {
+        case .variable(let name):
+            return .variable(variable(name))
+        case .reference(let reference):
+            guard reference.fields.isEmpty else { throw unsupported("READ into a field") }
+            let indexes = try reference.indexes.map { try lowerExpression($0, expecting: .number, context: "\(reference.base.name) index") }
+            return indexes.isEmpty ? .variable(variable(reference.base)) : .element(variable(reference.base), indexes)
+        }
+    }
+
+    /// A call used as a statement runs for its effect; anything else is
+    /// evaluated and dropped, as the interpreter does.
+    private func lowerExpressionStatement(_ expression: Expression) throws {
+        switch expression {
+        case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
+            if let userFunction = model.functions[name.normalized] {
+                emit(.call(userFunction.name, try lowerArguments(arguments, for: userFunction)))
+                return
+            }
+        default:
+            break
+        }
+        _ = try lowerExpression(expression)
     }
 
     // MARK: - Control flow helpers
@@ -441,7 +544,7 @@ final class FunctionBuilder {
 
     private func lowerFor(_ name: VariableName, _ start: Expression, _ end: Expression, _ step: Expression?) throws {
         let counter = variable(name)
-        guard counter.type == .number else {
+        guard counter.type == .number, counter.rank == nil else {
             throw CompileError("Type error: FOR variable \(name.name) must be numeric", at: location)
         }
         let endSlot = hidden("for.end", .number)
@@ -546,7 +649,10 @@ final class FunctionBuilder {
         case .number(let value): return .number(value)
         case .string(let value): return .string(value)
         case .boolean(let value): return .boolean(value)
-        case .variable(let name): return .load(variable(name))
+        case .variable(let name):
+            let resolved = variable(name)
+            guard resolved.rank == nil else { throw CompileError("Type error: \(name.name) is an array", at: location) }
+            return .load(resolved)
         case .unaryMinus(let inner):
             return .negate(try lowerExpression(inner, expecting: .number, context: "unary minus"))
         case .binary(let left, let operation, let right):
@@ -616,13 +722,45 @@ final class FunctionBuilder {
         }
     }
 
+    /// `NAME(args)`: a user function, an array element, or a builtin — in
+    /// the interpreter's order of precedence.
     private func lowerCall(_ name: VariableName, _ arguments: [Expression]) throws -> BIRExpression {
-        guard let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) else {
-            if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
-                throw unsupported("the builtin \(name.name)")
+        if let userFunction = model.functions[name.normalized] {
+            guard userFunction.returnType != .void else {
+                throw CompileError("VOID function \(userFunction.displayName) cannot be used in an expression", at: location)
             }
-            throw unsupported("calling \(name.name) (user functions and arrays arrive in Phase 4)")
+            return .call(userFunction.name, try lowerArguments(arguments, for: userFunction), returns: userFunction.returnType)
         }
+        if let intrinsic = BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) {
+            return try lowerIntrinsic(intrinsic, name, arguments)
+        }
+        if BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
+            throw unsupported("the builtin \(name.name)")
+        }
+        let array = variable(name)
+        guard let rank = array.rank else {
+            throw CompileError("Unknown function \(name.name)", at: location)
+        }
+        guard rank == arguments.count else {
+            throw CompileError("\(name.name) expects \(rank) indexes", at: location)
+        }
+        let indexes = try arguments.map { try lowerExpression($0, expecting: .number, context: "\(name.name) index") }
+        return .element(array, indexes)
+    }
+
+    private func lowerArguments(_ arguments: [Expression], for userFunction: SemanticModel.Function) throws -> [BIRExpression] {
+        guard arguments.count == userFunction.parameters.count else {
+            throw CompileError(
+                "Function \(userFunction.displayName) expects \(userFunction.parameters.count) arguments, got \(arguments.count)",
+                at: location
+            )
+        }
+        return try zip(arguments, userFunction.parameters).map { argument, parameter in
+            try lowerExpression(argument, expecting: parameter.type, context: "\(userFunction.displayName) parameter \(parameter.name)")
+        }
+    }
+
+    private func lowerIntrinsic(_ intrinsic: BIRIntrinsic, _ name: VariableName, _ arguments: [Expression]) throws -> BIRExpression {
         var lowered = try arguments.map { try lowerExpression($0) }
         // Normalize the optional-argument forms to a fixed shape.
         switch intrinsic {

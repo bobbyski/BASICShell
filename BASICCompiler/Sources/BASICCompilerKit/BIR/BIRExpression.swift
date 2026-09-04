@@ -37,6 +37,10 @@ public indirect enum BIRExpression: Sendable {
     case logical(BIRLogical, BIRExpression, BIRExpression)
     /// A builtin function.
     case intrinsic(BIRIntrinsic, [BIRExpression])
+    /// A call to a user `FUNCTION` that returns a value.
+    case call(String, [BIRExpression], returns: BIRType)
+    /// One element of an array variable.
+    case element(BIRVariable, [BIRExpression])
 
     /// The static type of the value this expression produces.
     public var type: BIRType {
@@ -51,6 +55,10 @@ public indirect enum BIRExpression: Sendable {
             return variable.type
         case .intrinsic(let intrinsic, _):
             return intrinsic.returnType
+        case .call(_, _, let returns):
+            return returns
+        case .element(let variable, _):
+            return variable.type
         }
     }
 }

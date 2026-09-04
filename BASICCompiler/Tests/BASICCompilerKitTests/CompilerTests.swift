@@ -68,7 +68,7 @@ struct BIRGoldenTests {
         #expect(BIRPrinter().render(module) == """
             module golden
             global A$ : string
-            function main
+            function main() : void
               entry:
                 store A$ <- "hi"
                 print A$ (1 + 2) newline
@@ -139,7 +139,7 @@ struct DiagnosticTests {
 
     @Test func unsupportedFeaturesSaySo() {
         do {
-            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "DIM A(10)", name: "bad")
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: "PRINT USING \"##.#\"; 1.5", name: "bad")
             Issue.record("expected a compile error")
         } catch let error as CompileError {
             #expect(error.description.contains("not supported by basicc yet"))

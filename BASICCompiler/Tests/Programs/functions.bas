@@ -1,0 +1,43 @@
+FUNCTION Square(X AS DOUBLE) AS DOUBLE
+  RETURN X * X
+END FUNCTION
+
+FUNCTION Greet$(Name$ AS STRING) AS STRING
+  LOCAL Prefix$ = "Hello, "
+  RETURN Prefix$ + Name$ + "!"
+END FUNCTION
+
+FUNCTION Fact(N AS INTEGER) AS DOUBLE
+  IF N <= 1 THEN RETURN 1
+  RETURN N * Fact(N - 1)
+END FUNCTION
+
+FUNCTION Shout(Msg$ AS STRING) AS VOID
+  PRINT Msg$; "!!"
+  Calls = Calls + 1
+END FUNCTION
+
+FUNCTION Early(N AS DOUBLE) AS DOUBLE
+  IF N > 5 THEN EXIT FUNCTION
+  RETURN N + 100
+END FUNCTION
+
+FUNCTION WithSub(N AS DOUBLE) AS DOUBLE
+  Total = 0
+  GOSUB Add
+  GOSUB Add
+  RETURN Total
+Add:
+  Total = Total + N
+  RETURN
+END FUNCTION
+
+DEF FNDouble(V) = V * 2
+
+PRINT Square(7); Fact(5); FNDouble(21)
+PRINT Greet$("World")
+Shout("hey")
+Shout("there")
+PRINT "CALLS ="; Calls
+PRINT Early(3); Early(9)
+PRINT WithSub(4)

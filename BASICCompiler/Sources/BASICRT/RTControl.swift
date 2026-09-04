@@ -20,9 +20,23 @@ public func basic_rt_fail(_ message: UnsafePointer<CChar>) -> Never {
 }
 
 func basic_rt_fail(_ message: String) -> Never {
+    basic_rt_fail(prefix: "Runtime error", message)
+}
+
+/// Reports a type error — the interpreter's other failure flavor.
+@_cdecl("basic_rt_fail_type")
+public func basic_rt_fail_type(_ message: UnsafePointer<CChar>) -> Never {
+    basic_rt_fail_type(String(cString: message))
+}
+
+func basic_rt_fail_type(_ message: String) -> Never {
+    basic_rt_fail(prefix: "Type error", message)
+}
+
+private func basic_rt_fail(prefix: String, _ message: String) -> Never {
     fflush(stdout)
     if RTConsole.column != 0 { fputs("\n", stdout) }
-    fputs("Runtime error: \(message)\n", stdout)
+    fputs("\(prefix): \(message)\n", stdout)
     fflush(stdout)
     exit(1)
 }
@@ -35,6 +49,13 @@ enum RTGosubStack {
 @_cdecl("basic_rt_gosub_push")
 public func basic_rt_gosub_push(_ resume: Int) {
     RTGosubStack.entries.append(resume)
+}
+
+/// How many GOSUBs are pending — a function compares this with the depth
+/// at its entry to tell a subroutine RETURN from its own return.
+@_cdecl("basic_rt_gosub_depth")
+public func basic_rt_gosub_depth() -> Int {
+    RTGosubStack.entries.count
 }
 
 @_cdecl("basic_rt_gosub_pop")

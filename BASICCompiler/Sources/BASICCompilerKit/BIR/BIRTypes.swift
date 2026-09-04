@@ -37,20 +37,37 @@ public enum BIRScope: Sendable, Hashable {
     case local
 }
 
+/// Whether a variable holds one value or an array of them.
+public enum BIRStorage: Sendable, Hashable {
+    /// One value.
+    case scalar
+    /// A runtime array of `rank` dimensions; `type` is the element type.
+    case array(rank: Int)
+}
+
 /// A resolved variable: a name, a type, and where it lives.
 public struct BIRVariable: Sendable, Hashable {
     /// The BASIC name, uppercased, suffix included: `A$`, `COUNT%`.
     public let name: String
-    /// The static type.
+    /// The static type — of the elements, for an array.
     public let type: BIRType
     /// Where the storage lives.
     public let scope: BIRScope
+    /// Scalar or array.
+    public let storage: BIRStorage
 
     /// Creates a variable.
-    public init(name: String, type: BIRType, scope: BIRScope) {
+    public init(name: String, type: BIRType, scope: BIRScope, storage: BIRStorage = .scalar) {
         self.name = name
         self.type = type
         self.scope = scope
+        self.storage = storage
+    }
+
+    /// The rank when this is an array, else nil.
+    public var rank: Int? {
+        if case .array(let rank) = storage { return rank }
+        return nil
     }
 }
 
