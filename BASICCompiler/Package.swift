@@ -7,6 +7,8 @@ import PackageDescription
 // see Documents/BASIC_COMPILER.md for the plan.
 //
 //   basicc                    the CLI driver
+//   basictest                 the conformance runner: compiled vs expected
+//                             vs the interpreter
 //   BASICCompilerKit          the shared dialect protocol, driver, BIR,
 //                             diagnostics — owns no language knowledge
 //   BASICDialectTraditional   the default dialect (Rev 1)
@@ -20,6 +22,7 @@ let package = Package(
     platforms: [.macOS("16.0")],
     products: [
         .executable(name: "basicc", targets: ["basicc"]),
+        .executable(name: "basictest", targets: ["basictest"]),
         .library(name: "BASICCompilerKit", targets: ["BASICCompilerKit"]),
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
@@ -36,6 +39,10 @@ let package = Package(
         .target(name: "BASICRT"),
         .executableTarget(
             name: "basicc",
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
+        ),
+        .executableTarget(
+            name: "basictest",
             dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
         ),
         .testTarget(

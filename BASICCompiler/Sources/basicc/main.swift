@@ -25,6 +25,7 @@ func printUsage() {
       --dialect <name>     traditional (default) or, later, swift
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
+      --json-diagnostics   report errors as a JSON array (for IDEs)
     """)
 }
 
@@ -40,6 +41,7 @@ struct Invocation {
     var dialect: String?
     var emitBIR = false
     var emitLLVM = false
+    var jsonDiagnostics = false
 
     init(_ arguments: [String]) {
         command = arguments.first ?? "help"
@@ -57,6 +59,7 @@ struct Invocation {
                 dialect = arguments[index]
             case "--emit-bir": emitBIR = true
             case "--emit-llvm": emitLLVM = true
+            case "--json-diagnostics": jsonDiagnostics = true
             default:
                 if argument.hasPrefix("-") { fail("unknown option '\(argument)'", code: 2) }
                 if source == nil { source = argument } else { fail("only one source file at a time", code: 2) }
@@ -99,8 +102,15 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
             exit(process.terminationStatus)
         }
     } catch let error as CompileError {
-        for diagnostic in error.diagnostics {
-            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        if invocation.jsonDiagnostics {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let json = (try? encoder.encode(error.diagnostics)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+            print(json)
+        } else {
+            for diagnostic in error.diagnostics {
+                FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+            }
         }
         exit(1)
     } catch {
