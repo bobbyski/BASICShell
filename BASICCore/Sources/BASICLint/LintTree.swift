@@ -173,7 +173,7 @@ public struct LintTree: @unchecked Sendable {
             // and the closer is a node of its own, because a rule that
             // checks `NEXT j` against `FOR i` needs to see it.
             switch statement {
-            case .endFunction, .endIf, .endType, .endClass, .endInterface, .endSelect, .nextLoop:
+            case .endFunction, .endIf, .endType, .endClass, .endInterface, .endSelect, .nextLoop, .wend:
                 current.add(LintNode(kind: .blockEnd, range: range, statement: statement, name: Self.name(of: statement), text: text))
                 closeBlock()
                 return
@@ -228,7 +228,7 @@ public struct LintTree: @unchecked Sendable {
         static func opensBlock(_ statement: Statement) -> Bool {
             switch statement {
             case .functionDeclaration, .typeDeclaration, .classDeclaration, .interfaceDeclaration,
-                 .blockIf, .forLoop, .selectCase:
+                 .blockIf, .forLoop, .whileLoop, .selectCase:
                 return true
             default:
                 return false
@@ -240,7 +240,7 @@ public struct LintTree: @unchecked Sendable {
             case .functionDeclaration, .defFunction: return .routineDeclaration
             case .typeDeclaration, .classDeclaration, .interfaceDeclaration: return .typeDeclaration
             case .blockIf, .ifThen: return .branch
-            case .forLoop: return .loop
+            case .forLoop, .whileLoop: return .loop
             case .selectCase: return .selectCase
             case .goto, .gotoLabel, .computedGoto: return .gotoStatement
             case .gosub, .computedGosub: return .gosubStatement

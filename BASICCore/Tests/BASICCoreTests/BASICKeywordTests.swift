@@ -168,9 +168,13 @@ struct BASICKeywordTests {
     /// completion list, none of them parses, and each therefore offered the
     /// user a keyword that produces `Syntax error: Expected =` — the parser
     /// reading it as a variable, because that is all it is.
+    ///
+    /// `WHILE` and `WEND` used to be on this list and are not any more: they
+    /// are implemented, in the interpreter and in the compiler both, and
+    /// `while.bas` holds the two to the same output.
     @Test("unimplemented keywords are not advertised")
     func unimplementedKeywordsAreAbsent() {
-        for word in ["WHILE", "WEND", "DO", "LOOP", "UNTIL", "BREAK", "CONTINUE",
+        for word in ["DO", "LOOP", "UNTIL", "BREAK", "CONTINUE",
                      "CONST", "DECLARE"] {
             #expect(
                 !BASICKeywords.isKeyword(word),

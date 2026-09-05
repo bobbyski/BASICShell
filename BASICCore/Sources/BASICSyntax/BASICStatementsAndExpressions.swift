@@ -142,6 +142,10 @@ public indirect enum Statement: Equatable {
     case endIf
     case forLoop(variable: VariableName, start: Expression, end: Expression, step: Expression?)
     case nextLoop([VariableName])
+    /// `WHILE condition` — a loop whose count is not known when it starts.
+    case whileLoop(Expression)
+    /// `WEND` — the end of the innermost `WHILE`.
+    case wend
     case selectCase(Expression)
     case caseClause([CaseClause])
     case caseElse

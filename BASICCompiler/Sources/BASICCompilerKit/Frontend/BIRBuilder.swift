@@ -248,9 +248,12 @@ final class FunctionBuilder {
         return .ret(nil)
     }
 
-    /// One open IF / FOR / SELECT.
+    /// One open IF / FOR / WHILE / SELECT.
     private enum Frame {
         case ifBlock(elseBlock: BIRBlockID?, join: BIRBlockID)
+        /// `test` is where the condition is re-evaluated, which is where a
+        /// `WEND` branches back to.
+        case whileLoop(test: BIRBlockID, exit: BIRBlockID)
         case forLoop(variable: BIRVariable, mirror: BIRVariable?, end: BIRVariable, step: BIRVariable, body: BIRBlockID, exit: BIRBlockID)
         case select(subject: BIRVariable, next: BIRBlockID, elseBlock: BIRBlockID?, end: BIRBlockID)
     }
@@ -872,6 +875,23 @@ final class FunctionBuilder {
             } else {
                 for name in names { try lowerNext(name) }
             }
+        case .whileLoop(let condition):
+            // The condition is tested before the body, so a WHILE that is
+            // false to begin with runs no times — the interpreter's rule.
+            let test = newBlock("while.test")
+            let body = newBlock("while.body")
+            let exit = newBlock("while.end")
+            terminate(.jump(test))
+            current = test
+            terminate(.branch(try lowerCondition(condition), then: body, else: exit))
+            current = body
+            frames.append(.whileLoop(test: test, exit: exit))
+        case .wend:
+            guard case .whileLoop(let test, let exit)? = frames.popLast() else {
+                throw CompileError("WEND without WHILE", at: location)
+            }
+            terminate(.jump(test))
+            current = exit
 
         case .selectCase(let subject):
             let value = try lowerExpression(subject, expecting: nil, context: "SELECT CASE")
@@ -1531,6 +1551,7 @@ final class FunctionBuilder {
         switch frames.last! {
         case .ifBlock: return "IF without END IF"
         case .forLoop(let variable, let mirror, _, _, _, _): return "FOR \(mirror?.name ?? variable.name) without NEXT"
+        case .whileLoop: return "WHILE without WEND"
         case .select: return "SELECT CASE without END SELECT"
         }
     }

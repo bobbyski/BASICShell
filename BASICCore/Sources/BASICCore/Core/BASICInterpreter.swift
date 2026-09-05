@@ -18,6 +18,10 @@ public final class BASICInterpreter {
     private let eventLoop: BASICEventLoop?
     private var gosubStack: [GosubFrame] = []
     private var forStack: [ForFrame] = []
+    /// The line each open `WHILE` is on, innermost last. A `WEND` jumps back
+    /// to it so the condition is tested again; the loop keeps no other
+    /// state, because a `WHILE` has no counter to keep.
+    private var whileStack: [Int] = []
     private var functionStack: [FunctionFrame] = []
     private var functionDefinitions: [String: FunctionDefinition] = [:]
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
@@ -1539,6 +1543,13 @@ public final class BASICInterpreter {
             return try forLoopFlow(variable: variable, start: start, end: end, step: step, pc: pc, parsed: parsed)
         case .nextLoop(let variables):
             return try nextLoopFlow(variables: variables)
+        case .whileLoop(let condition):
+            return try whileLoopFlow(condition, pc: pc, parsed: parsed)
+        case .wend:
+            guard let start = whileStack.last else {
+                throw BASICError.runtime("WEND without WHILE")
+            }
+            return .jump(start)
         case .selectCase(let expression):
             return try selectCaseFlow(expression, pc: pc, parsed: parsed)
         case .caseClause, .caseElse:
@@ -1611,6 +1622,24 @@ public final class BASICInterpreter {
 
         forStack.append(ForFrame(variable: variable, endValue: endValue, stepValue: stepValue, loopStartIndex: pc))
         return .next
+    }
+
+    /// `WHILE condition`, on entry and on every pass back through it.
+    ///
+    /// The condition is tested here rather than at the `WEND`, which is what
+    /// makes a `WHILE` whose condition is false at the start run zero times.
+    /// The line is pushed only on the way in: a `WEND` jumps back to this
+    /// same line, so a second push would leave a frame per iteration.
+    private func whileLoopFlow(_ condition: Expression, pc: Int, parsed: [ParsedLine]) throws -> Flow {
+        if try evaluate(condition).truthy {
+            if whileStack.last != pc { whileStack.append(pc) }
+            return .next
+        }
+        if whileStack.last == pc { _ = whileStack.popLast() }
+        guard let index = matchingWend(after: pc, in: parsed) else {
+            throw BASICError.runtime("WHILE without WEND")
+        }
+        return .jump(index + 1)
     }
 
     private func nextLoopFlow(variables: [VariableName]) throws -> Flow {
@@ -3551,6 +3580,10 @@ public final class BASICInterpreter {
             return text
         case .nextLoop(let variables):
             return "next" + (variables.isEmpty ? "" : " " + variables.map(\.name).joined(separator: ", "))
+        case .whileLoop(let condition):
+            return "while \(traceText(for: condition))"
+        case .wend:
+            return "wend"
         case .selectCase(let expression):
             return "select case \(traceText(for: expression))"
         case .caseClause(let clauses):
@@ -5115,6 +5148,37 @@ public final class BASICInterpreter {
             index += 1
         }
         return nil
+    }
+
+    /// The `WEND` that closes the `WHILE` at `pc`, counting nested ones.
+    private func matchingWend(after pc: Int, in parsed: [ParsedLine]) -> Int? {
+        var depth = 0
+        var index = pc + 1
+        while index < parsed.count {
+            for event in whileEvents(in: parsed[index].statement) {
+                switch event {
+                case .whileLoop:
+                    depth += 1
+                case .wend:
+                    if depth == 0 { return index }
+                    depth -= 1
+                }
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private enum WhileEvent { case whileLoop, wend }
+
+    private func whileEvents(in statement: Statement) -> [WhileEvent] {
+        switch statement {
+        case .whileLoop: return [.whileLoop]
+        case .wend: return [.wend]
+        case .labeled(_, let inner): return whileEvents(in: inner)
+        case .sequence(let statements): return statements.flatMap(whileEvents)
+        default: return []
+        }
     }
 
     private func matchingNext(after pc: Int, in parsed: [ParsedLine]) -> Int? {
