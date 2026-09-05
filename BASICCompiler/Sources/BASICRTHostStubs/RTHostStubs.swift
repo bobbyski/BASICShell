@@ -63,3 +63,13 @@ public func basic_rt_host_tui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, 
 
 @_cdecl("basic_rt_host_handler_register")
 public func basic_rt_host_handler_register(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer) {}
+
+@_cdecl("basic_rt_host_rich_new")
+public func basic_rt_host_rich_new(_ typeName: UnsafePointer<CChar>) -> UnsafeMutableRawPointer {
+    rtStubFail("Rich text is not supported by this host")
+}
+
+@_cdecl("basic_rt_host_rich_call")
+public func basic_rt_host_rich_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("Rich text is not supported by this host")
+}

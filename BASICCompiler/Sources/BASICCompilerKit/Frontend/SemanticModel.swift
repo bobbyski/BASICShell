@@ -132,6 +132,25 @@ public final class SemanticModel {
         ],
     ]
 
+    /// The RichSwift pseudo classes, spelled as the interpreter stores
+    /// them. All six are behind the compiled runtime, through the same
+    /// binding — `BASICCore`'s — that the interpreter renders with.
+    public static let richClassNames: [String: String] = [
+        "RICHTEXT": "RichText",
+        "RICHMARKDOWN": "RichMarkdown",
+        "RICHTABLE": "RichTable",
+        "RICHPANEL": "RichPanel",
+        "RICHSYNTAX": "RichSyntax",
+        "RICHPROGRESS": "RichProgress",
+    ]
+
+    /// What a Rich method gives back: a VARIANT, as a TUI method does, for
+    /// the same reason — `render$` answers with text and a setter answers
+    /// with nothing, and one static type holds both.
+    public static let richMembers: [String: (parameters: Int?, returns: BIRType)] = [
+        "*": (nil, .variant),
+    ]
+
     /// The TUI classes the compiled runtime has behind it: all of them. The
     /// binding is BASICCore's, called across a small ABI, so what a compiled
     /// program can build is what the interpreter can build.
@@ -232,6 +251,7 @@ public final class SemanticModel {
 
     /// The static type of a system member, when the class and member exist.
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
+        if richClassNames[typeName] != nil { return richMembers[member] ?? richMembers["*"] }
         if typeName == "TUI" || supportedTUIClasses.contains(typeName) { return tuiMembers[member] ?? tuiMembers["*"] }
         let name = typeName == "VTG" ? "VECTORTERMINAL" : typeName
         return systemClasses[name]?[member] ?? systemClasses[name]?["*"]
@@ -248,8 +268,9 @@ public final class SemanticModel {
 
     /// Whether a name constructs a system object.
     public static func isSystemClass(_ name: String) -> Bool {
-        systemClasses[name] != nil || supportedTUIClasses.contains(name)
+        systemClasses[name] != nil || supportedTUIClasses.contains(name) || richClassNames[name] != nil
     }
+
     /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
     /// anonymous ones by their canonical shape.
     public private(set) var signatures: [String: BIRSignature] = [:]
