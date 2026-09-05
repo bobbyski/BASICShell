@@ -16,6 +16,7 @@ let package = Package(
     platforms: [.macOS("16.0")],
     dependencies: [
         .package(path: "../BASICCore"),
+        .package(path: "../DocumentArchive"),
         .package(path: "../../../frameworks/UILess/Code/TUIKit"),
         .package(path: vectorTerminalSDKPath)
     ],
@@ -24,11 +25,13 @@ let package = Package(
             name: "BASICShell",
             dependencies: [
                 "BASICCore",
+                "DocumentArchive",
                 "TUIKit",
                 "VectorTerminalSDK"
             ],
             resources: [
-                .copy("Resources/Demos")
+                .copy("Resources/Demos"),
+                .copy("Resources/UserDocs.zip")
             ]
         )
     ]

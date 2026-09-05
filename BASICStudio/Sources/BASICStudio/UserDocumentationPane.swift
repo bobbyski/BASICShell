@@ -1,5 +1,6 @@
 import BASICCore
 import AppKit
+import DocumentArchive
 import CoreText
 import GameController
 import MarkdownUI
@@ -111,51 +112,61 @@ struct UserDoc: Identifiable, Hashable {
     let content: String
 
     static func loadAll() -> [UserDoc] {
-        for directory in documentationDirectories() {
-            guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-                continue
-            }
-
-            let docs = files
-                .filter { $0.pathExtension.lowercased() == "md" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                .compactMap { url -> UserDoc? in
-                    guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-                    let fileName = url.deletingPathExtension().lastPathComponent
-                    return UserDoc(
-                        id: url.lastPathComponent,
-                        title: title(from: content, fallback: fileName),
-                        category: category(from: fileName),
-                        content: content
-                    )
-                }
-                .sorted { left, right in
-                    if left.category != right.category {
-                        return UserDocCategory.allCases.firstIndex(of: left.category)! < UserDocCategory.allCases.firstIndex(of: right.category)!
-                    }
-                    return left.title.localizedStandardCompare(right.title) == .orderedAscending
-                }
-
-            if !docs.isEmpty {
-                return docs
-            }
+        guard let library = try? DocumentLibrary(searching: sources(), extension: "md") else {
+            return []
         }
-
-        return []
+        return library.documents
+            .map { document in
+                UserDoc(
+                    id: document.path,
+                    title: title(from: document.text, fallback: document.name),
+                    category: category(from: document.name),
+                    content: document.text
+                )
+            }
+            .sorted { left, right in
+                if left.category != right.category {
+                    return UserDocCategory.allCases.firstIndex(of: left.category)!
+                        < UserDocCategory.allCases.firstIndex(of: right.category)!
+                }
+                return left.title.localizedStandardCompare(right.title) == .orderedAscending
+            }
     }
 
-    private static func documentationDirectories() -> [URL] {
+    /// Where the pages might be, best first.
+    ///
+    /// The archive the app ships with comes first; the source directory is
+    /// searched after it so that editing a page shows up without repacking.
+    /// `BASIC_USERDOCS` overrides both and takes either shape.
+    private static func sources() -> [DocumentLibrary.Source] {
+        var sources: [DocumentLibrary.Source] = []
+
+        if let override = ProcessInfo.processInfo.environment["BASIC_USERDOCS"], !override.isEmpty {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: override, isDirectory: &isDirectory) {
+                sources.append(isDirectory.boolValue
+                    ? .directory(URL(fileURLWithPath: override))
+                    : .archive(URL(fileURLWithPath: override)))
+            }
+        }
+        if let bundled = Bundle.main.url(forResource: "UserDocs", withExtension: "zip") {
+            sources.append(.archive(bundled))
+        }
+        if let bundled = Bundle.module.url(forResource: "UserDocs", withExtension: "zip") {
+            sources.append(.archive(bundled))
+        }
+
         let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let sourceURL = URL(fileURLWithPath: String(#filePath))
-        return [
-            currentDirectory.appendingPathComponent("UserDocs"),
-            currentDirectory.appendingPathComponent("Code/BASICStudio/UserDocs"),
-            sourceURL
+        sources.append(.directory(currentDirectory.appendingPathComponent("UserDocs")))
+        sources.append(.directory(currentDirectory.appendingPathComponent("Code/BASICStudio/UserDocs")))
+        sources.append(.directory(
+            URL(fileURLWithPath: String(#filePath))
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .appendingPathComponent("UserDocs")
-        ]
+        ))
+        return sources
     }
 
     private static func category(from fileName: String) -> UserDocCategory {

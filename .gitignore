@@ -13,3 +13,11 @@ test.bas
 BASICCompiler/.build
 BASICCompiler/.swiftpm
 BASICCompiler/Examples/*/.build
+DocumentArchive/.build
+DocumentArchive/.swiftpm
+
+# Any package's build directory, so a new package added later is covered
+# without anyone having to remember this file — which is how 1495 build
+# artifacts once reached a commit.
+.build/
+.swiftpm/

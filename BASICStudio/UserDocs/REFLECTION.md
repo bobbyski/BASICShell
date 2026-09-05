@@ -8,6 +8,7 @@ Looking at the shape of a value at run time: how many fields it has, what they a
 | --- | --- |
 | `REFLECT(v)` | A dictionary describing `v` itself — its `name`, `path` and `type`. |
 | `FIELDCOUNT(v)` | How many fields `v` has. |
+| `FIELDNAME$(v, which)` | The name of that field. |
 | `FIELDMETA(v, which)` | A dictionary describing one field, plus any `META` attached to it. |
 | `FIELDVALUE(v, which)` | The value in that field. |
 | `FIELDVALUE$(v, which)` | That value as a string. |

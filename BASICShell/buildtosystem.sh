@@ -377,15 +377,15 @@ done
 # without these is not broken — `HELP` falls back to the one-line command
 # list — but it is a shell with no manual, which is worth failing loudly for
 # rather than discovering later.
-USER_DOCS="$PACKAGE_DIR/../BASICStudio/UserDocs"
-if [ -d "$USER_DOCS" ]; then
-    doc_count="$(find "$USER_DOCS" -name '*.md' | wc -l | tr -d ' ')"
-    [ "$doc_count" -gt 0 ] || fail "$USER_DOCS has no pages in it"
-    $SUDO rm -rf "$LIB_DIR/UserDocs"
-    $SUDO cp -R "$USER_DOCS" "$LIB_DIR/UserDocs"
-    note "$doc_count help pages"
+# The pages ride inside the resource bundle installed above, as one zip. It
+# is also copied here on its own, so an install can be pointed at the manual
+# without knowing the bundle's name.
+USER_DOCS_ZIP="$PACKAGE_DIR/Sources/$PRODUCT/Resources/UserDocs.zip"
+if [ -f "$USER_DOCS_ZIP" ]; then
+    $SUDO cp "$USER_DOCS_ZIP" "$LIB_DIR/UserDocs.zip"
+    note "help archive installed ($(($(stat -f%z "$USER_DOCS_ZIP") / 1024)) KB)"
 else
-    note "no UserDocs at $USER_DOCS — HELP will fall back to the command list"
+    note "no UserDocs.zip — run Scripts/pack-userdocs.sh; HELP will fall back to the command list"
 fi
 
 # Installed atomically: write beside the target, then rename over it. A shell

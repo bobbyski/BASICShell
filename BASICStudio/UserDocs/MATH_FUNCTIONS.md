@@ -16,6 +16,8 @@ The numeric library. Every one takes a number and returns a number.
 | `LOG(x)` | The natural logarithm. |
 | `LCT(x)` | The logarithm base 10. |
 | `LTW(x)` | The logarithm base 2. |
+| `RND()` | A random number from 0 up to but not including 1. |
+| `RANDOMIZE n` | Starts the random sequence from a known place. |
 
 The three that cut a number down to a whole one differ only in which way they go, which is the sort of thing that is obvious until it costs an afternoon:
 

@@ -28,6 +28,7 @@
 //
 
 import BASICCore
+import DocumentArchive
 import Foundation
 import TUIKit
 
@@ -60,82 +61,91 @@ struct ShellHelpTopic {
     let content: String
 }
 
-/// Finding and reading Studio's `UserDocs`.
+/// Finding and reading the manual's pages.
+///
+/// The pages ship as one zip — `UserDocs.zip`, built from the source
+/// directory by `Scripts/pack-userdocs.sh` — and are read out of it in
+/// process by ``DocumentArchive``. An archive is one file to install, one
+/// file to sign, and cannot arrive half-copied the way a directory of a
+/// hundred small files can.
+///
+/// The source directory is still searched, last, so that someone editing a
+/// page sees the edit without repacking anything.
 enum ShellHelpLibrary {
 
     /// Every page, tutorials first and alphabetical within a group — the
     /// order Studio's menu lists them in.
     static func load(environment: [String: String] = ProcessInfo.processInfo.environment) -> [ShellHelpTopic] {
-        for directory in directories(environment: environment) {
-            guard let files = try? FileManager.default.contentsOfDirectory(
-                at: directory, includingPropertiesForKeys: nil
-            ) else { continue }
-
-            let topics = files
-                .filter { $0.pathExtension.lowercased() == "md" }
-                .compactMap { url -> ShellHelpTopic? in
-                    guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-                    let name = url.deletingPathExtension().lastPathComponent
-                    return ShellHelpTopic(
-                        name: name,
-                        title: title(of: content, fallback: name),
-                        group: group(of: name),
-                        content: content
-                    )
-                }
-                .sorted { left, right in
-                    if left.group != right.group {
-                        return Group.allCases.firstIndex(of: left.group)!
-                            < Group.allCases.firstIndex(of: right.group)!
-                    }
-                    return left.title.localizedStandardCompare(right.title) == .orderedAscending
-                }
-
-            if !topics.isEmpty { return topics }
+        guard let library = try? DocumentLibrary(searching: sources(environment: environment), extension: "md") else {
+            return []
         }
-        return []
+        return library.documents
+            .map { document in
+                ShellHelpTopic(
+                    name: document.name,
+                    title: title(of: document.text, fallback: document.name),
+                    group: group(of: document.name),
+                    content: document.text
+                )
+            }
+            .sorted { left, right in
+                if left.group != right.group {
+                    return Group.allCases.firstIndex(of: left.group)!
+                        < Group.allCases.firstIndex(of: right.group)!
+                }
+                return left.title.localizedStandardCompare(right.title) == .orderedAscending
+            }
     }
 
     private typealias Group = ShellHelpTopic.Group
 
-    /// Where the pages might be, best guess first.
+    /// Where the pages might be, best first.
     ///
-    /// The shell runs from three places and each has its own answer: a
-    /// developer's `swift build` product, an install under `$PREFIX`, and a
-    /// run from the repository root. `BASIC_USERDOCS` is ahead of all of them
-    /// so a person editing the manual can point at what they are editing.
-    static func directories(environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
-        var candidates: [URL] = []
+    /// `BASIC_USERDOCS` comes first and takes either shape, so a person
+    /// working on the manual can point the shell at a directory of drafts or
+    /// at an archive they have just built.
+    static func sources(environment: [String: String] = ProcessInfo.processInfo.environment) -> [DocumentLibrary.Source] {
+        var sources: [DocumentLibrary.Source] = []
 
         if let override = environment["BASIC_USERDOCS"], !override.isEmpty {
-            candidates.append(URL(fileURLWithPath: override))
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: override, isDirectory: &isDirectory) {
+                sources.append(isDirectory.boolValue
+                    ? .directory(URL(fileURLWithPath: override))
+                    : .archive(URL(fileURLWithPath: override)))
+            }
         }
 
-        // Installed: `$PREFIX/bin/basicshell` with the pages beside the demo
-        // bundle, in `$PREFIX/lib/basicshell/UserDocs`.
+        // The archive this build shipped with. `Bundle.module` finds it
+        // beside the executable, which is where the installer puts it.
+        if let bundled = Bundle.module.url(forResource: "UserDocs", withExtension: "zip") {
+            sources.append(.archive(bundled))
+        }
+
+        // An install that has the archive next to the demo bundle rather than
+        // inside one.
         if let executable = Bundle.main.executablePath {
-            let binDirectory = URL(fileURLWithPath: executable).deletingLastPathComponent()
-            let prefix = binDirectory.deletingLastPathComponent()
-            candidates.append(prefix.appendingPathComponent("lib/basicshell/UserDocs"))
-            candidates.append(prefix.appendingPathComponent("share/basicshell/UserDocs"))
+            let prefix = URL(fileURLWithPath: executable)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            sources.append(.archive(prefix.appendingPathComponent("lib/basicshell/UserDocs.zip")))
         }
 
-        // In-tree: this file is `Code/BASICShell/Sources/BASICShell/…`, and the
-        // pages are Studio's. Four levels up is `Code`.
+        // The source directory, for someone editing a page right now. This
+        // file is `Code/BASICShell/Sources/BASICShell/…`; four levels up is
+        // `Code`, and the pages are Studio's.
         let code = URL(fileURLWithPath: String(#filePath))
-            .deletingLastPathComponent()   // BASICShell
-            .deletingLastPathComponent()   // Sources
-            .deletingLastPathComponent()   // BASICShell (the package)
-            .deletingLastPathComponent()   // Code
-        candidates.append(code.appendingPathComponent("BASICStudio/UserDocs"))
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        sources.append(.directory(code.appendingPathComponent("BASICStudio/UserDocs")))
 
-        // Run from the repository root, or from Studio's own directory — the
-        // two Studio itself looks in.
         let working = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        candidates.append(working.appendingPathComponent("Code/BASICStudio/UserDocs"))
-        candidates.append(working.appendingPathComponent("UserDocs"))
+        sources.append(.directory(working.appendingPathComponent("Code/BASICStudio/UserDocs")))
+        sources.append(.directory(working.appendingPathComponent("UserDocs")))
 
-        return candidates
+        return sources
     }
 
     /// `TUTORIAL_*` is a tutorial; everything else is reference. Studio's rule.

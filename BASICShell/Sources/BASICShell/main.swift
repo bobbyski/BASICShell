@@ -2027,6 +2027,10 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
     /// simply off — a program with an `ON MOUSE` handler is still owed its
     /// events after someone has looked something up in the manual.
     func lendingMouseToTUI<Value>(_ body: () -> Value) -> Value {
+        // Nothing to lend and nobody to lend it to when there is no terminal:
+        // a shell reading a script would otherwise write mouse escape codes
+        // into its own output for a TUI that is never going to open.
+        guard isatty(STDOUT_FILENO) == 1 else { return body() }
         let hasVectorTerminal = isVectorTerminalAvailable
         if hasVectorTerminal {
             vtgCanvas.enableMouseReporting(mode: "all")
