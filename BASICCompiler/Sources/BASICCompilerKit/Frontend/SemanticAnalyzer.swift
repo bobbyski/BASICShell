@@ -512,7 +512,7 @@ struct SemanticAnalyzer {
             noteClosureReferences(parameters: parameters, captures: captures, names: Self.freeVariables(in: body, model: model), bodyLines: [], at: line, in: function, changed: &changed)
         case .functionCall(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
-        case .unaryMinus(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner), .systemFunction(let inner), .environmentFunction(let inner):
+        case .unaryMinus(let inner), .logicalNot(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner), .systemFunction(let inner), .environmentFunction(let inner):
             try noteReferences(in: inner, at: line, in: function, changed: &changed)
         case .pointFunction(let point):
             try noteReferences(in: point.x, at: line, in: function, changed: &changed)
@@ -625,7 +625,7 @@ struct SemanticAnalyzer {
                 return arguments.isEmpty ? field.field.type : field.field.type.elementType
             }
             return nil
-        case .unaryMinus: return .number
+        case .unaryMinus, .logicalNot: return .number
         case .await(let inner):
             // AWAIT of an async call is the function's value; of anything
             // else, the value itself (a task handle stays a VARIANT).
@@ -817,7 +817,7 @@ struct SemanticAnalyzer {
             case .methodCall(let receiver, _, let arguments):
                 if receiver.base.normalized != "FILE" { append(receiver.base) }
                 receiver.indexes.forEach(visit); arguments.forEach(visit)
-            case .unaryMinus(let inner), .await(let inner), .chrFunction(let inner), .lenFunction(let inner),
+            case .unaryMinus(let inner), .logicalNot(let inner), .await(let inner), .chrFunction(let inner), .lenFunction(let inner),
                  .environmentFunction(let inner), .systemFunction(let inner): visit(inner)
             case .binary(let left, _, let right): visit(left); visit(right)
             case .pointFunction(let point): visit(point.x); visit(point.y)

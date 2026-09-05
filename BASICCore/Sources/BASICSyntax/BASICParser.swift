@@ -1437,7 +1437,34 @@ public struct Parser {
     }
 
     private mutating func parseExpression() throws -> Expression {
-        try parseOr()
+        try parseImp()
+    }
+
+    /// The logical operators, loosest first, as BASIC has always ordered
+    /// them: `IMP`, then `EQV`, then `XOR`, then `OR`, then `AND`, then
+    /// `NOT`, then the comparisons.
+    private mutating func parseImp() throws -> Expression {
+        var expression = try parseEqv()
+        while matchIdentifier("IMP") {
+            expression = .binary(expression, .imp, try parseEqv())
+        }
+        return expression
+    }
+
+    private mutating func parseEqv() throws -> Expression {
+        var expression = try parseXor()
+        while matchIdentifier("EQV") {
+            expression = .binary(expression, .eqv, try parseXor())
+        }
+        return expression
+    }
+
+    private mutating func parseXor() throws -> Expression {
+        var expression = try parseOr()
+        while matchIdentifier("XOR") {
+            expression = .binary(expression, .xor, try parseOr())
+        }
+        return expression
     }
 
     private mutating func parseOr() throws -> Expression {
@@ -1449,11 +1476,21 @@ public struct Parser {
     }
 
     private mutating func parseAnd() throws -> Expression {
-        var expression = try parseComparison()
+        var expression = try parseNot()
         while matchIdentifier("AND") {
-            expression = .binary(expression, .and, try parseComparison())
+            expression = .binary(expression, .and, try parseNot())
         }
         return expression
+    }
+
+    /// `NOT` sits between `AND` and comparison, where BASIC has always put
+    /// it: `NOT a = b` inverts the comparison rather than the `a`, and
+    /// `NOT a AND b` inverts only the `a`.
+    private mutating func parseNot() throws -> Expression {
+        if matchIdentifier("NOT") {
+            return .logicalNot(try parseNot())
+        }
+        return try parseComparison()
     }
 
     private mutating func parseComparison() throws -> Expression {

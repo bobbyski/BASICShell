@@ -237,6 +237,8 @@ public indirect enum Expression: Equatable {
     case methodCall(VariableReference, VariableName, [Expression])
     case newObject(String, [Expression])
     case unaryMinus(Expression)
+    /// `NOT expression` — the truthiness of the expression, inverted.
+    case logicalNot(Expression)
     case binary(Expression, BinaryOperation, Expression)
     case await(Expression)
     case functionCall(VariableName, [Expression])
@@ -262,7 +264,10 @@ public struct GraphicsPoint: Equatable {
 public enum BinaryOperation: Equatable {
     case add, subtract, multiply, divide
     case equal, notEqual, less, lessEqual, greater, greaterEqual
-    case and, or
+    /// The logical set, loosest last: `AND`, `OR`, `XOR`, `EQV`, `IMP`.
+    /// `EQV` is true when both sides agree; `IMP` is false only when the
+    /// left is true and the right is not.
+    case and, or, xor, eqv, imp
 }
 
 public enum Token: Equatable {

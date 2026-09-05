@@ -244,6 +244,8 @@ public struct BIRPrinter {
             return variable.name
         case .negate(let value):
             return "-(\(render(value)))"
+        case .logicalNot(let inner):
+            return "not " + render(inner)
         case .arithmetic(let op, let left, let right):
             let symbol = ["add": "+", "subtract": "-", "multiply": "*", "divide": "/"][op.rawValue]!
             return "(\(render(left)) \(symbol) \(render(right)))"

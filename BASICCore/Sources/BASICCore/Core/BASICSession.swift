@@ -158,6 +158,12 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private let outputCoordinator: BASICHostOutputCoordinator
     private let runtime = BASICRuntime()
     private let fileState = BASICFileState()
+
+    /// The file the program was last loaded from or saved to, when there is
+    /// one. A host that compiles the program needs it: an `IMPORT` resolves
+    /// against the importing file's directory, so a program with imports has
+    /// to be compiled where it lives rather than as a copy.
+    public var lastLoadedPath: String? { fileState.lastFilePath }
     private let taskScheduler: BASICTaskScheduler
     private var activeInterpreter: BASICInterpreter?
     private var activeProgramTask: BASICTask?
@@ -451,7 +457,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 stopAllTimers()
                 runtime.clearAll()
             case "HELP":
-                host.printLine("Commands: RUN, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, OPENFILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, JOBS, WAIT, KILL, NEW, CLEAR, HELP, QUIT")
+                host.printLine("Commands: RUN, JIT, LIST, LOAD, SAVE, CD, PWD, PUSHD, POPD, DIRS, PROMPT, FILES, OPENFILES, WHICH, TYPE, EXPORT, SETENV, UNSETENV, SYSTEM, EXEC, TASKS, TASK <id>, JOBS, WAIT, KILL, NEW, CLEAR, HELP, QUIT")
                 host.printLine("Statements: PRINT, LET, GLOBAL, LOCAL, OPTION, INPUT, EXPORT, SYSTEM, EXEC, GOTO, GOSUB, RETURN, IF expr THEN target, LABEL, END, REM")
             default:
                 if Self.interactiveBlockBalance(in: trimmed) > 0 {
@@ -2310,7 +2316,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private static let basicBuiltinCommands: Set<String> = [
-        "ALIAS", "BG", "CD", "DIRS", "EDIT", "EXPORT", "FG", "FILES", "HELP", "JOBS",
+        "ALIAS", "BG", "CD", "DIRS", "EDIT", "EXPORT", "FG", "FILES", "HELP", "JIT", "JOBS",
         "KILL", "LIST", "LOAD", "NEW", "POPD", "PROMPT", "PUSHD", "PWD", "QUIT", "RUN",
         "SAVE", "SETENV", "STATUS", "SYSTEM", "TASK", "TASKS", "TYPE", "UNALIAS",
         "UNSETENV", "WAIT", "WHICH"

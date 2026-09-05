@@ -317,3 +317,38 @@ struct StarterTests {
         return (String(decoding: data, as: UTF8.self), process.terminationStatus)
     }
 }
+
+/// The logical operators bind in BASIC's order, and the compiler agrees with
+/// the interpreter about it.
+@Suite("Logical operators")
+struct LogicalOperatorTests {
+    /// Each of these is a program and the parenthesised form it must equal.
+    static let precedence: [(String, String)] = [
+        ("NOT a = b", "NOT (a = b)"),
+        ("NOT f AND t", "(NOT f) AND t"),
+        ("t OR f XOR t", "(t OR f) XOR t"),
+        ("t XOR t EQV f", "(t XOR t) EQV f"),
+        ("f EQV f IMP f", "(f EQV f) IMP f"),
+        ("NOT t OR t", "(NOT t) OR t"),
+    ]
+
+    @Test(arguments: LogicalOperatorTests.precedence)
+    func anExpressionMeansItsParenthesisedForm(pair: (String, String)) throws {
+        let source = """
+        DIM t AS INTEGER
+        DIM f AS INTEGER
+        DIM a AS INTEGER
+        DIM b AS INTEGER
+        t = 1
+        f = 0
+        a = 1
+        b = 2
+        PRINT \(pair.0)
+        PRINT \(pair.1)
+        """
+        let run = try TestBuild.run(source: source)
+        let lines = run.stdout.split(separator: "\n").map(String.init)
+        #expect(lines.count == 2, Comment(rawValue: run.stdout))
+        #expect(lines.first == lines.last, Comment(rawValue: "\(pair.0) is not \(pair.1): \(run.stdout)"))
+    }
+}

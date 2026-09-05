@@ -1613,6 +1613,10 @@ final class FunctionBuilder {
             return .load(resolved)
         case .unaryMinus(let inner):
             return .negate(try lowerExpression(inner, expecting: .number, context: "unary minus"))
+        case .logicalNot(let inner):
+            // NOT takes the truthiness of whatever it is given, the same
+            // test IF applies, so it works on anything IF works on.
+            return .logicalNot(try lowerExpression(inner))
         case .binary(let left, let operation, let right):
             return try lowerBinary(left, operation, right)
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
@@ -1748,6 +1752,12 @@ final class FunctionBuilder {
             return .logical(.and, l, r)
         case .or:
             return .logical(.or, l, r)
+        case .xor:
+            return .logical(.xor, l, r)
+        case .eqv:
+            return .logical(.eqv, l, r)
+        case .imp:
+            return .logical(.imp, l, r)
         }
     }
 

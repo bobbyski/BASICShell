@@ -3857,6 +3857,51 @@ func runShellCommand(_ command: String, foregroundProcessRegistry: ShellForegrou
     return 128 + (waitStatus & 0x7f)
 }
 
+/// `JIT` — compile the program in front of you, then run it.
+///
+/// `RUN` interprets and always will; this is the other half of the same
+/// question. The compiler is run rather than linked, so a shell without
+/// `basicc` installed says so and nothing else changes.
+func isJITCommand(_ input: String) -> Bool {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    let uppercased = trimmed.uppercased()
+    return uppercased == "JIT" || uppercased.hasPrefix("JIT ")
+}
+
+@MainActor
+func runJITCommand(_ input: String) {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    let rest = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+    // `JIT` compiles what is loaded; `JIT path.bas` compiles that file
+    // without disturbing what is loaded, the way you would try something.
+    let namedFile = rest.isEmpty ? nil : rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+    if let namedFile, !FileManager.default.fileExists(atPath: namedFile) {
+        host.printLine("JIT: \(namedFile) does not exist")
+        return
+    }
+    if namedFile == nil, session.program.isEmpty {
+        host.printLine("JIT: nothing to compile")
+        return
+    }
+    // A program that came from a file is compiled as that file, so its
+    // IMPORTs resolve against the directory it lives in.
+    let sourcePath = namedFile ?? session.lastLoadedPath
+    let text = namedFile == nil ? BASICJIT.text(of: session.program) : ""
+
+    switch BASICJIT.compile(source: text, path: sourcePath) {
+    case .unavailable(let reason):
+        host.printLine("JIT: \(reason)")
+    case .refused(let diagnostics):
+        for line in diagnostics { host.printLine(line) }
+    case .built(let binary):
+        defer { BASICJIT.discard(binary: binary) }
+        let status = BASICJIT.run(binary: binary)
+        if status != 0 {
+            host.printLine("JIT: exited with status \(status)")
+        }
+    }
+}
+
 func isRunCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let uppercased = trimmed.uppercased()
@@ -4070,6 +4115,11 @@ while true {
     }
     if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
         runIntegratedEditor()
+        drainSessionEventLoop()
+        continue
+    }
+    if isJITCommand(line) {
+        runJITCommand(line)
         drainSessionEventLoop()
         continue
     }

@@ -171,7 +171,9 @@ struct BASICKeywordTests {
     ///
     /// `WHILE` and `WEND` used to be on this list and are not any more: they
     /// are implemented, in the interpreter and in the compiler both, and
-    /// `while.bas` holds the two to the same output.
+    /// `while.bas` holds the two to the same output. `NOT`, `XOR`, `EQV` and
+    /// `IMP` were never on it because they were never offered, which was its
+    /// own kind of wrong — `logical.bas` covers all six operators now.
     @Test("unimplemented keywords are not advertised")
     func unimplementedKeywordsAreAbsent() {
         for word in ["DO", "LOOP", "UNTIL", "BREAK", "CONTINUE",

@@ -3687,6 +3687,8 @@ public final class BASICInterpreter {
             return "new \(name)(\(arguments.map(traceText(for:)).joined(separator: ", ")))"
         case .unaryMinus(let expression):
             return "-\(traceText(for: expression))"
+        case .logicalNot(let expression):
+            return "not \(traceText(for: expression))"
         case .binary(let left, let operation, let right):
             return "\(traceText(for: left)) \(traceText(for: operation)) \(traceText(for: right))"
         case .await(let expression):
@@ -3718,6 +3720,9 @@ public final class BASICInterpreter {
         case .greaterEqual: return ">="
         case .and: return "and"
         case .or: return "or"
+        case .xor: return "xor"
+        case .eqv: return "eqv"
+        case .imp: return "imp"
         }
     }
 
@@ -5253,7 +5258,7 @@ public final class BASICInterpreter {
                 }
             }
             throw BASICError.runtime("Cannot compare these values")
-        case .add, .subtract, .multiply, .divide, .and, .or:
+        case .add, .subtract, .multiply, .divide, .and, .or, .xor, .eqv, .imp:
             throw BASICError.runtime("Invalid CASE comparison")
         }
     }
@@ -5415,6 +5420,12 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("Unary minus requires a number")
             }
             return .number(-value)
+        case .logicalNot(let expression):
+            // Truthiness, inverted — the same test `IF` applies, so `NOT`
+            // works on whatever `IF` works on rather than only on booleans.
+            // 1 or 0, as every other logical operator and every comparison
+            // in this language answers.
+            return .number(try evaluate(expression).truthy ? 0 : 1)
         case .binary(let left, let operation, let right):
             return try evaluateBinary(left, operation, right)
         case .await(let expression):
@@ -5666,7 +5677,7 @@ public final class BASICInterpreter {
                 arguments.forEach(visit)
             case .newObject(_, let arguments):
                 arguments.forEach(visit)
-            case .unaryMinus(let expression), .await(let expression), .chrFunction(let expression),
+            case .unaryMinus(let expression), .logicalNot(let expression), .await(let expression), .chrFunction(let expression),
                  .lenFunction(let expression), .environmentFunction(let expression), .systemFunction(let expression):
                 visit(expression)
             case .pwdFunction:
@@ -6164,6 +6175,13 @@ public final class BASICInterpreter {
             return .number(left.truthy && right.truthy ? 1 : 0)
         case .or:
             return .number(left.truthy || right.truthy ? 1 : 0)
+        case .xor:
+            return .number(left.truthy != right.truthy ? 1 : 0)
+        case .eqv:
+            return .number(left.truthy == right.truthy ? 1 : 0)
+        case .imp:
+            // False only when the left holds and the right does not.
+            return .number(!left.truthy || right.truthy ? 1 : 0)
         }
     }
 

@@ -12,7 +12,7 @@ public enum BIRComparison: String, Sendable {
 
 /// `AND` / `OR` on truthiness. Each yields the number `1` or `0`.
 public enum BIRLogical: String, Sendable {
-    case and, or
+    case and, or, xor, eqv, imp
 }
 
 /// A typed expression tree.
@@ -27,6 +27,8 @@ public indirect enum BIRExpression: Sendable {
     case load(BIRVariable)
     /// Unary minus on a number.
     case negate(BIRExpression)
+    /// `NOT expression`: its truthiness, inverted, as 1 or 0.
+    case logicalNot(BIRExpression)
     /// Arithmetic on two numbers.
     case arithmetic(BIRArithmetic, BIRExpression, BIRExpression)
     /// Concatenation of two strings.
@@ -110,7 +112,7 @@ public indirect enum BIRExpression: Sendable {
     /// The static type of the value this expression produces.
     public var type: BIRType {
         switch self {
-        case .number, .negate, .arithmetic, .compare, .logical:
+        case .number, .negate, .arithmetic, .compare, .logical, .logicalNot:
             return .number
         case .string, .concat:
             return .string
@@ -172,7 +174,7 @@ public indirect enum BIRExpression: Sendable {
             return true
         case .number, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
             return false
-        case .negate(let a), .text(let a), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
+        case .negate(let a), .logicalNot(let a), .text(let a), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
             return a.mayRunCode
         case .arithmetic(_, let a, let b), .concat(let a, let b), .compare(_, let a, let b), .logical(_, let a, let b),
              .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b):

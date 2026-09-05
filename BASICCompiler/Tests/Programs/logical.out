@@ -1,0 +1,16 @@
+NOT  10
+AND  1000
+OR   1110
+XOR  0110
+EQV  1001
+IMP  1011
+cmp  11
+and  11
+or   00
+xor  11
+eqv  00
+text 10
+zero 10
+guarded
+exactly one
+implied

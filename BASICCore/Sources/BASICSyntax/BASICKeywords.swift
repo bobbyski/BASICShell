@@ -86,7 +86,7 @@ public enum BASICKeywords {
     public static let control: Set<String> = [
         "AND", "ASYNC", "AWAIT", "BACKGROUND", "CALL", "CANCEL", "CASE", "ELSE",
         "ELSEIF", "END", "ERROR", "EXIT", "WHILE", "WEND", "FOR", "GOSUB", "GOTO", "IF", "IS",
-        "JOIN", "NEXT", "ON", "OR", "PAUSE", "REM", "RESUME", "RETURN", "SELECT",
+        "EQV", "IMP", "JOIN", "NEXT", "NOT", "ON", "OR", "PAUSE", "XOR", "REM", "RESUME", "RETURN", "SELECT",
         "STEP", "STOP", "THEN", "TO", "YIELD",
     ]
 

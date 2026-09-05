@@ -2123,11 +2123,31 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = uitofp i1 \(flag) to double")
             return (result, false)
+        case .logicalNot(let inner):
+            let flag = out.temp()
+            out.emit("\(flag) = xor i1 \(truthiness(of: inner)), true")
+            let result = out.temp()
+            out.emit("\(result) = uitofp i1 \(flag) to double")
+            return (result, false)
         case .logical(let op, let left, let right):
             let l = truthiness(of: left)
             let r = truthiness(of: right)
             let flag = out.temp()
-            out.emit("\(flag) = \(op == .and ? "and" : "or") i1 \(l), \(r)")
+            switch op {
+            case .and: out.emit("\(flag) = and i1 \(l), \(r)")
+            case .or: out.emit("\(flag) = or i1 \(l), \(r)")
+            case .xor: out.emit("\(flag) = xor i1 \(l), \(r)")
+            case .eqv:
+                // The sides agree: exclusive-or, inverted.
+                let differ = out.temp()
+                out.emit("\(differ) = xor i1 \(l), \(r)")
+                out.emit("\(flag) = xor i1 \(differ), true")
+            case .imp:
+                // False only when the left holds and the right does not.
+                let notLeft = out.temp()
+                out.emit("\(notLeft) = xor i1 \(l), true")
+                out.emit("\(flag) = or i1 \(notLeft), \(r)")
+            }
             let result = out.temp()
             out.emit("\(result) = uitofp i1 \(flag) to double")
             return (result, false)
