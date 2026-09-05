@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// Compiling a program with `basicc` and running what comes out.
 ///
@@ -133,6 +136,18 @@ public enum BASICJIT {
     /// Runs a compiled binary with the terminal it was started from, so
     /// `INPUT`, `INKEY$` and a TUI application all behave as they would
     /// under `RUN`. Answers its exit status.
+    ///
+    /// The terminal is handed over for the duration. `Process` starts a
+    /// child in a process group of its own, and a process group that is not
+    /// the terminal's foreground group is stopped by `SIGTTIN` the instant
+    /// it reads a key — the program freezes, the host waits for it, and
+    /// neither ever moves again. So the child's group is made the foreground
+    /// group before it can read anything, which also puts Ctrl-C where it
+    /// belongs: it interrupts the program, not the host waiting on it.
+    ///
+    /// The terminal's settings are saved and put back too. A program killed
+    /// part-way through has no chance to leave raw mode, and a host that
+    /// returned to its prompt with echo off would look broken.
     @discardableResult
     public static func run(binary: String, arguments: [String] = []) -> Int32 {
         let process = Process()
@@ -141,13 +156,46 @@ public enum BASICJIT {
         process.standardInput = FileHandle.standardInput
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
+
+        let terminal = STDIN_FILENO
+        let isTerminal = isatty(terminal) == 1
+        var savedTermios = termios()
+        let savedTermiosIsValid = isTerminal && tcgetattr(terminal, &savedTermios) == 0
+        let previousForeground: pid_t = isTerminal ? tcgetpgrp(terminal) : -1
+
         do {
             try process.run()
         } catch {
             return 127
         }
+
+        // Hand over the terminal. SIGCONT covers the race in which the child
+        // reached its first read before this ran and was already stopped.
+        var handedOver = false
+        let childGroup = getpgid(process.processIdentifier)
+        if isTerminal, previousForeground > 0, childGroup > 0, childGroup != previousForeground {
+            handedOver = withSIGTTOUIgnored { tcsetpgrp(terminal, childGroup) == 0 }
+            if handedOver { _ = killpg(childGroup, SIGCONT) }
+        }
+
         process.waitUntilExit()
+
+        if handedOver {
+            _ = withSIGTTOUIgnored { tcsetpgrp(terminal, previousForeground) }
+        }
+        if savedTermiosIsValid {
+            _ = tcsetattr(terminal, TCSADRAIN, &savedTermios)
+        }
         return process.terminationStatus
+    }
+
+    /// `tcsetpgrp` from a background process group signals `SIGTTOU` at the
+    /// caller, which would stop the very host trying to take its terminal
+    /// back. The signal is turned off around the call, as a shell does.
+    private static func withSIGTTOUIgnored<T>(_ body: () -> T) -> T {
+        let previous = signal(SIGTTOU, SIG_IGN)
+        defer { _ = signal(SIGTTOU, previous) }
+        return body()
     }
 
     /// Everything a temporary build left behind.
