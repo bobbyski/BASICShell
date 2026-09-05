@@ -45,6 +45,14 @@ final class StudioModel: ObservableObject {
     @Published var editorFindRequest = 0
     @Published var editorReplaceRequest = 0
     @Published var isProgramRunning = false
+    /// A compiled program is running, started by `JIT`. Separate from
+    /// `isProgramRunning`, which means the interpreter is inside a program:
+    /// the two are never both true, and the debugger only ever applies to
+    /// the second.
+    @Published var isJITRunning = false
+    /// The compiled program's process and its standard input, while it runs.
+    var jitProcess: Process?
+    var jitInput: Pipe?
     @Published var isConsoleOverwriteMode = false
     @Published var areGraphicsLayersVisible = true
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
@@ -158,7 +166,7 @@ final class StudioModel: ObservableObject {
     private var basicGraphicsOperationID = 0
     private var shouldRunStartupProgram = false
     private var isLoadingSettings = true
-    private var currentProgramURL: URL?
+    var currentProgramURL: URL?
     private var currentProgramFileName: String?
     private let executionLane = BASICWorkerLane(label: "AIBasic.Studio.Execution")
     private var activeExecutionControl: BASICExecutionControl?
@@ -172,13 +180,13 @@ final class StudioModel: ObservableObject {
     private let logBuffer = StudioLogBuffer()
     private var logDrainTask: Task<Void, Never>?
 
-    private lazy var session: BASICSession = {
+    lazy var session: BASICSession = {
         let session = BASICSession(host: self, promptTemplate: promptTemplate)
         session.stopsForegroundProgramOnBreak = true
         return session
     }()
 
-    private var prompt: String {
+    var prompt: String {
         session.prompt
     }
 
@@ -624,6 +632,15 @@ final class StudioModel: ObservableObject {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         selectedPane = .console
+        // While a compiled program is running the console is its terminal:
+        // a line typed here is what its INPUT reads, not a command for the
+        // interpreter, which is not running anything.
+        if isJITRunning {
+            appendJITOutput(command + "\n")
+            sendLineToJITProgram(command)
+            command = ""
+            return
+        }
         submitConsoleCommand(trimmed, echo: true)
         command = ""
     }
@@ -648,6 +665,11 @@ final class StudioModel: ObservableObject {
     }
 
     func stopProgram() {
+        // Stop means stop, whichever engine is running it.
+        if isJITRunning {
+            stopJITProgram()
+            return
+        }
         activeExecutionControl?.requestBreak()
         inputCoordinator.cancelLineInput()
         inputCoordinator.endRawKeyInput()
@@ -783,7 +805,7 @@ final class StudioModel: ObservableObject {
         (try? currentDirectoryPath()) ?? FileManager.default.currentDirectoryPath
     }
 
-    private func rebuildProgramFromEditor() {
+    func rebuildProgramFromEditor() {
         session.program.loadSource(programText, fileName: currentProgramFileName)
         updateEditorDiagnostics()
     }
@@ -828,6 +850,17 @@ final class StudioModel: ObservableObject {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    /// The console append a compiled run uses. Same buffer, same trimming;
+    /// it is `internal` because the JIT run lives in its own file.
+    func appendJITOutput(_ text: String) {
+        appendConsole(text)
+    }
+
+    /// Echoes `JIT` at the prompt, as Run echoes `RUN`.
+    func echoConsoleCommandForJIT() {
+        echoConsoleCommand("JIT")
     }
 
     private func appendConsoleOutput(_ text: String, terminator: String = "\n") {

@@ -41,6 +41,14 @@ struct StudioView: View {
                 HStack {
                     Button("Run") { model.runEditorProgram() }
                         .keyboardShortcut("r", modifiers: [.command])
+                    // Compiled rather than interpreted. The same program
+                    // either way — the compiler is held to the interpreter's
+                    // output — but no debugger, because a compiled program
+                    // has no interpreter to step.
+                    Button("JIT") { model.jitEditorProgram() }
+                        .keyboardShortcut("r", modifiers: [.command, .shift])
+                        .disabled(model.isProgramRunning || model.isJITRunning)
+                        .help("Compile, then run")
                     Button("List") { model.listProgram() }
                     Button("New") { model.clearProgram() }
                     TextField("Immediate command", text: $model.command)
@@ -62,16 +70,25 @@ struct StudioView: View {
                     Image(systemName: "play.fill")
                         .foregroundStyle(model.isProgramRunning ? Color.secondary : Color.primary)
                 }
-                .disabled(model.isProgramRunning)
+                .disabled(model.isProgramRunning || model.isJITRunning)
                 .help("Run")
+
+                Button {
+                    model.jitEditorProgram()
+                } label: {
+                    Image(systemName: "bolt.fill")
+                        .foregroundStyle(model.isProgramRunning || model.isJITRunning ? Color.secondary : Color.primary)
+                }
+                .disabled(model.isProgramRunning || model.isJITRunning)
+                .help("Compile, then run — no debugger on this path")
 
                 Button {
                     model.stopProgram()
                 } label: {
                     Image(systemName: "stop.fill")
-                        .foregroundStyle(model.isProgramRunning ? Color.red : Color.secondary)
+                        .foregroundStyle(model.isProgramRunning || model.isJITRunning ? Color.red : Color.secondary)
                 }
-                .disabled(!model.isProgramRunning)
+                .disabled(!model.isProgramRunning && !model.isJITRunning)
                 .help("Stop")
 
                 Divider()
