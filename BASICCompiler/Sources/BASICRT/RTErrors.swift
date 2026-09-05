@@ -50,6 +50,10 @@ enum RTError {
             faultStatement = statement
             rt_longjmp(jumpBuffer, 1)
         }
+        // A program that dies mid-draw owes the terminal the same tidy-up
+        // as one that reaches END, or the message is printed under a canvas
+        // that is still there.
+        RTGraphics.finish()
         fflush(stdout)
         fputs((prefix.map { "\($0): " } ?? "") + message + "\n", stdout)
         fflush(stdout)

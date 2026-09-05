@@ -13,6 +13,7 @@ public func basic_rt_start() {
     } else {
         setvbuf(stdout, nil, _IOFBF, 1 << 16)
     }
+    RTSignals.install()
 }
 
 @_cdecl("basic_rt_finish")
