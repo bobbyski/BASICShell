@@ -2012,6 +2012,59 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         }
     }
 
+    /// Turns the mouse on for a TUIKit application, and puts the terminal
+    /// back the way it was found.
+    ///
+    /// TUIKit's `ANSIDriver` asks for the mouse with the DEC private modes
+    /// — `?1002h`, `?1006h` — which is all an xterm needs and all it sends.
+    /// A VTG terminal takes its mouse reporting over the VTG protocol
+    /// instead, so the editor and the manual came up there with a mouse that
+    /// did nothing: the driver had asked in a language that terminal does not
+    /// use for this. Asking both ways costs one escape sequence and works on
+    /// both.
+    ///
+    /// On the way out the reporting goes back to what the session wants, not
+    /// simply off — a program with an `ON MOUSE` handler is still owed its
+    /// events after someone has looked something up in the manual.
+    func lendingMouseToTUI<Value>(_ body: () -> Value) -> Value {
+        let hasVectorTerminal = isVectorTerminalAvailable
+        if hasVectorTerminal {
+            vtgCanvas.enableMouseReporting(mode: "all")
+        }
+        defer {
+            if hasVectorTerminal {
+                vtgCanvas.disableMouseReporting()
+            }
+            if session?.acceptsHostInputEvent(type: "MOUSE") == true {
+                if hasVectorTerminal {
+                    vtgCanvas.enableMouseReporting(mode: "all")
+                }
+                enableANSIMouseMotionReporting()
+            } else {
+                disableANSIMouseMotionReporting()
+            }
+        }
+        return body()
+    }
+
+    /// Puts the terminal back after a program this shell did not run itself.
+    ///
+    /// A JIT'd program owns the terminal while it runs and is supposed to
+    /// hand it back — and does, when it ends or is interrupted. It cannot
+    /// when it is killed outright, and an older compiler's runtime did not
+    /// know it had to. Either way the shell is left holding a terminal with
+    /// mouse reporting on and a canvas still drawn, which is not a state a
+    /// prompt is usable in. This is the same tidy-up `RUN` does at the end of
+    /// a foreground program, applied to a program that ran beside us.
+    func finishForeignProgram() {
+        stopVectorTerminalEventPolling()
+        disableANSIMouseMotionReporting()
+        guard isVectorTerminalAvailable else { return }
+        vtgCanvas.disableMouseReporting()
+        vtgCanvas.clear()
+        vtgCanvas.present()
+    }
+
     private func enableANSIMouseMotionReporting() {
         writeRawTerminal("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h")
     }
@@ -3472,10 +3525,12 @@ func runIntegratedEditor() {
     // that does not parse is visible while it can still be fixed — the shell's
     // transcript is behind the alternate screen and would not be read until
     // after the editor closed.
-    let edited = BASICProgramEditor.edit(text: listing, label: "<program>") { buffer in
-        session.program.loadSource(buffer)
-        guard let diagnostic = session.diagnostics().first else { return nil }
-        return "Line \(diagnostic.lineNumber), column \(diagnostic.column + 1): \(diagnostic.message)"
+    let edited = host.lendingMouseToTUI {
+        BASICProgramEditor.edit(text: listing, label: "<program>") { buffer in
+            session.program.loadSource(buffer)
+            guard let diagnostic = session.diagnostics().first else { return nil }
+            return "Line \(diagnostic.lineNumber), column \(diagnostic.column + 1): \(diagnostic.message)"
+        }
     }
 
     ShellEventTrace.shared.write("editor-return edited=\(edited != nil)")
@@ -3896,6 +3951,9 @@ func runJITCommand(_ input: String) {
     case .built(let binary):
         defer { BASICJIT.discard(binary: binary) }
         let status = BASICJIT.run(binary: binary)
+        // Unconditionally, because the shell cannot know what the program did
+        // with the terminal and the program cannot always put it back.
+        host.finishForeignProgram()
         if status != 0 {
             host.printLine("JIT: exited with status \(status)")
         }
@@ -3915,7 +3973,9 @@ func isHelpCommand(_ input: String) -> Bool {
 func runHelpCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let rest = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
-    return BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest)
+    return host.lendingMouseToTUI {
+        BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest)
+    }
 }
 
 func isRunCommand(_ input: String) -> Bool {

@@ -37,3 +37,14 @@ Awaiting `HTTPGETASYNC` produces a dictionary with `STATUS`, `BODY`, `URL`, and 
 ## Cancellation And Errors
 
 Cancellation is cooperative and wakes suspended waits. Cancelling an owning foreground program also cancels its descendant tree. Failed task errors surface at `AWAIT` or `JOIN` and can be handled with `ON ERROR GOTO`.
+
+## ASYNCVALUE
+
+`ASYNCVALUE(v)` wraps a value that is already known in a task that answers it. It is the way to hand back a task from a function that did not need to do any waiting, so a caller can `AWAIT` whatever it gets without asking which kind it got.
+
+```basic
+t = asyncvalue(42)
+print await t
+```
+
+prints `42`.
