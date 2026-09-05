@@ -372,6 +372,22 @@ for bundle in "$STAGE"/*.bundle; do
     $SUDO ln -s "../lib/basicshell/$name" "$BIN_DIR/$name"
 done
 
+# The manual `HELP` opens: Studio's markdown pages, installed rather than
+# copied into this package, so there stays exactly one of them. An install
+# without these is not broken — `HELP` falls back to the one-line command
+# list — but it is a shell with no manual, which is worth failing loudly for
+# rather than discovering later.
+USER_DOCS="$PACKAGE_DIR/../BASICStudio/UserDocs"
+if [ -d "$USER_DOCS" ]; then
+    doc_count="$(find "$USER_DOCS" -name '*.md' | wc -l | tr -d ' ')"
+    [ "$doc_count" -gt 0 ] || fail "$USER_DOCS has no pages in it"
+    $SUDO rm -rf "$LIB_DIR/UserDocs"
+    $SUDO cp -R "$USER_DOCS" "$LIB_DIR/UserDocs"
+    note "$doc_count help pages"
+else
+    note "no UserDocs at $USER_DOCS — HELP will fall back to the command list"
+fi
+
 # Installed atomically: write beside the target, then rename over it. A shell
 # being overwritten in place while someone is running it is a crash.
 $SUDO cp "$BINARY" "$BIN_DIR/.$COMMAND_NAME.new"

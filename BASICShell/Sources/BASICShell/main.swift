@@ -3902,6 +3902,22 @@ func runJITCommand(_ input: String) {
     }
 }
 
+/// `HELP`, and `HELP <topic>`.
+func isHelpCommand(_ input: String) -> Bool {
+    let uppercased = input.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return uppercased == "HELP" || uppercased.hasPrefix("HELP ")
+}
+
+/// Opens the manual, answering false when it could not be opened — a shell
+/// reading a script, a build with no pages beside it — so the caller can let
+/// the session print the command list it always printed.
+@MainActor
+func runHelpCommand(_ input: String) -> Bool {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    let rest = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+    return BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest)
+}
+
 func isRunCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let uppercased = trimmed.uppercased()
@@ -4120,6 +4136,12 @@ while true {
     }
     if isJITCommand(line) {
         runJITCommand(line)
+        drainSessionEventLoop()
+        continue
+    }
+    // Only when the manual opened. Otherwise this falls through to the
+    // session, which prints the one-line list of commands.
+    if isHelpCommand(line), runHelpCommand(line) {
         drainSessionEventLoop()
         continue
     }
