@@ -2031,41 +2031,62 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         // a shell reading a script would otherwise write mouse escape codes
         // into its own output for a TUI that is never going to open.
         guard isatty(STDOUT_FILENO) == 1 else { return body() }
+
+        // Get out of the way, rather than help.
+        //
+        // TUIKit's driver asks the terminal for exactly what it can read:
+        // `?1002h` button-event tracking, reported in SGR. It does that
+        // itself, correctly, and a TUIKit program started from anywhere else
+        // — the compiled gallery, say — has a working mouse without this
+        // shell being involved at all.
+        //
+        // What it cannot survive is the shell having put the terminal in VTG
+        // mouse mode first. `enableMouseReporting` turns on VTG-native
+        // reporting, and those events arrive as VTG protocol messages that an
+        // ANSI decoder cannot read; it also sends `?1000h`, which replaces
+        // the `?1002h` the driver asked for with a mode that reports no drag.
+        // Either alone is enough to leave the editor and the manual with a
+        // mouse that does nothing, which is what turning it "on" here did.
+        //
+        // So the terminal is put back to plain ANSI mouse before the app
+        // starts, and what the session wanted is restored after it ends.
         let hasVectorTerminal = isVectorTerminalAvailable
         if hasVectorTerminal {
-            vtgCanvas.enableMouseReporting(mode: "all")
+            vtgCanvas.disableMouseReporting()
         }
+        disableANSIMouseMotionReporting()
+
         defer {
-            if hasVectorTerminal {
-                vtgCanvas.disableMouseReporting()
-            }
             if session?.acceptsHostInputEvent(type: "MOUSE") == true {
                 if hasVectorTerminal {
                     vtgCanvas.enableMouseReporting(mode: "all")
                 }
                 enableANSIMouseMotionReporting()
             } else {
+                if hasVectorTerminal {
+                    vtgCanvas.disableMouseReporting()
+                }
                 disableANSIMouseMotionReporting()
             }
         }
         return body()
     }
 
-    /// Turns mouse reporting on for a TUIKit application that has already
-    /// started.
+    /// Re-asserts the mouse modes a TUIKit application needs, once it is
+    /// running.
     ///
-    /// Called from inside the running app rather than before it, because the
-    /// driver switches to the alternate screen on the way in and a terminal
-    /// that resets its input modes when the screen changes drops an enable
-    /// sent before that — which is what happened: the editor and the manual
-    /// came up with a mouse that had been turned on and then quietly turned
-    /// off again by the screen switch.
+    /// Called from inside the app rather than before it, because the driver
+    /// switches to the alternate screen on the way in and a terminal that
+    /// resets its input modes when the screen changes would drop an enable
+    /// sent before that.
     func enableMouseForRunningTUI() {
         guard isatty(STDOUT_FILENO) == 1 else { return }
-        if isVectorTerminalAvailable {
-            vtgCanvas.enableMouseReporting(mode: "all")
-        }
-        enableANSIMouseMotionReporting()
+        // The same two modes TUIKit's driver asks for, and only those: button
+        // events, reported in SGR so a column past 95 can be expressed at all.
+        // Re-asserted once the app owns the screen, in case switching to the
+        // alternate screen reset them — asking for anything else here is how
+        // the mouse stopped working.
+        writeRawTerminal("\u{1B}[?1002h\u{1B}[?1006h")
     }
 
     /// Puts the terminal back after a program this shell did not run itself.
