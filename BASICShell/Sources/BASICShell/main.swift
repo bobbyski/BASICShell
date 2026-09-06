@@ -2051,6 +2051,23 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         return body()
     }
 
+    /// Turns mouse reporting on for a TUIKit application that has already
+    /// started.
+    ///
+    /// Called from inside the running app rather than before it, because the
+    /// driver switches to the alternate screen on the way in and a terminal
+    /// that resets its input modes when the screen changes drops an enable
+    /// sent before that — which is what happened: the editor and the manual
+    /// came up with a mouse that had been turned on and then quietly turned
+    /// off again by the screen switch.
+    func enableMouseForRunningTUI() {
+        guard isatty(STDOUT_FILENO) == 1 else { return }
+        if isVectorTerminalAvailable {
+            vtgCanvas.enableMouseReporting(mode: "all")
+        }
+        enableANSIMouseMotionReporting()
+    }
+
     /// Puts the terminal back after a program this shell did not run itself.
     ///
     /// A JIT'd program owns the terminal while it runs and is supposed to
@@ -3530,7 +3547,7 @@ func runIntegratedEditor() {
     // transcript is behind the alternate screen and would not be read until
     // after the editor closed.
     let edited = host.lendingMouseToTUI {
-        BASICProgramEditor.edit(text: listing, label: "<program>") { buffer in
+        BASICProgramEditor.edit(text: listing, label: "<program>", onReady: { host.enableMouseForRunningTUI() }) { buffer in
             session.program.loadSource(buffer)
             guard let diagnostic = session.diagnostics().first else { return nil }
             return "Line \(diagnostic.lineNumber), column \(diagnostic.column + 1): \(diagnostic.message)"
@@ -3978,7 +3995,7 @@ func runHelpCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let rest = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
     return host.lendingMouseToTUI {
-        BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest)
+        BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest, onReady: { host.enableMouseForRunningTUI() })
     }
 }
 

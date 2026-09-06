@@ -192,14 +192,14 @@ enum BASICShellHelp {
     ///
     /// - Parameter wanted: what `HELP PRINT` asked for, matched against a
     ///   page's file name and title.
-    static func browse(topic wanted: String? = nil) -> Bool {
+    static func browse(topic wanted: String? = nil, onReady: (@MainActor () -> Void)? = nil) -> Bool {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { return false }
         let topics = ShellHelpLibrary.load()
         guard !topics.isEmpty else { return false }
 
         return MainActorBridge.lendingTerminal {
             MainActorBridge.runBlocking {
-                await present(topics: topics, wanted: wanted, on: ANSIDriver())
+                await present(topics: topics, wanted: wanted, onReady: onReady, on: ANSIDriver())
             } ?? false
         }
     }
@@ -212,9 +212,15 @@ enum BASICShellHelp {
     static func present(
         topics: [ShellHelpTopic],
         wanted: String? = nil,
+        onReady: (@MainActor () -> Void)? = nil,
         on driver: any TerminalDriver
     ) async -> Bool {
         let app = App(driver: driver)
+
+        // After the app owns the screen, not before — see the editor.
+        if let onReady {
+            _ = app.addTimer(every: .milliseconds(1), repeats: false) { onReady() }
+        }
         app.applyTheme(.modernTurbo)
         // `^C` is a copy key in TUIKit's controls, and a manual that closed on
         // it would close under a reader trying to copy a line of a program.

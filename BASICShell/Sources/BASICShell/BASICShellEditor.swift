@@ -156,11 +156,12 @@ enum BASICProgramEditor {
     static func edit(
         text: String,
         label: String,
+        onReady: (@MainActor () -> Void)? = nil,
         commit: @escaping @MainActor (String) -> String?
     ) -> Outcome? {
         MainActorBridge.lendingTerminal {
             MainActorBridge.runBlocking {
-                await present(text: text, label: label, commit: commit, on: ANSIDriver())
+                await present(text: text, label: label, commit: commit, onReady: onReady, on: ANSIDriver())
             } ?? nil
         }
     }
@@ -176,9 +177,17 @@ enum BASICProgramEditor {
         text original: String,
         label: String,
         commit: @escaping @MainActor (String) -> String?,
+        onReady: (@MainActor () -> Void)? = nil,
         on driver: any TerminalDriver
     ) async -> Outcome? {
         let app = App(driver: driver)
+
+        // Anything that has to happen after the screen belongs to the app —
+        // turning the mouse on, for one. A one-shot timer is the shortest way
+        // to be later than a call that has not returned yet.
+        if let onReady {
+            _ = app.addTimer(every: .milliseconds(1), repeats: false) { onReady() }
+        }
         app.applyTheme(.modernTurbo)
         // `^C` is the editor's *copy* key, and `SyntaxTextView` only consumes it
         // when there is a selection. Left at its default the app would quit on

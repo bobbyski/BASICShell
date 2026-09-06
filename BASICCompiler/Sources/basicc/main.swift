@@ -109,7 +109,12 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
             print(try compilation.llvmIR(sourcePath: source), terminator: "")
             return
         }
-        let output = invocation.output ?? Compilation.moduleName(for: source)
+        // Without `-o`, output goes under Build/ rather than beside the
+        // source — what every other compiler does, and what the Makefile in
+        // a generated project already asks for. Building a program in place
+        // used to leave the binary and a `<name>.build` directory of
+        // intermediates sitting next to the .bas file it came from.
+        let output = invocation.output ?? Compilation.defaultOutputPath(for: source)
         if invocation.emitAssembly {
             try compilation.buildAssembly(sourcePath: source, output: output)
             return

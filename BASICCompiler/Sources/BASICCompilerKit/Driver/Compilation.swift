@@ -61,6 +61,12 @@ public struct Compilation: Sendable {
 
         let buildDir = output + ".build"
         try FileManager.default.createDirectory(atPath: buildDir, withIntermediateDirectories: true)
+        // `-o Build/roids` names a directory that may not exist yet, and the
+        // linker will not make one.
+        let outputDirectory = (output as NSString).deletingLastPathComponent
+        if !outputDirectory.isEmpty {
+            try FileManager.default.createDirectory(atPath: outputDirectory, withIntermediateDirectories: true)
+        }
         let irPath = (buildDir as NSString).appendingPathComponent("\(module.name).ll")
         let objectPath = (buildDir as NSString).appendingPathComponent("\(module.name).o")
         try toolchain.assemble(llvmIR: lowered.llvmIR, irPath: irPath, objectPath: objectPath, optimizationLevel: options.optimizationLevel)
@@ -80,6 +86,17 @@ public struct Compilation: Sendable {
         let lowered = try dialect.lower(module, options: options)
         let irPath = (output as NSString).deletingPathExtension + ".ll"
         try toolchain.assembleToAssembly(llvmIR: lowered.llvmIR, irPath: irPath, assemblyPath: output)
+    }
+
+    /// Where a build writes when `-o` was not given: `Build/<name>`,
+    /// relative to the working directory, as `make` and every other compiler
+    /// driver in this tree already assume.
+    ///
+    /// The intermediates follow the output — `<output>.build/` — so putting
+    /// the output under `Build/` puts them there too and leaves the
+    /// directory holding the source with nothing added to it.
+    public static func defaultOutputPath(for sourcePath: String) -> String {
+        ("Build" as NSString).appendingPathComponent(moduleName(for: sourcePath))
     }
 
     /// The module name for a source path: its base name without `.bas`, or
