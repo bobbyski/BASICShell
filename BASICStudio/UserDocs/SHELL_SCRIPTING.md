@@ -80,6 +80,30 @@ There is **no way for a script to read its own command-line arguments**. Pass
 what it needs in the environment instead, with `SETENV` before it or
 `ENVIRON$` inside it — see [SETENV, EXPORT and UNSETENV](ENVIRONMENT.md).
 
+## Running one command and stopping
+
+`-c` takes the commands as an argument, runs them, and exits — what a
+terminal emulator runs for a profile's startup command, and what `sh -c`
+does everywhere else.
+
+```
+basicshell -c 'print "hello"'
+basicshell -c 'option shellmode on
+/bin/echo two lines work too'
+```
+
+The text is read **one line at a time, exactly as if you had typed it**, so
+`cd`, `alias` and a bare external command all work in it — the same reason a
+startup file is read that way. Text loaded as a *program* could contain none
+of them.
+
+The exit status is the last command's, so `basicshell -c '/bin/ls /nowhere'`
+fails like any other shell, and `QUIT n` exits with `n`.
+
+Startup files are **not** read: what `-c` does should not depend on what
+happens to be in someone's `~/.BASICrc`. Anything after the command string is
+passed on to it rather than read as an option.
+
 ## The environment and the directory
 
 `SETENV`, `EXPORT` and `UNSETENV` set what a command inherits;

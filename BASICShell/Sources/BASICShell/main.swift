@@ -3510,6 +3510,13 @@ var loadsStartupFiles = true
 // The Unix convention, older than any of this: a login shell is exec'd with a
 // leading `-` on argv[0]. `--login` is for saying so by hand.
 var isLoginShell = CommandLine.arguments.first?.hasPrefix("-") ?? false
+
+/// `-c commands`: run these and exit, as every other shell's `-c` does.
+///
+/// What a terminal emulator runs for a profile's startup command, and the one
+/// thing this shell had no spelling for — it took a file and nothing else.
+var commandText: String?
+
 while let first = arguments.first {
     if first == "--no-rc" {
         loadsStartupFiles = false
@@ -3517,6 +3524,17 @@ while let first = arguments.first {
     } else if first == "--login" || first == "-l" {
         isLoginShell = true
         arguments.removeFirst()
+    } else if first == "-c" {
+        arguments.removeFirst()
+        guard let text = arguments.first else {
+            Swift.print("basicshell: -c needs a command")
+            exit(2)
+        }
+        commandText = text
+        arguments.removeFirst()
+        // Whatever follows belongs to the command, the way `sh -c` hands the
+        // rest on rather than reading them as its own options.
+        break
     } else {
         break
     }
@@ -3992,7 +4010,11 @@ func runJITCommand(_ input: String) {
         for line in diagnostics { host.printLine(line) }
     case .built(let binary):
         defer { BASICJIT.discard(binary: binary) }
-        let status = BASICJIT.run(binary: binary)
+        // The same hand-over the editor and the manual get: the terminal is
+        // put back to plain ANSI mouse before the program starts, because a
+        // compiled TUI program asks for what it needs itself and cannot read
+        // VTG-native reports this shell may have left switched on.
+        let status = host.lendingMouseToTUI { BASICJIT.run(binary: binary) }
         // Unconditionally, because the shell cannot know what the program did
         // with the terminal and the program cannot always put it back.
         host.finishForeignProgram()
@@ -4187,6 +4209,34 @@ func runStartupFiles(isLoginShell: Bool) -> Bool {
 if arguments.first == "--cls" {
     host.clearEverything()
     finish(0)
+}
+
+// `-c` runs before the script branch and instead of the prompt.
+//
+// **Line by line through `submit`, not loaded as a program.** This is the same
+// choice the startup files make and for the same reason: `cd`, `alias` and a
+// bare external command are things the session understands when a person types
+// them, not statements the parser knows, so text read as a *program* cannot
+// contain any of them — and those are most of what a profile's startup command
+// is made of.
+//
+// Startup files are not read, as they are not for a script: what `-c` does
+// should not depend on what happens to be in someone's `~/.BASICrc`.
+if let commandText {
+    session.setScriptContext(path: "-c", arguments: arguments)
+    var exitStatus: Int32 = 0
+    for line in commandText.split(separator: "\n", omittingEmptySubsequences: false) {
+        let keepGoing = session.submit(String(line))
+        drainSessionEventLoop()
+        if !keepGoing {
+            // QUIT, and the status it asked for.
+            finish(Int32(session.requestedExitStatus))
+        }
+    }
+    // Otherwise the last command's status, so `-c "/bin/false"` fails the way
+    // it would in any other shell.
+    exitStatus = Int32(session.lastSystemStatus)
+    finish(exitStatus)
 }
 
 if let scriptPath = arguments.first {
