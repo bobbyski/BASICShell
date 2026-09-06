@@ -2253,11 +2253,34 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         shellWordCommand(keyword: "TYPE", from: source)
     }
 
+    /// The one argument of a `WHICH`/`TYPE` typed at the prompt.
+    ///
+    /// A quoted argument is unwrapped, which is what makes the typed form
+    /// agree with the statement form: `WHICH "ls"` in a program is a string
+    /// literal and reaches the resolver as `ls`, while at the prompt the
+    /// quotes used to travel with it and the shell went looking through
+    /// `PATH` for a file whose name began with a quotation mark. It never
+    /// found one, so `WHICH "tool"` reported `"tool" not found` for a tool
+    /// that was on `PATH` and ran perfectly well when typed.
+    ///
+    /// Quoting is also the only way to name something with a space in it,
+    /// so a quoted argument runs to its closing quote rather than to the
+    /// first space.
     private static func shellWordCommand(keyword: String, from source: String) -> String? {
         guard keywordPrefix(keyword, matches: source) else { return nil }
         let start = source.index(source.startIndex, offsetBy: keyword.count)
         let rest = source[start...].trimmingCharacters(in: .whitespaces)
-        guard !rest.isEmpty else { return "" }
+        guard let first = rest.first else { return "" }
+
+        if first == "\"" || first == "'" {
+            let body = rest.dropFirst()
+            if let end = body.firstIndex(of: first) {
+                return String(body[body.startIndex..<end])
+            }
+            // Unterminated: take the rest, so a missing quote names something
+            // rather than nothing.
+            return String(body)
+        }
         return String(rest.split(whereSeparator: { $0.isWhitespace }).first ?? "")
     }
 
