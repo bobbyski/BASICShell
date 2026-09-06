@@ -3130,6 +3130,17 @@ public final class BASICInterpreter {
             try runtime.assign(kind: .local, variable: parameter.variable, declaredType: parameter.type, value: value)
         }
 
+        // Where this call found the loop stacks. A function that returns from
+        // inside a FOR or a WHILE never reaches the NEXT or WEND that would
+        // pop it, and the frame it leaves behind belongs to nobody: the
+        // caller's own NEXT then matches the callee's FOR and fails with
+        // "NEXT without matching FOR" — in the caller, which did nothing
+        // wrong. Returning early out of a search loop is ordinary enough that
+        // this was reachable from any program; the compiler has always got it
+        // right, and the interpreter is supposed to be the one that decides.
+        let entryForDepth = forStack.count
+        let entryWhileDepth = whileStack.count
+
         functionStack.append(FunctionFrame(
             definition: definition,
             receiverClassName: receiverClassName,
@@ -3137,6 +3148,12 @@ public final class BASICInterpreter {
             returnValue: runtime.defaultValue(for: returnType)
         ))
         defer {
+            if forStack.count > entryForDepth {
+                forStack.removeLast(forStack.count - entryForDepth)
+            }
+            if whileStack.count > entryWhileDepth {
+                whileStack.removeLast(whileStack.count - entryWhileDepth)
+            }
             _ = functionStack.popLast()
             runtime.popLocalContext()
         }

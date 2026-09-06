@@ -19,6 +19,22 @@ print "["; str$(42); "]"
 
 prints `65`, `B`, then `3.5`, then `[ 42]`.
 
-That leading space in `STR$` is not a mistake and not ours: BASIC has always left room in front of a number for the minus sign it might have needed. Use `LTRIM$` or build the string another way when it is in the way.
+That leading space in `STR$` is not a mistake and not ours: BASIC has always left room in front of a number for the minus sign it might have needed.
+
+There is no `LTRIM$` in this BASIC. Where the space is in the way — building a coordinate list, say — take it off:
+
+```basic
+FUNCTION Trimmed$(value AS STRING) AS STRING
+    LOCAL text$ = value
+    WHILE LEFT$(text$, 1) = " "
+        text$ = MID$(text$, 2)
+    WEND
+    RETURN text$
+END FUNCTION
+
+print "["; Trimmed$(STR$(42)); "]"
+```
+
+prints `[42]`.
 
 See also [CHR$](CHR.md) and [String Functions](STRING_FUNCTIONS.md).
