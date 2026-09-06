@@ -26,12 +26,34 @@ enum DemoSweep {
     static var script: String { root.appendingPathComponent("Scripts/compiler-demo-sweep.py").path }
     static var document: String { root.appendingPathComponent("Documents/BASIC_COMPILER_COMPATABILITY.md").path }
     static var demos: String { root.appendingPathComponent("basicPrograms/demos").path }
-    static var interpreter: String { root.appendingPathComponent("Code/BASICShell/.build/debug/BASICShell").path }
-    static var compiler: String { "/opt/homebrew/bin/basicc" }
+    /// The interpreter, found on `PATH`. `BASICSHELL` overrides.
+    static var interpreter: String { found("BASICShell", override: "BASICSHELL") }
+
+    /// The compiler, found on `PATH`. `BASICC` overrides.
+    ///
+    /// Neither of these is a path written into the source. A build directory
+    /// and an install prefix are both guesses about someone else's machine:
+    /// the first one here was an install prefix, and it decided whether the
+    /// sweep ran at all, so when that prefix was emptied the test stopped
+    /// running rather than failing — the quietest way for a check to stop
+    /// checking. `PATH` is the one answer the machine already has.
+    static var compiler: String { found("basicc", override: "BASICC") }
+
+    /// A tool on `PATH`, or the empty string when it is not there.
+    private static func found(_ name: String, override: String) -> String {
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment[override], !path.isEmpty { return path }
+        for directory in (environment["PATH"] ?? "").split(separator: ":") {
+            let candidate = (String(directory) as NSString).appendingPathComponent(name)
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return ""
+    }
 
     /// Whether everything the sweep needs is here.
     static var isAvailable: Bool {
         ProcessInfo.processInfo.environment["BASICC_SKIP_DEMO_SWEEP"] == nil
+            && ![interpreter, compiler].contains("")
             && [script, document, demos, interpreter, compiler].allSatisfy { FileManager.default.fileExists(atPath: $0) }
     }
 

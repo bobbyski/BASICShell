@@ -48,7 +48,12 @@ public enum BASICJIT {
         if let override = environment["BASICC"], FileManager.default.isExecutableFile(atPath: override) {
             return override
         }
-        let searched = (environment["PATH"] ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin")
+        // PATH decides, and nothing else. The fallback is the system's own
+        // default for a process started without one — naming likely install
+        // prefixes here would be this code guessing at somebody's machine,
+        // and guessing wrong is how a JIT ends up compiling with a compiler
+        // the user did not install and cannot see.
+        let searched = (environment["PATH"] ?? "/usr/bin:/bin")
             .split(separator: ":").map(String.init)
         for directory in searched {
             let candidate = (directory as NSString).appendingPathComponent("basicc")
