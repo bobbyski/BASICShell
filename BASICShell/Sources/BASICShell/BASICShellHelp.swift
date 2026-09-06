@@ -186,14 +186,6 @@ private final class HelpWindow: Window {
 /// The `HELP` browser: topics on the left, the page on the right.
 enum BASICShellHelp {
 
-    /// One sidebar row. Group headers are rows too, and show that group's
-    /// contents — a row that selects to a blank page is a row that looks
-    /// broken.
-    private enum Row {
-        case header(ShellHelpTopic.Group)
-        case topic(Int)
-    }
-
     /// Opens the manual, returning false when it could not be shown — no
     /// terminal to draw on, or no pages to draw. The caller falls back to the
     /// one-line command list, which is what `HELP` did before this existed.
@@ -231,26 +223,34 @@ enum BASICShellHelp {
         let window = HelpWindow()
         window.fillsScreen = true
 
-        // Headers interleaved with their pages, which is the sidebar's order
-        // and also the order arrow keys walk.
-        var rows: [Row] = []
+        // A tree, not a list with headings drawn on it.
+        //
+        // The first version of this was a flat `SidebarList` whose group rows
+        // carried a `▾` glyph, which is a picture of a disclosure control
+        // rather than one: the triangle was there, nothing was under it, and
+        // choosing a group could not collapse anything because the pages were
+        // siblings of their heading rather than children of it. `TreeView`
+        // has the parent/child relationship, and with it collapsing, the
+        // arrow keys, and a scrollbar — none of which a flat list can have.
+        var roots: [TreeNode] = []
+        var topicForNode: [ObjectIdentifier: Int] = [:]
+        var nodeForTopic: [Int: TreeNode] = [:]
         for group in ShellHelpTopic.Group.allCases {
             let indexes = topics.indices.filter { topics[$0].group == group }
             guard !indexes.isEmpty else { continue }
-            rows.append(.header(group))
-            rows.append(contentsOf: indexes.map { Row.topic($0) })
+            let root = TreeNode(group.title.uppercased())
+            root.isExpanded = true
+            for index in indexes {
+                let child = TreeNode(topics[index].title)
+                topicForNode[ObjectIdentifier(child)] = index
+                nodeForTopic[index] = child
+                root.addChild(child)
+            }
+            roots.append(root)
         }
 
-        let items = rows.map { row -> SidebarItem in
-            switch row {
-            case .header(let group):
-                // Uppercase and a marker, so a header reads as one on a list
-                // that has no other way to say so.
-                SidebarItem(icon: "▾", title: group.title.uppercased())
-            case .topic(let index):
-                SidebarItem(title: topics[index].title)
-            }
-        }
+        let tree = TreeView(roots: roots)
+        tree.anchors = .fill()
 
         let document = Panel("Help")
         document.themeContext = ThemeContext.contentWindow
@@ -259,71 +259,65 @@ enum BASICShellHelp {
         let status = StatusBar()
         let heading = Label("")
         status.addSegment(heading, percentage: 100)
-        status.addSegment(Label("↑↓ topic   Esc close"), minimumWidth: 22)
+        status.addSegment(Label("↑↓ topic   ←→ group   Esc close"), minimumWidth: 30)
         status.anchors = AnchorSet(leading: 0, trailing: 0, bottom: 0, height: 1)
 
-        /// The page for a row: a topic's markdown, or a group's contents.
-        func markdown(for row: Row) -> String {
-            switch row {
-            case .topic(let index):
-                return topics[index].content
-            case .header(let group):
-                let listed = topics.filter { $0.group == group }
-                    .map { "- \($0.title)" }
-                    .joined(separator: "\n")
-                return """
-                # \(group.title)
+        let treeHost = TUIView()
+        treeHost.addSubview(tree)
+        let detailHost = TUIView()
+        let split = SplitView(axis: .horizontal, first: treeHost, second: detailHost, dividerPosition: 30)
+        split.minimumFirstLength = 16
+        split.minimumSecondLength = 20
+        split.anchors = .fill()
+        document.content.addSubview(split)
 
-                \(listed.isEmpty ? "_No pages._" : listed)
-                """
+        var page: MarkdownView?
+
+        /// Shows a node: a page for a topic, a contents list for a group.
+        func show(_ node: TreeNode?) {
+            guard let node else { return }
+            let markdown: String
+            let caption: String
+            if let index = topicForNode[ObjectIdentifier(node)] {
+                markdown = topics[index].content
+                caption = "\(topics[index].group.title) · \(topics[index].title)"
+            } else {
+                // A group shows what is in it. A heading that selected to a
+                // blank page would read as broken.
+                let listed = node.children.map { "- \($0.title)" }.joined(separator: "\n")
+                markdown = "# \(node.title.capitalized)\n\n\(listed)"
+                caption = node.title.capitalized
             }
-        }
-
-        func caption(for row: Row) -> String {
-            switch row {
-            case .header(let group): group.title
-            case .topic(let index): "\(topics[index].group.title) · \(topics[index].title)"
-            }
-        }
-
-        let master = MasterDetail(items: items) { index in
-            let view = MarkdownView(markdown: index < rows.count ? markdown(for: rows[index]) : "")
+            page?.removeFromSuperview()
+            let view = MarkdownView(markdown: markdown)
             view.anchors = .fill()
-            return view
-        }
-        master.sidebarWidth = 30
-        master.anchors = .fill()
-        /// The window's name for what is on screen, in both places it appears.
-        func nameCurrent(_ index: Int) {
-            guard index < rows.count else { return }
-            let text = caption(for: rows[index])
-            document.title = text
-            heading.text = text
+            detailHost.addSubview(view)
+            page = view
+            document.title = caption
+            heading.text = caption
         }
 
-        master.onSelectionChanged = { index in
-            if let index { nameCurrent(index) }
+        tree.onSelectionChanged = { node in show(node) }
+        // Return on a group opens or closes it, which is what Return means
+        // everywhere else in TUIKit.
+        tree.onActivate = { node in
+            if node.isExpandable { tree.toggle(node) }
         }
-        document.content.addSubview(master)
 
-        // Opens on the first group header, so the reader arrives at the top of
-        // the list looking at what the groups are — landing part-way down a
-        // list of seventy-six pages, with the heading above already scrolled
-        // off, tells them nothing about how it is organised.
-        var start = 0
+        // `HELP PRINT` opens on PRINT. A name that matches nothing opens at
+        // the top rather than complaining: the list is right there to look in.
+        var start = roots.first
         if let wanted = wanted?.uppercased(), !wanted.isEmpty {
-            let match = rows.firstIndex { row in
-                guard case .topic(let index) = row else { return false }
-                return topics[index].name.uppercased() == wanted
-                    || topics[index].title.uppercased() == wanted
+            let match = topics.indices.first { index in
+                topics[index].name.uppercased() == wanted || topics[index].title.uppercased() == wanted
             }
-            if let match { start = match }
+            if let match, let node = nodeForTopic[match] { start = node }
         }
-        master.list.select(start, notify: true)
-        // Named here as well as from the callback: selecting the row that is
+        tree.select(start, notify: true)
+        // Named here as well as from the callback: selecting the node that is
         // already selected is not a change, so the callback does not fire and
         // the window would open wearing its placeholder title.
-        nameCurrent(start)
+        show(start)
 
         let fileMenu = Menu("&File")
         fileMenu.addItem("&Close", keyEquivalent: KeyInput(key: .character("x"), modifiers: .control)) {
@@ -339,7 +333,7 @@ enum BASICShellHelp {
         window.addSubview(bar)
         window.addSubview(status)
         window.addSubview(document)
-        _ = window.makeFirstResponder(master.list)
+        _ = window.makeFirstResponder(tree)
 
         do {
             try await app.run(window)
