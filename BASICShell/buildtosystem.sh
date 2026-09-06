@@ -46,6 +46,19 @@
 #   $PREFIX/bin/*.bundle                     -> symlinks into the directory below
 #   $PREFIX/lib/basicshell/BASICShell_BASICShell.bundle/Demos/*.bas
 #
+# The compiler goes with it, in the layout its own buildAndInstall.sh uses:
+#
+#   $PREFIX/bin/basicc                       the compiler
+#   $PREFIX/bin/basictest                    the conformance runner
+#   $PREFIX/bin/basiclint                    the linter
+#   $PREFIX/lib/basicc/libBASICRTHost.a      the runtime it links
+#   $PREFIX/share/basicc/BASICRT/            runtime sources, the fallback
+#
+# The shell's JIT finds `basicc` on PATH, so a shell installed without one
+# can interpret and not compile. Installing them together is what keeps
+# `RUN` and `JIT` the same age — a JIT'd program carrying a months-old
+# runtime behaves like a months-old build, and looks like a live bug.
+#
 # The payload lives under lib/ because /usr/local/bin is a directory of
 # programs, not a place to unpack a tree of BASIC demos; the symlinks in bin/
 # are what `Bundle.module` actually finds, and Foundation resolves them.
@@ -261,6 +274,29 @@ start_ticker "building"
 swift build -c release --product "$PRODUCT" || { stop_ticker; fail "release build"; }
 stop_ticker
 
+# The compiler, from the sibling package. Built here rather than by calling
+# its own buildAndInstall.sh, because that script installs as it builds and
+# this one has to build as you and install as root: running the whole of it
+# under sudo would leave a .build directory owned by root.
+#
+# Before anything is copied, so a compiler that will not build stops the
+# install rather than half-finishing it.
+COMPILER_DIR="$PACKAGE_DIR/../BASICCompiler"
+COMPILER_BIN=""
+if [ -d "$COMPILER_DIR" ]; then
+    say "building basicc (release)"
+    start_ticker "building basicc"
+    for product in basicc basictest basiclint BASICRTHost; do
+        swift build -c release --package-path "$COMPILER_DIR" --product "$product" \
+            || { stop_ticker; fail "release build of $product"; }
+    done
+    stop_ticker
+    COMPILER_BIN="$(swift build -c release --package-path "$COMPILER_DIR" --show-bin-path)"
+else
+    note "no BASICCompiler package beside this one — installing the shell alone"
+    note "JIT will report that basicc is not installed; RUN still interprets"
+fi
+
 BUILD_DIR="$(swift build -c release --show-bin-path)"
 BINARY="$BUILD_DIR/$PRODUCT"
 [ -x "$BINARY" ] || fail "no binary at $BINARY"
@@ -388,6 +424,24 @@ else
     note "no UserDocs.zip — run Scripts/pack-userdocs.sh; HELP will fall back to the command list"
 fi
 
+# The compiler and its runtime, in the layout `RuntimeLibrary` looks for:
+# the archive at <prefix>/lib/basicc, the sources at <prefix>/share/basicc,
+# both found relative to the installed basicc rather than by any search path.
+if [ -n "$COMPILER_BIN" ]; then
+    $SUDO mkdir -p "$PREFIX/lib/basicc" "$PREFIX/share/basicc"
+    for tool in basicc basictest basiclint; do
+        $SUDO cp "$COMPILER_BIN/$tool" "$BIN_DIR/.$tool.new"
+        $SUDO chmod 755 "$BIN_DIR/.$tool.new"
+        $SUDO mv -f "$BIN_DIR/.$tool.new" "$BIN_DIR/$tool"
+    done
+    $SUDO cp "$COMPILER_BIN/libBASICRTHost.a" "$PREFIX/lib/basicc/libBASICRTHost.a"
+    $SUDO chmod 644 "$PREFIX/lib/basicc/libBASICRTHost.a"
+    $SUDO rm -rf "$PREFIX/share/basicc/BASICRT" "$PREFIX/share/basicc/BASICRTHostStubs"
+    $SUDO cp -R "$COMPILER_DIR/Sources/BASICRT" "$PREFIX/share/basicc/BASICRT"
+    $SUDO cp -R "$COMPILER_DIR/Sources/BASICRTHostStubs" "$PREFIX/share/basicc/BASICRTHostStubs"
+    note "basicc, basictest and basiclint installed with their runtime"
+fi
+
 # Installed atomically: write beside the target, then rename over it. A shell
 # being overwritten in place while someone is running it is a crash.
 $SUDO cp "$BINARY" "$BIN_DIR/.$COMMAND_NAME.new"
@@ -409,6 +463,32 @@ PROBE_DIR="$(mktemp -d)"
 printf 'print "ok"\n' > "$PROBE_DIR/smoke.bas"
 printf '%s' "$("$INSTALLED" "$PROBE_DIR/smoke.bas" </dev/null 2>&1)" | grep -q '^ok$' \
     || fail "the installed shell cannot run a program"
+
+# The compiler, with the environment cleared, so it is proven to find its own
+# runtime rather than one that happens to be in this shell's environment.
+#
+# This is the check JIT depends on: `jit` shells out to whichever basicc is on
+# PATH, and a compiler that cannot find its archive compiles nothing.
+if [ -n "$COMPILER_BIN" ]; then
+    printf 'PRINT "basicc ok"\n' > "$PROBE_DIR/probe.bas"
+    if env -i PATH=/usr/bin:/bin HOME="$HOME" "$BIN_DIR/basicc" \
+            build "$PROBE_DIR/probe.bas" -o "$PROBE_DIR/probe" >/dev/null 2>&1 \
+       && [ "$("$PROBE_DIR/probe")" = "basicc ok" ]; then
+        note "the installed basicc compiles and links against its own runtime"
+    else
+        fail "the installed basicc cannot build a program — check $PREFIX/lib/basicc"
+    fi
+
+    # And that the shell *finds* it, which is the whole point of installing the
+    # two together: JIT looks for basicc on PATH and nowhere else, so this asks
+    # the installed shell to resolve exactly that name the way JIT will.
+    if PATH="$BIN_DIR:$PATH" "$INSTALLED" -c 'which "basicc"' 2>/dev/null | grep -q 'basicc'; then
+        note "the installed shell resolves basicc on PATH — JIT will find it"
+    else
+        note "the installed shell cannot see basicc on PATH — JIT will decline"
+        note "add $BIN_DIR to PATH, or set BASICC to point at it"
+    fi
+fi
 
 # The check that matters — and it only means anything with the fallback gone.
 #

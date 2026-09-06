@@ -4206,6 +4206,48 @@ func runStartupFiles(isLoginShell: Bool) -> Bool {
                                               : ShellStartupFiles.interactive)
 }
 
+/// Runs one line the way the prompt does, answering false when the shell
+/// should stop.
+///
+/// **The prompt and `-c` share this, because they have to.** `EDIT`, `JIT`,
+/// `HELP` and the job-control words are the shell's own, handled here rather
+/// than by the session — so a line dispatched any other way falls through to
+/// shell mode, and `-c 'jit prog.bas'` reported `jit: command not found`
+/// instead of compiling anything.
+@MainActor
+func runShellLine(_ line: String) -> Bool {
+    if handleShellJobControlCommand(line) {
+        drainSessionEventLoop()
+        return true
+    }
+    if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
+        runIntegratedEditor()
+        drainSessionEventLoop()
+        return true
+    }
+    if isJITCommand(line) {
+        runJITCommand(line)
+        drainSessionEventLoop()
+        return true
+    }
+    // Only when the manual opened. Otherwise this falls through to the
+    // session, which prints the one-line list of commands.
+    if isHelpCommand(line), runHelpCommand(line) {
+        drainSessionEventLoop()
+        return true
+    }
+    if isRunCommand(line), printDiagnosticsIfNeeded() {
+        return true
+    }
+    let oldPromptTemplate = session.promptTemplate
+    let shouldContinue = session.submit(line)
+    if session.promptTemplate != oldPromptTemplate {
+        BASICPromptTemplateStore.save(session.promptTemplate)
+    }
+    drainSessionEventLoop()
+    return shouldContinue
+}
+
 if arguments.first == "--cls" {
     host.clearEverything()
     finish(0)
@@ -4226,9 +4268,7 @@ if let commandText {
     session.setScriptContext(path: "-c", arguments: arguments)
     var exitStatus: Int32 = 0
     for line in commandText.split(separator: "\n", omittingEmptySubsequences: false) {
-        let keepGoing = session.submit(String(line))
-        drainSessionEventLoop()
-        if !keepGoing {
+        if !runShellLine(String(line)) {
             // QUIT, and the status it asked for.
             finish(Int32(session.requestedExitStatus))
         }
@@ -4277,36 +4317,7 @@ while true {
     ShellLineEditor.shared.setBasicSymbolCompletionWords(BASICCompletionEngine.programSymbolWords(in: session.program))
     ShellLineEditor.shared.setIncludesExternalCommandCompletions(session.shellModeEnabled)
     guard let line = host.readLine(prompt: session.prompt) else { break }
-    if handleShellJobControlCommand(line) {
-        drainSessionEventLoop()
-        continue
-    }
-    if line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "EDIT" {
-        runIntegratedEditor()
-        drainSessionEventLoop()
-        continue
-    }
-    if isJITCommand(line) {
-        runJITCommand(line)
-        drainSessionEventLoop()
-        continue
-    }
-    // Only when the manual opened. Otherwise this falls through to the
-    // session, which prints the one-line list of commands.
-    if isHelpCommand(line), runHelpCommand(line) {
-        drainSessionEventLoop()
-        continue
-    }
-    if isRunCommand(line), printDiagnosticsIfNeeded() {
-        continue
-    }
-    let oldPromptTemplate = session.promptTemplate
-    let shouldContinue = session.submit(line)
-    if session.promptTemplate != oldPromptTemplate {
-        BASICPromptTemplateStore.save(session.promptTemplate)
-    }
-    drainSessionEventLoop()
-    if !shouldContinue {
+    if !runShellLine(line) {
         shellExitCode = Int32(session.requestedExitStatus)
         break
     }
