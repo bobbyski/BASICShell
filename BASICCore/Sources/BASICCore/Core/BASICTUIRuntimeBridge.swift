@@ -87,7 +87,10 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
     /// registry it reads is main-actor isolated.
     @MainActor
     func invoke(handlerFor id: Int) {
-        guard let handler = BASICTUIRegistry.shared.handlers[id] else { return }
+        let handler = BASICTUIRegistry.shared.handlers[id]
+        BASICTUITrace.log("invoke(handlerFor: \(id)) → \(handler ?? "NO HANDLER REGISTERED")"
+            + " (registered ids: \(BASICTUIRegistry.shared.handlers.keys.sorted()))")
+        guard let handler else { return }
         invoke(handlerNamed: handler)
     }
 
@@ -108,12 +111,21 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
     /// a BASIC handler is a name, so the value has to travel with the call or
     /// the program needs one near-identical function per value.
     func invoke(handlerNamed handler: String, with arguments: [BASICValue]) {
-        guard let invoke = invokeHandler else { return }
+        guard let invoke = invokeHandler else {
+            BASICTUITrace.log("\(handler): no invokeHandler — nothing can dispatch it")
+            return
+        }
         do {
             try invoke(handler, arguments)
+            BASICTUITrace.log("\(handler): ran")
         } catch let error as BASICError {
+            // Parked rather than thrown: a handler is called mid-frame from a
+            // non-throwing closure. Parking it silently is also why a handler
+            // that fails looks exactly like one that never ran.
+            BASICTUITrace.log("\(handler): FAILED — \(error)")
             fail(with: error)
         } catch {
+            BASICTUITrace.log("\(handler): FAILED — \(error)")
             fail(with: .runtime("\(error)"))
         }
     }

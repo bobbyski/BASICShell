@@ -69,8 +69,12 @@ public enum BASICCompiledTUI {
                 guard case .handle(let windowID, _)? = arguments.first else {
                     throw Failure(message: "\(typeName).run expects a window")
                 }
+                // Saved and restored rather than cleared — see the `else`
+                // branch below, which is nested inside this one for the whole
+                // life of the application.
+                let previous = bridge.invokeHandler
                 bridge.invokeHandler = wrapped
-                defer { bridge.invokeHandler = nil }
+                defer { bridge.invokeHandler = previous }
                 // A compiled program is its own host: an ANSIDriver and
                 // nothing else a `BASICHost` would answer.
                 try BASICTUIRuntimeBridge.runBlocking(appID: id, windowID: windowID, driver: ANSIDriver())
@@ -80,8 +84,22 @@ public enum BASICCompiledTUI {
                 return .empty
             }
             let runtime = BASICRuntime()
+            // **Restore, never clear.**
+            //
+            // Every method a program calls while its application is running
+            // — `label.text(…)` from a timer, `tabs.select(…)` from a click —
+            // comes through here, *nested inside* the `RUN` above. Clearing
+            // on the way out therefore tore down the dispatcher that `RUN`
+            // installed, and every later control event was dropped in
+            // silence: a click still moved the highlight, because that is
+            // TUIKit's own doing, and the handler behind it never ran again.
+            //
+            // The gallery died on its first clock tick — `RefreshClock`
+            // called `clock.text(…)`, and nothing in the program answered a
+            // button, a tab or a sidebar row afterwards.
+            let previous = bridge.invokeHandler
             bridge.invokeHandler = wrapped
-            defer { bridge.invokeHandler = nil }
+            defer { bridge.invokeHandler = previous }
             let answer = try runtime.callTUIMethod(
                 typeName: typeName, id: id, method: method,
                 arguments: arguments.map(basicValue),
