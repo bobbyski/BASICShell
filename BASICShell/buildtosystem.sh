@@ -51,7 +51,7 @@
 #   $PREFIX/bin/basicc                       the compiler
 #   $PREFIX/bin/basictest                    the conformance runner
 #   $PREFIX/bin/basiclint                    the linter
-#   $PREFIX/lib/basicc/libBASICRTHost.a      the runtime it links
+#   $PREFIX/lib/libBASICRTHost.a             the runtime it links
 #   $PREFIX/share/basicc/BASICRT/            runtime sources, the fallback
 #
 # The shell's JIT finds `basicc` on PATH, so a shell installed without one
@@ -425,17 +425,17 @@ else
 fi
 
 # The compiler and its runtime, in the layout `RuntimeLibrary` looks for:
-# the archive at <prefix>/lib/basicc, the sources at <prefix>/share/basicc,
+# the archive at <prefix>/lib, the sources at <prefix>/share/basicc,
 # both found relative to the installed basicc rather than by any search path.
 if [ -n "$COMPILER_BIN" ]; then
-    $SUDO mkdir -p "$PREFIX/lib/basicc" "$PREFIX/share/basicc"
+    $SUDO mkdir -p "$PREFIX/lib" "$PREFIX/share/basicc"
     for tool in basicc basictest basiclint; do
         $SUDO cp "$COMPILER_BIN/$tool" "$BIN_DIR/.$tool.new"
         $SUDO chmod 755 "$BIN_DIR/.$tool.new"
         $SUDO mv -f "$BIN_DIR/.$tool.new" "$BIN_DIR/$tool"
     done
-    $SUDO cp "$COMPILER_BIN/libBASICRTHost.a" "$PREFIX/lib/basicc/libBASICRTHost.a"
-    $SUDO chmod 644 "$PREFIX/lib/basicc/libBASICRTHost.a"
+    $SUDO cp "$COMPILER_BIN/libBASICRTHost.a" "$PREFIX/lib/libBASICRTHost.a"
+    $SUDO chmod 644 "$PREFIX/lib/libBASICRTHost.a"
     $SUDO rm -rf "$PREFIX/share/basicc/BASICRT" "$PREFIX/share/basicc/BASICRTHostStubs"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRT" "$PREFIX/share/basicc/BASICRT"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRTHostStubs" "$PREFIX/share/basicc/BASICRTHostStubs"
@@ -476,7 +476,7 @@ if [ -n "$COMPILER_BIN" ]; then
        && [ "$("$PROBE_DIR/probe")" = "basicc ok" ]; then
         note "the installed basicc compiles and links against its own runtime"
     else
-        fail "the installed basicc cannot build a program — check $PREFIX/lib/basicc"
+        fail "the installed basicc cannot build a program — check $PREFIX/lib"
     fi
 
     # And that the shell *finds* it, which is the whole point of installing the

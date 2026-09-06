@@ -65,7 +65,7 @@ public struct RuntimeLibrary: Sendable {
     /// The full runtime archive, when one can be had:
     ///
     /// 1. `BASICC_RT_LIB` in the environment.
-    /// 2. `<prefix>/lib/basicc/lib<name>Host.a` beside the installed `basicc`.
+    /// 2. `<prefix>/lib/lib<name>Host.a` beside the installed `basicc`.
     /// 3. In-tree: `.build/release/lib<name>Host.a` of this package, rebuilt
     ///    with `swift build` when it is missing or older than the runtime
     ///    sources or the manifest.
@@ -74,7 +74,10 @@ public struct RuntimeLibrary: Sendable {
             return FileManager.default.fileExists(atPath: override) ? override : nil
         }
         if let executableDir = (Bundle.main.executablePath as NSString?)?.deletingLastPathComponent {
-            let installed = ((executableDir as NSString).appendingPathComponent("../lib/basicc") as NSString)
+            // `<prefix>/lib`, the conventional place for a local library —
+            // reached by walking up from wherever this `basicc` was started,
+            // never from a path written down here.
+            let installed = ((executableDir as NSString).appendingPathComponent("../lib") as NSString)
                 .appendingPathComponent("lib\(name)Host.a")
             if FileManager.default.fileExists(atPath: installed) { return installed }
         }

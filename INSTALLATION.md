@@ -27,7 +27,7 @@ they have to be the same age — see [Why together](#why-together).
 
 <prefix>/lib/basicshell/BASICShell_BASICShell.bundle/Demos/*.bas
 <prefix>/lib/basicshell/UserDocs.zip            the manual HELP opens
-<prefix>/lib/basicc/libBASICRTHost.a            the runtime basicc links
+<prefix>/lib/libBASICRTHost.a                   the runtime basicc links
 <prefix>/share/basicc/BASICRT/                  runtime sources (fallback)
 <prefix>/share/basicc/BASICRTHostStubs/
 ```
@@ -45,14 +45,14 @@ time, from the prefix the binary is actually in or from the environment.
 | Thing | Found by | Override |
 | --- | --- | --- |
 | `basicc`, from the shell's `JIT` | `PATH` | `BASICC` |
-| The runtime archive, from `basicc` | `../lib/basicc/` relative to the running `basicc` | `BASICC_RT_LIB` |
+| The runtime archive, from `basicc` | `../lib/` relative to the running `basicc` | `BASICC_RT_LIB` |
 | Runtime sources, when there is no archive | `../share/basicc/` relative to `basicc` | `BASICC_RT_DIR` |
 | The manual, from `HELP` | the shell's resource bundle, then `../lib/basicshell/UserDocs.zip` | `BASIC_USERDOCS` |
 | Demo programs | the shell's resource bundle beside the executable | — |
 
 The two relative lookups are why the layout above is not a convention you may
 vary: `basicc` finds its runtime by walking up from wherever it was started.
-Move the binary without the `lib/basicc` beside it and it compiles nothing.
+Move the binary without the `lib` beside it and it compiles nothing.
 
 `PATH` is the whole of how the shell finds the compiler. A shell installed
 without one interprets and refuses to compile, saying so — it does not guess
@@ -92,8 +92,9 @@ bundle resource.
 that links it, not on a library search path. Two places it cannot go:
 
 - `/usr/lib` — protected by System Integrity Protection. Not even `root` can
-  write there (`touch /usr/lib/x` → *Operation not permitted*), and nothing
-  looks for it there in any case.
+  write there (`touch /usr/lib/x` → *Operation not permitted*). `/usr/local/lib`
+  is the writable, conventional equivalent, and is where a default install
+  puts it.
 - `/opt/homebrew` — that prefix belongs to Homebrew. Hand-installed binaries
   in it are indistinguishable from packages Homebrew manages, and `brew`
   will not know about them.
