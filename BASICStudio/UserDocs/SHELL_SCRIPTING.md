@@ -80,6 +80,27 @@ There is **no way for a script to read its own command-line arguments**. Pass
 what it needs in the environment instead, with `SETENV` before it or
 `ENVIRON$` inside it — see [SETENV, EXPORT and UNSETENV](ENVIRONMENT.md).
 
+## Chaining with &&
+
+`a && b` runs `b` only if `a` succeeded, as it does in any other shell:
+
+```basic
+option shellmode on
+cd "/usr/bin" && pwd
+```
+
+The point of the conditional is the case where it matters: `cd somewhere &&
+build` must not build in the wrong directory when the `cd` fails. Chain as
+many as you like; the first failure stops the rest.
+
+Anything inside quotes is left alone, so `print "a && b"` prints what it
+says. A single `&` still means *run this in the background* — see
+[JOBS](JOBS.md).
+
+Success is the command's status, the same one `STATUS` and `ERRORLEVEL`
+report: zero from a command that worked, non-zero from one that did not,
+including a built-in like `CD` that could not do what it was asked.
+
 ## Running one command and stopping
 
 `-c` takes the commands as an argument, runs them, and exits — what a

@@ -6,7 +6,7 @@ Names that are already set: read them like variables, but nothing assigns to the
 
 | Name | Answers |
 | --- | --- |
-| `ERRORLEVEL` | The exit status of the last external command. 0 when it succeeded. |
+| `ERRORLEVEL` | The exit status of the last command. 0 when it succeeded; non-zero from a command that failed, including a built-in like `CD`. |
 | `CURRENT_FUNCTION$` | The name of the function this line is inside. |
 | `CURRENT_TASK$` | The running task — `#1 Program` in an ordinary program, and the task's own name inside an `ASYNC` one. |
 | `CURRENT_THREAD$` | Which thread is running the code. |

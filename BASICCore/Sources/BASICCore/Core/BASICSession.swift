@@ -477,9 +477,15 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         } catch let error as BASICError {
             (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine(error.description)
+            // A command that failed leaves a failing status, as one does in
+            // any shell. Only an *external* command used to set it, so
+            // `STATUS` after a bad `CD` still read whatever the last
+            // subprocess left — and `&&` had nothing to test.
+            runtime.lastSystemStatus = 1
         } catch {
             (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine("Unexpected error: \(error)")
+            runtime.lastSystemStatus = 1
         }
 
         return true
@@ -555,10 +561,16 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         } catch let error as BASICError {
             (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine(error.description)
+            // A command that failed leaves a failing status, as one does in
+            // any shell. Without this only an *external* command set it, so
+            // `STATUS` after a bad `CD` still read whatever the last
+            // subprocess left — and `&&` had nothing to test.
+            runtime.lastSystemStatus = 1
             return true
         } catch {
             (host as? BASICRunDisplayHost)?.prepareToPrintRunResult()
             host.printLine("Unexpected error: \(error)")
+            runtime.lastSystemStatus = 1
             return true
         }
     }

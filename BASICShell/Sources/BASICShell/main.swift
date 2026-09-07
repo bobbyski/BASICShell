@@ -4206,6 +4206,43 @@ func runStartupFiles(isLoginShell: Bool) -> Bool {
                                               : ShellStartupFiles.interactive)
 }
 
+/// Splits a line on top-level `&&`, leaving anything inside quotes alone.
+///
+/// A single `&` is untouched: that is still "run this in the background".
+func shellConditionalSegments(_ line: String) -> [String] {
+    var segments: [String] = []
+    var current = ""
+    var quote: Character?
+    var index = line.startIndex
+
+    while index < line.endIndex {
+        let character = line[index]
+        if let open = quote {
+            current.append(character)
+            if character == open { quote = nil }
+            index = line.index(after: index)
+            continue
+        }
+        if character == "\"" || character == "'" {
+            quote = character
+            current.append(character)
+            index = line.index(after: index)
+            continue
+        }
+        let next = line.index(after: index)
+        if character == "&", next < line.endIndex, line[next] == "&" {
+            segments.append(current)
+            current = ""
+            index = line.index(after: next)
+            continue
+        }
+        current.append(character)
+        index = next
+    }
+    segments.append(current)
+    return segments
+}
+
 /// Runs one line the way the prompt does, answering false when the shell
 /// should stop.
 ///
@@ -4216,6 +4253,24 @@ func runStartupFiles(isLoginShell: Bool) -> Bool {
 /// instead of compiling anything.
 @MainActor
 func runShellLine(_ line: String) -> Bool {
+    // `a && b` runs b only if a succeeded — what it means in every other
+    // shell, and the reason it is worth having rather than a plain separator:
+    // `cd somewhere && build` must not build in the wrong directory when the
+    // cd fails. Each part is then dispatched exactly as if typed alone.
+    let segments = shellConditionalSegments(line)
+    if segments.count > 1 {
+        for segment in segments {
+            let piece = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !piece.isEmpty else { continue }
+            // Cleared first, so the *previous* line's failure cannot stop this
+            // one before it has run.
+            session.lastSystemStatus = 0
+            if !runShellLine(piece) { return false }
+            if session.lastSystemStatus != 0 { break }
+        }
+        return true
+    }
+
     if handleShellJobControlCommand(line) {
         drainSessionEventLoop()
         return true
