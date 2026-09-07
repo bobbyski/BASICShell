@@ -3986,7 +3986,15 @@ func isJITCommand(_ input: String) -> Bool {
 @MainActor
 func runJITCommand(_ input: String) {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    let rest = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+    var rest = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+    // `JIT SWIFT` picks the Rev 2 compiler for this run; `JIT TRADITIONAL`
+    // names the default out loud. Both compilers are supported permanently,
+    // so this is a choice, never a migration.
+    var dialect: String?
+    for name in ["SWIFT", "TRADITIONAL"] where rest.uppercased() == name || rest.uppercased().hasPrefix(name + " ") {
+        dialect = name.lowercased()
+        rest = String(rest.dropFirst(name.count)).trimmingCharacters(in: .whitespaces)
+    }
     // `JIT` compiles what is loaded; `JIT path.bas` compiles that file
     // without disturbing what is loaded, the way you would try something.
     let namedFile = rest.isEmpty ? nil : rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
@@ -4003,7 +4011,7 @@ func runJITCommand(_ input: String) {
     let sourcePath = namedFile ?? session.lastLoadedPath
     let text = namedFile == nil ? BASICJIT.text(of: session.program) : ""
 
-    switch BASICJIT.compile(source: text, path: sourcePath) {
+    switch BASICJIT.compile(source: text, path: sourcePath, dialect: dialect) {
     case .unavailable(let reason):
         host.printLine("JIT: \(reason)")
     case .refused(let diagnostics):

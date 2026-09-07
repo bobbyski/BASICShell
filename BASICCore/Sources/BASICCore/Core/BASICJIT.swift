@@ -73,10 +73,16 @@ public enum BASICJIT {
     ///   - optimization: `-O0` … `-O3`; `-O0` is the default because a JIT
     ///     is asked for interactively and the optimizer buys about 8% for a
     ///     noticeably longer wait.
+    ///   - dialect: which compiler to use — `"traditional"` (Rev 1, the
+    ///     default) or `"swift"` (Rev 2). `nil` leaves the choice to
+    ///     `basicc`, which uses the traditional dialect unless the program
+    ///     sits beside a `Package.swift`. Both dialects are supported
+    ///     permanently; this picks between them, it does not replace one.
     public static func compile(
         source: String,
         path: String?,
         optimization: String = "-O0",
+        dialect: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Outcome {
         guard let compiler = compilerPath(environment: environment) else {
@@ -105,7 +111,9 @@ public enum BASICJIT {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
-        process.arguments = ["build", sourcePath, optimization, "-o", binary]
+        var arguments = ["build", sourcePath, optimization, "-o", binary]
+        if let dialect { arguments += ["--dialect", dialect] }
+        process.arguments = arguments
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

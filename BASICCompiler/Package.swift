@@ -18,6 +18,8 @@ let vectorTerminalSDKPath = ProcessInfo.processInfo.environment["VECTORTERMINALS
 //   BASICCompilerKit          the shared dialect protocol, driver, BIR,
 //                             diagnostics — owns no language knowledge
 //   BASICDialectTraditional   the default dialect (Rev 1)
+//   BASICDialectSwift         the Swift-substrate dialect (Rev 2), where a
+//                             BASIC CLASS is a real Swift class
 //   BASICRT                   the runtime library, in Swift, linked into
 //                             every compiled program
 //   BASICBuildPlugin          swift build compiles .bas files in a C target
@@ -37,6 +39,9 @@ let package = Package(
         .executable(name: "basiclint", targets: ["BASICLintCLI"]),
         .library(name: "BASICCompilerKit", targets: ["BASICCompilerKit"]),
         .library(name: "BASICDialectTraditional", targets: ["BASICDialectTraditional"]),
+        // Rev 2. A peer of the traditional dialect, never a replacement:
+        // both ship, both are maintained, and `traditional` stays default.
+        .library(name: "BASICDialectSwift", targets: ["BASICDialectSwift"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
         // The host half of the runtime: VTG graphics (and, later, TUIKit and
         // events). Built by SwiftPM because it links the host SDKs; linked
@@ -59,12 +64,13 @@ let package = Package(
             dependencies: [.product(name: "BASICSyntax", package: "BASICCore")]
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
+        .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICRT"),
         .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
         ),
         .executableTarget(
             name: "BASICLintCLI",
@@ -78,7 +84,7 @@ let package = Package(
         ),
         .testTarget(
             name: "BASICCompilerKitTests",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
         ),
     ]
 )

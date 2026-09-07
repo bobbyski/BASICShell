@@ -1,4 +1,5 @@
 import BASICCompilerKit
+import BASICDialectSwift
 import BASICDialectTraditional
 import Foundation
 
@@ -8,7 +9,7 @@ import Foundation
 // a dialect, and hands it the work.
 
 let version = "0.1.0"
-let registry = DialectRegistry([TraditionalDialect()])
+let registry = DialectRegistry([TraditionalDialect(), SwiftDialect()])
 
 func printUsage() {
     print("""
@@ -23,7 +24,8 @@ func printUsage() {
 
     options:
       -o <path>            output executable (default: the source's base name)
-      --dialect <name>     traditional (default) or, later, swift
+      --dialect <name>     traditional (default) or swift; a project with a
+                           Package.swift builds as swift unless this says otherwise
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
       --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
@@ -86,10 +88,31 @@ struct Invocation {
     }
 }
 
+/// Which dialect compiles this invocation.
+///
+/// `--dialect` wins outright. Failing that, a `Package.swift` beside the
+/// program selects the Swift dialect: a package manifest is a statement that
+/// the program has Swift dependencies for SwiftPM to resolve, and resolving
+/// them is that dialect's job. A program with no manifest links the runtime
+/// libraries built into the compiler and fetches nothing.
+///
+/// An inferred choice is announced on stderr. Inference that is silent is
+/// inference that gets blamed on the compiler months later.
+func resolveDialect(_ invocation: Invocation) throws -> any DialectCompiler {
+    if invocation.dialect != nil { return try registry.dialect(named: invocation.dialect) }
+    guard let source = invocation.source,
+          SwiftDialect.inferredFromPackageManifest(at: source) else {
+        return registry.defaultDialect
+    }
+    let dialect = try registry.dialect(named: SwiftDialect.identity.identifier)
+    FileHandle.standardError.write(Data("basicc: Package.swift found — building with --dialect swift\n".utf8))
+    return dialect
+}
+
 func compilation(for invocation: Invocation) -> Compilation {
     do {
         return Compilation(
-            dialect: try registry.dialect(named: invocation.dialect),
+            dialect: try resolveDialect(invocation),
             options: CompileOptions(optimizationLevel: invocation.optimizationLevel)
         )
     } catch {
