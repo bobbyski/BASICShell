@@ -66,15 +66,14 @@ struct SwiftClassMetadataTests {
     static let base = SwiftClassMetadata.Superclass(
         module: "Base",
         name: "BASICObject",
-        vtable: [
-            "$s4Base11BASICObjectC3tagSivg",
-            "$s4Base11BASICObjectC3tagSivs",
-            "$s4Base11BASICObjectC3tagSivM",
-            "$s5Roids7BSpriteC3tagACSi_tcfC",
-            "$s4Base11BASICObjectC8describeSiyF",
+        immediateMembers: [
+            .fieldOffset(16),
+            .method("$s4Base11BASICObjectC3tagSivg"),
+            .method("$s4Base11BASICObjectC3tagSivs"),
+            .method("$s4Base11BASICObjectC3tagSivM"),
+            .method("$s5Roids7BSpriteC3tagACSi_tcfC"),
+            .method("$s4Base11BASICObjectC8describeSiyF"),
         ],
-        fieldOffsets: [16],
-        fieldOffsetVectorOffset: 16,
         instanceSize: 24
     )
 
@@ -155,7 +154,7 @@ struct SwiftClassMetadataTests {
                 SwiftClassMetadata.Override(
                     baseMethodDescriptor: "$s4Base11BASICObjectC8describeSiyFTq",
                     implementation: "$s5Roids7BSpriteC8describeSiyF",
-                    vtableSlot: 4
+                    slot: 5
                 )
             ]
         )
@@ -258,12 +257,32 @@ struct SwiftClassMetadataTests {
         #expect(run.stdout == "305\n305\nSwiftShip\n", "got: \(run.stdout)\(run.stderr)")
     }
 
-    @Test func newStoredPropertiesAreRefusedRatherThanLaidOutWrong() {
-        let withField = SwiftClassMetadata(
-            module: "Roids", name: "BSprite", superclass: Self.base,
-            overrides: [], newStoredProperties: ["Bonus"]
+    /// The layout rules, against the numbers `swiftc` emits for the same
+    /// shapes. The base here has positive size 16 words (10 header + 1 field
+    /// offset + 5 vtable entries).
+    @Test func aSubclassLaysItsOwnFieldsOutPastTheInheritedOnes() throws {
+        #expect(Self.base.positiveSizeInWords == 16)
+
+        let none = SwiftClassMetadata(module: "Roids", name: "BSprite", superclass: Self.base, overrides: [])
+        #expect(none.instanceSize == 24)
+        #expect(none.immediateMembers == 0)
+        #expect(none.ownFieldOffsets == [])
+
+        let two = SwiftClassMetadata(
+            module: "Roids", name: "BSprite", superclass: Self.base, overrides: [],
+            storedProperties: [.init(name: "X"), .init(name: "Y")]
         )
-        #expect(throws: SwiftClassMetadata.UnsupportedLayout.self) { try withField.render() }
+        // Own fields start where the superclass's instance data ends.
+        #expect(two.ownFieldOffsets == [24, 32])
+        #expect(two.instanceSize == 40)
+        #expect(two.immediateMembers == 2)
+        // And the field-offset vector is placed at the superclass's size.
+        // The superclass's block comes first and stays intact; this class's
+        // own field offsets follow it, never merged into it.
+        #expect(try two.slots() == Self.base.immediateMembers + [.fieldOffset(24), .fieldOffset(32)])
+        let ir = try two.render()
+        #expect(ir.contains("i32 \(Self.base.positiveSizeInWords)"))
+        #expect(ir.contains("i64 24, i64 32"))
     }
 }
 
@@ -318,11 +337,23 @@ struct SwiftDialectTests {
         #expect(SwiftDialect.inferredFromPackageManifest(at: directory.path))
     }
 
-    @Test func loweringRefusesWithADiagnosticThatNamesTheWayOut() throws {
-        let module = BIRModule(name: "demo")
-        #expect(throws: CompileError.self) {
-            try SwiftDialect().lower(module, options: CompileOptions())
-        }
+    /// The Swift dialect compiles whole programs, sharing Rev 1's lowering
+    /// for everything that is not the object model. It is a real compiler
+    /// selection, not a stub that refuses.
+    @Test func theSwiftDialectLowersAWholeProgram() throws {
+        let compilation = Compilation(dialect: SwiftDialect(), options: CompileOptions())
+        let bir = try compilation.bir(source: "PRINT \"HI\"\n", name: "demo")
+        let lowered = try SwiftDialect().lower(bir, options: CompileOptions())
+        #expect(lowered.name == "demo")
+        #expect(lowered.llvmIR.contains("define i32 @main"))
+    }
+
+    /// It reports the substrate it actually produces. Saying `.swiftString`
+    /// before R2.1 lands would have Sema assume a representation the lowering
+    /// does not emit.
+    @Test func theProfileDescribesWhatIsBuiltNotWhatIsPlanned() {
+        #expect(SwiftDialect().semantics.strings == .exactBytes)
+        #expect(SwiftDialect().semantics.importsSwiftFrameworks)
     }
 
     /// A stand-in default so this file does not depend on the traditional

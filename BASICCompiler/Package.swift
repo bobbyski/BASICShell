@@ -43,6 +43,9 @@ let package = Package(
         // both ship, both are maintained, and `traditional` stays default.
         .library(name: "BASICDialectSwift", targets: ["BASICDialectSwift"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
+        // Rev 2's root class. Small on purpose: it exists so every BASIC
+        // class has a real Swift class above it (see BASICObject).
+        .library(name: "BASICRTSwift", targets: ["BASICRTSwift"]),
         // The host half of the runtime: VTG graphics (and, later, TUIKit and
         // events). Built by SwiftPM because it links the host SDKs; linked
         // into a program when present, else stubbed.
@@ -64,8 +67,9 @@ let package = Package(
             dependencies: [.product(name: "BASICSyntax", package: "BASICCore")]
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
-        .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit"]),
+        .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         .target(name: "BASICRT"),
+        .target(name: "BASICRTSwift"),
         .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(

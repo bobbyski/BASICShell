@@ -21,3 +21,6 @@ DocumentArchive/.swiftpm
 # artifacts once reached a commit.
 .build/
 .swiftpm/
+
+# Rev 2 interop demo build products
+BASICCompiler/Examples/SwiftInterop/Build/

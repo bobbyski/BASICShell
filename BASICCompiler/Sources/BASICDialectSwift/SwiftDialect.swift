@@ -1,4 +1,5 @@
 import BASICCompilerKit
+import BASICDialectTraditional
 import Foundation
 
 /// Rev 2: the dialect whose objects *are* Swift objects.
@@ -17,11 +18,29 @@ import Foundation
 /// dependencies to resolve — but an explicit `--dialect` always wins, and the
 /// driver reports which dialect it chose either way.
 ///
-/// ## Status
+/// ## How much of this is built
 ///
-/// The seam, not the back end. `lower` refuses with a diagnostic that says so;
-/// what is *proved* rather than planned lives in
-/// ``SwiftClassMetadata`` and its tests.
+/// The object model is proved end to end (``SwiftClassMetadata``): a BASIC
+/// class is a real Swift class, subclasses one, and is subclassed by one.
+///
+/// Everything that is *not* the object model — expressions, control flow,
+/// strings, arrays, files — is still lowered by the traditional dialect,
+/// which both dialects share as a starting point. That is deliberate
+/// scaffolding, not the destination: it means `--dialect swift` compiles and
+/// runs real programs today while the substrate is replaced a piece at a
+/// time, instead of refusing everything until all of it is done. Each piece
+/// that moves has a slice in `BASIC_COMPILER.md`:
+///
+/// | Still Rev 1's | Moves in |
+/// |---|---|
+/// | Strings (exact bytes, not `Swift.String`) | R2.1 |
+/// | Arrays and dictionaries | R2.2, R2.3 |
+/// | Errors (`ON ERROR` on runtime records) | R3.1 |
+/// | `ASYNC`/`AWAIT` | R3.3 |
+///
+/// ``semantics`` therefore still reports what is *true today*, not what is
+/// planned — a profile that lied about the substrate would make Sema emit
+/// code the back end cannot honour.
 public struct SwiftDialect: DialectCompiler {
     public static let identity = DialectIdentity(
         identifier: "swift",
@@ -30,8 +49,12 @@ public struct SwiftDialect: DialectCompiler {
         isDefault: false
     )
 
+    /// Reports the substrate as it is, not as it is planned. Strings are
+    /// still exact bytes because R2.1 has not landed; saying `.swiftString`
+    /// here would have Sema assume a representation the lowering does not
+    /// produce.
     public let semantics = SemanticProfile(
-        strings: .swiftString,
+        strings: .exactBytes,
         importsSwiftFrameworks: true
     )
 
@@ -39,17 +62,12 @@ public struct SwiftDialect: DialectCompiler {
     public init() {}
 
     public func lower(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
-        throw CompileError([
-            Diagnostic(
-                severity: .error,
-                file: module.name + ".bas",
-                message: """
-                the swift dialect cannot lower a whole module yet — its object model is proved \
-                (see SwiftClassMetadata) but IRGen is not written. Build with the traditional \
-                dialect meanwhile: omit --dialect, or pass --dialect traditional
-                """
-            )
-        ])
+        // Shared, not copied. A fork of Rev 1's lowering would drift from it
+        // silently, and the two dialects are meant to compile the same
+        // language — the divergence is the object model, and it is added
+        // here rather than forked in.
+        let base = try TraditionalDialect().lower(module, options: options)
+        return LoweredModule(name: base.name, llvmIR: base.llvmIR)
     }
 
     public func runtimeLibrary(for target: TargetTriple) -> RuntimeLibrary {

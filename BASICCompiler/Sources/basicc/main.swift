@@ -19,6 +19,11 @@ func printUsage() {
       basicc build <file.bas|project/> [options]   compile to an executable
       basicc run <file.bas|project/> [options]     compile, then run it
       basicc new <Name> [--kind k] [-o dir]   create a starter project
+      basicc swift-interface <file.bas>   print the Swift view of the program's
+                                          classes, as a .swiftinterface
+      basicc swift-class <file.bas> -o <dir>
+                                          compile the program's classes into a
+                                          Swift-callable object plus interface
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -178,6 +183,54 @@ let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
 case "--version", "-v":
     print("basicc \(version)")
+case "swift-class":
+    guard let source = invocation.source else { fail("a source file is required", code: 2) }
+    do {
+        let compilation = Compilation(dialect: SwiftDialect(), options: CompileOptions())
+        let bir = try compilation.bir(sourcePath: source)
+        let directory = invocation.output ?? "Build"
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let base = (directory as NSString).appendingPathComponent(bir.name)
+
+        let ir = try SwiftObjectLowering(module: bir).render()
+        try ir.write(toFile: base + ".ll", atomically: true, encoding: .utf8)
+        try Toolchain().assemble(llvmIR: ir, irPath: base + ".ll", objectPath: base + ".o")
+
+        let interface = SwiftInterfaceEmitter(module: bir).render(target: SwiftInterfaceEmitter.hostTarget)
+        try interface.text.write(toFile: base + ".swiftinterface", atomically: true, encoding: .utf8)
+        for skip in interface.skipped {
+            FileHandle.standardError.write(Data(
+                "basicc: skipped \(skip.owner).\(skip.member) — \(skip.reason)\n".utf8))
+        }
+        print("\(bir.name).o and \(bir.name).swiftinterface in \(directory)")
+    } catch let error as CompileError {
+        for diagnostic in error.diagnostics {
+            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        }
+        exit(1)
+    } catch {
+        fail("\(error)")
+    }
+case "swift-interface":
+    guard let source = invocation.source else { fail("a source file is required", code: 2) }
+    do {
+        let compilation = Compilation(dialect: SwiftDialect(), options: CompileOptions())
+        let emitter = SwiftInterfaceEmitter(module: try compilation.bir(sourcePath: source))
+        let interface = emitter.render(target: SwiftInterfaceEmitter.hostTarget)
+        print(interface.text, terminator: "")
+        // On stderr so the interface itself stays pipeable into a file.
+        for skip in interface.skipped {
+            FileHandle.standardError.write(Data(
+                "basicc: skipped \(skip.owner).\(skip.member) — \(skip.reason)\n".utf8))
+        }
+    } catch let error as CompileError {
+        for diagnostic in error.diagnostics {
+            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        }
+        exit(1)
+    } catch {
+        fail("\(error)")
+    }
 case "dialects":
     for identity in registry.identities {
         print("\(identity.identifier)\(identity.isDefault ? " (default)" : "")\t\(identity.summary)")

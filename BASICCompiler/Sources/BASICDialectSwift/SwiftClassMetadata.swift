@@ -41,14 +41,21 @@ import Foundation
 ///    +80  field offset vector, then the vtable slots
 /// ```
 ///
-/// ## What it does not do yet
+/// ## Where a subclass's own fields go
 ///
-/// New stored properties on a BASIC subclass. The proved shape inherits its
-/// layout; placing a *new* field means deriving the field-offset-vector
-/// position rather than inheriting a measured one, and that derivation is the
-/// next slice. ``Layout`` therefore carries the superclass's measured
-/// numbers instead of computing them, and ``render()`` refuses new fields
-/// rather than emitting a layout it cannot stand behind.
+/// Derived from `swiftc`'s own output for classes with 0, 1, 2 and 3 stored
+/// properties over the same base, then checked by running the result:
+///
+/// ```text
+///   fieldOffsetVectorOffset = the superclass's positive size, in words
+///   numImmediateMembers     = own field-offset words + own vtable entries
+///   positiveSizeInWords     = superclass's positive size + immediate members
+///   classSize               = 24 + positiveSizeInWords * 8
+///   instanceSize            = superclass's instance size + own field sizes
+/// ```
+///
+/// The subclass's own field-offset vector begins exactly where the inherited
+/// metadata ends, which is why the superclass's size is the offset.
 public struct SwiftClassMetadata {
     /// The Swift class a BASIC class inherits — everything the emitter needs
     /// to name and lay out against it.
@@ -63,14 +70,20 @@ public struct SwiftClassMetadata {
         public let module: String
         /// The class's name, e.g. `"BASICObject"`.
         public let name: String
-        /// Its vtable entry symbols, in metadata slot order.
-        public let vtable: [String]
-        /// Its field-offset entries, in metadata slot order.
-        public let fieldOffsets: [Int]
-        /// Where the field offset vector sits, in words, as the superclass's
-        /// own descriptor records it.
-        public let fieldOffsetVectorOffset: Int
-        /// Instance size and alignment mask, inherited unchanged.
+        /// Its metadata slots past the header, in the order its own metadata
+        /// has them. A class's field offsets and vtable entries are **not**
+        /// two separate runs across the whole hierarchy: each class in the
+        /// chain contributes its own fields followed by its own methods, and
+        /// the next class's block starts after that. Modelling this as one
+        /// ordered list is what keeps a two-level hierarchy laid out the way
+        /// `swiftc` lays it out.
+        public let immediateMembers: [MetadataSlot]
+        /// This class's own metadata size past the address point, in words.
+        /// It is also where a subclass's own block begins.
+        public var positiveSizeInWords: Int {
+            SwiftClassMetadata.headerSizeInWords + immediateMembers.count
+        }
+        /// Instance size, inherited unchanged by a subclass.
         public let instanceSize: Int
         /// The alignment mask (`7` for word-aligned).
         public let alignMask: Int
@@ -79,17 +92,13 @@ public struct SwiftClassMetadata {
         public init(
             module: String,
             name: String,
-            vtable: [String],
-            fieldOffsets: [Int],
-            fieldOffsetVectorOffset: Int,
+            immediateMembers: [MetadataSlot],
             instanceSize: Int,
             alignMask: Int = 7
         ) {
             self.module = module
             self.name = name
-            self.vtable = vtable
-            self.fieldOffsets = fieldOffsets
-            self.fieldOffsetVectorOffset = fieldOffsetVectorOffset
+            self.immediateMembers = immediateMembers
             self.instanceSize = instanceSize
             self.alignMask = alignMask
         }
@@ -98,20 +107,57 @@ public struct SwiftClassMetadata {
         var mangled: String { get throws { try SwiftMangling.mangleClass(module: module, name: name) } }
     }
 
+    /// One word of a class's metadata past the fixed header.
+    public enum MetadataSlot: Sendable, Equatable {
+        /// A stored property's byte offset within the instance.
+        case fieldOffset(Int)
+        /// A vtable entry: the symbol dispatched to.
+        case method(String)
+    }
+
     /// One `OVERRIDES` in a BASIC class: which inherited method, and the body.
     public struct Override: Sendable {
         /// The superclass method descriptor symbol (`…Tq`) being replaced.
         public let baseMethodDescriptor: String
         /// The symbol of the function that replaces it.
         public let implementation: String
-        /// Which slot of the superclass vtable it occupies.
-        public let vtableSlot: Int
+        /// Which of the superclass's ``MetadataSlot``s it replaces.
+        public let slot: Int
 
         /// Creates an override.
-        public init(baseMethodDescriptor: String, implementation: String, vtableSlot: Int) {
+        public init(baseMethodDescriptor: String, implementation: String, slot: Int) {
             self.baseMethodDescriptor = baseMethodDescriptor
             self.implementation = implementation
-            self.vtableSlot = vtableSlot
+            self.slot = slot
+        }
+    }
+
+    /// One stored property a BASIC class adds: `PUBLIC X AS DOUBLE`.
+    public struct StoredProperty: Sendable {
+        /// The field's name, as BASIC wrote it.
+        public let name: String
+        /// Its size in bytes. Every BASIC scalar is one word: a number is a
+        /// `Double`, a string or object is a reference.
+        public let size: Int
+
+        /// Creates a stored property.
+        public init(name: String, size: Int = 8) {
+            self.name = name
+            self.size = size
+        }
+    }
+
+    /// A method the class adds rather than overrides — a new vtable slot.
+    public struct Method: Sendable {
+        /// The BASIC name.
+        public let name: String
+        /// The symbol implementing it.
+        public let implementation: String
+
+        /// Creates a method.
+        public init(name: String, implementation: String) {
+            self.name = name
+            self.implementation = implementation
         }
     }
 
@@ -130,8 +176,10 @@ public struct SwiftClassMetadata {
     public let superclass: Superclass
     /// Its overrides.
     public let overrides: [Override]
-    /// New stored properties, which are not supported yet.
-    public let newStoredProperties: [String]
+    /// Stored properties this class adds.
+    public let storedProperties: [StoredProperty]
+    /// Methods this class adds (as opposed to overrides).
+    public let methods: [Method]
 
     /// Creates a class metadata emitter.
     public init(
@@ -139,14 +187,71 @@ public struct SwiftClassMetadata {
         name: String,
         superclass: Superclass,
         overrides: [Override],
-        newStoredProperties: [String] = []
+        storedProperties: [StoredProperty] = [],
+        methods: [Method] = []
     ) {
         self.module = module
         self.name = name
         self.superclass = superclass
         self.overrides = overrides
-        self.newStoredProperties = newStoredProperties
+        self.storedProperties = storedProperties
+        self.methods = methods
     }
+
+    /// Byte offsets of this class's own stored properties, laid out one after
+    /// another past the superclass's instance data.
+    public var ownFieldOffsets: [Int] {
+        var offset = superclass.instanceSize
+        return storedProperties.map { property in
+            defer { offset += property.size }
+            return offset
+        }
+    }
+
+    /// This class's own metadata block: its field offsets, then its methods.
+    ///
+    /// **This has to agree, word for word, with what the generated interface
+    /// declares.** Swift computes a method's vtable slot and a subclass's
+    /// field placement from its own model of the layout, so the interface and
+    /// the metadata are two statements of one fact. Both mismatches were
+    /// measured, not imagined:
+    ///
+    /// - Offset words the interface does not declare shift the vtable out
+    ///   from under the caller, and a method call jumps to a field offset.
+    /// - Fields the interface does not declare make a Swift subclass place
+    ///   *its* stored properties on top of BASIC's.
+    ///
+    /// So the fields are emitted here and declared there, as `final` stored
+    /// properties — `final` because a non-resilient client then reads them
+    /// straight from this vector instead of wanting accessor slots, and a
+    /// `modify` coroutine is not something to hand-write yet.
+    public var ownMembers: [MetadataSlot] {
+        ownFieldOffsets.map { .fieldOffset($0) } + methods.map { .method($0.implementation) }
+    }
+
+    /// Every slot past the header: the superclass's block with any overrides
+    /// applied in place, then this class's own block appended.
+    public func slots() throws -> [MetadataSlot] {
+        var inherited = superclass.immediateMembers
+        for override in overrides {
+            guard inherited.indices.contains(override.slot) else {
+                throw UnsupportedLayout(reason: "override of \(override.implementation) names slot \(override.slot), and \(superclass.name) has \(inherited.count)")
+            }
+            guard case .method = inherited[override.slot] else {
+                throw UnsupportedLayout(reason: "override of \(override.implementation) names slot \(override.slot) of \(superclass.name), which is a stored property, not a method")
+            }
+            inherited[override.slot] = .method(override.implementation)
+        }
+        return inherited + ownMembers
+    }
+
+    /// This instance's size: the superclass's, plus what this class adds.
+    public var instanceSize: Int {
+        superclass.instanceSize + storedProperties.reduce(0) { $0 + $1.size }
+    }
+
+    /// Metadata words this class adds past the inherited part.
+    public var immediateMembers: Int { ownMembers.count }
 
     /// Words of metadata behind the address point: reserved, destructor,
     /// value witness.
@@ -162,14 +267,10 @@ public struct SwiftClassMetadata {
     /// generator's business; this emits the structures that make them
     /// reachable as a Swift class, and names the symbols they must define.
     public func render() throws -> String {
-        guard newStoredProperties.isEmpty else {
-            throw UnsupportedLayout(reason: "the class adds stored properties (\(newStoredProperties.joined(separator: ", "))), and the field offset vector for new fields is not derived yet")
-        }
         let mangled = try SwiftMangling.mangleClass(module: module, name: name)
         let superMangled = try superclass.mangled
-        let vtable = try resolvedVTable()
-        let positiveSizeInWords = Self.headerSizeInWords + superclass.fieldOffsets.count + vtable.count
-        let classSize = Self.classAddressPoint + positiveSizeInWords * 8
+        let slots = try slots()
+        let classSize = Self.classAddressPoint + (superclass.positiveSizeInWords + immediateMembers) * 8
         let objcName = "_TtC\(module.utf8.count)\(module)\(name.utf8.count)\(name)"
 
         var out = ""
@@ -186,10 +287,10 @@ public struct SwiftClassMetadata {
             mangled: mangled,
             superMangled: superMangled,
             objcName: objcName,
-            vtable: vtable,
+            slots: slots,
             classSize: classSize
         )
-        out += "@\"\(mangled)N\" = alias %swift.type, getelementptr inbounds (\(metadataType(vtable: vtable)), ptr @\"\(mangled)Mf\", i32 0, i32 3)\n"
+        out += "@\"\(mangled)N\" = alias %swift.type, getelementptr inbounds (\(metadataType(slots: slots)), ptr @\"\(mangled)Mf\", i32 0, i32 3)\n"
         out += typeRecord(mangled: mangled)
         out += metadataAccessor(mangled: mangled)
         return out
@@ -232,7 +333,7 @@ public struct SwiftClassMetadata {
         let fields = "{ i32, i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, ptr }"
         var out = ""
         out += "@\"_METACLASS_DATA_\(objcName)\" = internal constant \(fields) { i32 129, i32 40, i32 40, i32 0, ptr null, ptr @\".str.objc.\(name)\", ptr null, ptr null, ptr null, ptr null, ptr null }, section \"__DATA, __objc_const\", align 8\n"
-        out += "@\"_DATA_\(objcName)\" = internal constant \(fields) { i32 128, i32 \(superclass.instanceSize), i32 \(superclass.instanceSize), i32 0, ptr null, ptr @\".str.objc.\(name)\", ptr null, ptr null, ptr null, ptr null, ptr null }, section \"__DATA, __objc_const\", align 8\n"
+        out += "@\"_DATA_\(objcName)\" = internal constant \(fields) { i32 128, i32 \(instanceSize), i32 \(instanceSize), i32 0, ptr null, ptr @\".str.objc.\(name)\", ptr null, ptr null, ptr null, ptr null, ptr null }, section \"__DATA, __objc_const\", align 8\n"
         return out
     }
 
@@ -248,45 +349,79 @@ public struct SwiftClassMetadata {
     }
 
     /// The nominal type descriptor: what the runtime reads to answer "what
-    /// type is this", and what an override table hangs off.
+    /// type is this", and what the vtable and override tables hang off.
     ///
-    /// Flags `0x40000050` = class kind, unique, has an override table.
+    /// Flags, measured: `0x40000050` is class + unique + has-override-table,
+    /// and `0x8000` adds has-vtable. A class that adds methods of its own
+    /// needs both — the vtable so its methods have descriptors, and the
+    /// override table because every BASIC class replaces the root's `init`.
+    ///
+    /// A method descriptor's flags are `16`: kind 0 (an ordinary method) with
+    /// the instance bit set. Accessors are 18/19/20 and initializers 1, which
+    /// is why the field accessors a Swift `public var` would generate are not
+    /// emitted here — BASIC fields are reached through methods for now.
     func nominalTypeDescriptor(mangled: String, superMangled: String) -> String {
-        let overrideFields = overrides.map { _ in "%swift.method_override_descriptor" }
-        let type = "<{ " + (Array(repeating: "i32", count: 12) + overrideFields).joined(separator: ", ") + " }>"
+        let moduleContext = "@\"$s\(module.utf8.count)\(module)MXM\""
+        // Eleven fixed words, then the optional vtable pair, then the
+        // override count and its entries.
+        var types: [String] = Array(repeating: "i32", count: 11)
+        if !methods.isEmpty { types += ["i32", "i32"] + methods.map { _ in "%swift.method_descriptor" } }
+        types += ["i32"] + overrides.map { _ in "%swift.method_override_descriptor" }
+        let type = "<{ " + types.joined(separator: ", ") + " }>"
         func field(_ indices: [Int]) -> String {
             "ptr getelementptr inbounds (\(type), ptr @\"\(mangled)Mn\", " + indices.map { "i32 \($0)" }.joined(separator: ", ") + ")"
         }
-        let moduleContext = "@\"$s\(module.utf8.count)\(module)MXM\""
+
+        var flags = 0x4000_0050
+        if !methods.isEmpty { flags |= 0x8000 }
         var values: [String] = [
-            "i32 1073741904",
+            "i32 \(Int32(bitPattern: UInt32(flags)))",
             Self.relative(to: moduleContext, fromField: field([0, 1])),
             Self.relative(to: "@\".str.class.\(name)\"", fromField: field([0, 2])),
             Self.relative(to: "@\"\(mangled)Ma\"", fromField: field([0, 3])),
             Self.relative(to: "@\"\(mangled)MF\"", fromField: field([0, 4])),
             Self.relative(to: "@\"symbolic.\(superMangled)\"", fromField: field([0, 5])),
             "i32 \(Self.negativeSizeInWords)",
-            "i32 \(Self.headerSizeInWords + superclass.fieldOffsets.count + superclass.vtable.count)",
-            "i32 0",
-            "i32 0",
-            "i32 \(superclass.fieldOffsetVectorOffset)",
-            "i32 \(overrides.count)",
+            "i32 \(superclass.positiveSizeInWords + immediateMembers)",
+            "i32 \(immediateMembers)",
+            "i32 \(storedProperties.count)",
+            "i32 \(superclass.positiveSizeInWords)",
         ]
-        for (index, override) in overrides.enumerated() {
-            let slot = 12 + index
-            // The class and method are GOT-indirect, which the low bit marks.
-            var descriptor = "%swift.method_override_descriptor { "
-            descriptor += "i32 add (" + Self.relative(to: "@\"got.\(superMangled)Mn\"", fromField: field([0, slot, 0])) + ", i32 1), "
-            descriptor += "i32 add (" + Self.relative(to: "@\"got.\(override.baseMethodDescriptor)\"", fromField: field([0, slot, 1])) + ", i32 1), "
-            descriptor += Self.relative(to: "@\"\(override.implementation)\"", fromField: field([0, slot, 2]))
-            descriptor += " }"
-            values.append(descriptor)
+        var index = 11
+        if !methods.isEmpty {
+            // After the inherited block and this class's own field offsets.
+            values.append("i32 \(superclass.positiveSizeInWords + storedProperties.count)")
+            values.append("i32 \(methods.count)")
+            index += 2
+            for method in methods {
+                values.append("%swift.method_descriptor { i32 16, "
+                    + Self.relative(to: "@\"\(method.implementation)\"", fromField: field([0, index, 1])) + " }")
+                index += 1
+            }
         }
+        values.append("i32 \(overrides.count)")
+        index += 1
+        for override in overrides {
+            var descriptor = "%swift.method_override_descriptor { "
+            descriptor += "i32 add (" + Self.relative(to: "@\"got.\(superMangled)Mn\"", fromField: field([0, index, 0])) + ", i32 1), "
+            descriptor += "i32 add (" + Self.relative(to: "@\"got.\(override.baseMethodDescriptor)\"", fromField: field([0, index, 1])) + ", i32 1), "
+            descriptor += Self.relative(to: "@\"\(override.implementation)\"", fromField: field([0, index, 2]))
+            values.append(descriptor + " }")
+            index += 1
+        }
+
         var out = ""
         for override in overrides {
             out += "@\"got.\(override.baseMethodDescriptor)\" = private unnamed_addr constant ptr @\"\(override.baseMethodDescriptor)\"\n"
         }
         out += "@\"\(mangled)Mn\" = constant \(type) <{ \(values.joined(separator: ", ")) }>, section \"__TEXT,__constg_swiftt\", align 4\n"
+        // A Swift subclass overriding one of these looks the method up by its
+        // descriptor, so each needs a symbol of its own aliasing into the table.
+        var slot = 13
+        for method in methods {
+            out += "@\"\(method.implementation)Tq\" = alias %swift.method_descriptor, getelementptr inbounds (\(type), ptr @\"\(mangled)Mn\", i32 0, i32 \(slot))\n"
+            slot += 1
+        }
         return out
     }
 
@@ -336,29 +471,19 @@ public struct SwiftClassMetadata {
 
     """
 
-    /// The superclass's vtable with each override's slot replaced.
-    func resolvedVTable() throws -> [String] {
-        var vtable = superclass.vtable
-        for override in overrides {
-            guard vtable.indices.contains(override.vtableSlot) else {
-                throw UnsupportedLayout(reason: "override of \(override.implementation) names vtable slot \(override.vtableSlot), and \(superclass.name) has \(vtable.count)")
-            }
-            vtable[override.vtableSlot] = override.implementation
-        }
-        return vtable
-    }
-
     /// The LLVM struct type of the metadata global, which varies with the
     /// number of field-offset and vtable slots.
-    func metadataType(vtable: [String]) -> String {
+    func metadataType(slots: [MetadataSlot]) -> String {
         let fixed = "ptr, ptr, ptr, i64, ptr, ptr, ptr, i64, i32, i32, i32, i16, i16, i32, i32, ptr, ptr"
-        let offsets = superclass.fieldOffsets.map { _ in "i64" }
-        let slots = vtable.map { _ in "ptr" }
-        return "<{ " + ([fixed] + offsets + slots).joined(separator: ", ") + " }>"
+        let words = slots.map { slot -> String in
+            if case .fieldOffset = slot { return "i64" }
+            return "ptr"
+        }
+        return "<{ " + ([fixed] + words).joined(separator: ", ") + " }>"
     }
 
-    func metadata(mangled: String, superMangled: String, objcName: String, vtable: [String], classSize: Int) -> String {
-        let type = metadataType(vtable: vtable)
+    func metadata(mangled: String, superMangled: String, objcName: String, slots: [MetadataSlot], classSize: Int) -> String {
+        let type = metadataType(slots: slots)
         var values: [String] = [
             "ptr null",
             "ptr @\"\(mangled)fD\"",
@@ -370,7 +495,7 @@ public struct SwiftClassMetadata {
             "i64 add (i64 ptrtoint (ptr @\"_DATA_\(objcName)\" to i64), i64 2)",
             "i32 2",
             "i32 0",
-            "i32 \(superclass.instanceSize)",
+            "i32 \(instanceSize)",
             "i16 \(superclass.alignMask)",
             "i16 0",
             "i32 \(classSize)",
@@ -378,8 +503,12 @@ public struct SwiftClassMetadata {
             "ptr @\"\(mangled)Mn\"",
             "ptr null",
         ]
-        values += superclass.fieldOffsets.map { "i64 \($0)" }
-        values += vtable.map { "ptr @\"\($0)\"" }
+        values += slots.map { slot in
+            switch slot {
+            case .fieldOffset(let offset): return "i64 \(offset)"
+            case .method(let symbol): return "ptr @\"\(symbol)\""
+            }
+        }
         return "@\"\(mangled)Mf\" = internal global \(type) <{ \(values.joined(separator: ", ")) }>, align 8\n"
     }
 }
