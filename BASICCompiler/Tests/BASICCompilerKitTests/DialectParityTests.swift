@@ -20,6 +20,12 @@ import Testing
 /// The interpreter stays the oracle above both — `basictest --interpreter`
 /// is where that comparison lives, because it needs a built shell. This one
 /// needs only the compiler, so it runs anywhere the package builds.
+///
+/// Set `BASICC_RT_LIB` to a prebuilt `libBASICRTHost.a` before running it.
+/// Without one, every `build` here may launch a *second* SwiftPM to produce
+/// the runtime archive, which then blocks on the build directory this test is
+/// already running out of — and on a machine where someone else is building
+/// the same tree, blocks on theirs.
 struct DialectParityTests {
     /// The conformance programs, which are chosen to cover the language
     /// rather than to be quick.

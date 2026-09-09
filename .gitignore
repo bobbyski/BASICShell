@@ -24,3 +24,8 @@ DocumentArchive/.swiftpm
 
 # Rev 2 interop demo build products
 BASICCompiler/Examples/SwiftInterop/Build/
+
+# Private scratch build dirs, so two agents building this tree at once do not
+# contend on one SwiftPM lock (only one SwiftPM may hold a build directory).
+.build-claude/
+*/.build-claude/
