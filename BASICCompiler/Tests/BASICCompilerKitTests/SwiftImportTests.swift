@@ -235,3 +235,74 @@ struct SwiftImportEndToEndTests {
         return root.appendingPathComponent(".build/debug/basicc").path
     }
 }
+
+/// Asking `swiftc` what a module's symbols are called, instead of computing
+/// them (R0.5).
+struct SwiftManglingProbeTests {
+    static let root = "/Users/bobby/src/AIBasic/Code/BASICCompiler"
+
+    /// Where BASICRTSwift's module lives, for the probe's `import`.
+    static var searchPaths: [String] {
+        [".build-claude/release/Modules", ".build-claude/debug/Modules",
+         ".build/release/Modules", ".build/debug/Modules"]
+            .map { (root as NSString).appendingPathComponent($0) }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    /// The cases a hand-written mangler got wrong, and the one nobody could
+    /// explain: `XYRoids` is shaped like `AbRoids` and mangles differently.
+    @Test func namesSwiftCompressesComeBackRight() throws {
+        let probe = SwiftManglingProbe(module: "Roids", declarations: [
+            .init(name: "Sprite"), .init(name: "RoidsSprite"),
+            .init(name: "AbRoids"), .init(name: "XYRoids"),
+        ])
+        let symbols = try probe.run(searchPaths: Self.searchPaths)
+        #expect(symbols.classes["Sprite"] == "$s5Roids6SpriteC")
+        #expect(symbols.classes["RoidsSprite"] == "$s5Roids0A6SpriteC")
+        #expect(symbols.classes["AbRoids"] == "$s5Roids02AbA0C")
+        #expect(symbols.classes["XYRoids"] == "$s5Roids7XYRoidsC")
+    }
+
+    /// Signatures the hand-written mangler refused, because Swift compresses
+    /// a repeated type: `f(Double) -> Double` is `yS2dF`, not `SdSdF`.
+    @Test func signaturesWithRepeatedTypesComeBackRight() throws {
+        let probe = SwiftManglingProbe(module: "Shapes", declarations: [
+            .init(name: "Box", methods: [
+                (name: "area", parameters: [], returns: "Swift.Double"),
+                (name: "setX", parameters: ["Swift.Double"], returns: nil),
+                (name: "scaled", parameters: ["Swift.Double"], returns: "Swift.Double"),
+                (name: "resize", parameters: ["Swift.Double", "Swift.Double"], returns: nil),
+                (name: "label", parameters: [], returns: "Swift.String"),
+            ]),
+        ])
+        let symbols = try probe.run(searchPaths: Self.searchPaths)
+        #expect(symbols.member("area", of: "Box") == "$s6Shapes3BoxC4areaSdyF")
+        #expect(symbols.member("setX", of: "Box") == "$s6Shapes3BoxC4setXyySdF")
+        // The two the hand mangler refused outright.
+        #expect(symbols.member("scaled", of: "Box") == "$s6Shapes3BoxC6scaledyS2dF")
+        #expect(symbols.member("resize", of: "Box") == "$s6Shapes3BoxC6resizeyySd_SdtF")
+        #expect(symbols.member("label", of: "Box") == "$s6Shapes3BoxC5labelSSyF")
+    }
+
+    @Test func propertiesAndInitializersComeBackToo() throws {
+        let probe = SwiftManglingProbe(module: "Shapes", declarations: [
+            .init(name: "Box", properties: [(name: "width", type: "Swift.Double")]),
+        ])
+        let symbols = try probe.run(searchPaths: Self.searchPaths)
+        #expect(symbols.member("width.get", of: "Box") == "$s6Shapes3BoxC5widthSdvg")
+        #expect(symbols.member("width.set", of: "Box") == "$s6Shapes3BoxC5widthSdvs")
+        #expect(symbols.member("init", of: "Box") == "$s6Shapes3BoxCACycfC")
+    }
+
+    /// A subclass's symbols, so a hierarchy comes back whole.
+    @Test func subclassesAreProbedWithTheirBases() throws {
+        let probe = SwiftManglingProbe(module: "Shapes", declarations: [
+            .init(name: "Shape", methods: [(name: "area", parameters: [], returns: "Swift.Double")]),
+            .init(name: "Rect", base: "Shape", methods: [(name: "area", parameters: [], returns: "Swift.Double")]),
+        ])
+        let symbols = try probe.run(searchPaths: Self.searchPaths)
+        #expect(symbols.metadata(of: "Shape") == "$s6Shapes5ShapeCN")
+        #expect(symbols.metadata(of: "Rect") == "$s6Shapes4RectCN")
+        #expect(symbols.member("area", of: "Rect") == "$s6Shapes4RectC4areaSdyF")
+    }
+}

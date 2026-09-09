@@ -78,7 +78,19 @@ public struct SwiftDialect: DialectCompiler {
         // silently, and the two dialects are meant to compile the same
         // language — the divergence is the object model, and it is added
         // here rather than forked in.
-        let objects = SwiftObjectModel(module: module, imports: imports)
+        // Ask swiftc what this module's classes and members are called
+        // before emitting anything that names them (R0.5).
+        let probed: SwiftManglingProbe.Symbols
+        do {
+            probed = try SwiftObjectModel.probe(module)
+        } catch {
+            // Reported, never swallowed: a probe that fails quietly leaves a
+            // program that runs correctly on runtime objects and gives no
+            // hint why it got none.
+            FileHandle.standardError.write(Data("basicc: note: \(error)\n".utf8))
+            probed = SwiftManglingProbe.Symbols()
+        }
+        let objects = SwiftObjectModel(module: module, imports: imports, probed: probed)
         for note in objects.notes where ProcessInfo.processInfo.environment["BASICC_NOTES"] != nil {
             FileHandle.standardError.write(Data("basicc: note: \(note)\n".utf8))
         }

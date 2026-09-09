@@ -73,8 +73,14 @@ public struct SwiftObjectModel: ObjectModel {
     /// Imported classes, by normalized BASIC name.
     private let importedByName: [String: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)]
 
+    /// Symbols `swiftc` says this module's classes have (R0.5). Empty when
+    /// the probe could not run, which declines every class rather than
+    /// emitting a name that might not link.
+    public let probed: SwiftManglingProbe.Symbols
+
     /// Analyses `module` and lays out every class that qualifies.
-    public init(module: BIRModule, imports: [String: SwiftAPI] = [:]) {
+    public init(module: BIRModule, imports: [String: SwiftAPI] = [:], probed: SwiftManglingProbe.Symbols = .init()) {
+        self.probed = probed
         self.module = module
         self.imports = imports
         // An imported class is a Swift object by definition — it *is* the
@@ -87,18 +93,76 @@ public struct SwiftObjectModel: ObjectModel {
             imported[type.name] = (moduleName, api, klass, type)
         }
         self.importedByName = imported
-        let (accepted, notes) = Self.analyse(module)
+        var (accepted, notes) = Self.analyse(module)
+        // A class whose symbols the probe did not report cannot be emitted:
+        // its name would be a guess, and a guessed symbol either fails to
+        // link or resolves to the wrong thing.
+        for name in accepted where probed.classes[module.types.first { $0.name == name }?.displayName ?? name] == nil {
+            accepted.remove(name)
+            notes.append("CLASS \(module.types.first { $0.name == name }?.displayName ?? name) stays a runtime object: swiftc did not report a symbol for it")
+        }
         self.notes = notes
         var layouts: [ClassLayout] = []
         var byName: [String: ClassLayout] = [:]
         // Bases first: a subclass's layout starts where its base's ends.
         for composite in Self.dependencyOrder(accepted, in: module) where composite.externalModule == nil {
-            let layout = Self.layout(composite, in: module, bases: byName, ordinal: layouts.count)
+            let layout = Self.layout(composite, in: module, bases: byName, ordinal: layouts.count, probed: probed)
             layouts.append(layout)
             byName[composite.name] = layout
         }
         self.classes = layouts
         self.byName = byName
+    }
+
+    /// Asks `swiftc` for the symbols this module's classes will have.
+    ///
+    /// The shapes declared to the probe are the shapes about to be emitted:
+    /// the same classes, the same bases, the same stored properties and the
+    /// same method signatures. Anything the analysis would decline is left
+    /// out, so a program pays only for the classes it gets.
+    public static func probe(_ module: BIRModule) throws -> SwiftManglingProbe.Symbols {
+        let (accepted, _) = analyse(module)
+        let byIndex = Dictionary(uniqueKeysWithValues: module.types.map { ($0.index, $0) })
+        var declarations: [SwiftManglingProbe.Declaration] = []
+        for composite in dependencyOrder(accepted, in: module) where composite.externalModule == nil {
+            let base = composite.base.flatMap { byIndex[$0] }
+            // **No properties.** A stored property changes a class's layout,
+            // which is ours to compute, and changes no symbol's *name* —
+            // and BASIC allows names Swift does not (`Tag$`), which made the
+            // probe fail to compile and take every class down with it.
+            let prefix = composite.name + "."
+            var methods: [(name: String, parameters: [String], returns: String?)] = []
+            for function in module.functions where function.name.hasPrefix(prefix) {
+                let basicName = String(function.name.dropFirst(prefix.count))
+                guard basicName != "NEW", isIdentifier(basicName) else { continue }
+                let parameters = function.parameters.dropFirst().compactMap { swiftSpelling($0.type, in: module) }
+                guard parameters.count == function.parameters.count - 1 else { continue }
+                guard function.returnType == .void || swiftSpelling(function.returnType, in: module) != nil else { continue }
+                methods.append((basicName, parameters, function.returnType == .void ? nil : swiftSpelling(function.returnType, in: module)))
+            }
+            declarations.append(.init(
+                name: composite.displayName,
+                base: base.flatMap { accepted.contains($0.name) ? $0.displayName : nil },
+                methods: methods
+            ))
+        }
+        return try SwiftManglingProbe(module: module.name, declarations: declarations).run()
+    }
+
+    /// How a BASIC type is spelled in the probe, or nil when it has no Swift
+    /// spelling and the member is left out.
+    static func swiftSpelling(_ type: BIRType, in module: BIRModule) -> String? {
+        switch type {
+        case .number: return "Swift.Double"
+        case .boolean: return "Swift.Bool"
+        // A BASIC string is the runtime's object; at a Swift boundary it is
+        // an opaque pointer until R2.1 changes what it is at rest.
+        case .string: return "Swift.UnsafeMutableRawPointer"
+        case .composite(let name):
+            guard let composite = module.types.first(where: { $0.name == name }), composite.isClass else { return nil }
+            return composite.displayName
+        default: return nil
+        }
     }
 
     // MARK: - Which classes qualify
@@ -232,8 +296,8 @@ public struct SwiftObjectModel: ObjectModel {
         type == .boolean ? (1, 1) : (8, 8)
     }
 
-    static func layout(_ composite: BIRCompositeType, in module: BIRModule, bases: [String: ClassLayout], ordinal: Int) -> ClassLayout {
-        let mangled = try! SwiftMangling.mangleClass(module: module.name, name: composite.displayName)
+    static func layout(_ composite: BIRCompositeType, in module: BIRModule, bases: [String: ClassLayout], ordinal: Int, probed: SwiftManglingProbe.Symbols) -> ClassLayout {
+        let mangled = probed.classes[composite.displayName]!
         let baseLayout = composite.base.flatMap { index in
             module.types.first { $0.index == index }.flatMap { bases[$0.name] }
         }
@@ -260,21 +324,16 @@ public struct SwiftObjectModel: ObjectModel {
         var visible: [(name: String, symbol: String, function: BIRFunction)] = []
         var overrides: [SwiftClassMetadata.Override] = [
             .init(baseMethodDescriptor: SwiftObjectLowering.basicObjectInitDescriptor,
-                  implementation: try! SwiftMangling.mangleInitializer(module: module.name, className: composite.displayName, allocating: true),
+                  implementation: probed.member("init", of: composite.displayName) ?? (mangled + "ACycfC"),
                   slot: 0),
         ]
         var newMethods: [SwiftClassMetadata.Method] = []
         for function in module.functions where function.name.hasPrefix(prefix) {
             let basicName = String(function.name.dropFirst(prefix.count))
             guard basicName != "NEW", isIdentifier(basicName) else { continue }
-            let parameters = function.parameters.dropFirst()
-            guard parameters.allSatisfy({ $0.type == .number }),
-                  function.returnType == .number || function.returnType == .void,
-                  let symbol = try? SwiftMangling.mangleMethod(
-                    module: module.name, className: composite.displayName, method: basicName,
-                    returns: function.returnType == .void ? .void : .number,
-                    parameters: parameters.map { _ in .number })
-            else { continue }
+            // Any signature swiftc could spell, because swiftc spelled it:
+            // the probe declared these shapes and reported the names.
+            guard let symbol = probed.member(basicName, of: composite.displayName) else { continue }
             visible.append((basicName, symbol, function))
             // An inherited visible method with the same name is overridden
             // in place; anything else is a new slot.
@@ -759,10 +818,14 @@ public struct SwiftObjectModel: ObjectModel {
           %fields = getelementptr inbounds i8, ptr %o, i64 16
           call void @llvm.memset.p0.i64(ptr %fields, i8 0, i64 \(layout.instanceSize - 16), i1 false)
         """
-        let initializing = try! SwiftMangling.mangleInitializer(module: module.name, className: layout.composite.displayName, allocating: false)
-        let allocating = try! SwiftMangling.mangleInitializer(module: module.name, className: layout.composite.displayName, allocating: true)
-        let destroying = try! SwiftMangling.mangleDestructor(module: module.name, className: layout.composite.displayName, deallocating: false)
-        let deallocating = try! SwiftMangling.mangleDestructor(module: module.name, className: layout.composite.displayName, deallocating: true)
+        // The allocating initializer is what the probe reports; its
+        // initializing twin ends in a lowercase `c`, and the destructors are
+        // the class prefix plus `fd`/`fD` — neither of which involves a
+        // signature, so neither needs probing.
+        let allocating = probed.member("init", of: layout.composite.displayName) ?? (layout.mangled + "ACycfC")
+        let initializing = String(allocating.dropLast()) + "c"
+        let destroying = layout.mangled + "fd"
+        let deallocating = layout.mangled + "fD"
 
         // A fresh instance starts as a zeroed allocation: every reference
         // field null, which the accessors above treat as empty.
