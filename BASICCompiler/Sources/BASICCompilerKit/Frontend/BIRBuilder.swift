@@ -17,11 +17,18 @@ import Foundation
 /// ```
 public struct BIRBuilder {
     private let defaultStringSubstitution: Bool
+    /// Classes that came from an imported Swift framework, by normalized
+    /// name, each mapped to the module it came from. Their declarations are
+    /// generated BASIC (see `SwiftInterfaceUnit`); marking them here is what
+    /// keeps the compiler from emitting bodies for members the framework
+    /// already implements.
+    private let externalClasses: [String: String]
 
     /// Creates a builder; `defaultStringSubstitution` is how OPTION
     /// STRING-SUB starts (the shell's default is on).
-    public init(defaultStringSubstitution: Bool = true) {
+    public init(defaultStringSubstitution: Bool = true, externalClasses: [String: String] = [:]) {
         self.defaultStringSubstitution = defaultStringSubstitution
+        self.externalClasses = externalClasses
     }
 
     /// Builds the module for a program.
@@ -40,12 +47,14 @@ public struct BIRBuilder {
                     BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger, metadata: $0.metadata)
                 },
                 isClass: type.kind == .classType,
-                base: type.base.flatMap { model.types[$0]?.index }
+                base: type.base.flatMap { model.types[$0]?.index },
+                externalModule: externalClasses[name]
             )
         }
 
         let closures = ClosureContext(firstTypeIndex: module.types.count)
         let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner, closures: closures)
+        main.externalClasses = Set(externalClasses.keys)
         main.substitutesStrings = defaultStringSubstitution
         main.entryLabels = Self.labelsGosubbedFromFunctions(lines, owner: analyzer.owner)
         try main.run()
@@ -54,9 +63,19 @@ public struct BIRBuilder {
         let mainLabels = main.labels
         for name in model.functionOrder {
             let builder = FunctionBuilder(lines: lines, model: model, function: name, owner: analyzer.owner, closures: closures)
+            builder.externalClasses = Set(externalClasses.keys)
             builder.outerLabels = mainLabels
             try builder.run()
-            module.functions.append(builder.function)
+            var function = builder.function
+            // A member of an imported class: declared so calls type-check and
+            // dispatch like any other, with no body of ours — the generated
+            // placeholder is discarded and the object model supplies a thunk
+            // onto the framework's own symbol.
+            if let owner = model.functions[name]?.owner, externalClasses[owner] != nil {
+                function.isExternal = true
+                function.blocks = []
+            }
+            module.functions.append(function)
         }
         // Each main subroutine a function reaches becomes a function whose
         // body is the main body entered at that label: a RETURN with no
@@ -205,6 +224,10 @@ final class FunctionBuilder {
     private let owner: [String?]
     /// The class whose method this is, for PRIVATE/PROTECTED checks.
     private let ownerClass: String?
+    /// Classes that came from an imported Swift framework, by normalized
+    /// name. `NEW` on one of these is the framework's initializer, which
+    /// allocates: there is no default instance to build first.
+    var externalClasses: Set<String> = []
     private let closures: ClosureContext
     /// For a closure body: the names that are its locals (parameters,
     /// captures, LOCALs), with their types. Every other name is global.
@@ -1318,6 +1341,18 @@ final class FunctionBuilder {
         guard let constructor = model.lookupMethod("NEW", in: typeName) else {
             guard arguments.isEmpty else { throw CompileError("CLASS \(type.displayName) has no constructor", at: location) }
             return .construct(typeName)
+        }
+        if externalClasses.contains(typeName) {
+            // The framework's initializer both allocates and initializes, so
+            // this is one call rather than construct-then-call-NEW.
+            let parameters = Array(constructor.parameters.dropFirst())
+            guard arguments.count == parameters.count else {
+                throw CompileError("Function \(constructor.displayName) expects \(parameters.count) arguments, got \(arguments.count)", at: location)
+            }
+            let lowered = try zip(arguments, parameters).map { argument, parameter in
+                try lowerExpression(argument, expecting: parameter.type, context: "NEW parameter \(parameter.name)")
+            }
+            return .constructWith(typeName, lowered)
         }
         let instance = hidden("new", .composite(typeName))
         emit(.store(instance, .construct(typeName)))

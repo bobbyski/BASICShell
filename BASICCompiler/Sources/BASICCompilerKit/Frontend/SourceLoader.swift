@@ -19,6 +19,16 @@ public struct SourceLoader {
     private let projectRoot: String?
     private let libraries: LibraryIndex
 
+    /// Asked about an `IMPORT` that names no BASIC file, directory or
+    /// library. A dialect that can import Swift frameworks answers with
+    /// generated BASIC source (see `SwiftInterfaceUnit`); returning nil
+    /// leaves the import to fail as it always did.
+    ///
+    /// This is the only thing the shared front end knows about foreign
+    /// imports, and it deliberately knows nothing else: the generated text
+    /// is BASIC, so everything downstream takes the ordinary path.
+    public var resolveForeignImport: ((_ name: String, _ location: BIRLocation) throws -> String?)?
+
     /// Creates a loader; give a project root to resolve imports against it,
     /// and the project's libraries for imports that name one.
     public init(projectRoot: String? = nil, libraries: LibraryIndex = LibraryIndex()) {
@@ -96,6 +106,13 @@ public struct SourceLoader {
                 activeImports.append(normalized)
                 defer { activeImports.removeLast() }
                 guard FileManager.default.fileExists(atPath: normalized) else {
+                    // Nothing on disk answers to it. A dialect that imports
+                    // Swift frameworks gets its turn here, before the error.
+                    if let generated = try resolveForeignImport?(path, location) {
+                        let unit = loadGenerated(generated, named: path)
+                        expanded += try expand(unit, importedPaths: &importedPaths, activeImports: &activeImports)
+                        continue
+                    }
                     throw CompileError("IMPORT could not find \(path)", at: location)
                 }
                 let imported = try loadLines(path: normalized, isImported: true)
@@ -116,6 +133,13 @@ public struct SourceLoader {
         // a file of source to be read.
         if extensionName.isEmpty, FileManager.default.fileExists(atPath: resolved) { return nil }
         return libraries.sources(forLibraryNamed: path)
+    }
+
+    /// Parses generated source as if it were a file called `<name>.bas`.
+    /// Marked imported, like any other import, so its DATA stays out of the
+    /// program's.
+    private func loadGenerated(_ source: String, named name: String) -> [ProgramLine] {
+        ProgramLine.parse(source, fileName: "<\(name)>", isImported: true)
     }
 
     /// The path an `IMPORT` line names, or nil for any other line.

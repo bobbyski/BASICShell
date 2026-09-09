@@ -66,18 +66,33 @@ public struct SwiftObjectModel: ObjectModel {
     public let classes: [ClassLayout]
     /// Why each declined class was declined.
     public let notes: [String]
+    /// Imported frameworks, by module name (R4).
+    public let imports: [String: SwiftAPI]
 
     private let byName: [String: ClassLayout]
+    /// Imported classes, by normalized BASIC name.
+    private let importedByName: [String: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)]
 
     /// Analyses `module` and lays out every class that qualifies.
-    public init(module: BIRModule) {
+    public init(module: BIRModule, imports: [String: SwiftAPI] = [:]) {
         self.module = module
+        self.imports = imports
+        // An imported class is a Swift object by definition — it *is* the
+        // framework's — and its layout is the framework's, not ours.
+        var imported: [String: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)] = [:]
+        for type in module.types {
+            guard let moduleName = type.externalModule, let api = imports[moduleName],
+                  let klass = api.classes.first(where: { $0.name.uppercased() == type.name })
+            else { continue }
+            imported[type.name] = (moduleName, api, klass, type)
+        }
+        self.importedByName = imported
         let (accepted, notes) = Self.analyse(module)
         self.notes = notes
         var layouts: [ClassLayout] = []
         var byName: [String: ClassLayout] = [:]
         // Bases first: a subclass's layout starts where its base's ends.
-        for composite in Self.dependencyOrder(accepted, in: module) {
+        for composite in Self.dependencyOrder(accepted, in: module) where composite.externalModule == nil {
             let layout = Self.layout(composite, in: module, bases: byName, ordinal: layouts.count)
             layouts.append(layout)
             byName[composite.name] = layout
@@ -110,11 +125,15 @@ public struct SwiftObjectModel: ObjectModel {
     static func analyse(_ module: BIRModule) -> (accepted: Set<String>, notes: [String]) {
         var notes: [String] = []
         var accepted = Set<String>()
+        // An imported class is the framework's object, laid out by the
+        // framework; it never takes our layout, and a program class that
+        // holds or inherits one is declined for now (R4.x).
+        let external = Set(module.types.filter { $0.externalModule != nil }.map(\.name))
         guard Self.isIdentifier(module.name) else {
             return ([], ["no class is a Swift object: the module name '\(module.name)' is not a Swift identifier"])
         }
         var reasons: [String: String] = [:]
-        for type in module.types where type.isClass {
+        for type in module.types where type.isClass && !external.contains(type.name) {
             if !Self.isIdentifier(type.displayName) {
                 reasons[type.name] = "'\(type.displayName)' is not a Swift identifier"
             } else if (try? SwiftMangling.mangleClass(module: module.name, name: type.displayName)) == nil {
@@ -151,7 +170,11 @@ public struct SwiftObjectModel: ObjectModel {
                     case .number, .boolean, .string:
                         continue
                     case .composite(let held):
-                        if isSwift, !accepted.contains(held) {
+                        if isSwift, external.contains(held) {
+                            accepted.remove(type.name)
+                            reasons[type.name] = "its field \(field.displayName) holds an imported \(held), which the framework lays out (R4.x)"
+                            changed = true
+                        } else if isSwift, !accepted.contains(held) {
                             accepted.remove(type.name)
                             reasons[type.name] = "its field \(field.displayName) is a \(module.types.first { $0.name == held }?.displayName ?? held), which is not a Swift object"
                             changed = true
@@ -177,7 +200,7 @@ public struct SwiftObjectModel: ObjectModel {
                 }
             }
         }
-        for type in module.types where type.isClass && !accepted.contains(type.name) {
+        for type in module.types where type.isClass && !accepted.contains(type.name) && !external.contains(type.name) {
             notes.append("CLASS \(type.displayName) stays a runtime object: \(reasons[type.name] ?? "declined")")
         }
         return (accepted, notes)
@@ -284,10 +307,15 @@ public struct SwiftObjectModel: ObjectModel {
 
     // MARK: - ObjectModel
 
-    public func isSwiftObject(_ typeName: String) -> Bool { byName[typeName] != nil }
+    public func isSwiftObject(_ typeName: String) -> Bool {
+        byName[typeName] != nil || importedByName[typeName] != nil
+    }
+
+    /// Whether anything in this program is a Swift object at all.
+    var hasSwiftObjects: Bool { !classes.isEmpty || !importedByName.isEmpty }
 
     public var symbols: ObjectSymbols {
-        guard !classes.isEmpty else { return .runtime }
+        guard hasSwiftObjects else { return .runtime }
         return ObjectSymbols(
             copy: "\"obj.copy\"", assign: "\"obj.assign\"", release: "\"obj.release\"",
             typeIndex: "\"obj.typeIndex\"", text: "\"obj.text\"", print: "\"obj.print\"",
@@ -296,21 +324,40 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     public func newSymbol(for typeName: String) -> String? {
-        byName[typeName].map { "\($0.name).new" }
+        if byName[typeName] != nil { return "\(typeName).new" }
+        // An imported class with a no-argument initializer.
+        if let entry = importedByName[typeName], entry.klass.initializers.contains(where: { $0.parameters.isEmpty }) {
+            return "\(typeName).new"
+        }
+        return nil
+    }
+
+    public func constructSymbol(for typeName: String, arguments: [BIRType]) -> String? {
+        guard let entry = importedByName[typeName],
+              entry.klass.initializers.contains(where: { $0.parameters.count == arguments.count })
+        else { return nil }
+        return "\(typeName).new.\(arguments.count)"
     }
 
     public func fieldGetSymbol(for typeName: String, field index: Int) -> String? {
-        guard let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) else { return nil }
-        return "\(layout.name).get.\(index)"
+        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) { return "\(layout.name).get.\(index)" }
+        // An imported class's storage is the framework's: reached through its
+        // property accessors, never by an offset we computed.
+        if let entry = importedByName[typeName], entry.type.fields.indices.contains(index) { return "\(typeName).get.\(index)" }
+        return nil
     }
 
     public func fieldSetSymbol(for typeName: String, field index: Int) -> String? {
-        guard let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) else { return nil }
-        return "\(layout.name).set.\(index)"
+        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) { return "\(layout.name).set.\(index)" }
+        if let entry = importedByName[typeName], entry.type.fields.indices.contains(index),
+           Self.property(named: entry.type.fields[index].name, of: entry.klass, in: entry.api)?.isSettable == true {
+            return "\(typeName).set.\(index)"
+        }
+        return nil
     }
 
     public var declarations: String {
-        guard !classes.isEmpty else { return "" }
+        guard hasSwiftObjects else { return "" }
         let root = SwiftObjectLowering.basicObject
         let rootMangled = (try? SwiftMangling.mangleClass(module: root.module, name: root.name)) ?? ""
         var out = SwiftClassMetadata.preamble
@@ -327,7 +374,7 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     public func definitions(for module: BIRModule) -> String {
-        guard !classes.isEmpty else { return "" }
+        guard hasSwiftObjects else { return "" }
         var out = "; ---- Rev 2: classes as Swift objects ----\n"
         var shared = Set<String>()
         var used: [String] = []
@@ -337,7 +384,230 @@ public struct SwiftObjectModel: ObjectModel {
             out += perClass(layout)
         }
         out += SwiftClassMetadata.usedDirective(used)
+        out += importedDeclarations()
+        for name in importedByName.keys.sorted() { out += perImportedClass(importedByName[name]!) }
         out += helpers()
+        return out
+    }
+
+    // MARK: - Imported classes (R4)
+
+    /// `declare`s for every framework symbol this module calls.
+    func importedDeclarations() -> String {
+        guard !importedByName.isEmpty else { return "" }
+        var out = "; ---- imported Swift frameworks ----\n"
+        out += "declare swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr)\n"
+        out += "declare swiftcc ptr @basic_rt_swift_string_out(i64, ptr)\n"
+        var seen = Set<String>()
+        for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
+            out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
+            for initializer in entry.klass.initializers where seen.insert(initializer.allocatingSymbol).inserted {
+                let parameters = initializer.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
+                out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
+            }
+            for method in entry.klass.methods where seen.insert(method.symbol).inserted {
+                let parameters = method.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
+                out += "declare swiftcc \(Self.abiReturn(method.returns)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", ")))\n"
+            }
+            for property in entry.klass.properties {
+                if seen.insert(property.getterSymbol).inserted {
+                    out += "declare swiftcc \(Self.abiReturn(property.type)) @\"\(property.getterSymbol)\"(ptr swiftself)\n"
+                }
+                if property.isSettable, seen.insert(property.setterSymbol).inserted {
+                    out += "declare swiftcc void @\"\(property.setterSymbol)\"(\(Self.abiType(property.type)), ptr swiftself)\n"
+                }
+            }
+        }
+        return out
+    }
+
+    /// A Swift value's ABI form at a call boundary. A `String` is two words.
+    static func abiType(_ type: SwiftAPI.ValueType) -> String {
+        switch type {
+        case .double: return "double"
+        case .int: return "i64"
+        case .bool: return "i1"
+        case .string: return "i64, ptr"
+        case .object, .void, .unsupported: return "ptr"
+        }
+    }
+
+    static func abiReturn(_ type: SwiftAPI.ValueType) -> String {
+        switch type {
+        case .double: return "double"
+        case .int: return "i64"
+        case .bool: return "i1"
+        case .string: return "{ i64, ptr }"
+        case .void: return "void"
+        case .object, .unsupported: return "ptr"
+        }
+    }
+
+    /// A property of an imported class or of any class above it.
+    ///
+    /// BIR gives a class *all* its fields, inherited first, so field 0 of a
+    /// subclass is usually the base's — and the accessor for it lives on the
+    /// base. Looking only at the class's own properties left the emitter
+    /// calling an accessor nothing defined.
+    static func property(named name: String, of klass: SwiftAPI.Class, in api: SwiftAPI) -> SwiftAPI.Property? {
+        var current: SwiftAPI.Class? = klass
+        while let here = current {
+            if let match = here.properties.first(where: { $0.name.uppercased() == name }) { return match }
+            current = here.superclassPrecise.flatMap { api.class(precise: $0) }
+        }
+        return nil
+    }
+
+    /// A method of an imported class or of any class above it.
+    static func method(named name: String, of klass: SwiftAPI.Class, in api: SwiftAPI) -> SwiftAPI.Function? {
+        var current: SwiftAPI.Class? = klass
+        while let here = current {
+            if let match = here.methods.first(where: { $0.name.uppercased() == name }) { return match }
+            current = here.superclassPrecise.flatMap { api.class(precise: $0) }
+        }
+        return nil
+    }
+
+    /// Thunks over an imported class: BASIC's calling convention on the
+    /// outside, Swift's on the inside, with values converted where they cross
+    /// (ruling R2.0).
+    func perImportedClass(_ entry: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)) -> String {
+        let name = entry.type.name
+        var out = "; \(entry.module).\(entry.klass.name), imported\n"
+        var counter = 0
+        func temp() -> String { counter += 1; return "%t\(counter)" }
+
+        /// Converts a BASIC value to Swift's ABI form; returns the argument text.
+        func toSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
+            switch type {
+            case .double: return "double \(value)"
+            case .bool: return "i1 \(value)"
+            case .int:
+                let r = temp(); body += "  \(r) = fptosi double \(value) to i64\n"; return "i64 \(r)"
+            case .string:
+                let r = temp(); body += "  \(r) = call swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr \(value))\n"
+                let a = temp(); body += "  \(a) = extractvalue { i64, ptr } \(r), 0\n"
+                let b = temp(); body += "  \(b) = extractvalue { i64, ptr } \(r), 1\n"
+                return "i64 \(a), ptr \(b)"
+            case .object, .void, .unsupported: return "ptr \(value)"
+            }
+        }
+        /// Converts a Swift result back to BASIC's form.
+        func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
+            switch type {
+            case .double, .bool, .object, .void, .unsupported: return value
+            case .int:
+                let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
+            case .string:
+                let a = temp(); body += "  \(a) = extractvalue { i64, ptr } \(value), 0\n"
+                let b = temp(); body += "  \(b) = extractvalue { i64, ptr } \(value), 1\n"
+                let r = temp(); body += "  \(r) = call swiftcc ptr @basic_rt_swift_string_out(i64 \(a), ptr \(b))\n"
+                return r
+            }
+        }
+        func basicType(_ type: SwiftAPI.ValueType) -> String {
+            switch type {
+            case .double, .int: return "double"
+            case .bool: return "i1"
+            case .string, .object, .void, .unsupported: return "ptr"
+            }
+        }
+
+        // Constructors.
+        for initializer in entry.klass.initializers {
+            counter = 0
+            var body = ""
+            var arguments: [String] = []
+            let parameters = initializer.parameters.enumerated().map { index, parameter -> String in
+                "\(basicType(parameter.type)) %a\(index)"
+            }
+            for (index, parameter) in initializer.parameters.enumerated() {
+                arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
+            }
+            arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
+            let result = temp()
+            body += "  \(result) = call swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(arguments.joined(separator: ", ")))\n"
+            let symbol = initializer.parameters.isEmpty ? "\(name).new" : "\(name).new.\(initializer.parameters.count)"
+            out += "define ptr @\"\(symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret ptr \(result)\n}\n"
+        }
+
+        // Property accessors, by BIR field index.
+        for (index, field) in entry.type.fields.enumerated() {
+            guard let property = Self.property(named: field.name, of: entry.klass, in: entry.api) else { continue }
+            counter = 0
+            var body = ""
+            let raw = temp()
+            body += "  \(raw) = call swiftcc \(Self.abiReturn(property.type)) @\"\(property.getterSymbol)\"(ptr swiftself %o)\n"
+            let value = fromSwift(raw, property.type, into: &body)
+            out += "define \(basicType(property.type)) @\"\(name).get.\(index)\"(ptr %o) {\n\(body)  ret \(basicType(property.type)) \(value)\n}\n"
+            if property.isSettable {
+                counter = 0
+                var setBody = ""
+                let argument = toSwift("%v", property.type, into: &setBody)
+                setBody += "  call swiftcc void @\"\(property.setterSymbol)\"(\(argument), ptr swiftself %o)\n"
+                out += "define void @\"\(name).set.\(index)\"(ptr %o, \(basicType(property.type)) %v) {\n\(setBody)  ret void\n}\n"
+            }
+        }
+
+        // A runtime record of its readable properties — what PRINT, JSON and
+        // VARIANT boxing use, so an imported object renders in the runtime's
+        // own words rather than a second formatter's.
+        out += "define ptr @\"\(name).toRuntime\"(ptr %o) {\n"
+        out += "  %rt = call ptr @basic_rt_composite_new(i64 \(entry.type.index))\n"
+        counter = 100
+        for (index, field) in entry.type.fields.enumerated() {
+            guard Self.property(named: field.name, of: entry.klass, in: entry.api) != nil else { continue }
+            let value = temp()
+            switch field.type {
+            case .number:
+                out += "  \(value) = call double @\"\(name).get.\(index)\"(ptr %o)\n"
+                out += "  call void @basic_rt_composite_set_number(ptr %rt, i64 \(index), double \(value))\n"
+            case .boolean:
+                out += "  \(value) = call i1 @\"\(name).get.\(index)\"(ptr %o)\n"
+                out += "  call void @basic_rt_composite_set_boolean(ptr %rt, i64 \(index), i1 \(value))\n"
+            case .string:
+                out += "  \(value) = call ptr @\"\(name).get.\(index)\"(ptr %o)\n"
+                out += "  call void @basic_rt_composite_set_string(ptr %rt, i64 \(index), ptr \(value))\n"
+                out += "  call void @basic_rt_string_release(ptr \(value))\n"
+            default:
+                break
+            }
+        }
+        out += "  ret ptr %rt\n}\n"
+
+        // Method thunks, named as the traditional lowering names a method.
+        // Every method the class answers to, its own and its bases', because
+        // BIR names a method on the class it was called on.
+        var methods: [SwiftAPI.Function] = []
+        var walk: SwiftAPI.Class? = entry.klass
+        while let here = walk {
+            for method in here.methods where !methods.contains(where: { $0.name == method.name }) { methods.append(method) }
+            walk = here.superclassPrecise.flatMap { entry.api.class(precise: $0) }
+        }
+        for method in methods {
+            guard let function = module.functions.first(where: { $0.name == "\(name).\(method.name.uppercased())" }) else { continue }
+            counter = 0
+            var body = ""
+            var arguments: [String] = []
+            var parameters = ["ptr %me"]
+            for (index, parameter) in method.parameters.enumerated() {
+                parameters.append("\(basicType(parameter.type)) %a\(index)")
+            }
+            for (index, parameter) in method.parameters.enumerated() {
+                arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
+            }
+            arguments.append("ptr swiftself %me")
+            let returnType = Self.abiReturn(method.returns)
+            if method.returns == .void {
+                body += "  call swiftcc void @\"\(method.symbol)\"(\(arguments.joined(separator: ", ")))\n"
+                out += "define void @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
+            } else {
+                let raw = temp()
+                body += "  \(raw) = call swiftcc \(returnType) @\"\(method.symbol)\"(\(arguments.joined(separator: ", ")))\n"
+                let value = fromSwift(raw, method.returns, into: &body)
+                out += "define \(basicType(method.returns)) @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(basicType(method.returns)) \(value)\n}\n"
+            }
+        }
         return out
     }
 
@@ -611,6 +881,11 @@ public struct SwiftObjectModel: ObjectModel {
 
     /// The whole-object operations that decide representation at run time.
     func helpers() -> String {
+        // Imported classes join the run-time switch, but with reference
+        // semantics: an imported Swift object is the framework's, and there
+        // is no copy constructor to call. Ruling D15 — `A = B` on an
+        // imported object aliases it, as it would in Swift.
+        let imported = importedByName.values.sorted { $0.type.name < $1.type.name }
         var out = """
         declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 
@@ -641,48 +916,61 @@ public struct SwiftObjectModel: ObjectModel {
           br i1 %end, label %none, label %check0
 
         """
-        for (k, layout) in classes.enumerated() {
+        var probes: [(label: Int, metadata: String)] = classes.map { ($0.ordinal, "\($0.mangled)N") }
+        probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
+        for (k, metadata) in probes {
             out += "check\(k):\n"
-            out += "  %eq\(k) = icmp eq ptr %isa, @\"\(layout.mangled)N\"\n"
+            out += "  %eq\(k) = icmp eq ptr %isa, @\"\(metadata)\"\n"
             out += "  br i1 %eq\(k), label %found\(k), label %check\(k + 1)\n"
         }
-        out += "check\(classes.count):\n  br label %step\n"
+        out += "check\(probes.count):\n  br label %step\n"
         out += "step:\n  %superp = getelementptr inbounds i8, ptr %isa, i64 8\n  %next = load ptr, ptr %superp, align 8\n  br label %loop\n"
-        for k in classes.indices { out += "found\(k):\n  ret i64 \(k)\n" }
+        for (k, _) in probes { out += "found\(k):\n  ret i64 \(k)\n" }
         out += "none:\n  ret i64 -1\n}\n\n"
 
         /// A dispatcher: switch on classOf, one arm per class, runtime default.
-        func dispatcher(_ name: String, signature: String, arguments: String, subject: String, arm: (ClassLayout) -> String, fallback: String) -> String {
+        func dispatcher(_ name: String, signature: String, arguments: String, subject: String,
+                        arm: (ClassLayout) -> String, importedArm: (Int) -> String, fallback: String) -> String {
             var text = "define \(signature) @\"obj.\(name)\"(\(arguments)) {\n"
             text += "  %k = call i64 @\"obj.classOf\"(ptr \(subject))\n"
-            text += "  switch i64 %k, label %rt [ " + classes.enumerated().map { "i64 \($0.offset), label %c\($0.offset)" }.joined(separator: " ") + " ]\n"
-            for (k, layout) in classes.enumerated() {
-                text += "c\(k):\n" + arm(layout)
-            }
+            text += "  switch i64 %k, label %rt [ " + probes.map { "i64 \($0.label), label %c\($0.label)" }.joined(separator: " ") + " ]\n"
+            for layout in classes { text += "c\(layout.ordinal):\n" + arm(layout) }
+            for k in classes.count..<probes.count { text += "c\(k):\n" + importedArm(k) }
             text += "rt:\n" + fallback + "}\n\n"
             return text
         }
 
         out += dispatcher("copy", signature: "ptr", arguments: "ptr %o", subject: "%o",
             arm: { "  %r\($0.ordinal) = call ptr @\"\($0.name).copy\"(ptr %o)\n  ret ptr %r\($0.ordinal)\n" },
+            // D15: an imported object is the framework's, and there is no
+            // copy constructor to call — it is retained, not duplicated.
+            importedArm: { _ in "  call void @swift_retain(ptr %o)\n  ret ptr %o\n" },
             fallback: "  %r = call ptr @basic_rt_composite_copy(ptr %o)\n  ret ptr %r\n")
         out += dispatcher("assign", signature: "void", arguments: "ptr %dst, ptr %src", subject: "%dst",
             arm: { "  call void @\"\($0.name).assign\"(ptr %dst, ptr %src)\n  ret void\n" },
+            // Nothing to write back: the receiver a method mutated *is* the
+            // object the caller holds.
+            importedArm: { _ in "  ret void\n" },
             fallback: "  call void @basic_rt_composite_assign(ptr %dst, ptr %src)\n  ret void\n")
         out += dispatcher("release", signature: "void", arguments: "ptr %o", subject: "%o",
             arm: { _ in "  call void @swift_release(ptr %o)\n  ret void\n" },
+            importedArm: { _ in "  call void @swift_release(ptr %o)\n  ret void\n" },
             fallback: "  call void @basic_rt_composite_release(ptr %o)\n  ret void\n")
         out += dispatcher("typeIndex", signature: "i64", arguments: "ptr %o", subject: "%o",
             arm: { "  ret i64 \($0.typeIndex)\n" },
+            importedArm: { k in "  ret i64 \(imported[k - classes.count].type.index)\n" },
             fallback: "  %r = call i64 @basic_rt_composite_type(ptr %o)\n  ret i64 %r\n")
         out += dispatcher("text", signature: "ptr", arguments: "ptr %o", subject: "%o",
             arm: { "  %t\($0.ordinal) = call ptr @\"\($0.name).toRuntime\"(ptr %o)\n  %s\($0.ordinal) = call ptr @basic_rt_composite_text(ptr %t\($0.ordinal))\n  call void @basic_rt_composite_release(ptr %t\($0.ordinal))\n  ret ptr %s\($0.ordinal)\n" },
+            importedArm: { k in "  %ti\(k) = call ptr @\"\(imported[k - classes.count].type.name).toRuntime\"(ptr %o)\n  %si\(k) = call ptr @basic_rt_composite_text(ptr %ti\(k))\n  call void @basic_rt_composite_release(ptr %ti\(k))\n  ret ptr %si\(k)\n" },
             fallback: "  %r = call ptr @basic_rt_composite_text(ptr %o)\n  ret ptr %r\n")
         out += dispatcher("print", signature: "void", arguments: "ptr %o", subject: "%o",
             arm: { "  %t\($0.ordinal) = call ptr @\"\($0.name).toRuntime\"(ptr %o)\n  call void @basic_rt_print_composite(ptr %t\($0.ordinal))\n  call void @basic_rt_composite_release(ptr %t\($0.ordinal))\n  ret void\n" },
+            importedArm: { k in "  %ti\(k) = call ptr @\"\(imported[k - classes.count].type.name).toRuntime\"(ptr %o)\n  call void @basic_rt_print_composite(ptr %ti\(k))\n  call void @basic_rt_composite_release(ptr %ti\(k))\n  ret void\n" },
             fallback: "  call void @basic_rt_print_composite(ptr %o)\n  ret void\n")
         out += dispatcher("box", signature: "ptr", arguments: "ptr %o", subject: "%o",
             arm: { "  %t\($0.ordinal) = call ptr @\"\($0.name).toRuntime\"(ptr %o)\n  %b\($0.ordinal) = call ptr @basic_rt_value_from_composite(ptr %t\($0.ordinal))\n  call void @basic_rt_composite_release(ptr %t\($0.ordinal))\n  ret ptr %b\($0.ordinal)\n" },
+            importedArm: { k in "  %ti\(k) = call ptr @\"\(imported[k - classes.count].type.name).toRuntime\"(ptr %o)\n  %bi\(k) = call ptr @basic_rt_value_from_composite(ptr %ti\(k))\n  call void @basic_rt_composite_release(ptr %ti\(k))\n  ret ptr %bi\(k)\n" },
             fallback: "  %r = call ptr @basic_rt_value_from_composite(ptr %o)\n  ret ptr %r\n")
 
         // Unboxing dispatches on the *requested* type index, which is a

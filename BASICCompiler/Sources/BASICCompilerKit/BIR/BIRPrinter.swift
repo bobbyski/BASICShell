@@ -268,6 +268,8 @@ public struct BIRPrinter {
             return "\(render(base)).#\(index)"
         case .construct(let name):
             return "new \(name)"
+        case .constructWith(let name, let arguments):
+            return "new \(name)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .usingString(let format, let values):
             return "USING$(" + ([format] + values).map(render).joined(separator: ", ") + ")"
         case .fileService(let method, let arguments, _):

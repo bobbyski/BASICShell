@@ -37,7 +37,9 @@ struct LLVMLowering {
         var functions: [String] = []
         var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel)
         functions.append(mainEmitter.render())
-        for function in module.functions {
+        // An imported class's members have no body here: the framework has
+        // them, and the object model emits a thunk onto its symbol.
+        for function in module.functions where !function.isExternal {
             var emitter = FunctionEmitter(function: function, module: module, constants: constants, isMain: false, objectModel: objectModel)
             functions.append(emitter.render())
         }
@@ -2097,6 +2099,18 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_using_render()")
             owned.append(result)
+            return (result, true)
+        case .constructWith(let name, let arguments):
+            let values = arguments.map { (lowerValue($0).0, $0.type) }
+            let result = out.temp()
+            guard let symbol = objectModel.constructSymbol(for: name, arguments: arguments.map(\.type)) else {
+                fail("CLASS \(name) cannot be constructed with arguments in this dialect")
+                return ("null", false)
+            }
+            let list = values.map { "\(Self.llvmType($0.1)) \($0.0)" }.joined(separator: ", ")
+            out.emit("\(result) = call ptr @\"\(symbol)\"(\(list))")
+            owned.append(result)
+            ownedComposites.insert(result)
             return (result, true)
         case .construct(let name):
             let result = out.temp()

@@ -4,22 +4,22 @@ import Foundation
 ///
 /// Every tool the driver invokes goes through `xcrun`, so the toolchain that
 /// answers is whichever Xcode is selected — the same one `swift build` uses.
-enum ProcessRunner {
+public enum ProcessRunner {
     /// A finished process: exit code plus both streams, fully drained.
-    struct Result {
-        let exitCode: Int32
-        let stdout: String
-        let stderr: String
+    public struct Result {
+        public let exitCode: Int32
+        public let stdout: String
+        public let stderr: String
     }
 
     /// Runs `xcrun <tool> <arguments>` and waits for it.
-    static func xcrun(_ tool: String, _ arguments: [String]) throws -> Result {
+    public static func xcrun(_ tool: String, _ arguments: [String]) throws -> Result {
         try run("/usr/bin/xcrun", [tool] + arguments)
     }
 
     /// Runs an executable and waits for it, draining both pipes so a chatty
     /// tool cannot deadlock on a full pipe buffer.
-    static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, workingDirectory: String? = nil) throws -> Result {
+    public static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, workingDirectory: String? = nil) throws -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

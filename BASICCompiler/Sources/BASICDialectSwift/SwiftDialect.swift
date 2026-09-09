@@ -58,15 +58,27 @@ public struct SwiftDialect: DialectCompiler {
         importsSwiftFrameworks: true
     )
 
+    /// Frameworks resolved for the module being compiled, by module name.
+    ///
+    /// Set by `SwiftImportLoader` while the source is read — the same pass
+    /// that generated the BASIC interface units — so lowering already knows
+    /// every framework symbol it must call.
+    public var imports: [String: SwiftAPI] = [:]
+
     /// Creates the Swift dialect.
     public init() {}
+
+    /// Creates the dialect with frameworks already resolved.
+    public init(imports: [String: SwiftAPI]) {
+        self.imports = imports
+    }
 
     public func lower(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
         // Shared, not copied. A fork of Rev 1's lowering would drift from it
         // silently, and the two dialects are meant to compile the same
         // language — the divergence is the object model, and it is added
         // here rather than forked in.
-        let objects = SwiftObjectModel(module: module)
+        let objects = SwiftObjectModel(module: module, imports: imports)
         for note in objects.notes where ProcessInfo.processInfo.environment["BASICC_NOTES"] != nil {
             FileHandle.standardError.write(Data("basicc: note: \(note)\n".utf8))
         }

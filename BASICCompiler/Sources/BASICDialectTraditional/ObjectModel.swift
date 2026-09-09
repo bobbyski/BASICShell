@@ -32,6 +32,10 @@ public protocol ObjectModel: Sendable {
     /// `basic_rt_composite_new(index)`.
     func newSymbol(for typeName: String) -> String?
 
+    /// `NEW X(args)` on an imported class, whose initializer allocates and
+    /// initializes in one call. Takes the arguments in BIR order.
+    func constructSymbol(for typeName: String, arguments: [BIRType]) -> String?
+
     /// Field access on a base whose *static* type is a Swift-object class,
     /// or nil for the runtime's `basic_rt_composite_get_*`/`set_*`. Same
     /// signatures as those: get takes `(ptr)`, set takes `(ptr, value)`.
@@ -97,6 +101,7 @@ public struct RuntimeObjectModel: ObjectModel {
     public func isSwiftObject(_ typeName: String) -> Bool { false }
     public var symbols: ObjectSymbols { .runtime }
     public func newSymbol(for typeName: String) -> String? { nil }
+    public func constructSymbol(for typeName: String, arguments: [BIRType]) -> String? { nil }
     public func fieldGetSymbol(for typeName: String, field index: Int) -> String? { nil }
     public func fieldSetSymbol(for typeName: String, field index: Int) -> String? { nil }
     public var declarations: String { "" }

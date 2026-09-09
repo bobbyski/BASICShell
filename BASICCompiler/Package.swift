@@ -68,7 +68,7 @@ let package = Package(
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
-        .target(name: "BASICRT"),
+        .target(name: "BASICRT", dependencies: ["BASICRTSwift"]),
         .target(name: "BASICRTSwift"),
         // BASICRTSwift rides in the same archive: a program built with the
         // Swift dialect descends every CLASS from BASICObject, and one

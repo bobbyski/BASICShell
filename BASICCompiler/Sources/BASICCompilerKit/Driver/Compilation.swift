@@ -21,6 +21,19 @@ public struct Compilation: Sendable {
     /// The tools.
     public let toolchain: Toolchain
 
+    /// Extra objects the link must include — an imported Swift framework's
+    /// compiled code (R4). Empty for a program that imports nothing.
+    public var extraObjects: [String] = []
+
+    /// Reads a program's source, given the path. A dialect that can import
+    /// Swift frameworks replaces this to resolve them as it reads (see
+    /// `SwiftImportLoader`); the default is the ordinary loader.
+    ///
+    /// It returns a *new* Compilation as well as the module, because
+    /// resolving an import teaches the dialect which symbols to call —
+    /// reading and lowering are one decision, not two.
+    public var readModule: (@Sendable (_ sourcePath: String, _ compilation: Compilation) throws -> (BIRModule, Compilation))?
+
     /// Creates a compilation.
     public init(dialect: any DialectCompiler, options: CompileOptions = CompileOptions(), toolchain: Toolchain = Toolchain()) {
         self.dialect = dialect
@@ -47,7 +60,8 @@ public struct Compilation: Sendable {
 
     /// The LLVM IR for a source file, for `--emit-llvm`.
     public func llvmIR(sourcePath: String) throws -> String {
-        try dialect.lower(try bir(sourcePath: sourcePath), options: options).llvmIR
+        let (module, compilation) = try readModule.map { try $0(sourcePath, self) } ?? (try bir(sourcePath: sourcePath), self)
+        return try compilation.dialect.lower(module, options: compilation.options).llvmIR
     }
 
     /// Compiles a source file to an executable at `output`.
@@ -56,8 +70,8 @@ public struct Compilation: Sendable {
     /// `<output>.build/` so `--emit-llvm` has something to show and a failed
     /// clang run leaves evidence.
     public func build(sourcePath: String, output: String) throws {
-        let module = try bir(sourcePath: sourcePath)
-        let lowered = try dialect.lower(module, options: options)
+        let (module, compilation) = try readModule.map { try $0(sourcePath, self) } ?? (try bir(sourcePath: sourcePath), self)
+        let lowered = try compilation.dialect.lower(module, options: compilation.options)
 
         let buildDir = output + ".build"
         try FileManager.default.createDirectory(atPath: buildDir, withIntermediateDirectories: true)
@@ -71,7 +85,7 @@ public struct Compilation: Sendable {
         let objectPath = (buildDir as NSString).appendingPathComponent("\(module.name).o")
         try toolchain.assemble(llvmIR: lowered.llvmIR, irPath: irPath, objectPath: objectPath, optimizationLevel: options.optimizationLevel)
 
-        let runtime = dialect.runtimeLibrary(for: options.target)
+        let runtime = compilation.dialect.runtimeLibrary(for: compilation.options.target)
         // The full runtime archive when there is one; else the core compiled
         // from source with the host half stubbed.
         let runtimeObject: String
@@ -87,7 +101,7 @@ public struct Compilation: Sendable {
         } else {
             runtimeObject = try cachedRuntimeObject(runtime)
         }
-        try toolchain.link(objects: [objectPath, runtimeObject], output: output, extraArguments: runtime.linkArguments)
+        try toolchain.link(objects: [objectPath, runtimeObject] + compilation.extraObjects, output: output, extraArguments: runtime.linkArguments)
     }
 
     /// Compiles a source file to assembly text at `output`, for the SwiftPM

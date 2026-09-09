@@ -116,10 +116,34 @@ func resolveDialect(_ invocation: Invocation) throws -> any DialectCompiler {
 
 func compilation(for invocation: Invocation) -> Compilation {
     do {
-        return Compilation(
-            dialect: try resolveDialect(invocation),
+        let dialect = try resolveDialect(invocation)
+        var compilation = Compilation(
+            dialect: dialect,
             options: CompileOptions(optimizationLevel: invocation.optimizationLevel)
         )
+        // Only the Swift dialect can import a Swift framework. Reading the
+        // source is where that is discovered, so reading is where it is
+        // resolved — and the dialect that lowers is the one the reader
+        // handed its findings to.
+        guard dialect is SwiftDialect else { return compilation }
+        compilation.readModule = { sourcePath, base in
+            let directory = (sourcePath as NSString).deletingLastPathComponent
+            let loader = SwiftImportLoader(programDirectory: directory.isEmpty ? "." : directory)
+            let result = try loader.load(path: sourcePath)
+            let module = try BIRBuilder(externalClasses: result.externalClasses)
+                .build(result.lines, moduleName: Compilation.moduleName(for: sourcePath))
+            var resolved = Compilation(
+                dialect: SwiftDialect(imports: result.imports),
+                options: base.options, toolchain: base.toolchain
+            )
+            resolved.extraObjects = result.objects
+            for note in result.imports.values.flatMap(\.skipped)
+            where ProcessInfo.processInfo.environment["BASICC_NOTES"] != nil {
+                FileHandle.standardError.write(Data("basicc: note: skipped \(note.member) — \(note.reason)\n".utf8))
+            }
+            return (module, resolved)
+        }
+        return compilation
     } catch {
         fail("\(error)", code: 2)
     }

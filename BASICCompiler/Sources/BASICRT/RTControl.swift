@@ -1,3 +1,6 @@
+#if canImport(BASICRTSwift)
+import BASICRTSwift
+#endif
 import Foundation
 
 // BASICRT control: program start and finish, runtime errors, the GOSUB
@@ -14,6 +17,20 @@ public func basic_rt_start() {
         setvbuf(stdout, nil, _IOFBF, 1 << 16)
     }
     RTSignals.install()
+    // The two hooks BASICRTSwift needs to convert strings at a framework
+    // boundary. They live here because only BASICRT knows what an RTString
+    // is, and BASICRTSwift must not depend on it.
+    //
+    // Conditional because the runtime can also be compiled straight from
+    // these sources, as one anonymous module with no BASICRTSwift in sight.
+    // That path is Rev 1's only, and a Rev 1 program has no Swift objects to
+    // bridge for — the Swift dialect refuses to build without the archive.
+    #if canImport(BASICRTSwift)
+    BASICRTSwiftBridge.install(
+        readString: { rtString($0).rawString },
+        makeString: { rtOwned($0) }
+    )
+    #endif
 }
 
 @_cdecl("basic_rt_finish")

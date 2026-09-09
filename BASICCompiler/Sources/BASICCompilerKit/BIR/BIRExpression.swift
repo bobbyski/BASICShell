@@ -49,6 +49,9 @@ public indirect enum BIRExpression: Sendable {
     case field(BIRExpression, index: Int, type: BIRType)
     /// A default instance of a `TYPE` or `CLASS` (before any `NEW` runs).
     case construct(String)
+    /// `NEW X(args)` on an imported class, whose initializer takes the
+    /// arguments itself — there is no default instance to construct first.
+    case constructWith(String, [BIRExpression])
     /// `USING$(format, values…)`: PRINT USING's rendering as a string.
     case usingString(format: BIRExpression, values: [BIRExpression])
     /// A `File.*` service call: `method` is the normalized member name.
@@ -130,7 +133,7 @@ public indirect enum BIRExpression: Sendable {
             return .string
         case .field(_, _, let type):
             return type
-        case .construct(let name):
+        case .construct(let name), .constructWith(let name, _):
             return .composite(name)
         case .usingString:
             return .string
@@ -170,7 +173,7 @@ public indirect enum BIRExpression: Sendable {
     /// the interpreter renders a whole PRINT before printing it.
     public var mayRunCode: Bool {
         switch self {
-        case .call, .callClosure, .callMethod, .hostCall, .systemNew, .systemCall, .asyncLaunch, .fileService, .construct:
+        case .call, .callClosure, .callMethod, .hostCall, .systemNew, .systemCall, .asyncLaunch, .fileService, .construct, .constructWith:
             return true
         case .number, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
             return false

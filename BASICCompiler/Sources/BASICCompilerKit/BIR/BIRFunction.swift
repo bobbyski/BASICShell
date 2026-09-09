@@ -286,6 +286,10 @@ public struct BIRFunction: Sendable {
     public var isEventHandler = false
     /// `ASYNC FUNCTION`: called through a task trampoline.
     public var isAsync = false
+    /// A member of an imported Swift class: declared so calls type-check and
+    /// dispatch as any method's do, but with no body here — the object model
+    /// supplies the definition, a thunk onto the framework's symbol.
+    public var isExternal = false
     /// For `main` when the program uses `ON ERROR`: the block that begins
     /// statement `id + 1`, i.e. where `RESUME NEXT` after statement `id` goes.
     public var statementResumeBlocks: [BIRBlockID] = []
@@ -417,14 +421,19 @@ public struct BIRCompositeType: Sendable {
     public let isClass: Bool
     /// The base class's type index, when there is one.
     public let base: Int?
+    /// The Swift module this class was imported from, or nil for one the
+    /// program declares. An imported class has no bodies of its own: its
+    /// members are the framework's, reached by symbol.
+    public var externalModule: String?
 
-    public init(name: String, displayName: String, index: Int, fields: [BIRField], isClass: Bool = false, base: Int? = nil) {
+    public init(name: String, displayName: String, index: Int, fields: [BIRField], isClass: Bool = false, base: Int? = nil, externalModule: String? = nil) {
         self.name = name
         self.displayName = displayName
         self.index = index
         self.fields = fields
         self.isClass = isClass
         self.base = base
+        self.externalModule = externalModule
     }
 }
 
