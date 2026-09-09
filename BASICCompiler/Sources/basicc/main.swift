@@ -24,6 +24,8 @@ func printUsage() {
       basicc swift-class <file.bas> -o <dir>
                                           compile the program's classes into a
                                           Swift-callable object plus interface
+      basicc import-report <file.bas>     what each IMPORTed Swift framework
+                                          gave the program, and what it did not
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -207,6 +209,25 @@ let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
 case "--version", "-v":
     print("basicc \(version)")
+case "import-report":
+    guard let source = invocation.source else { fail("a source file is required", code: 2) }
+    do {
+        let directory = (source as NSString).deletingLastPathComponent
+        let result = try SwiftImportLoader(programDirectory: directory.isEmpty ? "." : directory).load(path: source)
+        if result.imports.isEmpty {
+            print("\(source) imports no Swift framework")
+        }
+        for module in result.imports.keys.sorted() {
+            print(SwiftInterfaceUnit(api: result.imports[module]!).report())
+        }
+    } catch let error as CompileError {
+        for diagnostic in error.diagnostics {
+            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        }
+        exit(1)
+    } catch {
+        fail("\(error)")
+    }
 case "swift-class":
     guard let source = invocation.source else { fail("a source file is required", code: 2) }
     do {

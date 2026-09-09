@@ -107,6 +107,37 @@ public struct SwiftInterfaceUnit {
         api.classes.map { $0.name.uppercased() }
     }
 
+    /// What was imported and what was not, per framework (R4.8).
+    ///
+    /// The tripwire against silent rot: a binding layer that loses half a
+    /// framework looks exactly like one that never had it, unless something
+    /// counts. Printed by `basicc import-report`.
+    public func report() -> String {
+        var lines = ["\(api.module): \(api.classes.count) class(es)"]
+        for klass in ordered() {
+            var parts: [String] = []
+            if let base = klass.superclassPrecise.flatMap({ self.api.class(precise: $0) }) { parts.append("inherits \(base.name)") }
+            parts.append("\(klass.properties.count) propert\(klass.properties.count == 1 ? "y" : "ies")")
+            parts.append("\(klass.methods.count) method(s)")
+            if let initializer = chosenInitializer(of: klass) {
+                parts.append("NEW(\(initializer.parameters.map(\.name).joined(separator: ", ")))")
+            } else {
+                parts.append("no NEW")
+            }
+            lines.append("  \(klass.name) — " + parts.joined(separator: ", "))
+        }
+        let skips = api.skipped + skippedInitializers
+        if skips.isEmpty {
+            lines.append("  nothing skipped")
+        } else {
+            lines.append("  skipped \(skips.count):")
+            for skip in skips.sorted(by: { $0.member < $1.member }) {
+                lines.append("    \(skip.member) — \(skip.reason)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func basicType(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
         // A Swift `Int` is a BASIC number too: the interpreter keeps every

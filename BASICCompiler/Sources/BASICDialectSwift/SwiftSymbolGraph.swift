@@ -273,7 +273,13 @@ public struct SwiftAPI: Sendable {
             if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
             } else {
-                type = .unsupported(afterColon.map(\.spelling).joined().trimmingCharacters(in: .whitespaces))
+                // The whole declared type, for the report: dropping the name
+                // and then the ": " lost the leading bracket, so `[Shape]`
+                // was reported as `Shape]`.
+                let declared = fragments.drop { $0.kind == "identifier" }
+                    .map(\.spelling).joined()
+                    .drop { $0 == ":" || $0 == " " }
+                type = .unsupported(String(declared))
             }
             let declared = parameter["name"] as? String
             let internalName = parameter["internalName"] as? String ?? declared ?? "value"

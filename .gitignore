@@ -29,3 +29,7 @@ BASICCompiler/Examples/SwiftInterop/Build/
 # contend on one SwiftPM lock (only one SwiftPM may hold a build directory).
 .build-claude/
 */.build-claude/
+
+# Rev 2 import demo build products
+BASICCompiler/Examples/SwiftImport/Program/Build/
+BASICCompiler/Examples/SwiftImport/*/.build/
