@@ -23,10 +23,20 @@ public struct RuntimeLibrary: Sendable {
     /// frameworks the runtime depends on). Empty for the traditional runtime.
     public let linkArguments: [String]
 
+    /// Why this runtime cannot be compiled from its sources on the fly, or
+    /// nil when it can. The source fallback compiles everything as one
+    /// anonymous module; a runtime whose symbols must carry a particular
+    /// module name — the Swift dialect's `BASICRTSwift.BASICObject`, which
+    /// every compiled class names in its metadata — can only come from the
+    /// archive, and a program that would otherwise fail at link with
+    /// "undefined symbol" deserves to be told that up front.
+    public let requiresArchiveBecause: String?
+
     /// Creates a runtime library description.
-    public init(name: String, linkArguments: [String] = []) {
+    public init(name: String, linkArguments: [String] = [], requiresArchiveBecause: String? = nil) {
         self.name = name
         self.linkArguments = linkArguments
+        self.requiresArchiveBecause = requiresArchiveBecause
     }
 
     /// The directory holding this runtime's Swift sources, or nil when none

@@ -56,7 +56,7 @@ import Foundation
 ///
 /// The subclass's own field-offset vector begins exactly where the inherited
 /// metadata ends, which is why the superclass's size is the offset.
-public struct SwiftClassMetadata {
+public struct SwiftClassMetadata: Sendable {
     /// The Swift class a BASIC class inherits — everything the emitter needs
     /// to name and lay out against it.
     ///
@@ -136,14 +136,20 @@ public struct SwiftClassMetadata {
     public struct StoredProperty: Sendable {
         /// The field's name, as BASIC wrote it.
         public let name: String
-        /// Its size in bytes. Every BASIC scalar is one word: a number is a
-        /// `Double`, a string or object is a reference.
+        /// Its size in bytes: 8 for a number (`Double`) or a reference, 1
+        /// for a boolean.
         public let size: Int
+        /// Its alignment. Swift lays stored properties out at natural
+        /// alignment — measured: `{Double, Bool}` is 25 bytes, the `Bool` at
+        /// 24 — so a `Bool` after a `Double` takes one byte, and a `Double`
+        /// after a `Bool` starts on the next multiple of eight.
+        public let alignment: Int
 
         /// Creates a stored property.
-        public init(name: String, size: Int = 8) {
+        public init(name: String, size: Int = 8, alignment: Int? = nil) {
             self.name = name
             self.size = size
+            self.alignment = alignment ?? size
         }
     }
 
@@ -203,6 +209,7 @@ public struct SwiftClassMetadata {
     public var ownFieldOffsets: [Int] {
         var offset = superclass.instanceSize
         return storedProperties.map { property in
+            offset = (offset + property.alignment - 1) / property.alignment * property.alignment
             defer { offset += property.size }
             return offset
         }
@@ -245,9 +252,13 @@ public struct SwiftClassMetadata {
         return inherited + ownMembers
     }
 
-    /// This instance's size: the superclass's, plus what this class adds.
+    /// This instance's size: where the last own field ends — exact, not
+    /// rounded, which is how `swiftc` reports it (`{Double, Bool}` is 25).
     public var instanceSize: Int {
-        superclass.instanceSize + storedProperties.reduce(0) { $0 + $1.size }
+        guard let last = storedProperties.last, let offset = ownFieldOffsets.last else {
+            return superclass.instanceSize
+        }
+        return offset + last.size
     }
 
     /// Metadata words this class adds past the inherited part.
@@ -267,6 +278,19 @@ public struct SwiftClassMetadata {
     /// generator's business; this emits the structures that make them
     /// reachable as a Swift class, and names the symbols they must define.
     public func render() throws -> String {
+        var shared = Set<String>()
+        return try render(shared: &shared, emitUsed: true)
+    }
+
+    /// Renders with module-level singletons deduplicated across classes.
+    ///
+    /// The module context, a superclass's symbolic reference and the GOT
+    /// slot for an overridden method are one per *module*, not one per
+    /// class; two classes over the same base would otherwise define them
+    /// twice, which LLVM rejects. `shared` remembers what has been emitted.
+    /// `@llvm.used` is likewise one per module — pass `emitUsed: false` and
+    /// collect ``usedSymbols`` yourself when emitting several classes.
+    public func render(shared: inout Set<String>, emitUsed: Bool) throws -> String {
         let mangled = try SwiftMangling.mangleClass(module: module, name: name)
         let superMangled = try superclass.mangled
         let slots = try slots()
@@ -276,13 +300,13 @@ public struct SwiftClassMetadata {
         var out = ""
         out += "; \(module).\(name) — a BASIC CLASS, emitted as a Swift class.\n"
         out += "; superclass \(superclass.module).\(superclass.name); \(overrides.count) override(s).\n"
-        out += names(mangled: mangled, superMangled: superMangled, objcName: objcName)
+        out += names(mangled: mangled, superMangled: superMangled, objcName: objcName, shared: &shared)
         out += objcRodata(objcName: objcName)
         out += "@\"\(mangled)Mm\" = global %objc_class { ptr @\"OBJC_METACLASS_$__TtCs12_SwiftObject\", "
         out += "ptr @\"\(superMangled)Mm\", ptr @_objc_empty_cache, ptr null, "
         out += "i64 ptrtoint (ptr @\"_METACLASS_DATA_\(objcName)\" to i64) }, align 8\n"
         out += fieldDescriptor(mangled: mangled, superMangled: superMangled)
-        out += nominalTypeDescriptor(mangled: mangled, superMangled: superMangled)
+        out += nominalTypeDescriptor(mangled: mangled, superMangled: superMangled, shared: &shared)
         out += metadata(
             mangled: mangled,
             superMangled: superMangled,
@@ -291,9 +315,24 @@ public struct SwiftClassMetadata {
             classSize: classSize
         )
         out += "@\"\(mangled)N\" = alias %swift.type, getelementptr inbounds (\(metadataType(slots: slots)), ptr @\"\(mangled)Mf\", i32 0, i32 3)\n"
-        out += typeRecord(mangled: mangled)
+        out += typeRecord(mangled: mangled, emitUsed: emitUsed)
         out += metadataAccessor(mangled: mangled)
         return out
+    }
+
+    /// The symbols `@llvm.used` must keep alive for this class.
+    public var usedSymbols: [String] {
+        get throws {
+            let mangled = try SwiftMangling.mangleClass(module: module, name: name)
+            return ["\(mangled)Mn", "\(mangled)Ma", "\(mangled)MF", "\(mangled)Hn", "objc_classes_\(mangled)N", "\(mangled)Mf"]
+        }
+    }
+
+    /// One `@llvm.used` for a module's worth of classes.
+    public static func usedDirective(_ symbols: [String]) -> String {
+        guard !symbols.isEmpty else { return "" }
+        let list = symbols.map { "ptr @\"\($0)\"" }.joined(separator: ", ")
+        return "@llvm.used = appending global [\(symbols.count) x ptr] [\(list)], section \"llvm.metadata\"\n"
     }
 
     /// A relative pointer: LLVM has no such type, so every one is written as
@@ -304,24 +343,32 @@ public struct SwiftClassMetadata {
 
     /// Name strings, the module context, and the symbolic mangled names the
     /// runtime reads type references out of.
-    func names(mangled: String, superMangled: String, objcName: String) -> String {
+    func names(mangled: String, superMangled: String, objcName: String, shared: inout Set<String>) -> String {
         let moduleContext = "@\"$s\(module.utf8.count)\(module)MXM\""
         var out = ""
-        out += "@\".str.module.\(module)\" = private constant [\(module.utf8.count + 1) x i8] c\"\(module)\\00\"\n"
         out += "@\".str.class.\(name)\" = private constant [\(name.utf8.count + 1) x i8] c\"\(name)\\00\"\n"
         out += "@\".str.objc.\(name)\" = private unnamed_addr constant [\(objcName.utf8.count + 1) x i8] c\"\(objcName)\\00\", section \"__TEXT,__objc_classname,cstring_literals\"\n"
-        out += "\(moduleContext) = linkonce_odr hidden constant <{ i32, i32, i32 }> <{ i32 0, i32 0, "
-        out += Self.relative(to: "@\".str.module.\(module)\"", fromField: "ptr getelementptr inbounds (<{ i32, i32, i32 }>, ptr \(moduleContext), i32 0, i32 2)")
-        out += " }>, section \"__TEXT,__constg_swiftt\", align 4\n"
+        if shared.insert(moduleContext).inserted {
+            out += "@\".str.module.\(module)\" = private constant [\(module.utf8.count + 1) x i8] c\"\(module)\\00\"\n"
+            out += "\(moduleContext) = linkonce_odr hidden constant <{ i32, i32, i32 }> <{ i32 0, i32 0, "
+            out += Self.relative(to: "@\".str.module.\(module)\"", fromField: "ptr getelementptr inbounds (<{ i32, i32, i32 }>, ptr \(moduleContext), i32 0, i32 2)")
+            out += " }>, section \"__TEXT,__constg_swiftt\", align 4\n"
+        }
         // Kind 2: an indirect reference through the GOT to the superclass's
         // descriptor — the form used when the superclass is another module's.
-        out += "@\"got.\(superMangled)Mn\" = private unnamed_addr constant ptr @\"\(superMangled)Mn\"\n"
-        out += "@\"symbolic.\(superMangled)\" = linkonce_odr hidden constant <{ i8, i32, i8 }> <{ i8 2, "
-        out += Self.relative(to: "@\"got.\(superMangled)Mn\"", fromField: "ptr getelementptr inbounds (<{ i8, i32, i8 }>, ptr @\"symbolic.\(superMangled)\", i32 0, i32 1)")
-        out += ", i8 0 }>, align 2\n"
-        // Kind 1: a direct reference to our own descriptor.
-        out += "@\"symbolic.\(mangled)\" = linkonce_odr hidden constant <{ i8, i32, i8 }> <{ i8 1, "
-        out += Self.relative(to: "@\"\(mangled)Mn\"", fromField: "ptr getelementptr inbounds (<{ i8, i32, i8 }>, ptr @\"symbolic.\(mangled)\", i32 0, i32 1)")
+        // (Also correct for a superclass in this module: the GOT slot simply
+        // resolves locally.)
+        if shared.insert("symbolic.\(superMangled)").inserted {
+            out += "@\"got.\(superMangled)Mn\" = private unnamed_addr constant ptr @\"\(superMangled)Mn\"\n"
+            out += "@\"symbolic.\(superMangled)\" = linkonce_odr hidden constant <{ i8, i32, i8 }> <{ i8 2, "
+            out += Self.relative(to: "@\"got.\(superMangled)Mn\"", fromField: "ptr getelementptr inbounds (<{ i8, i32, i8 }>, ptr @\"symbolic.\(superMangled)\", i32 0, i32 1)")
+            out += ", i8 0 }>, align 2\n"
+        }
+        // Kind 1: a direct reference to our own descriptor. Named apart from
+        // the kind-2 reference a *subclass* emits for this same class — two
+        // globals, two contents, and LLVM would rightly refuse one name.
+        out += "@\"symbolic.own.\(mangled)\" = linkonce_odr hidden constant <{ i8, i32, i8 }> <{ i8 1, "
+        out += Self.relative(to: "@\"\(mangled)Mn\"", fromField: "ptr getelementptr inbounds (<{ i8, i32, i8 }>, ptr @\"symbolic.own.\(mangled)\", i32 0, i32 1)")
         out += ", i8 0 }>, align 2\n"
         return out
     }
@@ -342,7 +389,7 @@ public struct SwiftClassMetadata {
     func fieldDescriptor(mangled: String, superMangled: String) -> String {
         let type = "{ i32, i32, i16, i16, i32 }"
         var out = "@\"\(mangled)MF\" = internal constant \(type) { "
-        out += Self.relative(to: "@\"symbolic.\(mangled)\"", fromField: "ptr @\"\(mangled)MF\"") + ", "
+        out += Self.relative(to: "@\"symbolic.own.\(mangled)\"", fromField: "ptr @\"\(mangled)MF\"") + ", "
         out += Self.relative(to: "@\"symbolic.\(superMangled)\"", fromField: "ptr getelementptr inbounds (\(type), ptr @\"\(mangled)MF\", i32 0, i32 1)")
         out += ", i16 1, i16 12, i32 0 }, section \"__TEXT,__swift5_fieldmd, regular\", no_sanitize_address, align 4\n"
         return out
@@ -360,7 +407,7 @@ public struct SwiftClassMetadata {
     /// the instance bit set. Accessors are 18/19/20 and initializers 1, which
     /// is why the field accessors a Swift `public var` would generate are not
     /// emitted here — BASIC fields are reached through methods for now.
-    func nominalTypeDescriptor(mangled: String, superMangled: String) -> String {
+    func nominalTypeDescriptor(mangled: String, superMangled: String, shared: inout Set<String>) -> String {
         let moduleContext = "@\"$s\(module.utf8.count)\(module)MXM\""
         // Eleven fixed words, then the optional vtable pair, then the
         // override count and its entries.
@@ -411,7 +458,7 @@ public struct SwiftClassMetadata {
         }
 
         var out = ""
-        for override in overrides {
+        for override in overrides where shared.insert("got.\(override.baseMethodDescriptor)").inserted {
             out += "@\"got.\(override.baseMethodDescriptor)\" = private unnamed_addr constant ptr @\"\(override.baseMethodDescriptor)\"\n"
         }
         out += "@\"\(mangled)Mn\" = constant \(type) <{ \(values.joined(separator: ", ")) }>, section \"__TEXT,__constg_swiftt\", align 4\n"
@@ -427,13 +474,14 @@ public struct SwiftClassMetadata {
 
     /// The record that puts this type in `__swift5_types`, so the runtime can
     /// find it by name, and the ObjC class list entry.
-    func typeRecord(mangled: String) -> String {
+    func typeRecord(mangled: String, emitUsed: Bool) -> String {
         var out = "@\"\(mangled)Hn\" = private constant %swift.type_metadata_record { "
         out += Self.relative(to: "@\"\(mangled)Mn\"", fromField: "ptr @\"\(mangled)Hn\"")
         out += " }, section \"__TEXT, __swift5_types, regular\", no_sanitize_address, align 4\n"
         out += "@\"objc_classes_\(mangled)N\" = internal global ptr @\"\(mangled)N\", section \"__DATA,__objc_classlist,regular,no_dead_strip\", no_sanitize_address, align 8\n"
-        out += "@llvm.used = appending global [5 x ptr] [ptr @\"\(mangled)Mn\", ptr @\"\(mangled)Ma\", ptr @\"\(mangled)MF\", ptr @\"\(mangled)Hn\", ptr @\"objc_classes_\(mangled)N\"], section \"llvm.metadata\"\n"
-        out += "@llvm.compiler.used = appending global [1 x ptr] [ptr @\"\(mangled)Mf\"], section \"llvm.metadata\"\n"
+        if emitUsed {
+            out += Self.usedDirective((try? usedSymbols) ?? [])
+        }
         return out
     }
 

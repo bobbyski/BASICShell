@@ -91,10 +91,15 @@ public struct SwiftInterfaceEmitter {
             // Declared `final` and in declaration order, so Swift's model of
             // the instance layout is the one basicc emitted.
             for field in composite.fields {
-                guard let type = swiftType(field.type) else {
+                // Only what Swift can read straight out of the instance: a
+                // number is a `Double` and a boolean a `Bool`, in place. A
+                // string or object field holds a runtime reference until R2
+                // decides what those are here, and declaring it as
+                // `Swift.String` would have Swift read a pointer as a string.
+                guard field.type == .number || field.type == .boolean, let type = swiftType(field.type) else {
                     skipped.append(.init(
                         owner: composite.displayName, member: field.displayName,
-                        reason: "\(field.type.name) fields have no Swift spelling yet"
+                        reason: "\(field.type.name) fields are not Swift-readable yet (R2)"
                     ))
                     continue
                 }

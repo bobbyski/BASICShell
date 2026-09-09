@@ -66,14 +66,23 @@ public struct SwiftDialect: DialectCompiler {
         // silently, and the two dialects are meant to compile the same
         // language — the divergence is the object model, and it is added
         // here rather than forked in.
-        let base = try TraditionalDialect().lower(module, options: options)
+        let objects = SwiftObjectModel(module: module)
+        for note in objects.notes where ProcessInfo.processInfo.environment["BASICC_NOTES"] != nil {
+            FileHandle.standardError.write(Data("basicc: note: \(note)\n".utf8))
+        }
+        let base = try TraditionalDialect().lower(module, options: options, objectModel: objects)
         return LoweredModule(name: base.name, llvmIR: base.llvmIR)
     }
 
     public func runtimeLibrary(for target: TargetTriple) -> RuntimeLibrary {
-        // Rev 2 adds its own runtime pieces (the root class every BASIC class
-        // descends from, boxes, metadata helpers) on top of the same core.
-        RuntimeLibrary(name: "BASICRT")
+        // The same archive as Rev 1 — BASICRTSwift rides inside it — but only
+        // the archive: every class's metadata names
+        // `BASICRTSwift.BASICObject` by its mangled symbol, and the
+        // compile-from-sources fallback cannot mint that name.
+        RuntimeLibrary(
+            name: "BASICRT",
+            requiresArchiveBecause: "compiled classes descend from BASICRTSwift.BASICObject, whose symbol only the archive carries"
+        )
     }
 
     /// Whether a source path is a project whose dependencies SwiftPM manages —

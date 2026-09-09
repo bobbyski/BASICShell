@@ -70,7 +70,12 @@ let package = Package(
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         .target(name: "BASICRT"),
         .target(name: "BASICRTSwift"),
-        .target(name: "BASICRTHost", dependencies: ["BASICRT", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
+        // BASICRTSwift rides in the same archive: a program built with the
+        // Swift dialect descends every CLASS from BASICObject, and one
+        // archive that both dialects link is simpler than two that must be
+        // found — a Rev 1 program merely carries one small class it never
+        // names.
+        .target(name: "BASICRTHost", dependencies: ["BASICRT", "BASICRTSwift", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",

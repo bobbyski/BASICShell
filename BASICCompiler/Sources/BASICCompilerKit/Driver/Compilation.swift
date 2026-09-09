@@ -74,7 +74,19 @@ public struct Compilation: Sendable {
         let runtime = dialect.runtimeLibrary(for: options.target)
         // The full runtime archive when there is one; else the core compiled
         // from source with the host half stubbed.
-        let runtimeObject = try runtime.archive() ?? cachedRuntimeObject(runtime)
+        let runtimeObject: String
+        if let archive = try runtime.archive() {
+            runtimeObject = archive
+        } else if let reason = runtime.requiresArchiveBecause {
+            throw CompileError([Diagnostic(
+                severity: .error,
+                file: sourcePath,
+                message: "this dialect needs the runtime archive (libBASICRTHost.a) and none was found: \(reason). "
+                    + "Set BASICC_RT_LIB to one, or install basicc so it sits beside its lib/ (see INSTALLATION.md)"
+            )])
+        } else {
+            runtimeObject = try cachedRuntimeObject(runtime)
+        }
         try toolchain.link(objects: [objectPath, runtimeObject], output: output, extraArguments: runtime.linkArguments)
     }
 

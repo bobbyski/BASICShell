@@ -23,7 +23,13 @@ public struct TraditionalDialect: DialectCompiler {
     public init() {}
 
     public func lower(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
-        let lowering = LLVMLowering(module: module, options: options)
+        try lower(module, options: options, objectModel: RuntimeObjectModel())
+    }
+
+    /// The same lowering with objects placed by `objectModel` — how the Swift
+    /// dialect shares this code and changes only where objects live.
+    public func lower(_ module: BIRModule, options: CompileOptions, objectModel: any ObjectModel) throws -> LoweredModule {
+        let lowering = LLVMLowering(module: module, options: options, objectModel: objectModel)
         return LoweredModule(name: module.name, llvmIR: lowering.render())
     }
 
