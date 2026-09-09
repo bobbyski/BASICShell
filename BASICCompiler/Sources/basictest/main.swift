@@ -1,4 +1,5 @@
 import BASICCompilerKit
+import BASICDialectSwift
 import BASICDialectTraditional
 import Foundation
 
@@ -8,6 +9,13 @@ import Foundation
 // the `.out` file beside it, and — when an interpreter is given — with what
 // BASICShell prints for the same program. The interpreter is the oracle:
 // a disagreement is a compiler bug until proved otherwise.
+//
+// This is also the whole contract between the two dialects. They are allowed
+// to differ inside — different object model, different string representation,
+// different error channel — and are not allowed to differ here. Running the
+// same programs under `--dialect traditional` and `--dialect swift` and
+// getting the same bytes is what "same language, two substrates" means in
+// practice; anything else is a claim.
 //
 //   basictest [dir] [--interpreter path] [--dialect name] [--update]
 //
@@ -54,7 +62,7 @@ func run(_ executable: String, _ arguments: [String]) throws -> (stdout: String,
 }
 
 let options = Options(Array(CommandLine.arguments.dropFirst()))
-let registry = DialectRegistry([TraditionalDialect()])
+let registry = DialectRegistry([TraditionalDialect(), SwiftDialect()])
 let dialect: any DialectCompiler
 do {
     dialect = try registry.dialect(named: options.dialect)

@@ -84,7 +84,7 @@ let package = Package(
         .plugin(name: "BASICBuildPlugin", capability: .buildTool(), dependencies: ["basicc"]),
         .executableTarget(
             name: "basictest",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
         ),
         .testTarget(
             name: "BASICCompilerKitTests",
