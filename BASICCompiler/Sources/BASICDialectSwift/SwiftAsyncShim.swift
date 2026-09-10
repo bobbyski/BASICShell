@@ -42,6 +42,14 @@ public struct SwiftAsyncShim {
         public var isAsync: Bool = true
         /// Which parameters are `() -> Void` handlers.
         public var closureParameters: Set<Int> = []
+        /// Which parameters are class references, by the class's Swift name.
+        ///
+        /// A `@_cdecl` function cannot mention a Swift class that is not
+        /// `@objc`, so these cross as pointers and are bridged here — the
+        /// same way the receiver always has.
+        public var objectParameters: [Int: String] = [:]
+        /// The class this returns, when it returns one.
+        public var objectResult: String?
 
         public init(className: String, name: String, labels: [String?],
                     parameterTypes: [String], returns: String?, isThrowing: Bool) {
@@ -121,6 +129,13 @@ public struct SwiftAsyncShim {
                     parameters.append("_ fn\(index): @convention(c) (UnsafeMutableRawPointer?) -> Void")
                     parameters.append("_ ctx\(index): UnsafeMutableRawPointer?")
                     callArguments.append("{ fn\(index)(ctx\(index)) }")
+                } else if method.objectParameters[index] != nil {
+                    parameters.append("_ a\(index): UnsafeMutableRawPointer")
+                    // Bridged before the call, never inside the task's
+                    // closure: capturing a raw pointer there is a concurrency
+                    // error in Swift 6, and the object reference is what the
+                    // call wants anyway.
+                    callArguments.append("o\(index)")
                 } else {
                     parameters.append("_ a\(index): \(type)")
                     callArguments.append("a\(index)")
@@ -129,10 +144,21 @@ public struct SwiftAsyncShim {
             let labelled = zip(method.labels, callArguments.indices)
                 .map { label, index in label.map { "\($0): \(callArguments[index])" } ?? callArguments[index] }
                 .joined(separator: ", ")
-            let result = method.returns.map { " -> \($0)" } ?? ""
+            // A class result crosses as a pointer too, unretained: an
+            // imported object belongs to the framework, and BASIC holding one
+            // aliases it rather than owning a copy (ruling D15).
+            let result = method.objectResult != nil
+                ? " -> UnsafeMutableRawPointer"
+                : (method.returns.map { " -> \($0)" } ?? "")
+            func handOut(_ expression: String) -> String {
+                method.objectResult != nil ? "Unmanaged.passUnretained(\(expression)).toOpaque()" : expression
+            }
             lines.append("@_cdecl(\"\(method.symbol)\")")
             lines.append("public func \(method.symbol)(\(parameters.joined(separator: ", ")))\(result) {")
             lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+            for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
+                lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
+            }
             if method.isAsync {
                 let awaited = method.isThrowing
                     ? "try await object.\(method.name)(\(labelled))"
@@ -141,7 +167,7 @@ public struct SwiftAsyncShim {
                 if method.returns == nil {
                     lines.append("        _ = try basicAwait { \(awaited) }")
                 } else {
-                    lines.append("        return try basicAwait { \(awaited) }")
+                    lines.append("        return \(handOut("try basicAwait { \(awaited) }"))")
                 }
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
@@ -149,13 +175,25 @@ public struct SwiftAsyncShim {
             } else if method.isThrowing {
                 lines.append("    do {")
                 let called = "try object.\(method.name)(\(labelled))"
-                lines.append(method.returns == nil ? "        _ = \(called)" : "        return \(called)")
+                lines.append(method.returns == nil ? "        _ = \(called)" : "        return \(handOut(called))")
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
                 lines.append("    }")
             } else {
+                // **`MainActor.assumeIsolated`, and it is load-bearing.** A
+                // UI framework's API is usually `@MainActor`-isolated, and a
+                // `@_cdecl` entry point is nonisolated — so calling one from
+                // the other is refused outright. A compiled BASIC program
+                // runs its statements on the main thread, so the assertion is
+                // true; stating it is what lets a main-actor framework be
+                // imported at all. It traps rather than corrupts if a future
+                // caller is ever elsewhere.
                 let called = "object.\(method.name)(\(labelled))"
-                lines.append(method.returns == nil ? "    \(called)" : "    return \(called)")
+                if method.returns == nil {
+                    lines.append("    MainActor.assumeIsolated { \(called) }")
+                } else {
+                    lines.append("    return MainActor.assumeIsolated { \(handOut(called)) }")
+                }
             }
             lines.append("}")
             lines.append("")

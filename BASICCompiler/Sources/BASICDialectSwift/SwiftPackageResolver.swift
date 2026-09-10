@@ -85,11 +85,18 @@ public struct SwiftPackageResolver {
             "swift", "package", "--scratch-path", scratch,
             "dump-symbol-graph", "--minimum-access-level", "public",
         ], workingDirectory: path)
-        guard graph.exitCode == 0 else {
-            throw Failure(importName: importName, problem: "swift package dump-symbol-graph failed in \(path):\n\(Self.lastLines(graph.stderr))")
-        }
+        // The graph we asked for, not the exit code. `dump-symbol-graph`
+        // walks *every* target in the package — tests and sample executables
+        // included — and fails as a whole if any one of them fails. TUIKit's
+        // test module is enough to stop the import of TUIKit itself, which is
+        // not a fact about TUIKit's API. So: if the module's own graph was
+        // written, the import succeeds, and the command's complaint is only
+        // reported when the file is genuinely absent.
         guard let symbolGraph = Self.find(named: "\(importName).symbols.json", under: scratch) else {
-            throw Failure(importName: importName, problem: "no \(importName).symbols.json under \(scratch)")
+            let detail = graph.exitCode == 0
+                ? "no \(importName).symbols.json was written under \(scratch)"
+                : "swift package dump-symbol-graph failed in \(path):\n\(Self.lastLines(graph.stderr))"
+            throw Failure(importName: importName, problem: detail)
         }
         let objectDirectory = "\(scratch)/release/\(importName).build"
         let objects = ((try? FileManager.default.contentsOfDirectory(atPath: objectDirectory)) ?? [])
@@ -120,6 +127,14 @@ public struct SwiftPackageResolver {
                 )
                 shim.isAsync = method.isAsync
                 shim.closureParameters = handlers
+                for (index, parameter) in method.parameters.enumerated() {
+                    if case .object(let precise) = parameter.type, let klass = api.class(precise: precise) {
+                        shim.objectParameters[index] = klass.name
+                    }
+                }
+                if case .object(let precise) = method.returns, let klass = api.class(precise: precise) {
+                    shim.objectResult = klass.name
+                }
                 methods.append(shim)
             }
         }
