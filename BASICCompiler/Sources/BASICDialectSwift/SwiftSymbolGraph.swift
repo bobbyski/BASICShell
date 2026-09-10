@@ -30,6 +30,9 @@ public struct SwiftAPI: Sendable {
         /// A `() -> Void` parameter — an event handler (R4.5). BASIC hands
         /// one over as a closure; the shim wraps it in a Swift closure.
         case voidClosure
+        /// A protocol — `TerminalDriver`. BASIC sees an INTERFACE, and any
+        /// imported class the graph says conforms may be passed (R4.7).
+        case protocolType(precise: String)
         /// A struct of scalars — a rect, a point, a colour (R4.4). It crosses
         /// **flattened**: BASIC passes the leaf values and the shim builds the
         /// struct, so `Window.init(frame: Rect)` reads `NEW Window(x, y, w, h)`.
@@ -53,6 +56,14 @@ public struct SwiftAPI: Sendable {
         /// The internal name, which is what BASIC calls the parameter.
         public let name: String
         public let type: ValueType
+        /// Whether the declaration gives it a default.
+        ///
+        /// A parameter BASIC cannot spell does not have to block the member:
+        /// if Swift will supply a value, the shim simply does not pass one.
+        /// `HeadlessDriver.init(size:supportsGraphicsChrome:graphicsCapabilities:)`
+        /// is constructible from BASIC for exactly this reason — the optional
+        /// it could not name defaults to nil.
+        public var hasDefault: Bool = false
     }
 
     /// A method, initializer or free function.
@@ -92,7 +103,14 @@ public struct SwiftAPI: Sendable {
         }
 
         var isSupported: Bool {
-            returns.isSupported && parameters.allSatisfy(\.type.isSupported)
+            // A parameter that cannot cross blocks the member only when the
+            // caller must supply it.
+            returns.isSupported && parameters.allSatisfy { $0.type.isSupported || $0.hasDefault }
+        }
+
+        /// The parameters BASIC actually passes: the ones it can spell.
+        public var passed: [Parameter] {
+            parameters.filter { $0.type.isSupported }
         }
     }
 
@@ -135,6 +153,13 @@ public struct SwiftAPI: Sendable {
         public let superclassPrecise: String?
         public let isOpen: Bool
         public let isFinal: Bool
+        /// Whether it is an `actor`.
+        ///
+        /// An actor's methods are isolated to it, so reaching one from
+        /// outside means awaiting it — `MainActor.assumeIsolated` is no help
+        /// because the isolation is not the main actor's. TUIKit's drivers
+        /// are actors, which is how this surfaced.
+        public var isActor: Bool = false
         public var initializers: [Function]
         public var methods: [Function]
         public var properties: [Property]
@@ -150,6 +175,10 @@ public struct SwiftAPI: Sendable {
     public var classes: [Class]
     /// Structs, by precise identifier.
     public var structures: [String: Structure] = [:]
+    /// Protocol names, by precise identifier.
+    public var protocols: [String: String] = [:]
+    /// Which protocols each class conforms to, by precise identifier.
+    public var conformances: [String: [String]] = [:]
     public var functions: [Function]
     public var skipped: [Skip]
 
@@ -214,6 +243,12 @@ public struct SwiftAPI: Sendable {
                   let target = relationship["target"] as? String else { continue }
             if kind == "memberOf" { memberOf[source] = target }
             if kind == "inheritsFrom" { inherits[source] = target }
+            if kind == "conformsTo" { api.conformances[source, default: []].append(target) }
+        }
+
+        for symbol in symbols where kind(of: symbol) == "swift.protocol" {
+            guard let precise = precise(of: symbol), let name = name(of: symbol) else { continue }
+            api.protocols[precise] = name
         }
 
         // Structs first: a class member may name one, and flattening it
@@ -248,6 +283,7 @@ public struct SwiftAPI: Sendable {
                 // the fragments say `class`, the accessLevel says `open`.
                 isOpen: (symbol["accessLevel"] as? String) == "open",
                 isFinal: modifiers.contains("final"),
+                isActor: modifiers.contains("actor"),
                 initializers: [], methods: [], properties: []
             ))
         }
@@ -305,7 +341,7 @@ public struct SwiftAPI: Sendable {
                     continue
                 }
                 api.classes[index].properties.append(Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: !readOnly))
-            case "swift.class":
+            case "swift.class", "swift.struct", "swift.protocol":
                 continue
             case let other:
                 api.skipped.append(Skip(member: path, reason: "\(other) has no BASIC counterpart yet"))
@@ -315,6 +351,14 @@ public struct SwiftAPI: Sendable {
         // cannot be known while the structs are still being read — so the
         // members that name an unflattenable one are withdrawn here, with a
         // reason, rather than reaching the shim and failing to compile.
+        // A method on an actor is awaited, whatever its own declaration says.
+        for index in api.classes.indices where api.classes[index].isActor {
+            api.classes[index].methods = api.classes[index].methods.map {
+                var method = $0
+                method.isAsync = true
+                return method
+            }
+        }
         for index in api.classes.indices {
             let klass = api.classes[index]
             api.classes[index].methods = klass.methods.filter { method in
@@ -338,7 +382,21 @@ public struct SwiftAPI: Sendable {
     /// Why a member cannot cross, when a struct in its signature does not
     /// flatten to scalars.
     func unflattenable(in function: Function) -> String? {
-        for parameter in function.parameters {
+        for parameter in function.passed {
+            // A struct or protocol this graph does not describe belongs to
+            // another module, so nothing here can name it — and it must not
+            // be spelled as a placeholder, which lands in generated Swift as
+            // `Never` and fails to compile.
+            if case .protocolType(let precise) = parameter.type, protocols[precise] == nil {
+                return "\(parameter.name) is a protocol from another module (\(precise))"
+            }
+            if case .structure(let precise) = parameter.type, structures[precise] == nil {
+                return "\(parameter.name) is a struct from another module (\(precise))"
+            }
+        }
+        // Only what BASIC actually passes: a defaulted parameter it cannot
+        // spell is left to Swift, so its shape is none of our business.
+        for parameter in function.passed {
             guard case .structure(let precise) = parameter.type else { continue }
             if leaves(of: parameter.type) == nil {
                 let name = structures[precise]?.name ?? precise
@@ -384,9 +442,33 @@ public struct SwiftAPI: Sendable {
         }
     }
 
+    /// Which parameters the declaration gives defaults to.
+    ///
+    /// Read from the declaration text, because the per-parameter fragments do
+    /// not carry it. Split paren-aware: a default may itself be a call, and
+    /// `Size(width: 80, height: 24)` contains the comma this would otherwise
+    /// split on.
+    static func defaulted(in symbol: [String: Any]) -> [Bool] {
+        let declaration = fragments(of: symbol["declarationFragments"]).map(\.spelling).joined()
+        guard let open = declaration.firstIndex(of: "("), let close = declaration.lastIndex(of: ")"), open < close else { return [] }
+        let inside = declaration[declaration.index(after: open)..<close]
+        var parts: [String] = []
+        var depth = 0
+        var current = ""
+        for character in inside {
+            if character == "(" || character == "[" { depth += 1 }
+            if character == ")" || character == "]" { depth -= 1 }
+            if character == ",", depth == 0 { parts.append(current); current = ""; continue }
+            current.append(character)
+        }
+        if !current.trimmingCharacters(in: .whitespaces).isEmpty { parts.append(current) }
+        return parts.map { $0.contains(" = ") }
+    }
+
     static func parameters(of symbol: [String: Any]) -> [Parameter] {
         let signature = symbol["functionSignature"] as? [String: Any]
         let titleLabels = labels(of: symbol)
+        let defaults = defaulted(in: symbol)
         return ((signature?["parameters"] as? [[String: Any]]) ?? []).enumerated().map { position, parameter in
             let fragments = fragments(of: parameter["declarationFragments"])
             // Everything after the `: ` is the type, and it counts only when
@@ -402,7 +484,15 @@ public struct SwiftAPI: Sendable {
                 .map(\.spelling).joined()
                 .drop { $0 == ":" || $0 == " " }
             let type: ValueType
-            if String(written).replacingOccurrences(of: "@escaping ", with: "") == "() -> Void" {
+            // Attributes are noise for this question: `@escaping`,
+            // `@MainActor` and `@Sendable` describe *how* a handler is used,
+            // not what shape it is. Matching only the bare spelling skipped
+            // every handler a UI framework declares, which is most of them.
+            var shape = String(written)
+            for attribute in ["@escaping ", "@MainActor ", "@Sendable ", "@autoclosure "] {
+                shape = shape.replacingOccurrences(of: attribute, with: "")
+            }
+            if shape == "() -> Void" {
                 type = .voidClosure
             } else if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
@@ -418,7 +508,8 @@ public struct SwiftAPI: Sendable {
             let declared = parameter["name"] as? String
             let internalName = parameter["internalName"] as? String ?? declared ?? "value"
             let label = titleLabels.indices.contains(position) ? titleLabels[position] : declared
-            return Parameter(label: label, name: internalName, type: type)
+            return Parameter(label: label, name: internalName, type: type,
+                             hasDefault: defaults.indices.contains(position) ? defaults[position] : false)
         }
     }
     static func returnType(of symbol: [String: Any]) -> ValueType {
@@ -442,6 +533,7 @@ public struct SwiftAPI: Sendable {
         // `V` is a struct. Whether it can actually cross is decided later, by
         // whether it flattens to scalars — this only says what it is.
         case let precise? where precise.hasSuffix("V"): return .structure(precise: precise)
+        case let precise? where precise.hasSuffix("P"): return .protocolType(precise: precise)
         default: return .unsupported(spelling)
         }
     }

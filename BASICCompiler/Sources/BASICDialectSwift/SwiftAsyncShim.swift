@@ -50,6 +50,11 @@ public struct SwiftAsyncShim {
         public var objectParameters: [Int: String] = [:]
         /// The class this returns, when it returns one.
         public var objectResult: String?
+        /// Protocol parameters, by position: the protocol's Swift name. The
+        /// value arrives as an object pointer and is cast — BASIC's INTERFACE
+        /// and Swift's protocol mean the same thing here, and the graph
+        /// already says which classes conform.
+        public var protocolParameters: [Int: String] = [:]
         /// Struct parameters, by position: the Swift spelling of each leaf
         /// the struct flattens to, and an expression that rebuilds it from
         /// them. The expression is nested where the struct is —
@@ -144,6 +149,9 @@ public struct SwiftAsyncShim {
                         parameters.append("_ a\(index)_\(leaf): \(spelling)")
                     }
                     callArguments.append("s\(index)")
+                } else if method.protocolParameters[index] != nil {
+                    parameters.append("_ a\(index): UnsafeMutableRawPointer")
+                    callArguments.append("p\(index)")
                 } else if method.objectParameters[index] != nil {
                     parameters.append("_ a\(index): UnsafeMutableRawPointer")
                     // Bridged before the call, never inside the task's
@@ -173,6 +181,13 @@ public struct SwiftAsyncShim {
             lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
                 lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
+            }
+            for (index, name) in method.protocolParameters.sorted(by: { $0.key < $1.key }) {
+                // `as!` rather than `as?`: the only way to reach here is a
+                // BASIC variable of the matching INTERFACE type, which the
+                // unit only lets conforming classes satisfy. A failure would
+                // be a compiler bug, and trapping says so immediately.
+                lines.append("    let p\(index) = Unmanaged<AnyObject>.fromOpaque(a\(index)).takeUnretainedValue() as! \(name)")
             }
             // Rebuild each struct from the leaves BASIC passed.
             for (index, structure) in method.structParameters.sorted(by: { $0.key < $1.key }) {

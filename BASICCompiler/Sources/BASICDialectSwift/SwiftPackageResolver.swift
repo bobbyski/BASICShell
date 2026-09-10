@@ -115,19 +115,24 @@ public struct SwiftPackageResolver {
             // Awaited methods, and methods taking a handler: the two shapes
             // that cannot be reached by a plain call from emitted IR.
             for method in klass.methods {
-                let handlers = Set(method.parameters.indices.filter { method.parameters[$0].type == .voidClosure })
-                guard method.isAsync || !handlers.isEmpty else { continue }
-                guard method.returns.isSupported, method.parameters.allSatisfy(\.type.isSupported) else { continue }
+                let passed = method.passed
+                let handlers = Set(passed.indices.filter { passed[$0].type == .voidClosure })
+                guard method.isAsync || !handlers.isEmpty || passed.count != method.parameters.count
+                        || passed.contains(where: { if case .structure = $0.type { return true }
+                                                    if case .protocolType = $0.type { return true }
+                                                    return false })
+                else { continue }
+                guard method.returns.isSupported else { continue }
                 var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: method.name,
-                    labels: method.parameters.map(\.label),
-                    parameterTypes: method.parameters.map { Self.spelling($0.type, in: api) },
+                    labels: passed.map(\.label),
+                    parameterTypes: passed.map { Self.spelling($0.type, in: api) },
                     returns: method.returns == .void ? nil : Self.spelling(method.returns, in: api),
                     isThrowing: method.isThrowing
                 )
                 shim.isAsync = method.isAsync
                 shim.closureParameters = handlers
-                for (index, parameter) in method.parameters.enumerated() {
+                for (index, parameter) in passed.enumerated() {
                     if case .object(let precise) = parameter.type, let klass = api.class(precise: precise) {
                         shim.objectParameters[index] = klass.name
                     }
@@ -135,7 +140,10 @@ public struct SwiftPackageResolver {
                 if case .object(let precise) = method.returns, let klass = api.class(precise: precise) {
                     shim.objectResult = klass.name
                 }
-                for (index, parameter) in method.parameters.enumerated() {
+                for (index, parameter) in passed.enumerated() {
+                    if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
+                        shim.protocolParameters[index] = name
+                    }
                     guard case .structure = parameter.type else { continue }
                     var next = 0
                     guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
@@ -197,6 +205,7 @@ public struct SwiftPackageResolver {
         case .voidClosure: return "() -> Swift.Void"
         // Named by the shim, which rebuilds it from the scalars BASIC passed.
         case .structure(let precise): return api.structures[precise]?.name ?? "Swift.Never"
+        case .protocolType(let precise): return api.protocols[precise] ?? "Swift.Never"
         case .unsupported: return "Swift.Never"
         }
     }

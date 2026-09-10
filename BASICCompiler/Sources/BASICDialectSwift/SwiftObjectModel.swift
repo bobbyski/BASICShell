@@ -559,7 +559,7 @@ public struct SwiftObjectModel: ObjectModel {
         for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
             out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
             for initializer in entry.klass.initializers where seen.insert(initializer.allocatingSymbol).inserted {
-                let parameters = initializer.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
+                let parameters = initializer.passed.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where Self.needsShim(method) && seen.insert("shim." + method.symbol).inserted {
@@ -568,7 +568,7 @@ public struct SwiftObjectModel: ObjectModel {
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
                 // A struct crosses as its scalars, so it contributes several
                 // parameters rather than one.
-                let parameters = ["ptr"] + method.parameters.flatMap { parameter -> [String] in
+                let parameters = ["ptr"] + method.passed.flatMap { parameter -> [String] in
                     if case .structure = parameter.type {
                         return (entry.api.leaves(of: parameter.type) ?? []).map { Self.abiType($0) }
                     }
@@ -581,7 +581,7 @@ public struct SwiftObjectModel: ObjectModel {
                 // callee stores the thrown error through it and returns
                 // normally, so a caller that omits it hands the callee a
                 // register full of whatever was there.
-                let parameters = method.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
+                let parameters = method.passed.map { Self.abiType($0.type) } + ["ptr swiftself"]
                     + (method.isThrowing ? ["ptr swifterror"] : [])
                 out += "declare swiftcc \(Self.abiReturn(method.returns)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
@@ -601,9 +601,14 @@ public struct SwiftObjectModel: ObjectModel {
     /// than by a plain call: awaited methods (R3.3) and methods taking a
     /// handler (R4.5) are the two shapes emitted IR cannot call directly.
     static func needsShim(_ method: SwiftAPI.Function) -> Bool {
-        method.isAsync || method.parameters.contains {
-            if case .structure = $0.type { return true }
-            return $0.type == .voidClosure
+        // Anything emitted IR cannot call directly, or whose argument list
+        // differs from what Swift declared because a defaulted parameter is
+        // being left out.
+        method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
+            switch $0.type {
+            case .structure, .protocolType, .voidClosure: return true
+            default: return false
+            }
         }
     }
 
@@ -622,7 +627,7 @@ public struct SwiftObjectModel: ObjectModel {
         // Never reached: a struct parameter is expanded into its scalars
         // before anything asks for its ABI, because how many words it takes
         // is a property of the struct rather than of the case.
-        case .structure: return "ptr"
+        case .structure, .protocolType: return "ptr"
         case .object, .void, .unsupported: return "ptr"
         }
     }
@@ -636,7 +641,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
         // reader, so reaching here would be a bug rather than a shape.
-        case .object, .voidClosure, .structure, .unsupported: return "ptr"
+        case .object, .voidClosure, .structure, .protocolType, .unsupported: return "ptr"
         }
     }
 
@@ -677,6 +682,9 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a BASIC value to Swift's ABI form; returns the argument text.
         func toSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
+            // An object pointer, handed straight through; the shim casts
+            // it to the protocol.
+            case .protocolType: return "ptr \(value)"
             case .structure: return "double \(value)"
             case .double: return "double \(value)"
             case .bool: return "i1 \(value)"
@@ -701,7 +709,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .structure, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .unsupported: return value
             case .int:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -715,7 +723,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .structure, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .structure, .protocolType, .void, .unsupported: return "ptr"
             }
         }
 
@@ -724,16 +732,16 @@ public struct SwiftObjectModel: ObjectModel {
             counter = 0
             var body = ""
             var arguments: [String] = []
-            let parameters = initializer.parameters.enumerated().map { index, parameter -> String in
+            let parameters = initializer.passed.enumerated().map { index, parameter -> String in
                 "\(basicType(parameter.type)) %a\(index)"
             }
-            for (index, parameter) in initializer.parameters.enumerated() {
+            for (index, parameter) in initializer.passed.enumerated() {
                 arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
             }
             arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
             let result = temp()
             body += "  \(result) = call swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(arguments.joined(separator: ", ")))\n"
-            let symbol = initializer.parameters.isEmpty ? "\(name).new" : "\(name).new.\(initializer.parameters.count)"
+            let symbol = initializer.passed.isEmpty ? "\(name).new" : "\(name).new.\(initializer.passed.count)"
             out += "define ptr @\"\(symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret ptr \(result)\n}\n"
         }
 
@@ -796,7 +804,7 @@ public struct SwiftObjectModel: ObjectModel {
             var body = ""
             var arguments: [String] = []
             var parameters = ["ptr %me"]
-            for (index, parameter) in method.parameters.enumerated() {
+            for (index, parameter) in method.passed.enumerated() {
                 parameters.append("\(basicType(parameter.type)) %a\(index)")
             }
             for (index, parameter) in method.parameters.enumerated() {

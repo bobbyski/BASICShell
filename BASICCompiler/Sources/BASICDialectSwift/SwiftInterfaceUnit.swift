@@ -35,6 +35,15 @@ public struct SwiftInterfaceUnit {
         ]
         // BASIC's function types are named, so a `() -> Void` parameter needs
         // one declared before anything can mention it.
+        // Every protocol a signature actually names becomes an INTERFACE,
+        // and the classes the graph says conform declare IMPLEMENTS. Only the
+        // ones that are used: declaring all of a framework's protocols would
+        // fill the unit with names no program can reach.
+        for precise in Self.protocolsUsed(in: api).sorted() {
+            guard let name = api.protocols[precise] else { continue }
+            lines.append("INTERFACE \(name)")
+            lines.append("END INTERFACE")
+        }
         if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
             // `AS DOUBLE`, not VOID: a BASIC closure is an *expression* and
             // must yield something. Swift's `() -> Void` discards it, which
@@ -47,12 +56,16 @@ public struct SwiftInterfaceUnit {
             if let superclass = klass.superclassPrecise, let base = api.class(precise: superclass) {
                 lines.append("  INHERITS \(base.name)")
             }
+            for precise in (api.conformances[klass.precise] ?? []).sorted()
+            where Self.protocolsUsed(in: api).contains(precise) {
+                if let name = api.protocols[precise] { lines.append("  IMPLEMENTS \(name)") }
+            }
             // BASIC has one constructor per class, spelled NEW; Swift may
             // have several. The first in graph order is the one imported and
             // the rest are reported, rather than picking silently by some
             // rule a reader would have to guess at.
             if let initializer = chosenInitializer(of: klass) {
-                let parameters = Self.declared(initializer.parameters, in: api)
+                let parameters = Self.declared(initializer.passed, in: api)
                     .joined(separator: ", ")
                 lines.append("  FUNCTION New(\(parameters)) AS VOID")
                 lines.append("  END FUNCTION")
@@ -61,7 +74,7 @@ public struct SwiftInterfaceUnit {
                 lines.append("  PUBLIC \(property.name) AS \(Self.basicType(property.type, in: api))")
             }
             for method in klass.methods {
-                let parameters = Self.declared(method.parameters, in: api)
+                let parameters = Self.declared(method.passed, in: api)
                     .joined(separator: ", ")
                 if method.returns == .void {
                     lines.append("  FUNCTION \(method.name)(\(parameters)) AS VOID")
@@ -128,7 +141,7 @@ public struct SwiftInterfaceUnit {
             parts.append("\(klass.properties.count) propert\(klass.properties.count == 1 ? "y" : "ies")")
             parts.append("\(klass.methods.count) method(s)")
             if let initializer = chosenInitializer(of: klass) {
-                parts.append("NEW(\(Self.names(initializer.parameters, in: api).joined(separator: ", ")))")
+                parts.append("NEW(\(Self.names(initializer.passed, in: api).joined(separator: ", ")))")
             } else {
                 parts.append("no NEW")
             }
@@ -149,6 +162,19 @@ public struct SwiftInterfaceUnit {
     /// The name of the generated function type a `() -> Void` parameter
     /// takes. One per unit, because every such parameter is the same shape.
     public static let handlerType = "SwiftHandler"
+
+    /// The protocols any imported signature names.
+    static func protocolsUsed(in api: SwiftAPI) -> Set<String> {
+        var used = Set<String>()
+        for klass in api.classes {
+            for function in klass.methods + klass.initializers {
+                for parameter in function.parameters {
+                    if case .protocolType(let precise) = parameter.type { used.insert(precise) }
+                }
+            }
+        }
+        return used
+    }
 
     /// A parameter list as BASIC declares it.
     ///
@@ -209,6 +235,9 @@ public struct SwiftInterfaceUnit {
         // language's own function type.
         // Flattened at the call, so it never names a BASIC type of its own.
         case .structure: return "DOUBLE"
+        // An INTERFACE, declared by the unit; any conforming imported class
+        // may be passed where one is wanted.
+        case .protocolType(let precise): return api.protocols[precise] ?? "VARIANT"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
@@ -221,7 +250,7 @@ public struct SwiftInterfaceUnit {
         case .bool: return "FALSE"
         case .string: return "\"\""
         case .object(let precise): return "NEW \(api.class(precise: precise)?.name ?? "VARIANT")"
-        case .void, .voidClosure, .structure, .unsupported: return "0"
+        case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }
 }
