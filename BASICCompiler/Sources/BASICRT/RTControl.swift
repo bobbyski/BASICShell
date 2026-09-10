@@ -28,7 +28,8 @@ public func basic_rt_start() {
     #if canImport(BASICRTSwift)
     BASICRTSwiftBridge.install(
         readString: { rtString($0).rawString },
-        makeString: { rtOwned($0) }
+        makeString: { rtOwned($0) },
+        fail: { basic_rt_fail($0) }
     )
     #endif
 }

@@ -33,4 +33,11 @@ CLASS Sprite
     FUNCTION Perimeter() AS DOUBLE
         RETURN 2 * ME.X + 2 * ME.Y
     END FUNCTION
+
+    ' Strings cross too (R2.1). A BASIC string is exact bytes and a
+    ' Swift.String is not, so they convert where they meet rather than
+    ' pretending to be one another.
+    FUNCTION Describe(Prefix AS STRING) AS STRING
+        RETURN Prefix + " " + STR$(ME.X) + "x" + STR$(ME.Y)
+    END FUNCTION
 END CLASS

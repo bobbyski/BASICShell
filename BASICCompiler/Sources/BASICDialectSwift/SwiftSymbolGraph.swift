@@ -61,6 +61,14 @@ public struct SwiftAPI: Sendable {
         public let isInitializer: Bool
         /// Whether a subclass may override it (`open`).
         public let isOverridable: Bool
+        /// Whether it can throw.
+        ///
+        /// Load-bearing, not decorative: a `throws` function takes a hidden
+        /// `swifterror` register in Swift's ABI, so calling one as though it
+        /// were an ordinary function passes garbage where the callee will
+        /// store a thrown error. It read as an ordinary method before this,
+        /// which is a correctness bug and not merely a missing feature.
+        public var isThrowing: Bool = false
 
         /// The allocating initializer, the entry a caller uses: the graph
         /// records `…cfc`, and the allocating twin is `…cfC`.
@@ -185,7 +193,12 @@ public struct SwiftAPI: Sendable {
                     parameters: parameters(of: symbol),
                     returns: isInit ? .void : returnType(of: symbol),
                     isInitializer: isInit,
-                    isOverridable: (symbol["accessLevel"] as? String) == "open"
+                    isOverridable: (symbol["accessLevel"] as? String) == "open",
+                    // `throws` shows up as a keyword fragment; the return type
+                    // looks perfectly ordinary beside it, which is why a
+                    // throwing method read as a plain one before this.
+                    isThrowing: fragments(of: symbol["declarationFragments"])
+                        .contains { $0.kind == "keyword" && $0.spelling == "throws" }
                 )
                 if !function.isSupported {
                     let bad = function.parameters.compactMap { p -> String? in

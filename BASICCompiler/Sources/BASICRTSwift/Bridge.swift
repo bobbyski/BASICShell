@@ -23,13 +23,21 @@ public enum BASICRTSwiftBridge {
         fatalError("the BASIC string bridge was not installed: basic_rt_start did not run")
     }
 
-    /// Installs both hooks. Called by `basic_rt_start`.
+    /// Reports a runtime error the way the interpreter does, and does not
+    /// return — the runtime longjmps to whatever `ON ERROR` installed.
+    public nonisolated(unsafe) static var fail: (String) -> Never = { message in
+        fatalError("the BASIC error bridge was not installed: \(message)")
+    }
+
+    /// Installs the hooks. Called by `basic_rt_start`.
     public static func install(
         readString: @escaping (UnsafeMutableRawPointer?) -> String,
-        makeString: @escaping (String) -> UnsafeMutableRawPointer
+        makeString: @escaping (String) -> UnsafeMutableRawPointer,
+        fail: @escaping (String) -> Never
     ) {
         Self.readString = readString
         Self.makeString = makeString
+        Self.fail = fail
     }
 }
 
@@ -47,4 +55,23 @@ public func basicRTSwiftStringIn(_ pointer: UnsafeMutableRawPointer?) -> String 
 @_silgen_name("basic_rt_swift_string_out")
 public func basicRTSwiftStringOut(_ text: String) -> UnsafeMutableRawPointer {
     BASICRTSwiftBridge.makeString(text)
+}
+
+
+/// Turns a thrown Swift error into a BASIC error and does not return (R4.6).
+///
+/// The whole round trip is: an imported `throws` method is called with the
+/// `swifterror` register Swift's ABI requires; if it comes back non-null the
+/// emitted thunk hands the error here, and this raises it the way any runtime
+/// error is raised — so `ON ERROR` catches a Swift `throw` with no special
+/// case anywhere in the language.
+///
+/// `Error` is a single refcounted pointer in Swift's ABI, which is why this
+/// can be reached from emitted IR by name.
+@_silgen_name("basic_rt_swift_error_raise")
+public func basicRTSwiftErrorRaise(_ error: Error) -> Never {
+    // `localizedDescription` would say "The operation couldn't be completed"
+    // for a plain enum; interpolation gives the case name, which is what a
+    // BASIC programmer needs to see.
+    BASICRTSwiftBridge.fail("\(error)")
 }

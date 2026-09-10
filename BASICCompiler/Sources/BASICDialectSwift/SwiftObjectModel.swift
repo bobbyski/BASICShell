@@ -155,9 +155,15 @@ public struct SwiftObjectModel: ObjectModel {
         switch type {
         case .number: return "Swift.Double"
         case .boolean: return "Swift.Bool"
-        // A BASIC string is the runtime's object; at a Swift boundary it is
-        // an opaque pointer until R2.1 changes what it is at rest.
-        case .string: return "Swift.UnsafeMutableRawPointer"
+        // R2.1: a BASIC string crosses as a `Swift.String`, converted at the
+        // boundary. It is *not* `Swift.String` at rest, and that is a finding
+        // rather than an omission — a BASIC string is bytes (`CHR$(0)` and
+        // high bytes survive, which `strings-bytes.bas` pins), and
+        // `Swift.String` cannot hold an arbitrary byte sequence losslessly.
+        // Storing one at rest would either lose those programs or need a
+        // second string type in the language; converting on access keeps the
+        // oracle and still hands Swift a native string.
+        case .string: return "Swift.String"
         case .composite(let name):
             guard let composite = module.types.first(where: { $0.name == name }), composite.isClass else { return nil }
             return composite.displayName
@@ -415,13 +421,29 @@ public struct SwiftObjectModel: ObjectModel {
         return nil
     }
 
+    /// The `declare`s for the value bridge — strings in and out, and the
+    /// error raiser. Emitted once for the module: LLVM refuses a second
+    /// declaration of the same name, and both the class path and the import
+    /// path need these.
+    static let bridgeDeclarations = """
+    declare swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr)
+    declare swiftcc ptr @basic_rt_swift_string_out(i64, ptr)
+    declare swiftcc void @basic_rt_swift_error_raise(ptr)
+
+    """
+
     public var declarations: String {
-        guard hasSwiftObjects else { return "" }
+        // The bridge belongs to whichever path is present; when both are, it
+        // is emitted here and the import path leaves it alone.
+        guard hasSwiftObjects || !importedByName.isEmpty else { return "" }
+        guard hasSwiftObjects else { return Self.bridgeDeclarations }
         let root = SwiftObjectLowering.basicObject
         let rootMangled = (try? SwiftMangling.mangleClass(module: root.module, name: root.name)) ?? ""
         var out = SwiftClassMetadata.preamble
         out += "declare void @swift_retain(ptr)\n"
         out += "declare void @swift_release(ptr)\n"
+        // Values crossing to and from Swift (R2.1, R4.6).
+        out += Self.bridgeDeclarations
         out += "@\"\(rootMangled)N\" = external global %swift.type, align 8\n"
         out += "@\"\(rootMangled)Mm\" = external global %objc_class, align 8\n"
         out += "@\"\(rootMangled)Mn\" = external global %swift.type_descriptor, align 4\n"
@@ -454,9 +476,9 @@ public struct SwiftObjectModel: ObjectModel {
     /// `declare`s for every framework symbol this module calls.
     func importedDeclarations() -> String {
         guard !importedByName.isEmpty else { return "" }
+        // The bridge itself is declared by `declarations`, which runs for a
+        // module with imports whether or not it also has classes of its own.
         var out = "; ---- imported Swift frameworks ----\n"
-        out += "declare swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr)\n"
-        out += "declare swiftcc ptr @basic_rt_swift_string_out(i64, ptr)\n"
         var seen = Set<String>()
         for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
             out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
@@ -465,7 +487,12 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where seen.insert(method.symbol).inserted {
+                // A `throws` method takes a hidden `swifterror` pointer; the
+                // callee stores the thrown error through it and returns
+                // normally, so a caller that omits it hands the callee a
+                // register full of whatever was there.
                 let parameters = method.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
+                    + (method.isThrowing ? ["ptr swifterror"] : [])
                 out += "declare swiftcc \(Self.abiReturn(method.returns)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for property in entry.klass.properties {
@@ -657,12 +684,42 @@ public struct SwiftObjectModel: ObjectModel {
             }
             arguments.append("ptr swiftself %me")
             let returnType = Self.abiReturn(method.returns)
+            // R4.6 — a thrown Swift error becomes a BASIC error.
+            //
+            // Swift's throwing convention is branch-on-return, not unwinding:
+            // the callee writes the error through a `swifterror` slot and
+            // returns as usual, so the caller reads the slot and takes one of
+            // two paths. That is why this needs no landing pads and works the
+            // same on any target.
+            var errorSlot = ""
+            if method.isThrowing {
+                errorSlot = "%err"
+                body = "  %err = alloca swifterror ptr, align 8\n  store ptr null, ptr %err, align 8\n" + body
+                arguments.append("ptr swifterror %err")
+            }
+            func raiseIfThrown(_ body: inout String) {
+                guard method.isThrowing else { return }
+                let thrown = temp()
+                body += "  \(thrown) = load ptr, ptr \(errorSlot), align 8\n"
+                let failed = temp()
+                body += "  \(failed) = icmp ne ptr \(thrown), null\n"
+                let raise = "raise\(counter)", carry = "carry\(counter)"
+                body += "  br i1 \(failed), label %\(raise), label %\(carry)\n"
+                body += "\(raise):\n"
+                // Does not return: the runtime longjmps to whatever ON ERROR
+                // installed, exactly as it does for a runtime error of its own.
+                body += "  call swiftcc void @basic_rt_swift_error_raise(ptr \(thrown))\n"
+                body += "  unreachable\n"
+                body += "\(carry):\n"
+            }
             if method.returns == .void {
                 body += "  call swiftcc void @\"\(method.symbol)\"(\(arguments.joined(separator: ", ")))\n"
+                raiseIfThrown(&body)
                 out += "define void @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
             } else {
                 let raw = temp()
                 body += "  \(raw) = call swiftcc \(returnType) @\"\(method.symbol)\"(\(arguments.joined(separator: ", ")))\n"
+                raiseIfThrown(&body)
                 let value = fromSwift(raw, method.returns, into: &body)
                 out += "define \(basicType(method.returns)) @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(basicType(method.returns)) \(value)\n}\n"
             }
@@ -917,27 +974,75 @@ public struct SwiftObjectModel: ObjectModel {
         // caller (or subclass) reaches the body BASIC wrote. The receiver is
         // passed straight through — a Swift caller expects reference
         // semantics, and gets them.
+        //
+        // Values are converted where they cross (R2.1). A BASIC string is
+        // the runtime's exact-byte object and a Swift string is a
+        // `Swift.String`; neither can hold the other's full range, so the
+        // conversion is at the boundary and the illusion is built on access,
+        // exactly as the slice describes. The shapes come from the probe, so
+        // any signature swiftc can spell arrives here.
         for method in layout.visibleMethods {
             let function = "F.\(method.function.name)"
-            if method.function.returnType == .void {
-                out += """
-                define swiftcc void @"\(method.symbol)"(double %a, ptr swiftself %self) {
-                  call void @"\(function)"(ptr %self, double %a)
-                  ret void
-                }
+            var body = ""
+            var counter = 0
+            func temp() -> String { counter += 1; return "%s\(counter)" }
 
-                """
-            } else {
-                out += """
-                define swiftcc double @"\(method.symbol)"(ptr swiftself %self) {
-                  %r = call double @"\(function)"(ptr %self)
-                  ret double %r
+            // Parameters: Swift's ABI in, BASIC's out.
+            var parameters: [String] = []
+            var arguments: [String] = ["ptr %self"]
+            for (index, parameter) in method.function.parameters.dropFirst().enumerated() {
+                switch parameter.type {
+                case .string:
+                    // A `Swift.String` is two words at a call boundary.
+                    parameters.append("i64 %a\(index)w0, ptr %a\(index)w1")
+                    let converted = temp()
+                    body += "  \(converted) = call swiftcc ptr @basic_rt_swift_string_out(i64 %a\(index)w0, ptr %a\(index)w1)\n"
+                    arguments.append("ptr \(converted)")
+                case .boolean:
+                    parameters.append("i1 %a\(index)")
+                    arguments.append("i1 %a\(index)")
+                case .composite:
+                    parameters.append("ptr %a\(index)")
+                    arguments.append("ptr %a\(index)")
+                default:
+                    parameters.append("double %a\(index)")
+                    arguments.append("double %a\(index)")
                 }
-
-                """
             }
+            parameters.append("ptr swiftself %self")
+
+            let call = "call \(Self.birABI(method.function.returnType)) @\"\(function)\"(\(arguments.joined(separator: ", ")))"
+            switch method.function.returnType {
+            case .void:
+                body += "  \(call)\n"
+                out += "define swiftcc void @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
+            case .string:
+                let raw = temp()
+                body += "  \(raw) = \(call)\n"
+                let text = temp()
+                body += "  \(text) = call swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr \(raw))\n"
+                // The BASIC result was owned by this frame; the Swift string
+                // carries its own storage now.
+                body += "  call void @basic_rt_string_release(ptr \(raw))\n"
+                out += "define swiftcc { i64, ptr } @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret { i64, ptr } \(text)\n}\n"
+            default:
+                let raw = temp()
+                body += "  \(raw) = \(call)\n"
+                out += "define swiftcc \(Self.birABI(method.function.returnType)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(Self.birABI(method.function.returnType)) \(raw)\n}\n"
+            }
+            out += "\n"
         }
         return out
+    }
+
+    /// A BIR type's LLVM form in Rev 1's own calling convention.
+    static func birABI(_ type: BIRType) -> String {
+        switch type {
+        case .void: return "void"
+        case .boolean: return "i1"
+        case .number: return "double"
+        default: return "ptr"
+        }
     }
 
     // MARK: - Module helpers

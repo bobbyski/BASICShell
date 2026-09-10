@@ -33,3 +33,19 @@ PRINT C.describe()
 C.rename("a unit circle")
 PRINT C.name
 PRINT C.describe()
+
+' A Swift method that throws. Swift's throwing convention is
+' branch-on-return — the callee writes the error into a register the caller
+' reads — so basicc calls it with that register and turns a thrown error into
+' an ordinary BASIC error. ON ERROR catches it like any other.
+ON ERROR GOTO Broken
+PRINT "scaled by 2:"; R.scaled(2)
+PRINT "scaled by -1:"; R.scaled(-1)
+PRINT "not reached"
+END
+
+Broken:
+' ERR is the BASIC error number the thrown ShapeError became. The error's
+' own text is what the runtime prints when nothing catches it; BASIC has no
+' pseudo-variable for it, which is a gap worth knowing rather than hiding.
+PRINT "caught a throw from Swift, ERR ="; ERR

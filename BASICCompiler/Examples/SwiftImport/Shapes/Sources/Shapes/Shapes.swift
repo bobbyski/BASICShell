@@ -17,6 +17,18 @@ open class Shape {
     public func rename(_ to: String) { name = to }
 
     public func sides() -> Int { 0 }
+
+    /// A method that can fail, so the error round trip has something to
+    /// carry (R4.6). BASIC catches this with `ON ERROR`.
+    public func scaled(by factor: Double) throws -> Double {
+        guard factor > 0 else { throw ShapeError.badScale(factor) }
+        return area() * factor
+    }
+}
+
+/// The framework's own error type. Nothing about it is written for BASIC.
+public enum ShapeError: Error {
+    case badScale(Double)
 }
 
 public final class Rect: Shape {

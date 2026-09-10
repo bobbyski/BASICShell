@@ -38,6 +38,11 @@ print("PaddedSprite.AREA() =", p.AREA(), "— super's 20, plus 1")
 // statically resolved call.
 let asSprite: Sprite = p
 print("through a Sprite    =", asSprite.AREA())
+// A Swift string in, a Swift string out — both converted at the boundary.
+let described: String = s.DESCRIBE("box")
+print("Describe(_:)        =", described, "— a Swift.String, from BASIC")
+print("  it is a String    =", described is String, "count", described.count)
+
 print("type(of:)           =", type(of: asSprite))
 // A dynamic cast, which only succeeds if the runtime really believes this
 // object's type descends from BASICObject.

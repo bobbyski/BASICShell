@@ -35,8 +35,10 @@ struct LLVMLowering {
     /// The whole module as `.ll` text.
     func render() -> String {
         var functions: [String] = []
-        var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel)
-        functions.append(mainEmitter.render())
+        if !options.omitsEntryPoint {
+            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel)
+            functions.append(mainEmitter.render())
+        }
         // An imported class's members have no body here: the framework has
         // them, and the object model emits a thunk onto its symbol.
         for function in module.functions where !function.isExternal {
@@ -54,6 +56,23 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\n"
         }
         text += "\n" + renderDataTables() + "\n"
+        if options.omitsEntryPoint {
+            // `main` normally registers the program's types with the runtime.
+            // A library has no main, so a constructor does it when the image
+            // loads — before any Swift caller can reach a class.
+            var setup = LLVMText()
+            setup.raw("define internal void @\"basic.library.setup\"() {")
+            setup.label("entry")
+            setup.emit("call void @basic_rt_start()")
+            for type in module.types {
+                setup.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
+            }
+            setup.emit("ret void")
+            setup.raw("}")
+            functions.append(setup.lines.joined(separator: "\n"))
+            text += "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] "
+            text += "[{ i32, ptr, ptr } { i32 65535, ptr @\"basic.library.setup\", ptr null }]\n"
+        }
         if module.functions.contains(where: \.isAsync) {
             functions.append(renderTaskSupport())
         }

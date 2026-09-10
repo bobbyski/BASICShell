@@ -50,6 +50,14 @@ public struct SwiftInterfaceEmitter {
     public let rootModule: String
 
     /// Creates an interface emitter.
+    /// The methods the object model will actually emit, as
+    /// "CLASS.METHOD" keys. The interface must promise exactly these: a
+    /// method declared here and not emitted there is a link error at the far
+    /// end of someone else's build, and one emitted and not declared is a
+    /// method Swift cannot call. Empty means "ask the old check", which is
+    /// what a caller with no model in hand gets.
+    public var emittedMethods: Set<String> = []
+
     public init(module: BIRModule, rootClass: String = "BASICObject", rootModule: String = "BASICRTSwift") {
         self.module = module
         self.rootClass = rootClass
@@ -152,20 +160,14 @@ public struct SwiftInterfaceEmitter {
         } else {
             return .unrepresentable("returns \(method.returnType.name), which has no Swift spelling yet")
         }
-        // Declared only if its symbol can actually be spelled. The interface
-        // and the object file have to agree: a method declared here but not
-        // emitted there is a link error at the far end of the build, blamed
-        // on whoever was writing Swift at the time.
-        do {
-            _ = try SwiftMangling.mangleMethod(
-                module: module.name,
-                className: composite.displayName,
-                method: name,
-                returns: method.returnType == .void ? .void : .number,
-                parameters: method.parameters.dropFirst().map { _ in .number }
-            )
-        } catch {
-            return .unrepresentable("\(error)")
+        // Declared only if the object model will emit it. Asking the model
+        // rather than re-deriving the answer is what keeps the two in step —
+        // they disagreed before, and the interface promised methods the
+        // object file did not define.
+        if !emittedMethods.isEmpty || !module.types.isEmpty {
+            guard emittedMethods.contains("\(composite.name).\(name)") else {
+                return .unrepresentable("the object model does not emit it")
+            }
         }
         return .declared("open func \(swiftIdentifier(name))(\(parameters.joined(separator: ", ")))\(returns)")
     }

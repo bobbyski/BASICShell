@@ -237,11 +237,22 @@ case "swift-class":
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let base = (directory as NSString).appendingPathComponent(bir.name)
 
-        let ir = try SwiftObjectLowering(module: bir).render()
+        // The same lowering a program gets, minus the entry point: one
+        // emitter, so a class Swift links behaves exactly as a class the
+        // program runs, and both get the probe's symbol names.
+        let options = CompileOptions(omitsEntryPoint: true)
+        let ir = try SwiftDialect().lower(bir, options: options).llvmIR
         try ir.write(toFile: base + ".ll", atomically: true, encoding: .utf8)
         try Toolchain().assemble(llvmIR: ir, irPath: base + ".ll", objectPath: base + ".o")
 
-        let interface = SwiftInterfaceEmitter(module: bir).render(target: SwiftInterfaceEmitter.hostTarget)
+        // The interface is generated from the same model that emitted the
+        // object, so the two cannot promise different things.
+        let objects = SwiftObjectModel(module: bir, probed: (try? SwiftObjectModel.probe(bir)) ?? .init())
+        var emitter = SwiftInterfaceEmitter(module: bir)
+        emitter.emittedMethods = Set(objects.classes.flatMap { layout in
+            layout.visibleMethods.map { "\(layout.composite.name).\($0.name)" }
+        })
+        let interface = emitter.render(target: SwiftInterfaceEmitter.hostTarget)
         try interface.text.write(toFile: base + ".swiftinterface", atomically: true, encoding: .utf8)
         for skip in interface.skipped {
             FileHandle.standardError.write(Data(
