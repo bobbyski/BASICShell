@@ -70,6 +70,15 @@ public struct SwiftObjectModel: ObjectModel {
     public let classes: [ClassLayout]
     /// Why each declined class was declined.
     public let notes: [String]
+    /// Programs the Swift dialect will not compile, and why.
+    ///
+    /// These are not preferences. Each one is a shape that used to build and
+    /// then crash: an imported object is the framework's, and the runtime's
+    /// containers hold the runtime's own records, so a slot that is declared
+    /// to hold one and actually holds the other is read as the wrong kind of
+    /// thing on the first touch. Refusing at compile time is the difference
+    /// between a message and a segfault.
+    public let refusals: [Diagnostic]
     /// The program's name as a Swift module name.
     ///
     /// A `.bas` file may be called `class-containers.bas`, and a Swift module
@@ -113,6 +122,7 @@ public struct SwiftObjectModel: ObjectModel {
             imported[type.name] = (moduleName, api, klass, type)
         }
         self.importedByName = imported
+        self.refusals = Self.refusals(module, imported: Set(imported.keys))
         var (accepted, notes) = Self.analyse(module)
         // A class whose symbols the probe did not report cannot be emitted:
         // its name would be a guess, and a guessed symbol either fails to
@@ -132,6 +142,49 @@ public struct SwiftObjectModel: ObjectModel {
         }
         self.classes = layouts
         self.byName = byName
+    }
+
+    /// Where an imported Swift object would be stored in a runtime slot.
+    ///
+    /// The runtime's arrays, records and object fields hold `RTComposite`s.
+    /// An imported class is a real Swift object laid out by the framework,
+    /// and there is no conversion between the two — so a declaration that
+    /// puts one where the other is expected is refused by name rather than
+    /// compiled into a program that dies on the first access.
+    static func refusals(_ module: BIRModule, imported: Set<String>) -> [Diagnostic] {
+        guard !imported.isEmpty else { return [] }
+        var out: [Diagnostic] = []
+        func display(_ name: String) -> String {
+            module.types.first { $0.name == name }?.displayName ?? name
+        }
+        func refuse(_ what: String, _ held: String) {
+            out.append(Diagnostic(
+                severity: .error, file: nil, line: nil,
+                message: "\(what) cannot hold an imported \(display(held)): a \(display(held)) is \(module.types.first { $0.name == held }?.externalModule ?? "the framework")'s own object, and BASIC's arrays and records hold BASIC's records. Hold it in a plain variable, or pass it straight to the call that wants it"
+            ))
+        }
+        func check(_ type: BIRType, rank: Int?, _ what: String) {
+            if rank != nil, case .composite(let held) = type, imported.contains(held) { refuse(what, held) }
+            if case .array(let element, _) = type, case .composite(let held) = element, imported.contains(held) { refuse(what, held) }
+        }
+        for variable in module.globals {
+            check(variable.type, rank: variable.rank, "the array \(variable.name)")
+        }
+        for function in [module.main] + module.functions {
+            for variable in function.locals + function.parameters {
+                check(variable.type, rank: variable.rank, "the array \(variable.name)")
+            }
+        }
+        for type in module.types where type.externalModule == nil {
+            for field in type.fields {
+                check(field.type, rank: field.dimensions.isEmpty ? nil : field.dimensions.count,
+                      "the array \(type.displayName).\(field.displayName)")
+                if field.dimensions.isEmpty, case .composite(let held) = field.type, imported.contains(held) {
+                    refuse("the field \(type.displayName).\(field.displayName)", held)
+                }
+            }
+        }
+        return out
     }
 
     /// Asks `swiftc` for the symbols this module's classes will have.
@@ -630,7 +683,7 @@ public struct SwiftObjectModel: ObjectModel {
     static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
         initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure: return true
+            case .structure, .protocolType, .voidClosure, .array: return true
             default: return false
             }
         }
@@ -640,9 +693,10 @@ public struct SwiftObjectModel: ObjectModel {
         // Anything emitted IR cannot call directly, or whose argument list
         // differs from what Swift declared because a defaulted parameter is
         // being left out.
-        method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
+        if case .array = method.returns { return true }
+        return method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure: return true
+            case .structure, .protocolType, .voidClosure, .array: return true
             default: return false
             }
         }
@@ -664,6 +718,9 @@ public struct SwiftObjectModel: ObjectModel {
         // before anything asks for its ABI, because how many words it takes
         // is a property of the struct rather than of the case.
         case .structure, .protocolType: return "ptr"
+        // The runtime's boxed value, holding the array. Always through a
+        // shim, which walks it through the bridge.
+        case .array: return "ptr"
         case .object, .void, .unsupported: return "ptr"
         }
     }
@@ -677,7 +734,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
         // reader, so reaching here would be a bug rather than a shape.
-        case .object, .voidClosure, .structure, .protocolType, .unsupported: return "ptr"
+        case .object, .voidClosure, .structure, .protocolType, .array, .unsupported: return "ptr"
         }
     }
 
@@ -739,13 +796,13 @@ public struct SwiftObjectModel: ObjectModel {
                 // installed it.
                 body += "  call void @basic_rt_closure_retain(ptr \(value))\n"
                 return "ptr @basic_rt_closure_invoke_void, ptr \(value)"
-            case .object, .void, .unsupported: return "ptr \(value)"
+            case .array, .object, .void, .unsupported: return "ptr \(value)"
             }
         }
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .unsupported: return value
             case .int:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -790,7 +847,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .structure, .protocolType, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .structure, .protocolType, .array, .void, .unsupported: return "ptr"
             }
         }
 

@@ -60,6 +60,28 @@ PRINT "taps recorded by BASIC:"; Taps
 ' means here.
 PRINT "measured (async):"; R.measured()
 
+' Arrays across the boundary (R4.7). A BASIC array goes over as a Swift
+' [String], and what comes back is a BASIC array again — LEN and (i) walk
+' it, so nothing new had to be added to the language for this.
+DIM Names(1) AS STRING
+Names(0) = "first"
+Names(1) = "second"
+DIM Said AS VARIANT
+Said = R.labelled(Names)
+FOR I = 0 TO LEN(Said) - 1
+  PRINT "  "; Said(I)
+NEXT I
+
+DIM Factors(2) AS DOUBLE
+Factors(0) = 1
+Factors(1) = 2
+Factors(2) = 0.5
+DIM Scaled AS VARIANT
+Scaled = R.areas(Factors)
+FOR I = 0 TO LEN(Scaled) - 1
+  PRINT "  area x factor:"; Scaled(I)
+NEXT I
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

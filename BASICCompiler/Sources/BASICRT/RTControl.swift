@@ -29,7 +29,20 @@ public func basic_rt_start() {
     BASICRTSwiftBridge.install(
         readString: { rtString($0).rawString },
         makeString: { rtOwned($0) },
-        fail: { basic_rt_fail($0) }
+        fail: { basic_rt_fail($0) },
+        // The array side (R4.7). An imported `[T]` is a BASIC array in a
+        // VARIANT, which is what a BASIC function already hands back, so
+        // `LEN(v)` and `v(i)` walk it and the language learns nothing new.
+        arrayCount: { rtSwiftArray($0)?.values.count ?? 0 },
+        arrayNumber: { rtSwiftArray($0)?.values[safe: $1]?.number ?? 0 },
+        arrayBoolean: { rtSwiftArray($0)?.values[safe: $1]?.truthy ?? false },
+        arrayString: { rtSwiftArray($0)?.values[safe: $1]?.string?.rawString ?? "" },
+        // A Swift array arrives 0-based, which is where a BASIC `DIM` starts
+        // too — so the bounds are `count - 1` and the indexes read the same
+        // on both sides.
+        makeNumberArray: { rtSwiftArrayOut($0.map { RTValue.number($0) }, element: .number) },
+        makeBooleanArray: { rtSwiftArrayOut($0.map { RTValue.boolean($0) }, element: .boolean) },
+        makeStringArray: { rtSwiftArrayOut($0.map { RTValue.string(RTText($0)) }, element: .string) }
     )
     #endif
 }
@@ -158,4 +171,31 @@ public func basic_rt_sleep(_ milliseconds: Double) -> Double {
 @_cdecl("basic_rt_file_exists_number")
 public func basic_rt_file_exists_number(_ pathPointer: UnsafeMutableRawPointer?) -> Double {
     FileManager.default.fileExists(atPath: (rtText(pathPointer) as NSString).expandingTildeInPath) ? 1 : 0
+}
+
+
+/// The BASIC array inside a boxed value, or nil when it holds something else.
+///
+/// Nil rather than a trap: an imported `[T]` parameter is declared VARIANT in
+/// the generated unit, and BASIC will let a program pass a number to it. An
+/// empty array is the harmless reading — the same thing the framework would
+/// see if the program passed an array with nothing in it.
+func rtSwiftArray(_ pointer: UnsafeMutableRawPointer?) -> RTArray? {
+    guard case .array(let array) = rtValue(pointer) else { return nil }
+    return array
+}
+
+/// An owned (+1) boxed value holding a one-dimensional BASIC array.
+func rtSwiftArrayOut(_ values: [RTValue], element: RTTypeRef) -> UnsafeMutableRawPointer {
+    rtOwned(.array(RTArray(
+        upperBounds: [values.count - 1], isDynamic: true, element: element, values: values
+    )))
+}
+
+extension Array {
+    /// Out-of-range reads as nil: index arithmetic at a boundary should give
+    /// a wrong answer no more readily than it gives a crash.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
 }

@@ -101,8 +101,11 @@ struct SwiftSymbolGraphTests {
     @Test func unsupportedMembersAreSkippedWithAReason() throws {
         let api = try #require(Self.graph)
         let shape = try #require(api.classes.first { $0.name == "Shape" })
-        #expect(!shape.methods.contains { $0.name == "corners" }, "[Int] has no BASIC spelling")
-        #expect(api.skipped.contains { $0.member.hasSuffix("corners()") })
+        // `[Int]` gained a BASIC spelling in R4.7: an array of numbers
+        // crosses as a BASIC array in a VARIANT. `[Shape]` did not, and the
+        // reason is not "not yet" — a BASIC array holds the runtime's own
+        // records, and an imported object is the framework's.
+        #expect(shape.methods.contains { $0.name == "corners" }, "[Int] crosses as a BASIC array")
         #expect(api.skipped.contains { $0.member.hasSuffix("totalArea(_:)") }, "[Shape] parameter")
         #expect(api.skipped.contains { $0.member.contains("Unit") }, "enums arrive with R4.x")
         for skip in api.skipped {
@@ -112,6 +115,22 @@ struct SwiftSymbolGraphTests {
 
     /// A class parameter and return are supported — that is the whole point
     /// of importing a framework of objects.
+    /// An array of scalars, both ways (R4.7).
+    ///
+    /// `[T]` is not a new BASIC type: it is the array a BASIC function
+    /// already hands back, carried in a VARIANT, so `LEN(v)` and `v(i)` walk
+    /// it and nothing in the language had to change.
+    @Test func arraysOfScalarsCrossAsBASICArrays() throws {
+        let api = try #require(Self.graph)
+        let shape = try #require(api.classes.first { $0.name == "Shape" })
+        let corners = try #require(shape.methods.first { $0.name == "corners" })
+        #expect(corners.returns == .array(element: .int))
+        #expect(SwiftInterfaceUnit.basicType(corners.returns, in: api) == "VARIANT")
+        // The shape emitted IR cannot call directly, so it goes through a
+        // generated shim — the same route an async or handler method takes.
+        #expect(SwiftObjectModel.needsShim(corners))
+    }
+
     @Test func classTypesAreCarriedByPreciseIdentifier() throws {
         let api = try #require(Self.graph)
         let shape = try #require(api.classes.first { $0.name == "Shape" })
@@ -137,6 +156,7 @@ struct SwiftImportEndToEndTests {
         public func describe() -> String { "\\(name) area \\(area())" }
         public func rename(_ to: String) { name = to }
         public func sides() -> Int { 0 }
+        public func labels(_ names: [String]) -> [String] { names.map { "\\($0)!" } }
     }
     public final class Rect: Shape {
         public var width: Double
@@ -165,6 +185,20 @@ struct SwiftImportEndToEndTests {
     DIM S AS Shape
     S = NEW Shape("plain")
     PRINT S.describe()
+    DIM N(1) AS STRING
+    N(0) = "a"
+    N(1) = "b"
+    DIM L AS VARIANT
+    L = S.labels(N)
+    PRINT L(0); L(1); LEN(L)
+    """
+
+    /// A program the Swift dialect must refuse: a BASIC array cannot hold an
+    /// imported object. It used to compile and then die on the first read.
+    static let refused = """
+    IMPORT "Shapes"
+    DIM Boxes(2) AS Rect
+    PRINT "unreachable"
     """
 
     /// What the program must print.
@@ -182,6 +216,7 @@ struct SwiftImportEndToEndTests {
     box
     0
     plain area 0.0
+    a!b!2
 
     """
 
@@ -222,6 +257,17 @@ struct SwiftImportEndToEndTests {
         let run = try ProcessRunner.run(binary, [])
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == Self.expected, "got:\n\(run.stdout)")
+
+        // The same framework, and a program that must not build. A refusal
+        // is only worth having if it fires, and this is the shape that used
+        // to produce a binary that segfaulted on the first element read.
+        let bad = program.appendingPathComponent("refused.bas")
+        try Self.refused.write(to: bad, atomically: true, encoding: .utf8)
+        let refused = try ProcessRunner.run(Self.compiler,
+            ["build", bad.path, "--dialect", "swift", "-o", root.appendingPathComponent("never").path])
+        #expect(refused.exitCode != 0, "an array of imported objects must be refused")
+        #expect((refused.stderr + refused.stdout).contains("cannot hold an imported Rect"),
+                "got: \(refused.stderr)\(refused.stdout)")
     }
 
     /// The compiler under test, built into this package's scratch path.

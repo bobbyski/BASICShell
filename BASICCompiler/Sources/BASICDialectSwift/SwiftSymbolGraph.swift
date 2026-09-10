@@ -37,6 +37,11 @@ public struct SwiftAPI: Sendable {
         /// **flattened**: BASIC passes the leaf values and the shim builds the
         /// struct, so `Window.init(frame: Rect)` reads `NEW Window(x, y, w, h)`.
         case structure(precise: String)
+        /// A `[T]` of scalars or imported classes (R4.7). It crosses as a
+        /// BASIC array carried in a VARIANT — the shape BASIC already has for
+        /// "an array a function hands back" — so `LEN(v)` and `v(i)` walk it
+        /// with nothing new in the language.
+        indirect case array(element: ValueType)
         /// Nothing.
         case void
         /// Something BASIC has no spelling for yet — the spelling is kept for
@@ -580,6 +585,8 @@ public struct SwiftAPI: Sendable {
             }
             if shape == "() -> Void" {
                 type = .voidClosure
+            } else if let array = Self.arrayType(fragments) {
+                type = array
             } else if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
             } else {
@@ -604,11 +611,44 @@ public struct SwiftAPI: Sendable {
         if fragments.isEmpty || fragments.map(\.spelling).joined() == "()" { return .void }
         // A bare type identifier is the whole return type; anything wrapped
         // (`[Shape]`, `Shape?`) is more than one fragment and unsupported.
+        if let array = arrayType(fragments) { return array }
         guard fragments.count == 1, let only = fragments.first, only.kind == "typeIdentifier" else {
             return .unsupported(fragments.map(\.spelling).joined())
         }
         return valueType(precise: only.precise, spelling: only.spelling)
     }
+    /// `[T]` read from the fragments of a declared type, or nil when the
+    /// fragments are not exactly a bracketed type identifier.
+    ///
+    /// A symbol graph spells an array as three fragments — `[`, the element,
+    /// `]` — and there is no `precise` for the array itself, so this is the
+    /// only place its shape is visible.
+    static func arrayType(_ fragments: [Fragment]) -> ValueType? {
+        // Matched on the *text*, not on fragment positions. A parameter's
+        // brackets do not get a fragment of their own — the graph writes
+        // `labels` then `: [` then `String` then `]`, so the opening bracket
+        // rides along with the colon and any rule counting fragments misses
+        // every array parameter while matching every array return.
+        let identifiers = fragments.filter { $0.kind == "typeIdentifier" }
+        guard identifiers.count == 1 else { return nil }
+        let joined = fragments.map(\.spelling).joined().replacingOccurrences(of: " ", with: "")
+        let written = joined.firstIndex(of: ":").map { String(joined[joined.index(after: $0)...]) } ?? joined
+        guard written == "[\(identifiers[0].spelling)]" else { return nil }
+        let element = valueType(precise: identifiers[0].precise, spelling: identifiers[0].spelling)
+        // An array of something BASIC cannot spell is not an array BASIC can
+        // spell. Nested arrays stop here too: a BASIC array of arrays is a
+        // rank-2 array, which is a different thing.
+        switch element {
+        case .double, .int, .bool, .string: return .array(element: element)
+        // Deliberately not `[SomeClass]`. A BASIC array holds the runtime's
+        // own records, and an imported object is the framework's — the two
+        // are not the same thing, and a program that stored one in the other
+        // used to build and then die on the first read. Refused here so the
+        // member is reported with a reason instead.
+        default: return nil
+        }
+    }
+
     static func valueType(precise: String?, spelling: String) -> ValueType {
         switch precise {
         case "s:Sd": return .double

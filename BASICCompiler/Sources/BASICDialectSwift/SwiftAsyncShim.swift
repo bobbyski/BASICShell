@@ -70,6 +70,16 @@ public struct SwiftAsyncShim {
         /// — because the memberwise initializer takes `origin:` and `size:`,
         /// not four numbers. BASIC passes the four (R4.4).
         public var structParameters: [Int: (leafTypes: [String], build: String)] = [:]
+        /// Array parameters, by position, tagged with their element kind
+        /// (`double`, `int`, `bool`, `string`). The value arrives as the
+        /// runtime's boxed array and is read element by element through the
+        /// bridge — the element type is known here, so nothing dynamic is
+        /// being guessed at (R4.7).
+        public var arrayParameters: [Int: String] = [:]
+        /// The element kind this returns an array of, when it does. The
+        /// result goes back as a BASIC array in a VARIANT, which is the shape
+        /// BASIC already has for an array a function hands back.
+        public var arrayResult: String?
 
         public init(className: String, name: String, labels: [String?],
                     parameterTypes: [String], returns: String?, isThrowing: Bool) {
@@ -113,6 +123,24 @@ public struct SwiftAsyncShim {
             "/// wherever the compiler happens to be installed.",
             "@_silgen_name(\"basic_rt_swift_error_raise\")",
             "private func basicAwaitRaise(_ error: Error) -> Never",
+            "",
+            "/// The array side of the same boundary (R4.7). A `[T]` crosses as",
+            "/// the runtime's own array carried in a VARIANT, so BASIC walks it",
+            "/// with `LEN(v)` and `v(i)` and learns nothing new.",
+            "@_silgen_name(\"basic_rt_swift_array_count\")",
+            "private func basicArrayCount(_ p: UnsafeMutableRawPointer?) -> Int",
+            "@_silgen_name(\"basic_rt_swift_array_number\")",
+            "private func basicArrayNumber(_ p: UnsafeMutableRawPointer?, _ i: Int) -> Double",
+            "@_silgen_name(\"basic_rt_swift_array_boolean\")",
+            "private func basicArrayBoolean(_ p: UnsafeMutableRawPointer?, _ i: Int) -> Bool",
+            "@_silgen_name(\"basic_rt_swift_array_string\")",
+            "private func basicArrayString(_ p: UnsafeMutableRawPointer?, _ i: Int) -> String",
+            "@_silgen_name(\"basic_rt_swift_array_out_numbers\")",
+            "private func basicArrayOutNumbers(_ v: [Double]) -> UnsafeMutableRawPointer",
+            "@_silgen_name(\"basic_rt_swift_array_out_booleans\")",
+            "private func basicArrayOutBooleans(_ v: [Bool]) -> UnsafeMutableRawPointer",
+            "@_silgen_name(\"basic_rt_swift_array_out_strings\")",
+            "private func basicArrayOutStrings(_ v: [String]) -> UnsafeMutableRawPointer",
             "",
             "/// Carries a result out of the task that produced it.",
             "private final class BASICAwaitBox<Value>: @unchecked Sendable {",
@@ -158,6 +186,9 @@ public struct SwiftAsyncShim {
                         parameters.append("_ a\(index)_\(leaf): \(spelling)")
                     }
                     callArguments.append("s\(index)")
+                } else if method.arrayParameters[index] != nil {
+                    parameters.append("_ a\(index): UnsafeMutableRawPointer?")
+                    callArguments.append("v\(index)")
                 } else if method.protocolParameters[index] != nil {
                     parameters.append("_ a\(index): UnsafeMutableRawPointer")
                     callArguments.append("p\(index)")
@@ -179,11 +210,21 @@ public struct SwiftAsyncShim {
             // A class result crosses as a pointer too, unretained: an
             // imported object belongs to the framework, and BASIC holding one
             // aliases it rather than owning a copy (ruling D15).
-            let result = (method.isInitializer || method.objectResult != nil)
+            let result = (method.isInitializer || method.objectResult != nil || method.arrayResult != nil)
                 ? " -> UnsafeMutableRawPointer"
                 : (method.returns.map { " -> \($0)" } ?? "")
             func handOut(_ expression: String) -> String {
-                method.objectResult != nil ? "Unmanaged.passUnretained(\(expression)).toOpaque()" : expression
+                if method.objectResult != nil {
+                    return "Unmanaged.passUnretained(\(expression)).toOpaque()"
+                }
+                switch method.arrayResult {
+                case "double": return "basicArrayOutNumbers(\(expression))"
+                // A Swift `Int` is a BASIC number, here as everywhere else.
+                case "int": return "basicArrayOutNumbers(\(expression).map(Swift.Double.init))"
+                case "bool": return "basicArrayOutBooleans(\(expression))"
+                case "string": return "basicArrayOutStrings(\(expression))"
+                default: return expression
+                }
             }
             lines.append("@_cdecl(\"\(method.symbol)\")")
             lines.append("public func \(method.symbol)(\(parameters.joined(separator: ", ")))\(result) {")
@@ -192,6 +233,20 @@ public struct SwiftAsyncShim {
             }
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
                 lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
+            }
+            // Read out of the runtime's array before the call, for the same
+            // reason an object parameter is bridged before it: what goes into
+            // the framework is a Swift value, not a pointer some later closure
+            // would have to capture.
+            for (index, kind) in method.arrayParameters.sorted(by: { $0.key < $1.key }) {
+                let read: String
+                switch kind {
+                case "int": read = "Swift.Int(basicArrayNumber(a\(index), $0))"
+                case "bool": read = "basicArrayBoolean(a\(index), $0)"
+                case "string": read = "basicArrayString(a\(index), $0)"
+                default: read = "basicArrayNumber(a\(index), $0)"
+                }
+                lines.append("    let v\(index) = (0..<basicArrayCount(a\(index))).map { \(read) }")
             }
             for (index, name) in method.protocolParameters.sorted(by: { $0.key < $1.key }) {
                 // `as!` rather than `as?`: the only way to reach here is a
@@ -243,12 +298,12 @@ public struct SwiftAsyncShim {
                 let called = "object.\(method.name)(\(labelled))"
                 if method.returns == nil {
                     lines.append("    MainActor.assumeIsolated { \(called) }")
-                } else if method.objectResult != nil {
+                } else if method.objectResult != nil || method.arrayResult != nil {
                     // The pointer is made *outside* the isolated closure: a
                     // raw pointer is explicitly not Sendable, and returning
                     // one across that boundary is an error in Swift 6.
                     lines.append("    let result = MainActor.assumeIsolated { \(called) }")
-                    lines.append("    return Unmanaged.passUnretained(result).toOpaque()")
+                    lines.append("    return \(handOut("result"))")
                 } else {
                     lines.append("    return MainActor.assumeIsolated { \(called) }")
                 }

@@ -25,6 +25,17 @@ open class Shape {
         return area() * 2
     }
 
+    /// Arrays crossing both ways (R4.7). Nothing here is written for
+    /// BASIC either: these are the `[String]` and `[Double]` any Swift
+    /// caller would pass, and BASIC hands over one of its own arrays.
+    public func labelled(_ labels: [String]) -> [String] {
+        labels.map { "\($0) is \(name)" }
+    }
+
+    public func areas(scaledBy factors: [Double]) -> [Double] {
+        factors.map { area() * $0 }
+    }
+
     /// A method that can fail, so the error round trip has something to
     /// carry (R4.6). BASIC catches this with `ON ERROR`.
     public func scaled(by factor: Double) throws -> Double {

@@ -238,6 +238,9 @@ public struct SwiftInterfaceUnit {
         // An INTERFACE, declared by the unit; any conforming imported class
         // may be passed where one is wanted.
         case .protocolType(let precise): return api.protocols[precise] ?? "VARIANT"
+        // A BASIC array travels in a VARIANT — that is how a function hands
+        // one back in this language, and `LEN(v)` and `v(i)` walk it.
+        case .array: return "VARIANT"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
@@ -270,6 +273,9 @@ public struct SwiftInterfaceUnit {
             }
             guard !arguments.isEmpty else { return "NEW \(klass.name)" }
             return "NEW \(klass.name)(\(arguments.joined(separator: ", ")))"
+        // A placeholder body is discarded, but it still has to type-check,
+        // and EMPTY is the VARIANT with nothing in it.
+        case .array: return "EMPTY"
         case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }

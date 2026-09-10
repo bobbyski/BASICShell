@@ -91,6 +91,10 @@ public struct SwiftDialect: DialectCompiler {
             probed = SwiftManglingProbe.Symbols()
         }
         let objects = SwiftObjectModel(module: module, imports: imports, probed: probed)
+        // Refusals before anything is emitted: these are the shapes that
+        // used to compile and then crash, and a diagnostic naming the
+        // declaration is the whole difference.
+        if !objects.refusals.isEmpty { throw CompileError(objects.refusals) }
         for note in objects.notes where ProcessInfo.processInfo.environment["BASICC_NOTES"] != nil {
             FileHandle.standardError.write(Data("basicc: note: \(note)\n".utf8))
         }

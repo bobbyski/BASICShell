@@ -129,11 +129,11 @@ public struct SwiftPackageResolver {
             for method in klass.methods {
                 let passed = method.passed
                 let handlers = Set(passed.indices.filter { passed[$0].type == .voidClosure })
-                guard method.isAsync || !handlers.isEmpty || passed.count != method.parameters.count
-                        || passed.contains(where: { if case .structure = $0.type { return true }
-                                                    if case .protocolType = $0.type { return true }
-                                                    return false })
-                else { continue }
+                // One predicate, asked in both places. When the emitter and
+                // the shim generator each decided this for themselves they
+                // disagreed, and a disagreement here is a call to a symbol
+                // nothing defines.
+                guard SwiftObjectModel.needsShim(method) else { continue }
                 guard method.returns.isSupported else { continue }
                 var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: method.name,
@@ -151,6 +151,10 @@ public struct SwiftPackageResolver {
                 }
                 if case .object(let precise) = method.returns, let klass = api.class(precise: precise) {
                     shim.objectResult = klass.name
+                }
+                if case .array(let element) = method.returns { shim.arrayResult = Self.elementKind(element) }
+                for (index, parameter) in passed.enumerated() {
+                    if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
                 }
                 for (index, parameter) in passed.enumerated() {
                     if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
@@ -170,13 +174,7 @@ public struct SwiftPackageResolver {
         for klass in api.classes {
             for initializer in klass.initializers {
                 let passed = initializer.passed
-                let needs = passed.contains {
-                    switch $0.type {
-                    case .structure, .protocolType, .voidClosure: return true
-                    default: return false
-                    }
-                } || passed.count != initializer.parameters.count
-                guard needs else { continue }
+                guard SwiftObjectModel.needsInitializerShim(initializer) else { continue }
                 var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: "init",
                     labels: passed.map(\.label),
@@ -197,6 +195,7 @@ public struct SwiftPackageResolver {
                     if case .object(let precise) = parameter.type, let k = api.class(precise: precise) {
                         shim.objectParameters[index] = k.name
                     }
+                    if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
                     guard case .structure = parameter.type else { continue }
                     var next = 0
                     guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
@@ -244,6 +243,16 @@ public struct SwiftPackageResolver {
         return "\(structure.name)(\(arguments.joined(separator: ", ")))"
     }
 
+    /// The tag the shim generator uses for an array's element kind.
+    static func elementKind(_ type: SwiftAPI.ValueType) -> String {
+        switch type {
+        case .int: return "int"
+        case .bool: return "bool"
+        case .string: return "string"
+        default: return "double"
+        }
+    }
+
     /// A Swift type's spelling in generated shim source.
     static func spelling(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
@@ -258,6 +267,7 @@ public struct SwiftPackageResolver {
         // Named by the shim, which rebuilds it from the scalars BASIC passed.
         case .structure(let precise): return api.structures[precise]?.name ?? "Swift.Never"
         case .protocolType(let precise): return api.protocols[precise] ?? "Swift.Never"
+        case .array(let element): return "[\(spelling(element, in: api))]"
         case .unsupported: return "Swift.Never"
         }
     }

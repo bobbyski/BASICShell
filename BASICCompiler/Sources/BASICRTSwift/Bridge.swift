@@ -29,16 +29,103 @@ public enum BASICRTSwiftBridge {
         fatalError("the BASIC error bridge was not installed: \(message)")
     }
 
+    /// How many elements the BASIC array in a boxed value has.
+    ///
+    /// A `[T]` crosses as a BASIC array carried in a VARIANT (R4.7), which is
+    /// the shape BASIC already has for an array a function hands back — so
+    /// `LEN(v)` and `v(i)` walk one with nothing new in the language.
+    public nonisolated(unsafe) static var arrayCount: (UnsafeMutableRawPointer?) -> Int = { _ in
+        fatalError("the BASIC array bridge was not installed: basic_rt_start did not run")
+    }
+
+    /// One element, read as the kind the imported signature says it is. The
+    /// element type is known at compile time, so there is no dynamic case to
+    /// get wrong here — a `[String]` parameter only ever asks for strings.
+    public nonisolated(unsafe) static var arrayNumber: (UnsafeMutableRawPointer?, Int) -> Double = { _, _ in 0 }
+    public nonisolated(unsafe) static var arrayBoolean: (UnsafeMutableRawPointer?, Int) -> Bool = { _, _ in false }
+    public nonisolated(unsafe) static var arrayString: (UnsafeMutableRawPointer?, Int) -> String = { _, _ in "" }
+
+    /// A new owned (+1) boxed value holding a BASIC array of these elements.
+    ///
+    /// Whole-array rather than allocate-then-fill: the shim has the Swift
+    /// array in hand, and one call cannot leave a half-built array behind if
+    /// something in the middle raises.
+    public nonisolated(unsafe) static var makeNumberArray: ([Double]) -> UnsafeMutableRawPointer = { _ in
+        fatalError("the BASIC array bridge was not installed: basic_rt_start did not run")
+    }
+    public nonisolated(unsafe) static var makeBooleanArray: ([Bool]) -> UnsafeMutableRawPointer = { _ in
+        fatalError("the BASIC array bridge was not installed: basic_rt_start did not run")
+    }
+    public nonisolated(unsafe) static var makeStringArray: ([String]) -> UnsafeMutableRawPointer = { _ in
+        fatalError("the BASIC array bridge was not installed: basic_rt_start did not run")
+    }
+
     /// Installs the hooks. Called by `basic_rt_start`.
     public static func install(
         readString: @escaping (UnsafeMutableRawPointer?) -> String,
         makeString: @escaping (String) -> UnsafeMutableRawPointer,
-        fail: @escaping (String) -> Never
+        fail: @escaping (String) -> Never,
+        arrayCount: @escaping (UnsafeMutableRawPointer?) -> Int,
+        arrayNumber: @escaping (UnsafeMutableRawPointer?, Int) -> Double,
+        arrayBoolean: @escaping (UnsafeMutableRawPointer?, Int) -> Bool,
+        arrayString: @escaping (UnsafeMutableRawPointer?, Int) -> String,
+        makeNumberArray: @escaping ([Double]) -> UnsafeMutableRawPointer,
+        makeBooleanArray: @escaping ([Bool]) -> UnsafeMutableRawPointer,
+        makeStringArray: @escaping ([String]) -> UnsafeMutableRawPointer
     ) {
         Self.readString = readString
         Self.makeString = makeString
         Self.fail = fail
+        Self.arrayCount = arrayCount
+        Self.arrayNumber = arrayNumber
+        Self.arrayBoolean = arrayBoolean
+        Self.arrayString = arrayString
+        Self.makeNumberArray = makeNumberArray
+        Self.makeBooleanArray = makeBooleanArray
+        Self.makeStringArray = makeStringArray
     }
+}
+
+/// The array side of the boundary (R4.7).
+///
+/// `@_silgen_name` for the same reason the string entry points use it: these
+/// deal in `Swift.String` and `Swift.Array`, which have no C representation.
+/// A generated shim declares them by name and never sees the runtime's
+/// module, so a shim compiled against a framework needs nothing on its
+/// search path but the framework.
+@_silgen_name("basic_rt_swift_array_count")
+public func basicRTSwiftArrayCount(_ pointer: UnsafeMutableRawPointer?) -> Int {
+    BASICRTSwiftBridge.arrayCount(pointer)
+}
+
+@_silgen_name("basic_rt_swift_array_number")
+public func basicRTSwiftArrayNumber(_ pointer: UnsafeMutableRawPointer?, _ index: Int) -> Double {
+    BASICRTSwiftBridge.arrayNumber(pointer, index)
+}
+
+@_silgen_name("basic_rt_swift_array_boolean")
+public func basicRTSwiftArrayBoolean(_ pointer: UnsafeMutableRawPointer?, _ index: Int) -> Bool {
+    BASICRTSwiftBridge.arrayBoolean(pointer, index)
+}
+
+@_silgen_name("basic_rt_swift_array_string")
+public func basicRTSwiftArrayString(_ pointer: UnsafeMutableRawPointer?, _ index: Int) -> String {
+    BASICRTSwiftBridge.arrayString(pointer, index)
+}
+
+@_silgen_name("basic_rt_swift_array_out_numbers")
+public func basicRTSwiftArrayOutNumbers(_ values: [Double]) -> UnsafeMutableRawPointer {
+    BASICRTSwiftBridge.makeNumberArray(values)
+}
+
+@_silgen_name("basic_rt_swift_array_out_booleans")
+public func basicRTSwiftArrayOutBooleans(_ values: [Bool]) -> UnsafeMutableRawPointer {
+    BASICRTSwiftBridge.makeBooleanArray(values)
+}
+
+@_silgen_name("basic_rt_swift_array_out_strings")
+public func basicRTSwiftArrayOutStrings(_ values: [String]) -> UnsafeMutableRawPointer {
+    BASICRTSwiftBridge.makeStringArray(values)
 }
 
 /// The `Swift.String` behind a runtime string pointer; null reads as "".
