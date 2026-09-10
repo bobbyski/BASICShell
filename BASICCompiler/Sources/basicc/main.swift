@@ -26,6 +26,8 @@ func printUsage() {
                                           Swift-callable object plus interface
       basicc import-report <file.bas>     what each IMPORTed Swift framework
                                           gave the program, and what it did not
+      basicc import-probe <file.bas>      the same, and prove it: compile every
+                                          generated shim and type-check the units
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -232,6 +234,39 @@ let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
 case "--version", "-v":
     print("basicc \(version)")
+case "import-probe":
+    // R4.8's tripwire. `import-report` says what a framework gave; this also
+    // proves the giving *works*: every generated shim is compiled by swiftc
+    // as the loader resolves the import, and then the whole program goes
+    // through the front end, which type-checks the generated interface units
+    // along with it. A member the reader claims and the emitter cannot spell
+    // fails here rather than the first time a program happens to call it.
+    guard let source = invocation.source else { fail("a source file is required", code: 2) }
+    do {
+        let directory = (source as NSString).deletingLastPathComponent
+        let result = try SwiftImportLoader(programDirectory: directory.isEmpty ? "." : directory).load(path: source)
+        guard !result.imports.isEmpty else {
+            print("\(source) imports no Swift framework")
+            exit(0)
+        }
+        for module in result.imports.keys.sorted() {
+            print(SwiftInterfaceUnit(api: result.imports[module]!).report())
+        }
+        // The front end over the whole program, generated units included —
+        // and then lowering, which is where the interface unit and the
+        // object model have to agree about which members exist.
+        let module = try BIRBuilder(externalClasses: result.externalClasses)
+            .build(result.lines, moduleName: Compilation.moduleName(for: source))
+        _ = try SwiftDialect(imports: result.imports).lower(module, options: CompileOptions())
+        print("shims compiled, interfaces type-check, thunks emit")
+    } catch let error as CompileError {
+        for diagnostic in error.diagnostics {
+            FileHandle.standardError.write(Data((diagnostic.rendered + "\n").utf8))
+        }
+        exit(1)
+    } catch {
+        fail("\(error)")
+    }
 case "import-report":
     guard let source = invocation.source else { fail("a source file is required", code: 2) }
     do {

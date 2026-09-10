@@ -128,6 +128,19 @@ public struct SwiftInterfaceUnit {
         api.classes.map { $0.name.uppercased() }
     }
 
+    /// How much of the framework reached BASIC (R4.8).
+    ///
+    /// A number, because that is the only form of this fact that a test can
+    /// hold onto. A binding layer that loses half a framework reads exactly
+    /// like one that never had it — until something counts.
+    public var coverage: (imported: Int, skipped: Int) {
+        let imported = api.classes.reduce(0) { total, klass in
+            total + klass.methods.count + klass.properties.count
+                + (chosenInitializer(of: klass) == nil ? 0 : 1)
+        }
+        return (imported, api.skipped.count + skippedInitializers.count)
+    }
+
     /// What was imported and what was not, per framework (R4.8).
     ///
     /// The tripwire against silent rot: a binding layer that loses half a
@@ -156,6 +169,10 @@ public struct SwiftInterfaceUnit {
                 lines.append("    \(skip.member) — \(skip.reason)")
             }
         }
+        let counted = coverage
+        let total = counted.imported + counted.skipped
+        let percent = total == 0 ? 100 : counted.imported * 100 / total
+        lines.append("  \(counted.imported) of \(total) members imported (\(percent)%)")
         return lines.joined(separator: "\n")
     }
 

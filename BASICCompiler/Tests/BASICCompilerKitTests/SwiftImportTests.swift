@@ -268,6 +268,20 @@ struct SwiftImportEndToEndTests {
         #expect(refused.exitCode != 0, "an array of imported objects must be refused")
         #expect((refused.stderr + refused.stdout).contains("cannot hold an imported Rect"),
                 "got: \(refused.stderr)\(refused.stdout)")
+
+        // R4.8's tripwire. Not "does the program run" — that only exercises
+        // the members this program happens to call. The probe compiles every
+        // generated shim, type-checks every generated interface, emits every
+        // thunk, and prints how much of the framework arrived. A binding
+        // layer that quietly loses half a framework fails here.
+        let probe = try ProcessRunner.run(Self.compiler, ["import-probe", source.path])
+        #expect(probe.exitCode == 0, "probe failed: \(probe.stderr)\(probe.stdout)")
+        #expect(probe.stdout.contains("shims compiled, interfaces type-check, thunks emit"))
+        let coverage = try #require(probe.stdout.split(separator: "\n")
+            .first { $0.contains("members imported") }.map(String.init))
+        // The count itself, so a regression that halves the surface is a
+        // failure rather than a smaller number nobody reads.
+        #expect(coverage.contains("11 of 11 members imported (100%)"), "got: \(coverage)")
     }
 
     /// The compiler under test, built into this package's scratch path.
