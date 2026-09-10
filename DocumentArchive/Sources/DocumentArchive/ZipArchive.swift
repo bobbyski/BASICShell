@@ -164,14 +164,24 @@ public struct ZipArchive: Sendable {
         guard end >= 0 else { throw Failure("no end-of-central-directory record: not a zip file") }
 
         let count = Int(readUInt16(bytes, end + 10))
-        var offset = Int(readUInt32(bytes, end + 16))
-        let declaredSize = Int(readUInt32(bytes, end + 12))
+        let rawOffset = readUInt32(bytes, end + 16)
+        let rawDeclaredSize = readUInt32(bytes, end + 12)
 
         // Zip64 puts 0xFFFFFFFF in the 32-bit fields and the real numbers in
         // its own record. Rather than half-support it, say so plainly.
-        if offset == 0xFFFF_FFFF || declaredSize == 0xFFFF_FFFF || readUInt16(bytes, end + 10) == 0xFFFF {
+        //
+        // **Checked before narrowing to `Int`, not after.** `Int` is 32 bits
+        // wide on wasm32, where `Int(0xFFFF_FFFF)` is not a comparison that
+        // comes out false — it is a trap, and the literal does not even
+        // compile. Reading the sentinel in the width the format defines it in
+        // is both correct and portable.
+        if rawOffset == UInt32.max || rawDeclaredSize == UInt32.max
+            || readUInt16(bytes, end + 10) == 0xFFFF {
             throw Failure("this is a zip64 archive, which this reader does not read")
         }
+
+        var offset = Int(rawOffset)
+        let declaredSize = Int(rawDeclaredSize)
 
         var entries: [Entry] = []
         entries.reserveCapacity(count)
