@@ -161,6 +161,12 @@ public final class BASICInterpreter {
             }
             guard diagnostics.isEmpty else { return diagnostics }
 
+            for violation in BranchScope.violations(in: parsed) {
+                diagnostics.append(BASICDiagnostic(
+                    lineNumber: violation.line.displayLineNumber, column: 0, message: violation.message))
+            }
+            guard diagnostics.isEmpty else { return diagnostics }
+
             do {
                 recordDefinitions = try collectRecords(in: parsed)
                 runtime.recordDefinitions = recordDefinitions
@@ -300,6 +306,13 @@ public final class BASICInterpreter {
             if let label = line.statement.label {
                 lineIndexByLabel[label.uppercased()] = index
             }
+        }
+        // A GOTO that leaves its routine is refused before anything runs
+        // (`BranchScope`). It used to end the function silently and hand back
+        // the default value — neither what the program said nor what the
+        // compiler did with the same source.
+        if let violation = BranchScope.violations(in: parsed).first {
+            throw BASICError.syntax("\(violation.message) (line \(violation.line.displayLineNumber))")
         }
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions

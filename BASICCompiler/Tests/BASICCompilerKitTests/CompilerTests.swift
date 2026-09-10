@@ -145,6 +145,49 @@ struct DiagnosticTests {
         #expect(run.exitCode == 1)
     }
 
+    /// A `GOTO` that leaves its routine, refused before anything runs.
+    ///
+    /// The rule earns its keep by removing a divergence rather than adding a
+    /// restriction: the interpreter used to end the function silently and
+    /// hand back the default value, while the compiler failed at run time
+    /// with `Missing label`. Neither is what the program said. The check
+    /// lives in `BranchScope`, which both engines call.
+    @Test func aGotoMayNotLeaveItsRoutine() {
+        let outward = "FUNCTION Escape() AS DOUBLE\n  GOTO Landing\n  RETURN 1\nEND FUNCTION\n"
+            + "PRINT Escape()\nEND\nLanding:\nPRINT \"outside\""
+        do {
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: outward, name: "bad")
+            Issue.record("expected a compile error")
+        } catch let error as CompileError {
+            #expect(error.description.contains("GOTO Landing leaves FUNCTION Escape"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+
+        // And the other way in: jumping *into* a function body used to run
+        // that body with no frame under it.
+        let inward = "GOTO Inside\nEND\nFUNCTION Host() AS DOUBLE\nInside:\n  RETURN 5\nEND FUNCTION"
+        do {
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: inward, name: "bad")
+            Issue.record("expected a compile error")
+        } catch let error as CompileError {
+            #expect(error.description.contains("Inside is in FUNCTION Host"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+    }
+
+    /// The rule is narrow on purpose. A label that exists *nowhere* is still
+    /// BASIC's own business — legal to write, a failure only when reached —
+    /// and `GOSUB` to a main-body subroutine from inside a function is a
+    /// supported affordance the compiler outlines.
+    @Test func onlyCrossRoutineJumpsAreRefused() throws {
+        _ = try Compilation(dialect: TraditionalDialect())
+            .bir(source: "FUNCTION F() AS DOUBLE\n  GOTO Nowhere\n  RETURN 1\nEND FUNCTION\nPRINT F()", name: "ok")
+        _ = try Compilation(dialect: TraditionalDialect())
+            .bir(source: "FUNCTION F() AS DOUBLE\n  GOSUB Helper\n  RETURN 1\nEND FUNCTION\nPRINT F()\nEND\nHelper:\nRETURN", name: "ok")
+    }
+
     @Test func unsupportedFeaturesSaySo() {
         do {
             _ = try Compilation(dialect: TraditionalDialect()).bir(source: "CLASS C\nASYNC FUNCTION F() AS DOUBLE\nEND FUNCTION\nEND CLASS", name: "bad")

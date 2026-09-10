@@ -33,6 +33,17 @@ public struct BIRBuilder {
 
     /// Builds the module for a program.
     public func build(_ lines: [ParsedLine], moduleName: String) throws -> BIRModule {
+        // A GOTO that leaves its routine, refused by name rather than left to
+        // fail at run time with `Missing label` — the same rule, from the same
+        // code, the interpreter applies (`BranchScope`). Both dialects come
+        // through here, so neither can drift from it.
+        let escapes = BranchScope.violations(in: lines)
+        if !escapes.isEmpty {
+            throw CompileError(escapes.map {
+                Diagnostic(severity: .error, file: $0.line.fileName,
+                           line: $0.line.displayLineNumber, message: $0.message)
+            })
+        }
         var analyzer = SemanticAnalyzer(lines: lines)
         let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
