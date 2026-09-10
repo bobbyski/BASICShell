@@ -561,7 +561,14 @@ public struct SwiftObjectModel: ObjectModel {
                 let parameters = initializer.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
-            for method in entry.klass.methods where seen.insert(method.symbol).inserted {
+            for method in entry.klass.methods where method.isAsync && seen.insert("await." + method.symbol).inserted {
+                // The shim's C entry point, not the async symbol: an async
+                // function cannot be called directly from here (R3.3).
+                let shim = "basic_await_\(entry.klass.name)_\(method.name)"
+                let parameters = ["ptr"] + method.parameters.map { Self.abiType($0.type) }
+                out += "declare \(Self.abiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
+            }
+            for method in entry.klass.methods where !method.isAsync && seen.insert(method.symbol).inserted {
                 // A `throws` method takes a hidden `swifterror` pointer; the
                 // callee stores the thrown error through it and returns
                 // normally, so a caller that omits it hands the callee a
@@ -756,6 +763,22 @@ public struct SwiftObjectModel: ObjectModel {
             }
             for (index, parameter) in method.parameters.enumerated() {
                 arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
+            }
+            // An async method goes through its shim, which takes the
+            // receiver as an ordinary first argument and no swiftself.
+            if method.isAsync {
+                let shim = "basic_await_\(entry.klass.name)_\(method.name)"
+                let call = "call \(Self.abiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
+                if method.returns == .void {
+                    body += "  \(call)\n"
+                    out += "define void @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
+                } else {
+                    let raw = temp()
+                    body += "  \(raw) = \(call)\n"
+                    let value = fromSwift(raw, method.returns, into: &body)
+                    out += "define \(basicType(method.returns)) @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(basicType(method.returns)) \(value)\n}\n"
+                }
+                continue
             }
             arguments.append("ptr swiftself %me")
             let returnType = Self.abiReturn(method.returns)

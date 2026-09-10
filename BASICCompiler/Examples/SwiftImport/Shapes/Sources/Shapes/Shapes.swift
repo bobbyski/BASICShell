@@ -18,6 +18,13 @@ open class Shape {
 
     public func sides() -> Int { 0 }
 
+    /// A method that suspends. BASIC calls it and waits; the suspension is
+    /// Swift's own (R3.3).
+    public func measured() async -> Double {
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        return area() * 2
+    }
+
     /// A method that can fail, so the error round trip has something to
     /// carry (R4.6). BASIC catches this with `ON ERROR`.
     public func scaled(by factor: Double) throws -> Double {

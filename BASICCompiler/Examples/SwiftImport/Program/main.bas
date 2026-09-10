@@ -38,6 +38,12 @@ PRINT C.describe()
 ' branch-on-return — the callee writes the error into a register the caller
 ' reads — so basicc calls it with that register and turns a thrown error into
 ' an ordinary BASIC error. ON ERROR catches it like any other.
+' An async Swift method. basicc compiles a shim that starts a real task and
+' waits for it, so the suspension is Swift's and the BASIC statement simply
+' does not finish until the value is in hand — which is what AWAIT already
+' means here.
+PRINT "measured (async):"; R.measured()
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

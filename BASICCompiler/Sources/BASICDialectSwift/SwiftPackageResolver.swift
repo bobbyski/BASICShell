@@ -85,6 +85,70 @@ public struct SwiftPackageResolver {
         return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph, objects: objects)
     }
 
+    /// Compiles the async shim for `api`, or nil when it has no async
+    /// methods. The object joins the program's link line.
+    public func buildAsyncShim(for api: SwiftAPI, package: ResolvedPackage) throws -> String? {
+        var methods: [SwiftAsyncShim.Method] = []
+        for klass in api.classes {
+            for method in klass.methods where method.isAsync {
+                guard method.returns.isSupported, method.parameters.allSatisfy(\.type.isSupported) else { continue }
+                methods.append(.init(
+                    className: klass.name, name: method.name,
+                    labels: method.parameters.map(\.label),
+                    parameterTypes: method.parameters.map { Self.spelling($0.type, in: api) },
+                    returns: method.returns == .void ? nil : Self.spelling(method.returns, in: api),
+                    isThrowing: method.isThrowing
+                ))
+            }
+        }
+        guard let source = SwiftAsyncShim(module: api.module, methods: methods).source() else { return nil }
+
+        let directory = (package.path as NSString).appendingPathComponent(".build/basicc-shims")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let file = (directory as NSString).appendingPathComponent("\(api.module)Await.swift")
+        try source.write(toFile: file, atomically: true, encoding: .utf8)
+        let object = (directory as NSString).appendingPathComponent("\(api.module)Await.o")
+
+        // Built against the framework's own module, and against BASICRTSwift
+        // for the error raiser a failing await hands its error to.
+        var arguments = ["swiftc", "-parse-as-library", "-emit-object", "-O", file, "-o", object]
+        for modules in Self.moduleSearchPaths(package: package) { arguments += ["-I", modules] }
+        let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
+        guard result.exitCode == 0 else {
+            throw Failure(importName: api.module, problem: "the await shim did not compile: \(result.stderr)")
+        }
+        return object
+    }
+
+    /// A Swift type's spelling in generated shim source.
+    static func spelling(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
+        switch type {
+        case .double: return "Swift.Double"
+        case .int: return "Swift.Int"
+        case .bool: return "Swift.Bool"
+        case .string: return "Swift.String"
+        case .object(let precise): return api.class(precise: precise)?.name ?? "AnyObject"
+        case .void: return "Swift.Void"
+        case .unsupported: return "Swift.Never"
+        }
+    }
+
+    /// Where `swiftc` should look for the framework's module and for
+    /// BASICRTSwift.
+    static func moduleSearchPaths(package: ResolvedPackage) -> [String] {
+        var paths: [String] = []
+        for configuration in ["release", "debug"] {
+            let modules = "\(package.path)/.build/\(configuration)/Modules"
+            if FileManager.default.fileExists(atPath: modules) { paths.append(modules) }
+            let flat = "\(package.path)/.build/\(configuration)"
+            if FileManager.default.fileExists(atPath: flat) { paths.append(flat) }
+        }
+        if let extra = ProcessInfo.processInfo.environment["BASICC_SWIFT_MODULES"] {
+            paths += extra.split(separator: ":").map(String.init)
+        }
+        return paths
+    }
+
     static func find(named name: String, under root: String) -> String? {
         guard let walker = FileManager.default.enumerator(atPath: root) else { return nil }
         for case let entry as String in walker where entry.hasSuffix("/" + name) || entry == name {

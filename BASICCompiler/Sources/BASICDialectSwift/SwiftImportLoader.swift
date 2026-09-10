@@ -59,6 +59,11 @@ public struct SwiftImportLoader {
                 let api = try SwiftAPI.read(fileAt: package.symbolGraph)
                 collected.imports[api.module] = api
                 collected.objects += package.objects
+                // Async methods need a compiled shim (R3.3); see
+                // `SwiftAsyncShim` for why these alone are not plain calls.
+                if let shim = try resolver.buildAsyncShim(for: api, package: package) {
+                    collected.objects.append(shim)
+                }
                 let unit = SwiftInterfaceUnit(api: api)
                 for className in unit.externalClassNames {
                     collected.externalClasses[className] = api.module

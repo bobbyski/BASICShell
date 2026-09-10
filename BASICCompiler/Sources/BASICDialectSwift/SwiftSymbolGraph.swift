@@ -61,6 +61,13 @@ public struct SwiftAPI: Sendable {
         public let isInitializer: Bool
         /// Whether a subclass may override it (`open`).
         public let isOverridable: Bool
+        /// Whether it must be awaited.
+        ///
+        /// Like `throws`, this is load-bearing: an `async` function has an
+        /// entirely different ABI — a context pointer and a continuation, not
+        /// a plain call — so importing one as ordinary would not merely lose
+        /// the suspension, it would call the wrong thing.
+        public var isAsync: Bool = false
         /// Whether it can throw.
         ///
         /// Load-bearing, not decorative: a `throws` function takes a hidden
@@ -197,6 +204,8 @@ public struct SwiftAPI: Sendable {
                     // `throws` shows up as a keyword fragment; the return type
                     // looks perfectly ordinary beside it, which is why a
                     // throwing method read as a plain one before this.
+                    isAsync: fragments(of: symbol["declarationFragments"])
+                        .contains { $0.kind == "keyword" && $0.spelling == "async" },
                     isThrowing: fragments(of: symbol["declarationFragments"])
                         .contains { $0.kind == "keyword" && $0.spelling == "throws" }
                 )
