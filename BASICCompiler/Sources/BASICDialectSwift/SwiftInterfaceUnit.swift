@@ -249,7 +249,27 @@ public struct SwiftInterfaceUnit {
         case .double, .int: return "0"
         case .bool: return "FALSE"
         case .string: return "\"\""
-        case .object(let precise): return "NEW \(api.class(precise: precise)?.name ?? "VARIANT")"
+        case .object(let precise):
+            // The body is discarded, but it still has to type-check — and a
+            // class whose NEW takes arguments will not accept none. Zeros of
+            // the right arity; `EMPTY` when the class has no NEW to call.
+            guard let klass = api.class(precise: precise) else { return "EMPTY" }
+            // A class with no importable NEW still constructs the BASIC way,
+            // with default fields — `EMPTY` is not a value of a class type.
+            guard let initializer = klass.initializers.first else { return "NEW \(klass.name)" }
+            // A zero of the *right kind* for each argument — `0` for a
+            // number, `""` for a string — because the placeholder still has
+            // to type-check even though nothing ever runs it.
+            let arguments = types(initializer.passed, in: api).map { basic -> String in
+                switch basic {
+                case "STRING": return "\"\""
+                case "BOOLEAN": return "FALSE"
+                case handlerType: return "FUNCTION() AS DOUBLE = 0"
+                default: return "0"
+                }
+            }
+            guard !arguments.isEmpty else { return "NEW \(klass.name)" }
+            return "NEW \(klass.name)(\(arguments.joined(separator: ", ")))"
         case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }

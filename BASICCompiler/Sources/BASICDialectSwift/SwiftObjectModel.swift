@@ -461,8 +461,14 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     public func constructSymbol(for typeName: String, arguments: [BIRType]) -> String? {
+        // Matched on the arity BASIC *passes*, not on Swift's parameter
+        // count: a struct arrives flattened and a defaulted parameter is not
+        // passed at all, so `Window.init(frame: Rect)` is four arguments here
+        // and one there.
         guard let entry = importedByName[typeName],
-              entry.klass.initializers.contains(where: { $0.parameters.count == arguments.count })
+              entry.klass.initializers.contains(where: {
+                  Self.basicArity($0, in: entry.api) == arguments.count
+              })
         else { return nil }
         return "\(typeName).new.\(arguments.count)"
     }
@@ -562,6 +568,17 @@ public struct SwiftObjectModel: ObjectModel {
                 let parameters = initializer.passed.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
+            for initializer in entry.klass.initializers
+            where Self.needsInitializerShim(initializer)
+                && seen.insert("newshim.\(entry.klass.name).\(Self.basicArity(initializer, in: entry.api))").inserted {
+                let parameters = initializer.passed.flatMap { parameter -> [String] in
+                    if case .structure = parameter.type {
+                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.abiType($0) }
+                    }
+                    return [Self.abiType(parameter.type)]
+                }
+                out += "declare ptr @basic_new_\(entry.klass.name)_\(Self.basicArity(initializer, in: entry.api))(\(parameters.joined(separator: ", ")))\n"
+            }
             for method in entry.klass.methods where Self.needsShim(method) && seen.insert("shim." + method.symbol).inserted {
                 // The shim's C entry point, not the async symbol: an async
                 // function cannot be called directly from here (R3.3).
@@ -597,9 +614,28 @@ public struct SwiftObjectModel: ObjectModel {
         return out
     }
 
+    /// How many arguments BASIC passes to a member: one per scalar, and one
+    /// per leaf of any struct.
+    static func basicArity(_ function: SwiftAPI.Function, in api: SwiftAPI) -> Int {
+        function.passed.reduce(0) { total, parameter in
+            if case .structure = parameter.type { return total + (api.leaves(of: parameter.type)?.count ?? 1) }
+            return total + 1
+        }
+    }
+
     /// Whether a method is reached through a generated Swift shim rather
     /// than by a plain call: awaited methods (R3.3) and methods taking a
     /// handler (R4.5) are the two shapes emitted IR cannot call directly.
+    /// Whether a constructor is reached through a generated shim.
+    static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
+        initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
+            switch $0.type {
+            case .structure, .protocolType, .voidClosure: return true
+            default: return false
+            }
+        }
+    }
+
     static func needsShim(_ method: SwiftAPI.Function) -> Bool {
         // Anything emitted IR cannot call directly, or whose argument list
         // differs from what Swift declared because a defaulted parameter is
@@ -719,6 +755,37 @@ public struct SwiftObjectModel: ObjectModel {
                 return r
             }
         }
+        /// A member's parameter list as BASIC declares it, and the argument
+        /// each one contributes.
+        ///
+        /// A struct is several BASIC numbers, not one value, so it expands
+        /// here — declaring it as a single pointer is what made the emitted
+        /// IR disagree with itself.
+        func basicParameters(_ passed: [SwiftAPI.Parameter]) -> (declared: [String], slots: [[(String, SwiftAPI.ValueType)]]) {
+            var declared: [String] = []
+            var slots: [[(String, SwiftAPI.ValueType)]] = []
+            for parameter in passed {
+                // A leaf carries its own type: `Size` is two numbers but
+                // `HeadlessDriver`'s flattened arguments include a boolean,
+                // and assuming every leaf was a number produced IR that
+                // disagreed with itself.
+                if case .structure = parameter.type, let leaves = entry.api.leaves(of: parameter.type) {
+                    var names: [(String, SwiftAPI.ValueType)] = []
+                    for leaf in leaves {
+                        let name = "%a\(declared.count)"
+                        declared.append("\(basicType(leaf)) \(name)")
+                        names.append((name, leaf))
+                    }
+                    slots.append(names)
+                } else {
+                    let name = "%a\(declared.count)"
+                    declared.append("\(basicType(parameter.type)) \(name)")
+                    slots.append([(name, parameter.type)])
+                }
+            }
+            return (declared, slots)
+        }
+
         func basicType(_ type: SwiftAPI.ValueType) -> String {
             switch type {
             case .double, .int: return "double"
@@ -727,22 +794,52 @@ public struct SwiftObjectModel: ObjectModel {
             }
         }
 
-        // Constructors.
-        for initializer in entry.klass.initializers {
+        // Constructors. Only one shape per arity: BASIC has a single NEW per
+        // class, the unit declares one, and two Swift initializers can
+        // collapse onto the same one once defaulted parameters are dropped —
+        // `ImageView` has two that both take one argument from BASIC.
+        var emittedNew = Set<String>()
+        for initializer in entry.klass.initializers
+        where emittedNew.insert("\(name).new.\(Self.basicArity(initializer, in: entry.api))").inserted {
             counter = 0
             var body = ""
             var arguments: [String] = []
-            let parameters = initializer.passed.enumerated().map { index, parameter -> String in
-                "\(basicType(parameter.type)) %a\(index)"
-            }
+            let (parameters, slots) = basicParameters(initializer.passed)
             for (index, parameter) in initializer.passed.enumerated() {
-                arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
+                if case .structure = parameter.type {
+                    // Each leaf goes across on its own; the shim rebuilds.
+                    arguments += slots[index].map { toSwift($0.0, $0.1, into: &body) }
+                } else {
+                    arguments.append(toSwift(slots[index][0].0, parameter.type, into: &body))
+                }
             }
-            arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
+            let arity0 = Self.basicArity(initializer, in: entry.api)
             let result = temp()
-            body += "  \(result) = call swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(arguments.joined(separator: ", ")))\n"
-            let symbol = initializer.passed.isEmpty ? "\(name).new" : "\(name).new.\(initializer.passed.count)"
+            if Self.needsInitializerShim(initializer) {
+                // Through the shim, for the same reasons a method goes
+                // through one: a protocol argument is an existential rather
+                // than a pointer, and a struct arrives in pieces.
+                body += "  \(result) = call ptr @basic_new_\(entry.klass.name)_\(arity0)(\(arguments.joined(separator: ", ")))\n"
+            } else {
+                arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
+                body += "  \(result) = call swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(arguments.joined(separator: ", ")))\n"
+            }
+            // Keyed on the arity BASIC sees, which is the *flattened* one:
+            // a `Size` parameter is two numbers there, and naming the symbol
+            // after Swift's count made the call site ask for one that was
+            // never defined.
+            // Always `.new.<arity>`, including zero — the call site names it
+            // from the argument count it has, and a special case for none
+            // meant a no-argument NEW asked for a symbol nothing defined.
+            let arity = Self.basicArity(initializer, in: entry.api)
+            let symbol = "\(name).new.\(arity)"
             out += "define ptr @\"\(symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret ptr \(result)\n}\n"
+            // `NEW C` and `NEW C()` reach the emitter by different routes and
+            // name the symbol differently; a no-argument constructor answers
+            // to both.
+            if arity == 0 {
+                out += "define ptr @\"\(name).new\"() {\n  %r = call ptr @\"\(symbol)\"()\n  ret ptr %r\n}\n"
+            }
         }
 
         // Property accessors, by BIR field index.
@@ -803,12 +900,15 @@ public struct SwiftObjectModel: ObjectModel {
             counter = 0
             var body = ""
             var arguments: [String] = []
-            var parameters = ["ptr %me"]
+            let (declared, slots) = basicParameters(method.passed)
+            var parameters = ["ptr %me"] + declared
             for (index, parameter) in method.passed.enumerated() {
-                parameters.append("\(basicType(parameter.type)) %a\(index)")
-            }
-            for (index, parameter) in method.parameters.enumerated() {
-                arguments.append(toSwift("%a\(index)", parameter.type, into: &body))
+                if case .structure = parameter.type {
+                    // Each leaf goes across on its own; the shim rebuilds.
+                    arguments += slots[index].map { toSwift($0.0, $0.1, into: &body) }
+                } else {
+                    arguments.append(toSwift(slots[index][0].0, parameter.type, into: &body))
+                }
             }
             // An async method goes through its shim, which takes the
             // receiver as an ordinary first argument and no swiftself.

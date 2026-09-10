@@ -40,6 +40,14 @@ public struct SwiftAsyncShim {
         public let isThrowing: Bool
         /// Whether it is awaited, or merely takes a handler (R4.5).
         public var isAsync: Bool = true
+        /// Whether this constructs the class rather than calling a method.
+        ///
+        /// A constructor needs a shim for the same reasons a method does — a
+        /// protocol parameter is an existential, not a pointer, and calling
+        /// one as though it were walks off the end of the value.
+        public var isInitializer: Bool = false
+        /// How many arguments BASIC passes, for the symbol's name.
+        public var basicArity: Int = 0
         /// Which parameters are `() -> Void` handlers.
         public var closureParameters: Set<Int> = []
         /// Which parameters are class references, by the class's Swift name.
@@ -75,7 +83,8 @@ public struct SwiftAsyncShim {
 
         /// The C symbol the emitted IR calls.
         public var symbol: String {
-            (isAsync ? "basic_await_" : "basic_handler_") + "\(className)_\(name)"
+            if isInitializer { return "basic_new_\(className)_\(basicArity)" }
+            return (isAsync ? "basic_await_" : "basic_handler_") + "\(className)_\(name)"
         }
     }
 
@@ -134,7 +143,7 @@ public struct SwiftAsyncShim {
             // function pointer and the closure it should invoke — and becomes
             // an ordinary Swift closure right here, which is the whole point:
             // the framework stores a Swift closure, not a wrapper object.
-            var parameters = ["_ me: UnsafeMutableRawPointer"]
+            var parameters = method.isInitializer ? [] : ["_ me: UnsafeMutableRawPointer"]
             var callArguments: [String] = []
             for (index, type) in method.parameterTypes.enumerated() {
                 if method.closureParameters.contains(index) {
@@ -170,7 +179,7 @@ public struct SwiftAsyncShim {
             // A class result crosses as a pointer too, unretained: an
             // imported object belongs to the framework, and BASIC holding one
             // aliases it rather than owning a copy (ruling D15).
-            let result = method.objectResult != nil
+            let result = (method.isInitializer || method.objectResult != nil)
                 ? " -> UnsafeMutableRawPointer"
                 : (method.returns.map { " -> \($0)" } ?? "")
             func handOut(_ expression: String) -> String {
@@ -178,7 +187,9 @@ public struct SwiftAsyncShim {
             }
             lines.append("@_cdecl(\"\(method.symbol)\")")
             lines.append("public func \(method.symbol)(\(parameters.joined(separator: ", ")))\(result) {")
-            lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+            if !method.isInitializer {
+                lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+            }
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
                 lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
             }
@@ -213,6 +224,13 @@ public struct SwiftAsyncShim {
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
                 lines.append("    }")
+            } else if method.isInitializer {
+                // Retained: the object is new and BASIC holds the only
+                // reference. An imported object is the framework's to manage
+                // (D15), and there is no release path for one yet — so this
+                // keeps it alive rather than handing back a corpse.
+                lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labelled)) }")
+                lines.append("    return Unmanaged.passRetained(made).toOpaque()")
             } else {
                 // **`MainActor.assumeIsolated`, and it is load-bearing.** A
                 // UI framework's API is usually `@MainActor`-isolated, and a

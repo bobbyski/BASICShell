@@ -56,7 +56,9 @@ public struct SwiftImportLoader {
             guard !name.contains("/"), (name as NSString).pathExtension.isEmpty else { return nil }
             do {
                 let package = try resolver.resolve(name)
-                let api = try SwiftAPI.read(fileAt: package.symbolGraph)
+                var api = try SwiftAPI.read(fileAt: package.symbolGraph)
+                // What the binary exports decides what can be called (R4.3).
+                api.keepOnly(exported: package.exported)
                 collected.imports[api.module] = api
                 collected.objects += package.objects
                 // Async methods need a compiled shim (R3.3); see

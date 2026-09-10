@@ -32,6 +32,17 @@ public struct SwiftPackageResolver {
         public let symbolGraph: String
         /// The compiled objects to link.
         public let objects: [String]
+        /// Every symbol those objects actually define.
+        ///
+        /// The graph says what the API *is*; this says what the binary
+        /// *exports*, and they are not the same. A property the graph
+        /// presents as a `var` may have no public setter — an actor's
+        /// properties are read-only from outside, and a computed one may have
+        /// no setter at all — and calling a symbol that is not there is a
+        /// link error at the end of someone else's build. The plan asks for
+        /// exactly this check ("validate every generated symbol against nm,
+        /// or bindings rot silently").
+        public var exported: Set<String> = []
     }
 
     /// The failure, with the command that produced it.
@@ -104,7 +115,8 @@ public struct SwiftPackageResolver {
         guard !objects.isEmpty else {
             throw Failure(importName: importName, problem: "swift build produced no objects in \(objectDirectory)")
         }
-        return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph, objects: objects)
+        return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph,
+                               objects: objects, exported: Self.exportedSymbols(of: objects))
     }
 
     /// Compiles the async shim for `api`, or nil when it has no async
@@ -149,6 +161,46 @@ public struct SwiftPackageResolver {
                     guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
                           let leaves = api.leaves(of: parameter.type)
                     else { continue }
+                    shim.structParameters[index] = (leaves.map { Self.spelling($0, in: api) }, build)
+                }
+                methods.append(shim)
+            }
+        }
+        // Constructors need shims for the same reasons methods do.
+        for klass in api.classes {
+            for initializer in klass.initializers {
+                let passed = initializer.passed
+                let needs = passed.contains {
+                    switch $0.type {
+                    case .structure, .protocolType, .voidClosure: return true
+                    default: return false
+                    }
+                } || passed.count != initializer.parameters.count
+                guard needs else { continue }
+                var shim = SwiftAsyncShim.Method(
+                    className: klass.name, name: "init",
+                    labels: passed.map(\.label),
+                    parameterTypes: passed.map { Self.spelling($0.type, in: api) },
+                    returns: nil, isThrowing: initializer.isThrowing
+                )
+                shim.isAsync = false
+                shim.isInitializer = true
+                shim.basicArity = passed.reduce(0) { total, parameter in
+                    if case .structure = parameter.type { return total + (api.leaves(of: parameter.type)?.count ?? 1) }
+                    return total + 1
+                }
+                shim.closureParameters = Set(passed.indices.filter { passed[$0].type == .voidClosure })
+                for (index, parameter) in passed.enumerated() {
+                    if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
+                        shim.protocolParameters[index] = name
+                    }
+                    if case .object(let precise) = parameter.type, let k = api.class(precise: precise) {
+                        shim.objectParameters[index] = k.name
+                    }
+                    guard case .structure = parameter.type else { continue }
+                    var next = 0
+                    guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
+                          let leaves = api.leaves(of: parameter.type) else { continue }
                     shim.structParameters[index] = (leaves.map { Self.spelling($0, in: api) }, build)
                 }
                 methods.append(shim)
@@ -231,6 +283,20 @@ public struct SwiftPackageResolver {
     /// The tail of a tool's output. A failing SwiftPM run prints its whole
     /// build log, and burying the one line that matters under a hundred
     /// progress lines helps nobody.
+    /// The symbols a set of objects defines, without the leading underscore
+    /// Mach-O adds.
+    static func exportedSymbols(of objects: [String]) -> Set<String> {
+        guard !objects.isEmpty,
+              let result = try? ProcessRunner.run("/usr/bin/xcrun", ["nm", "-gjU"] + objects)
+        else { return [] }
+        var found = Set<String>()
+        for line in result.stdout.split(separator: "\n") {
+            let name = line.hasPrefix("_") ? String(line.dropFirst()) : String(line)
+            if name.hasPrefix("$s") { found.insert(name) }
+        }
+        return found
+    }
+
     static func lastLines(_ text: String, count: Int = 12) -> String {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         return lines.suffix(count).joined(separator: "\n")

@@ -33,3 +33,8 @@ BASICCompiler/Examples/SwiftInterop/Build/
 # Rev 2 import demo build products
 BASICCompiler/Examples/SwiftImport/Program/Build/
 BASICCompiler/Examples/SwiftImport/*/.build/
+
+# The private scratch path basicc gives an imported package's own SwiftPM, so
+# building a framework for its symbol graph never contends with the build the
+# user started in that same package.
+.build-basicc/

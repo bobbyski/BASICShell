@@ -315,7 +315,15 @@ struct LLVMLowering {
 
     /// The JSON descriptor the runtime registers a type from.
     static func typeDescriptor(_ type: BIRCompositeType, module: BIRModule) -> String {
+        // An imported class keeps its state in the framework, reached through
+        // accessors; the record registered here is a shell that exists so the
+        // runtime can name the type. Describing its fields as what they are
+        // would have the runtime *build* them — and a framework's classes
+        // refer to each other (`TUIView.superview` is a `TUIView`), so
+        // building one default eagerly builds another until the stack ends.
+        let isExternal = type.externalModule != nil
         func typeObject(_ type: BIRType, dimensions: [Int?], isInteger: Bool = false) -> [String: Any] {
+            if isExternal { return ["k": "variant"] }
             switch type {
             case .number, .void: return ["k": isInteger ? "integer" : "number"]
             case .string: return ["k": "string"]

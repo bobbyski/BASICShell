@@ -361,6 +361,24 @@ public struct SwiftAPI: Sendable {
         }
         for index in api.classes.indices {
             let klass = api.classes[index]
+            // A property whose type is a protocol or a struct comes back as
+            // an existential or a value, neither of which crosses as the
+            // pointer a property accessor is emitted to return. Declaring one
+            // put a type in the generated unit that nothing declares.
+            api.classes[index].properties = klass.properties.filter { property in
+                switch property.type {
+                case .protocolType(let precise):
+                    api.skipped.append(Skip(member: "\(klass.name).\(property.name)",
+                                            reason: "it is \(api.protocols[precise] ?? precise), a protocol; a property of one does not cross yet"))
+                    return false
+                case .structure(let precise):
+                    api.skipped.append(Skip(member: "\(klass.name).\(property.name)",
+                                            reason: "it is \(api.structures[precise]?.name ?? precise), a struct; a struct crosses as arguments, not as a value"))
+                    return false
+                default:
+                    return true
+                }
+            }
             api.classes[index].methods = klass.methods.filter { method in
                 if let bad = api.unflattenable(in: method) {
                     api.skipped.append(Skip(member: "\(klass.name).\(method.name)", reason: bad))
@@ -377,6 +395,74 @@ public struct SwiftAPI: Sendable {
             }
         }
         return api
+    }
+
+    /// Withdraws every member whose symbol the framework does not export.
+    ///
+    /// The graph describes the API; the binary decides what can be called.
+    /// A property the graph presents as a `var` may have no public setter —
+    /// an actor's properties are read-only from outside, and a computed one
+    /// may never have had one — and a symbol that is not there is a link
+    /// error at the end of somebody else's build rather than a diagnostic
+    /// here. With `exported` empty, nothing is withdrawn: an unavailable
+    /// symbol table must not look like an empty framework.
+    public mutating func keepOnly(exported: Set<String>) {
+        guard !exported.isEmpty else { return }
+        func has(_ symbol: String) -> Bool { exported.contains(String(symbol.dropFirst(2))) || exported.contains(symbol) }
+
+        // A class whose *metadata* is not exported cannot be constructed or
+        // recognised at run time. A generic class is the usual reason —
+        // `Ref<Value>` has a metadata accessor rather than one fixed symbol —
+        // and emitting a reference to metadata that does not exist is a link
+        // error rather than anything a program could have done differently.
+        let withdrawn = Set(classes.filter { !has($0.symbol + "N") }.map(\.precise))
+        if !withdrawn.isEmpty {
+            for klass in classes where withdrawn.contains(klass.precise) {
+                skipped.append(Skip(member: klass.name, reason: "the framework exports no type metadata for it; a generic class has none to export"))
+            }
+            classes.removeAll { withdrawn.contains($0.precise) }
+            // And anything that names one of them: its type has gone.
+            for index in classes.indices {
+                let klass = classes[index]
+                func mentions(_ function: Function) -> Bool {
+                    if case .object(let precise) = function.returns, withdrawn.contains(precise) { return true }
+                    return function.passed.contains {
+                        if case .object(let precise) = $0.type { return withdrawn.contains(precise) }
+                        return false
+                    }
+                }
+                classes[index].methods = klass.methods.filter { !mentions($0) }
+                classes[index].initializers = klass.initializers.filter { !mentions($0) }
+                classes[index].properties = klass.properties.filter {
+                    if case .object(let precise) = $0.type { return !withdrawn.contains(precise) }
+                    return true
+                }
+            }
+        }
+        for index in classes.indices {
+            let klass = classes[index]
+            classes[index].methods = klass.methods.filter { method in
+                guard has(method.symbol) else {
+                    skipped.append(Skip(member: "\(klass.name).\(method.name)",
+                                        reason: "the framework does not export it"))
+                    return false
+                }
+                return true
+            }
+            classes[index].initializers = klass.initializers.filter { has($0.allocatingSymbol) }
+            classes[index].properties = klass.properties.compactMap { property in
+                guard has(property.getterSymbol) else {
+                    skipped.append(Skip(member: "\(klass.name).\(property.name)",
+                                        reason: "the framework exports no getter for it"))
+                    return nil
+                }
+                guard property.isSettable, !has(property.setterSymbol) else { return property }
+                // Readable but not writable — which is the truth for an
+                // actor's property, and for any computed one without a setter.
+                return Property(name: property.name, symbol: property.symbol,
+                                type: property.type, isSettable: false)
+            }
+        }
     }
 
     /// Why a member cannot cross, when a struct in its signature does not
