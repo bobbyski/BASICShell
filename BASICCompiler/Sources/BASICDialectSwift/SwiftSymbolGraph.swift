@@ -30,6 +30,10 @@ public struct SwiftAPI: Sendable {
         /// A `() -> Void` parameter — an event handler (R4.5). BASIC hands
         /// one over as a closure; the shim wraps it in a Swift closure.
         case voidClosure
+        /// A struct of scalars — a rect, a point, a colour (R4.4). It crosses
+        /// **flattened**: BASIC passes the leaf values and the shim builds the
+        /// struct, so `Window.init(frame: Rect)` reads `NEW Window(x, y, w, h)`.
+        case structure(precise: String)
         /// Nothing.
         case void
         /// Something BASIC has no spelling for yet — the spelling is kept for
@@ -104,6 +108,22 @@ public struct SwiftAPI: Sendable {
         public var setterSymbol: String { String(symbol.dropLast(2)) + "vs" }
     }
 
+    /// A struct, and the scalars it flattens to.
+    public struct Structure: Sendable {
+        public let name: String
+        /// The precise identifier, `s:6TUIKit4RectV`.
+        public let precise: String
+        /// What its initializer takes, in order.
+        ///
+        /// **The initializer, not the property list.** A struct's properties
+        /// include computed ones — `Size` publishes `isEmpty` and
+        /// `cellCount`, `Rect` publishes `minX`…`maxY` — and flattening those
+        /// built calls like `Size(width:height:isEmpty:cellCount:)`, which is
+        /// not an initializer that exists. What a value is *built from* is
+        /// exactly what its initializer takes.
+        public var fields: [(name: String, type: ValueType)] = []
+    }
+
     /// A class.
     public struct Class: Sendable {
         public let name: String
@@ -128,8 +148,33 @@ public struct SwiftAPI: Sendable {
 
     public let module: String
     public var classes: [Class]
+    /// Structs, by precise identifier.
+    public var structures: [String: Structure] = [:]
     public var functions: [Function]
     public var skipped: [Skip]
+
+    /// The scalars a type flattens to at a call boundary.
+    ///
+    /// A scalar is itself; a struct is its stored properties, recursively —
+    /// `Rect` is `Point` and `Size`, which are two numbers each, so a `Rect`
+    /// parameter is four. Nil when something in the tree has no BASIC
+    /// spelling, which is what keeps a struct of arrays out.
+    ///
+    /// Bounded against a cycle, which a value type cannot have but a
+    /// malformed graph could describe.
+    public func leaves(of type: ValueType, depth: Int = 0) -> [ValueType]? {
+        guard depth < 8 else { return nil }
+        guard case .structure(let precise) = type else {
+            return type.isSupported ? [type] : nil
+        }
+        guard let structure = structures[precise], !structure.fields.isEmpty else { return nil }
+        var out: [ValueType] = []
+        for field in structure.fields {
+            guard let inner = leaves(of: field.type, depth: depth + 1) else { return nil }
+            out += inner
+        }
+        return out
+    }
 
     /// A class by its precise identifier.
     public func `class`(precise: String) -> Class? {
@@ -171,7 +216,25 @@ public struct SwiftAPI: Sendable {
             if kind == "inheritsFrom" { inherits[source] = target }
         }
 
-        // Classes first, so members have somewhere to go.
+        // Structs first: a class member may name one, and flattening it
+        // needs its fields already known.
+        for symbol in symbols {
+            guard kind(of: symbol) == "swift.struct", let precise = precise(of: symbol), let name = name(of: symbol) else { continue }
+            api.structures[precise] = Structure(name: name, precise: precise)
+        }
+        for symbol in symbols {
+            guard kind(of: symbol) == "swift.init", let precise = precise(of: symbol),
+                  let owner = memberOf[precise], api.structures[owner] != nil else { continue }
+            let taken = parameters(of: symbol).map { (name: $0.label ?? $0.name, type: $0.type) }
+            // The widest initializer, which is the memberwise one when there
+            // is one: a convenience `init()` would flatten the value to
+            // nothing and quietly lose its contents.
+            if taken.count > (api.structures[owner]?.fields.count ?? 0) {
+                api.structures[owner]?.fields = taken
+            }
+        }
+
+        // Classes next, so members have somewhere to go.
         var classIndex: [String: Int] = [:]
         for symbol in symbols {
             guard kind(of: symbol) == "swift.class", let precise = precise(of: symbol), let name = name(of: symbol) else { continue }
@@ -248,7 +311,44 @@ public struct SwiftAPI: Sendable {
                 api.skipped.append(Skip(member: path, reason: "\(other) has no BASIC counterpart yet"))
             }
         }
+        // A struct is only importable if it flattens to scalars, and that
+        // cannot be known while the structs are still being read — so the
+        // members that name an unflattenable one are withdrawn here, with a
+        // reason, rather than reaching the shim and failing to compile.
+        for index in api.classes.indices {
+            let klass = api.classes[index]
+            api.classes[index].methods = klass.methods.filter { method in
+                if let bad = api.unflattenable(in: method) {
+                    api.skipped.append(Skip(member: "\(klass.name).\(method.name)", reason: bad))
+                    return false
+                }
+                return true
+            }
+            api.classes[index].initializers = klass.initializers.filter { initializer in
+                if let bad = api.unflattenable(in: initializer) {
+                    api.skipped.append(Skip(member: "\(klass.name).init", reason: bad))
+                    return false
+                }
+                return true
+            }
+        }
         return api
+    }
+
+    /// Why a member cannot cross, when a struct in its signature does not
+    /// flatten to scalars.
+    func unflattenable(in function: Function) -> String? {
+        for parameter in function.parameters {
+            guard case .structure(let precise) = parameter.type else { continue }
+            if leaves(of: parameter.type) == nil {
+                let name = structures[precise]?.name ?? precise
+                return "\(parameter.name) is \(name), a struct that does not flatten to numbers, booleans or strings"
+            }
+        }
+        if case .structure(let precise) = function.returns {
+            return "it returns \(structures[precise]?.name ?? precise); a struct comes back as one value and BASIC has no name for it yet"
+        }
+        return nil
     }
 
     // MARK: - Graph pieces
@@ -339,6 +439,9 @@ public struct SwiftAPI: Sendable {
         case "s:Sb": return .bool
         case "s:SS": return .string
         case let precise? where precise.hasSuffix("C"): return .object(precise: precise)
+        // `V` is a struct. Whether it can actually cross is decided later, by
+        // whether it flattens to scalars — this only says what it is.
+        case let precise? where precise.hasSuffix("V"): return .structure(precise: precise)
         default: return .unsupported(spelling)
         }
     }

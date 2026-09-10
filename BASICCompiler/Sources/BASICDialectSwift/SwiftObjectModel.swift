@@ -566,7 +566,14 @@ public struct SwiftObjectModel: ObjectModel {
                 // The shim's C entry point, not the async symbol: an async
                 // function cannot be called directly from here (R3.3).
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
-                let parameters = ["ptr"] + method.parameters.map { Self.abiType($0.type) }
+                // A struct crosses as its scalars, so it contributes several
+                // parameters rather than one.
+                let parameters = ["ptr"] + method.parameters.flatMap { parameter -> [String] in
+                    if case .structure = parameter.type {
+                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.abiType($0) }
+                    }
+                    return [Self.abiType(parameter.type)]
+                }
                 out += "declare \(Self.abiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where !Self.needsShim(method) && seen.insert(method.symbol).inserted {
@@ -594,7 +601,10 @@ public struct SwiftObjectModel: ObjectModel {
     /// than by a plain call: awaited methods (R3.3) and methods taking a
     /// handler (R4.5) are the two shapes emitted IR cannot call directly.
     static func needsShim(_ method: SwiftAPI.Function) -> Bool {
-        method.isAsync || method.parameters.contains { $0.type == .voidClosure }
+        method.isAsync || method.parameters.contains {
+            if case .structure = $0.type { return true }
+            return $0.type == .voidClosure
+        }
     }
 
     static func shimSymbol(_ method: SwiftAPI.Function, of className: String) -> String {
@@ -609,6 +619,10 @@ public struct SwiftObjectModel: ObjectModel {
         case .bool: return "i1"
         case .string: return "i64, ptr"
         case .voidClosure: return "ptr, ptr"
+        // Never reached: a struct parameter is expanded into its scalars
+        // before anything asks for its ABI, because how many words it takes
+        // is a property of the struct rather than of the case.
+        case .structure: return "ptr"
         case .object, .void, .unsupported: return "ptr"
         }
     }
@@ -622,7 +636,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
         // reader, so reaching here would be a bug rather than a shape.
-        case .object, .voidClosure, .unsupported: return "ptr"
+        case .object, .voidClosure, .structure, .unsupported: return "ptr"
         }
     }
 
@@ -663,6 +677,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a BASIC value to Swift's ABI form; returns the argument text.
         func toSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
+            case .structure: return "double \(value)"
             case .double: return "double \(value)"
             case .bool: return "i1 \(value)"
             case .int:
@@ -686,7 +701,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .structure, .unsupported: return value
             case .int:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -700,7 +715,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .structure, .void, .unsupported: return "ptr"
             }
         }
 

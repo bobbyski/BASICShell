@@ -135,6 +135,14 @@ public struct SwiftPackageResolver {
                 if case .object(let precise) = method.returns, let klass = api.class(precise: precise) {
                     shim.objectResult = klass.name
                 }
+                for (index, parameter) in method.parameters.enumerated() {
+                    guard case .structure = parameter.type else { continue }
+                    var next = 0
+                    guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
+                          let leaves = api.leaves(of: parameter.type)
+                    else { continue }
+                    shim.structParameters[index] = (leaves.map { Self.spelling($0, in: api) }, build)
+                }
                 methods.append(shim)
             }
         }
@@ -157,6 +165,25 @@ public struct SwiftPackageResolver {
         return object
     }
 
+    /// An expression that rebuilds `type` from the flattened arguments named
+    /// `<prefix><n>`, nested exactly as the struct is.
+    ///
+    /// The memberwise initializer's labels are its stored property names, in
+    /// declaration order — which is the order the leaves arrive in.
+    static func rebuild(_ type: SwiftAPI.ValueType, in api: SwiftAPI, prefix: String, next: inout Int) -> String? {
+        guard case .structure(let precise) = type else {
+            defer { next += 1 }
+            return "\(prefix)\(next)"
+        }
+        guard let structure = api.structures[precise], !structure.fields.isEmpty else { return nil }
+        var arguments: [String] = []
+        for field in structure.fields {
+            guard let inner = rebuild(field.type, in: api, prefix: prefix, next: &next) else { return nil }
+            arguments.append("\(field.name): \(inner)")
+        }
+        return "\(structure.name)(\(arguments.joined(separator: ", ")))"
+    }
+
     /// A Swift type's spelling in generated shim source.
     static func spelling(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
@@ -168,6 +195,8 @@ public struct SwiftPackageResolver {
         case .void: return "Swift.Void"
         // Spelled by the shim itself, which takes the pair BASIC can supply.
         case .voidClosure: return "() -> Swift.Void"
+        // Named by the shim, which rebuilds it from the scalars BASIC passed.
+        case .structure(let precise): return api.structures[precise]?.name ?? "Swift.Never"
         case .unsupported: return "Swift.Never"
         }
     }

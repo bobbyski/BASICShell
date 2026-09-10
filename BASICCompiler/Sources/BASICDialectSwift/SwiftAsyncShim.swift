@@ -50,6 +50,13 @@ public struct SwiftAsyncShim {
         public var objectParameters: [Int: String] = [:]
         /// The class this returns, when it returns one.
         public var objectResult: String?
+        /// Struct parameters, by position: the Swift spelling of each leaf
+        /// the struct flattens to, and an expression that rebuilds it from
+        /// them. The expression is nested where the struct is —
+        /// `Rect(origin: Point(x: …, y: …), size: Size(width: …, height: …))`
+        /// — because the memberwise initializer takes `origin:` and `size:`,
+        /// not four numbers. BASIC passes the four (R4.4).
+        public var structParameters: [Int: (leafTypes: [String], build: String)] = [:]
 
         public init(className: String, name: String, labels: [String?],
                     parameterTypes: [String], returns: String?, isThrowing: Bool) {
@@ -129,6 +136,14 @@ public struct SwiftAsyncShim {
                     parameters.append("_ fn\(index): @convention(c) (UnsafeMutableRawPointer?) -> Void")
                     parameters.append("_ ctx\(index): UnsafeMutableRawPointer?")
                     callArguments.append("{ fn\(index)(ctx\(index)) }")
+                } else if let structure = method.structParameters[index] {
+                    // One BASIC argument per leaf, in declaration order —
+                    // which is the order the memberwise initializers take
+                    // them, so `Rect` is `x, y, w, h`.
+                    for (leaf, spelling) in structure.leafTypes.enumerated() {
+                        parameters.append("_ a\(index)_\(leaf): \(spelling)")
+                    }
+                    callArguments.append("s\(index)")
                 } else if method.objectParameters[index] != nil {
                     parameters.append("_ a\(index): UnsafeMutableRawPointer")
                     // Bridged before the call, never inside the task's
@@ -158,6 +173,10 @@ public struct SwiftAsyncShim {
             lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
                 lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
+            }
+            // Rebuild each struct from the leaves BASIC passed.
+            for (index, structure) in method.structParameters.sorted(by: { $0.key < $1.key }) {
+                lines.append("    let s\(index) = \(structure.build)")
             }
             if method.isAsync {
                 let awaited = method.isThrowing
@@ -191,8 +210,14 @@ public struct SwiftAsyncShim {
                 let called = "object.\(method.name)(\(labelled))"
                 if method.returns == nil {
                     lines.append("    MainActor.assumeIsolated { \(called) }")
+                } else if method.objectResult != nil {
+                    // The pointer is made *outside* the isolated closure: a
+                    // raw pointer is explicitly not Sendable, and returning
+                    // one across that boundary is an error in Swift 6.
+                    lines.append("    let result = MainActor.assumeIsolated { \(called) }")
+                    lines.append("    return Unmanaged.passUnretained(result).toOpaque()")
                 } else {
-                    lines.append("    return MainActor.assumeIsolated { \(handOut(called)) }")
+                    lines.append("    return MainActor.assumeIsolated { \(called) }")
                 }
             }
             lines.append("}")

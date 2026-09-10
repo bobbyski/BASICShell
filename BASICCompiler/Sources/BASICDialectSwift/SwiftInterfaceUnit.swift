@@ -52,7 +52,7 @@ public struct SwiftInterfaceUnit {
             // the rest are reported, rather than picking silently by some
             // rule a reader would have to guess at.
             if let initializer = chosenInitializer(of: klass) {
-                let parameters = initializer.parameters.map { "\($0.name) AS \(Self.basicType($0.type, in: api))" }
+                let parameters = Self.declared(initializer.parameters, in: api)
                     .joined(separator: ", ")
                 lines.append("  FUNCTION New(\(parameters)) AS VOID")
                 lines.append("  END FUNCTION")
@@ -61,7 +61,7 @@ public struct SwiftInterfaceUnit {
                 lines.append("  PUBLIC \(property.name) AS \(Self.basicType(property.type, in: api))")
             }
             for method in klass.methods {
-                let parameters = method.parameters.map { "\($0.name) AS \(Self.basicType($0.type, in: api))" }
+                let parameters = Self.declared(method.parameters, in: api)
                     .joined(separator: ", ")
                 if method.returns == .void {
                     lines.append("  FUNCTION \(method.name)(\(parameters)) AS VOID")
@@ -128,7 +128,7 @@ public struct SwiftInterfaceUnit {
             parts.append("\(klass.properties.count) propert\(klass.properties.count == 1 ? "y" : "ies")")
             parts.append("\(klass.methods.count) method(s)")
             if let initializer = chosenInitializer(of: klass) {
-                parts.append("NEW(\(initializer.parameters.map(\.name).joined(separator: ", ")))")
+                parts.append("NEW(\(Self.names(initializer.parameters, in: api).joined(separator: ", ")))")
             } else {
                 parts.append("no NEW")
             }
@@ -150,6 +150,52 @@ public struct SwiftInterfaceUnit {
     /// takes. One per unit, because every such parameter is the same shape.
     public static let handlerType = "SwiftHandler"
 
+    /// A parameter list as BASIC declares it.
+    ///
+    /// A struct becomes one parameter per scalar it flattens to — `frame` is
+    /// `frame_x, frame_y, frame_width, frame_height` — because BASIC has no
+    /// name for the struct and the shim rebuilds it from exactly these, in
+    /// this order.
+    static func declared(_ parameters: [SwiftAPI.Parameter], in api: SwiftAPI) -> [String] {
+        zip(names(parameters, in: api), types(parameters, in: api))
+            .map { "\($0) AS \($1)" }
+    }
+
+    static func names(_ parameters: [SwiftAPI.Parameter], in api: SwiftAPI) -> [String] {
+        parameters.flatMap { parameter -> [String] in
+            guard case .structure = parameter.type, let leaves = leafNames(of: parameter.type, in: api) else {
+                return [parameter.name]
+            }
+            return leaves.map { "\(parameter.name)_\($0)" }
+        }
+    }
+
+    static func types(_ parameters: [SwiftAPI.Parameter], in api: SwiftAPI) -> [String] {
+        parameters.flatMap { parameter -> [String] in
+            guard case .structure = parameter.type, let leaves = api.leaves(of: parameter.type) else {
+                return [basicType(parameter.type, in: api)]
+            }
+            return leaves.map { basicType($0, in: api) }
+        }
+    }
+
+    /// The dotted names of a struct's leaves, so a parameter reads
+    /// `frame_origin_x` rather than `frame_0`.
+    static func leafNames(of type: SwiftAPI.ValueType, in api: SwiftAPI, depth: Int = 0) -> [String]? {
+        guard depth < 8, case .structure(let precise) = type,
+              let structure = api.structures[precise], !structure.fields.isEmpty else { return nil }
+        var out: [String] = []
+        for field in structure.fields {
+            if case .structure = field.type {
+                guard let inner = leafNames(of: field.type, in: api, depth: depth + 1) else { return nil }
+                out += inner.map { "\(field.name)_\($0)" }
+            } else {
+                out.append(field.name)
+            }
+        }
+        return out
+    }
+
     static func basicType(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
         // A Swift `Int` is a BASIC number too: the interpreter keeps every
@@ -161,6 +207,8 @@ public struct SwiftInterfaceUnit {
         case .object(let precise): return api.class(precise: precise)?.name ?? "VARIANT"
         // A handler BASIC hands over; the generated unit declares it as the
         // language's own function type.
+        // Flattened at the call, so it never names a BASIC type of its own.
+        case .structure: return "DOUBLE"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
@@ -173,7 +221,7 @@ public struct SwiftInterfaceUnit {
         case .bool: return "FALSE"
         case .string: return "\"\""
         case .object(let precise): return "NEW \(api.class(precise: precise)?.name ?? "VARIANT")"
-        case .void, .voidClosure, .unsupported: return "0"
+        case .void, .voidClosure, .structure, .unsupported: return "0"
         }
     }
 }
