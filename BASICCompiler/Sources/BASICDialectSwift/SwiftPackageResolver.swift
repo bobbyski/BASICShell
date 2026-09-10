@@ -64,19 +64,34 @@ public struct SwiftPackageResolver {
         guard let path = dependencies[importName] else {
             throw Failure(importName: importName, problem: "the program's Package.swift names no dependency called \(importName) (it has: \(dependencies.keys.sorted().joined(separator: ", ")))")
         }
-        // Built in the package's own .build, the way any consumer builds it.
-        let build = try ProcessRunner.run("/usr/bin/xcrun", ["swift", "build", "-c", "release", "--product", importName], workingDirectory: path)
+        // **Its own build directory, not the package's `.build`.** SwiftPM
+        // takes an exclusive lock on a build directory, so building a
+        // dependency in the place its author (or their editor, or another
+        // tool) is already building it makes `basicc` wait on a lock it
+        // cannot see — and the failure looks like a broken import rather than
+        // a busy directory. Stable rather than temporary, so a second compile
+        // of the same program costs nothing.
+        let scratch = (path as NSString).appendingPathComponent(".build-basicc")
+        let build = try ProcessRunner.run("/usr/bin/xcrun", [
+            "swift", "build", "-c", "release", "--product", importName,
+            "--scratch-path", scratch,
+        ], workingDirectory: path)
         guard build.exitCode == 0 else {
-            throw Failure(importName: importName, problem: "swift build failed in \(path): \(build.stderr)")
+            throw Failure(importName: importName, problem: "swift build failed in \(path):\n\(Self.lastLines(build.stderr))")
         }
-        let graph = try ProcessRunner.run("/usr/bin/xcrun", ["swift", "package", "dump-symbol-graph", "--minimum-access-level", "public"], workingDirectory: path)
+        let graph = try ProcessRunner.run("/usr/bin/xcrun", [
+            // `--scratch-path` belongs to `swift package`, not to the
+            // subcommand, so it goes before the verb.
+            "swift", "package", "--scratch-path", scratch,
+            "dump-symbol-graph", "--minimum-access-level", "public",
+        ], workingDirectory: path)
         guard graph.exitCode == 0 else {
-            throw Failure(importName: importName, problem: "swift package dump-symbol-graph failed in \(path): \(graph.stderr)")
+            throw Failure(importName: importName, problem: "swift package dump-symbol-graph failed in \(path):\n\(Self.lastLines(graph.stderr))")
         }
-        guard let symbolGraph = Self.find(named: "\(importName).symbols.json", under: (path as NSString).appendingPathComponent(".build")) else {
-            throw Failure(importName: importName, problem: "no \(importName).symbols.json under \(path)/.build")
+        guard let symbolGraph = Self.find(named: "\(importName).symbols.json", under: scratch) else {
+            throw Failure(importName: importName, problem: "no \(importName).symbols.json under \(scratch)")
         }
-        let objectDirectory = "\(path)/.build/release/\(importName).build"
+        let objectDirectory = "\(scratch)/release/\(importName).build"
         let objects = ((try? FileManager.default.contentsOfDirectory(atPath: objectDirectory)) ?? [])
             .filter { $0.hasSuffix(".o") }.sorted().map { (objectDirectory as NSString).appendingPathComponent($0) }
         guard !objects.isEmpty else {
@@ -110,7 +125,7 @@ public struct SwiftPackageResolver {
         }
         guard let source = SwiftAsyncShim(module: api.module, methods: methods).source() else { return nil }
 
-        let directory = (package.path as NSString).appendingPathComponent(".build/basicc-shims")
+        let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let file = (directory as NSString).appendingPathComponent("\(api.module)Await.swift")
         try source.write(toFile: file, atomically: true, encoding: .utf8)
@@ -146,16 +161,26 @@ public struct SwiftPackageResolver {
     /// BASICRTSwift.
     static func moduleSearchPaths(package: ResolvedPackage) -> [String] {
         var paths: [String] = []
-        for configuration in ["release", "debug"] {
-            let modules = "\(package.path)/.build/\(configuration)/Modules"
-            if FileManager.default.fileExists(atPath: modules) { paths.append(modules) }
-            let flat = "\(package.path)/.build/\(configuration)"
-            if FileManager.default.fileExists(atPath: flat) { paths.append(flat) }
+        for build in [".build-basicc", ".build"] {
+            for configuration in ["release", "debug"] {
+                let modules = "\(package.path)/\(build)/\(configuration)/Modules"
+                if FileManager.default.fileExists(atPath: modules) { paths.append(modules) }
+                let flat = "\(package.path)/\(build)/\(configuration)"
+                if FileManager.default.fileExists(atPath: flat) { paths.append(flat) }
+            }
         }
         if let extra = ProcessInfo.processInfo.environment["BASICC_SWIFT_MODULES"] {
             paths += extra.split(separator: ":").map(String.init)
         }
         return paths
+    }
+
+    /// The tail of a tool's output. A failing SwiftPM run prints its whole
+    /// build log, and burying the one line that matters under a hundred
+    /// progress lines helps nobody.
+    static func lastLines(_ text: String, count: Int = 12) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.suffix(count).joined(separator: "\n")
     }
 
     static func find(named name: String, under root: String) -> String? {
