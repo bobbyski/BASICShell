@@ -504,6 +504,7 @@ public struct SwiftObjectModel: ObjectModel {
     declare swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr)
     declare swiftcc ptr @basic_rt_swift_string_out(i64, ptr)
     declare swiftcc void @basic_rt_swift_error_raise(ptr)
+    declare void @basic_rt_closure_invoke_void(ptr)
 
     """
 
@@ -561,14 +562,14 @@ public struct SwiftObjectModel: ObjectModel {
                 let parameters = initializer.parameters.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
-            for method in entry.klass.methods where method.isAsync && seen.insert("await." + method.symbol).inserted {
+            for method in entry.klass.methods where Self.needsShim(method) && seen.insert("shim." + method.symbol).inserted {
                 // The shim's C entry point, not the async symbol: an async
                 // function cannot be called directly from here (R3.3).
-                let shim = "basic_await_\(entry.klass.name)_\(method.name)"
+                let shim = Self.shimSymbol(method, of: entry.klass.name)
                 let parameters = ["ptr"] + method.parameters.map { Self.abiType($0.type) }
                 out += "declare \(Self.abiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
             }
-            for method in entry.klass.methods where !method.isAsync && seen.insert(method.symbol).inserted {
+            for method in entry.klass.methods where !Self.needsShim(method) && seen.insert(method.symbol).inserted {
                 // A `throws` method takes a hidden `swifterror` pointer; the
                 // callee stores the thrown error through it and returns
                 // normally, so a caller that omits it hands the callee a
@@ -589,6 +590,17 @@ public struct SwiftObjectModel: ObjectModel {
         return out
     }
 
+    /// Whether a method is reached through a generated Swift shim rather
+    /// than by a plain call: awaited methods (R3.3) and methods taking a
+    /// handler (R4.5) are the two shapes emitted IR cannot call directly.
+    static func needsShim(_ method: SwiftAPI.Function) -> Bool {
+        method.isAsync || method.parameters.contains { $0.type == .voidClosure }
+    }
+
+    static func shimSymbol(_ method: SwiftAPI.Function, of className: String) -> String {
+        (method.isAsync ? "basic_await_" : "basic_handler_") + "\(className)_\(method.name)"
+    }
+
     /// A Swift value's ABI form at a call boundary. A `String` is two words.
     static func abiType(_ type: SwiftAPI.ValueType) -> String {
         switch type {
@@ -596,6 +608,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .int: return "i64"
         case .bool: return "i1"
         case .string: return "i64, ptr"
+        case .voidClosure: return "ptr, ptr"
         case .object, .void, .unsupported: return "ptr"
         }
     }
@@ -607,7 +620,9 @@ public struct SwiftObjectModel: ObjectModel {
         case .bool: return "i1"
         case .string: return "{ i64, ptr }"
         case .void: return "void"
-        case .object, .unsupported: return "ptr"
+        // Never a result: a method *returning* a closure is skipped by the
+        // reader, so reaching here would be a bug rather than a shape.
+        case .object, .voidClosure, .unsupported: return "ptr"
         }
     }
 
@@ -657,13 +672,21 @@ public struct SwiftObjectModel: ObjectModel {
                 let a = temp(); body += "  \(a) = extractvalue { i64, ptr } \(r), 0\n"
                 let b = temp(); body += "  \(b) = extractvalue { i64, ptr } \(r), 1\n"
                 return "i64 \(a), ptr \(b)"
+            case .voidClosure:
+                // The pair a Swift closure is made from here: a stable C
+                // trampoline, and the BASIC closure it should invoke. The
+                // closure is retained because the framework keeps it past
+                // this call — an event handler outlives the statement that
+                // installed it.
+                body += "  call void @basic_rt_closure_retain(ptr \(value))\n"
+                return "ptr @basic_rt_closure_invoke_void, ptr \(value)"
             case .object, .void, .unsupported: return "ptr \(value)"
             }
         }
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .unsupported: return value
             case .int:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -677,7 +700,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int: return "double"
             case .bool: return "i1"
-            case .string, .object, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .void, .unsupported: return "ptr"
             }
         }
 
@@ -766,8 +789,8 @@ public struct SwiftObjectModel: ObjectModel {
             }
             // An async method goes through its shim, which takes the
             // receiver as an ordinary first argument and no swiftself.
-            if method.isAsync {
-                let shim = "basic_await_\(entry.klass.name)_\(method.name)"
+            if Self.needsShim(method) {
+                let shim = Self.shimSymbol(method, of: entry.klass.name)
                 let call = "call \(Self.abiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
                 if method.returns == .void {
                     body += "  \(call)\n"

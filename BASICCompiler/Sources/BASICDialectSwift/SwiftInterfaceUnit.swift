@@ -33,6 +33,14 @@ public struct SwiftInterfaceUnit {
             "' Every member below is the framework's own — the bodies here are",
             "' placeholders the compiler discards (see SwiftInterfaceUnit).",
         ]
+        // BASIC's function types are named, so a `() -> Void` parameter needs
+        // one declared before anything can mention it.
+        if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
+            // `AS DOUBLE`, not VOID: a BASIC closure is an *expression* and
+            // must yield something. Swift's `() -> Void` discards it, which
+            // is the honest mapping — the handler is run for its effect.
+            lines.append("FUNCTION TYPE \(Self.handlerType)() AS DOUBLE")
+        }
         // Bases before subclasses, so INHERITS always names a declared class.
         for klass in ordered() {
             lines.append("CLASS \(klass.name)")
@@ -138,6 +146,10 @@ public struct SwiftInterfaceUnit {
         return lines.joined(separator: "\n")
     }
 
+    /// The name of the generated function type a `() -> Void` parameter
+    /// takes. One per unit, because every such parameter is the same shape.
+    public static let handlerType = "SwiftHandler"
+
     static func basicType(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
         // A Swift `Int` is a BASIC number too: the interpreter keeps every
@@ -147,6 +159,9 @@ public struct SwiftInterfaceUnit {
         case .bool: return "BOOLEAN"
         case .string: return "STRING"
         case .object(let precise): return api.class(precise: precise)?.name ?? "VARIANT"
+        // A handler BASIC hands over; the generated unit declares it as the
+        // language's own function type.
+        case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
     }
@@ -158,7 +173,7 @@ public struct SwiftInterfaceUnit {
         case .bool: return "FALSE"
         case .string: return "\"\""
         case .object(let precise): return "NEW \(api.class(precise: precise)?.name ?? "VARIANT")"
-        case .void, .unsupported: return "0"
+        case .void, .voidClosure, .unsupported: return "0"
         }
     }
 }

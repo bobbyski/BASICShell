@@ -38,6 +38,10 @@ public struct SwiftAsyncShim {
         public let returns: String?
         /// Whether it also throws.
         public let isThrowing: Bool
+        /// Whether it is awaited, or merely takes a handler (R4.5).
+        public var isAsync: Bool = true
+        /// Which parameters are `() -> Void` handlers.
+        public var closureParameters: Set<Int> = []
 
         public init(className: String, name: String, labels: [String?],
                     parameterTypes: [String], returns: String?, isThrowing: Bool) {
@@ -50,7 +54,9 @@ public struct SwiftAsyncShim {
         }
 
         /// The C symbol the emitted IR calls.
-        public var symbol: String { "basic_await_\(className)_\(name)" }
+        public var symbol: String {
+            (isAsync ? "basic_await_" : "basic_handler_") + "\(className)_\(name)"
+        }
     }
 
     /// The module being imported.
@@ -104,27 +110,53 @@ public struct SwiftAsyncShim {
             "",
         ]
         for method in methods {
-            let parameters = (["_ me: UnsafeMutableRawPointer"] + method.parameterTypes.enumerated()
-                .map { "_ a\($0.offset): \($0.element)" }).joined(separator: ", ")
-            let result = method.returns.map { " -> \($0)" } ?? ""
-            let call = zip(method.labels, method.parameterTypes.indices)
-                .map { label, index in label.map { "\($0): a\(index)" } ?? "a\(index)" }
-                .joined(separator: ", ")
-            lines.append("@_cdecl(\"\(method.symbol)\")")
-            lines.append("public func \(method.symbol)(\(parameters))\(result) {")
-            lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
-            let awaited = method.isThrowing ? "try await object.\(method.name)(\(call))" : "await object.\(method.name)(\(call))"
-            lines.append("    do {")
-            if method.returns == nil {
-                lines.append("        _ = try basicAwait { \(awaited) }")
-            } else {
-                lines.append("        return try basicAwait { \(awaited) }")
+            // A handler parameter arrives as the pair BASIC can supply — a C
+            // function pointer and the closure it should invoke — and becomes
+            // an ordinary Swift closure right here, which is the whole point:
+            // the framework stores a Swift closure, not a wrapper object.
+            var parameters = ["_ me: UnsafeMutableRawPointer"]
+            var callArguments: [String] = []
+            for (index, type) in method.parameterTypes.enumerated() {
+                if method.closureParameters.contains(index) {
+                    parameters.append("_ fn\(index): @convention(c) (UnsafeMutableRawPointer?) -> Void")
+                    parameters.append("_ ctx\(index): UnsafeMutableRawPointer?")
+                    callArguments.append("{ fn\(index)(ctx\(index)) }")
+                } else {
+                    parameters.append("_ a\(index): \(type)")
+                    callArguments.append("a\(index)")
+                }
             }
-            lines.append("    } catch {")
-            // The same road a synchronous `throws` takes: a BASIC error the
-            // program's ON ERROR can catch.
-            lines.append("        basicAwaitRaise(error)")
-            lines.append("    }")
+            let labelled = zip(method.labels, callArguments.indices)
+                .map { label, index in label.map { "\($0): \(callArguments[index])" } ?? callArguments[index] }
+                .joined(separator: ", ")
+            let result = method.returns.map { " -> \($0)" } ?? ""
+            lines.append("@_cdecl(\"\(method.symbol)\")")
+            lines.append("public func \(method.symbol)(\(parameters.joined(separator: ", ")))\(result) {")
+            lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+            if method.isAsync {
+                let awaited = method.isThrowing
+                    ? "try await object.\(method.name)(\(labelled))"
+                    : "await object.\(method.name)(\(labelled))"
+                lines.append("    do {")
+                if method.returns == nil {
+                    lines.append("        _ = try basicAwait { \(awaited) }")
+                } else {
+                    lines.append("        return try basicAwait { \(awaited) }")
+                }
+                lines.append("    } catch {")
+                lines.append("        basicAwaitRaise(error)")
+                lines.append("    }")
+            } else if method.isThrowing {
+                lines.append("    do {")
+                let called = "try object.\(method.name)(\(labelled))"
+                lines.append(method.returns == nil ? "        _ = \(called)" : "        return \(called)")
+                lines.append("    } catch {")
+                lines.append("        basicAwaitRaise(error)")
+                lines.append("    }")
+            } else {
+                let called = "object.\(method.name)(\(labelled))"
+                lines.append(method.returns == nil ? "    \(called)" : "    return \(called)")
+            }
             lines.append("}")
             lines.append("")
         }

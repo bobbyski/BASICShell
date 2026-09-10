@@ -36,8 +36,13 @@ struct SemanticAnalyzer {
     mutating func run() throws -> SemanticModel {
         owner = Array(repeating: nil, count: lines.count)
         try collectTypeNames()
-        try collectTypeMembers()
+        // Before members, not after: a class method may take a FUNCTION TYPE
+        // as a parameter, and resolving that member needs the signature to
+        // exist already. The interpreter accepts such a method and basicc
+        // refused it — an ordering accident, not a decision. Signatures need
+        // only type *names*, which the pass above has.
         try collectSignatures()
+        try collectTypeMembers()
         try collectFunctions()
         collectLocals()
         var changed = true

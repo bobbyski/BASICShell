@@ -90,15 +90,22 @@ public struct SwiftPackageResolver {
     public func buildAsyncShim(for api: SwiftAPI, package: ResolvedPackage) throws -> String? {
         var methods: [SwiftAsyncShim.Method] = []
         for klass in api.classes {
-            for method in klass.methods where method.isAsync {
+            // Awaited methods, and methods taking a handler: the two shapes
+            // that cannot be reached by a plain call from emitted IR.
+            for method in klass.methods {
+                let handlers = Set(method.parameters.indices.filter { method.parameters[$0].type == .voidClosure })
+                guard method.isAsync || !handlers.isEmpty else { continue }
                 guard method.returns.isSupported, method.parameters.allSatisfy(\.type.isSupported) else { continue }
-                methods.append(.init(
+                var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: method.name,
                     labels: method.parameters.map(\.label),
                     parameterTypes: method.parameters.map { Self.spelling($0.type, in: api) },
                     returns: method.returns == .void ? nil : Self.spelling(method.returns, in: api),
                     isThrowing: method.isThrowing
-                ))
+                )
+                shim.isAsync = method.isAsync
+                shim.closureParameters = handlers
+                methods.append(shim)
             }
         }
         guard let source = SwiftAsyncShim(module: api.module, methods: methods).source() else { return nil }
@@ -129,6 +136,8 @@ public struct SwiftPackageResolver {
         case .string: return "Swift.String"
         case .object(let precise): return api.class(precise: precise)?.name ?? "AnyObject"
         case .void: return "Swift.Void"
+        // Spelled by the shim itself, which takes the pair BASIC can supply.
+        case .voidClosure: return "() -> Swift.Void"
         case .unsupported: return "Swift.Never"
         }
     }

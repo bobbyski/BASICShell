@@ -54,3 +54,26 @@ public func basic_rt_closure_function(_ pointer: UnsafeMutableRawPointer?) -> Un
 public func basic_rt_closure_environment(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     rtClosure(pointer).environment.map { Unmanaged.passUnretained($0).toOpaque() }
 }
+
+/// Calls a BASIC closure that takes nothing and returns nothing (R4.5).
+///
+/// The entry point a Swift framework's event handler ends up calling. A BASIC
+/// closure is a function pointer plus an environment, and its compiled form
+/// takes the environment first — so invoking one is a call through that
+/// pointer with the environment in hand, which is what this does.
+///
+/// It is `@_cdecl` on purpose: a Swift framework wants a C function pointer
+/// it can wrap in a closure, and this is a stable one that works for every
+/// BASIC closure rather than a trampoline emitted per call site.
+@_cdecl("basic_rt_closure_invoke_void")
+public func basic_rt_closure_invoke_void(_ pointer: UnsafeMutableRawPointer?) {
+    guard let pointer else { return }
+    let closure = rtClosure(pointer)
+    // The closure yields a number — BASIC closures are expressions — and the
+    // Swift side wanted `() -> Void`, so the value is run for its effect and
+    // dropped. Typed here rather than called through a void pointer so the
+    // convention is stated, not assumed.
+    typealias Body = @convention(c) (UnsafeMutableRawPointer?) -> Double
+    let body = unsafeBitCast(closure.function, to: Body.self)
+    _ = body(closure.environment.map { Unmanaged.passUnretained($0).toOpaque() })
+}

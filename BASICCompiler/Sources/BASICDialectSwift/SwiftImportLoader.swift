@@ -68,7 +68,17 @@ public struct SwiftImportLoader {
                 for className in unit.externalClassNames {
                     collected.externalClasses[className] = api.module
                 }
-                return unit.render()
+                let text = unit.render()
+                // `BASICC_DUMP_UNITS=<dir>` writes the generated BASIC for
+                // each import. The unit is real source the compiler parses,
+                // and when it will not compile the first question is always
+                // what it actually says.
+                if let directory = ProcessInfo.processInfo.environment["BASICC_DUMP_UNITS"] {
+                    try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+                    try? text.write(toFile: (directory as NSString).appendingPathComponent("\(api.module).bas"),
+                                    atomically: true, encoding: .utf8)
+                }
+                return text
             } catch let failure as SwiftPackageResolver.Failure {
                 // A name that is not a dependency is not our business: let
                 // the ordinary "IMPORT could not find" say so, which is the

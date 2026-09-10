@@ -33,6 +33,19 @@ open class Shape {
     }
 }
 
+/// A control with an event, so a BASIC handler has somewhere to be stored
+/// (R4.5). `onTap` holds a Swift closure — not a wrapper, not a bridge.
+public final class Button {
+    public var label: String
+    private var onTap: (() -> Void)?
+
+    public init(label: String) { self.label = label }
+
+    public func whenTapped(_ handler: @escaping () -> Void) { onTap = handler }
+
+    public func tap() { onTap?() }
+}
+
 /// The framework's own error type. Nothing about it is written for BASIC.
 public enum ShapeError: Error {
     case badScale(Double)

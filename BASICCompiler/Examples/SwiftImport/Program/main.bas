@@ -38,6 +38,22 @@ PRINT C.describe()
 ' branch-on-return — the callee writes the error into a register the caller
 ' reads — so basicc calls it with that register and turns a thrown error into
 ' an ordinary BASIC error. ON ERROR catches it like any other.
+' An event handler written in BASIC, stored by a Swift control as an
+' ordinary Swift closure. basicc passes the pair Swift needs — a C function
+' pointer and the BASIC closure to invoke — and the shim makes a closure of
+' them, so what the framework holds is the real thing.
+DIM Taps AS INTEGER
+FUNCTION Bump() AS INTEGER
+    Taps = Taps + 1
+    RETURN Taps
+END FUNCTION
+DIM B AS Button
+B = NEW Button("Go")
+B.whenTapped(FUNCTION() AS DOUBLE = Bump())
+B.tap()
+B.tap()
+PRINT "taps recorded by BASIC:"; Taps
+
 ' An async Swift method. basicc compiles a shim that starts a real task and
 ' waits for it, so the suspension is Swift's and the BASIC statement simply
 ' does not finish until the value is in hand — which is what AWAIT already

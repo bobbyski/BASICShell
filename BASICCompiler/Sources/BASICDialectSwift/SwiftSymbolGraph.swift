@@ -27,6 +27,9 @@ public struct SwiftAPI: Sendable {
         case string
         /// A class from this module, by its mangled prefix (`s:6Shapes5ShapeC`).
         case object(precise: String)
+        /// A `() -> Void` parameter — an event handler (R4.5). BASIC hands
+        /// one over as a closure; the shim wraps it in a Swift closure.
+        case voidClosure
         /// Nothing.
         case void
         /// Something BASIC has no spelling for yet — the spelling is kept for
@@ -291,8 +294,17 @@ public struct SwiftAPI: Sendable {
             // and ignoring what surrounds it made `[Shape]` import as
             // `Shape` — a parameter that would take the array's element.
             let afterColon = fragments.drop { !$0.spelling.contains(":") }.dropFirst()
+            // The declared type as written, which is the only way to tell a
+            // *function* type apart: its single `typeIdentifier` is the
+            // result, so `() -> Void` looks exactly like `Void` if you read
+            // the identifiers and ignore the punctuation between them.
+            let written = fragments.drop { $0.kind == "identifier" }
+                .map(\.spelling).joined()
+                .drop { $0 == ":" || $0 == " " }
             let type: ValueType
-            if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
+            if String(written).replacingOccurrences(of: "@escaping ", with: "") == "() -> Void" {
+                type = .voidClosure
+            } else if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
             } else {
                 // The whole declared type, for the report: dropping the name
