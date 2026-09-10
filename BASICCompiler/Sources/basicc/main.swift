@@ -107,6 +107,16 @@ struct Invocation {
 /// inference that gets blamed on the compiler months later.
 func resolveDialect(_ invocation: Invocation) throws -> any DialectCompiler {
     if invocation.dialect != nil { return try registry.dialect(named: invocation.dialect) }
+    // A project may name its dialect, which is how a scheme carries the
+    // choice into the build (R5.3). Announced, like every inferred choice.
+    if let source = invocation.source,
+       let project = try? ProjectManifest.load(at: source),
+       let named = project.options?.dialect {
+        let dialect = try registry.dialect(named: named)
+        FileHandle.standardError.write(Data(
+            "basicc: \(project.name) asks for --dialect \(named)\n".utf8))
+        return dialect
+    }
     guard let source = invocation.source,
           SwiftDialect.inferredFromPackageManifest(at: source) else {
         return registry.defaultDialect
@@ -129,10 +139,23 @@ func compilation(for invocation: Invocation) -> Compilation {
         // handed its findings to.
         guard dialect is SwiftDialect else { return compilation }
         compilation.readModule = { sourcePath, base in
-            let directory = (sourcePath as NSString).deletingLastPathComponent
+            // A project names its entry file and its own libraries; a bare
+            // `.bas` is its own entry. Reading the project here is what lets
+            // `basicc build <project>` work under this dialect at all —
+            // handing the directory to the source loader asked it to read a
+            // folder as a program.
+            let project = try ProjectManifest.load(at: sourcePath)
+            let entry = project?.entryPath ?? sourcePath
+            let directory = (entry as NSString).deletingLastPathComponent
             let loader = SwiftImportLoader(programDirectory: directory.isEmpty ? "." : directory)
-            let result = try loader.load(path: sourcePath)
-            let module = try BIRBuilder(externalClasses: result.externalClasses)
+            let libraries = try project.map { try LibraryIndex.build(root: $0.root, declared: $0.libraries ?? []) } ?? LibraryIndex()
+            let result = try loader.load(path: entry, projectRoot: project?.root, libraries: libraries)
+            // A project answers for itself; a bare `.bas` keeps the
+            // builder's own default, which is on. Defaulting to `false` here
+            // turned `${...}` substitution off for every program without a
+            // project — caught by parity, which is what it is for.
+            let module = try BIRBuilder(defaultStringSubstitution: project?.stringSubstitution ?? true,
+                                        externalClasses: result.externalClasses)
                 .build(result.lines, moduleName: Compilation.moduleName(for: sourcePath))
             var resolved = Compilation(
                 dialect: SwiftDialect(imports: result.imports),

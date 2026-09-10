@@ -33,6 +33,14 @@ public struct ProjectManifest: Decodable {
     public struct Options: Decodable {
         public let stringSub: Bool?
         public let shellMode: Bool?
+        /// Which compiler builds this project: `"traditional"` (the default)
+        /// or `"swift"`.
+        ///
+        /// The project's own answer, so a scheme carries the dialect into the
+        /// build rather than every invocation having to remember `--dialect`
+        /// (R5.3). An explicit `--dialect` on the command line still wins, and
+        /// the driver says which one it used.
+        public let dialect: String?
     }
 
     private enum CodingKeys: String, CodingKey {
