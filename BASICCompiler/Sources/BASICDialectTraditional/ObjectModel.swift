@@ -42,6 +42,19 @@ public protocol ObjectModel: Sendable {
     func fieldGetSymbol(for typeName: String, field index: Int) -> String?
     func fieldSetSymbol(for typeName: String, field index: Int) -> String?
 
+    /// The symbol that, given an object of `typeName`, hands back the
+    /// runtime record holding the fields the object does not lay out itself
+    /// — arrays, dictionaries, VARIANTs. Nil when this class keeps every
+    /// field in the object.
+    ///
+    /// The emitter uses it to point the *runtime's own* field calls at the
+    /// record, so those fields keep the semantics the runtime already
+    /// implements rather than a hand-written approximation of them.
+    func runtimeRecordSymbol(for typeName: String) -> String?
+
+    /// Whether the field at `index` of `typeName` lives in that record.
+    func fieldLivesInRuntimeRecord(_ typeName: String, field index: Int) -> Bool
+
     /// IR the module needs before the functions: `declare`s for the symbols
     /// above and any externals they use.
     var declarations: String { get }
@@ -104,6 +117,8 @@ public struct RuntimeObjectModel: ObjectModel {
     public func constructSymbol(for typeName: String, arguments: [BIRType]) -> String? { nil }
     public func fieldGetSymbol(for typeName: String, field index: Int) -> String? { nil }
     public func fieldSetSymbol(for typeName: String, field index: Int) -> String? { nil }
+    public func runtimeRecordSymbol(for typeName: String) -> String? { nil }
+    public func fieldLivesInRuntimeRecord(_ typeName: String, field index: Int) -> Bool { false }
     public var declarations: String { "" }
     public func definitions(for module: BIRModule) -> String { "" }
 }

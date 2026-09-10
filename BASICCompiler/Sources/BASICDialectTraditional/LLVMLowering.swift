@@ -681,6 +681,33 @@ struct FunctionEmitter {
         return name
     }
 
+    /// The pointer a runtime field call should be made against.
+    ///
+    /// Normally the record itself. When the base is a Swift object whose
+    /// field `index` the runtime keeps (an array, a dictionary, a VARIANT),
+    /// it is the record that object carries — so the call is the same call
+    /// the traditional dialect makes, on the same kind of record, and the
+    /// field keeps the semantics the runtime already implements.
+    private mutating func runtimeFieldTarget(_ pointer: String, base: BIRExpression, index: Int) -> String {
+        guard let owner = swiftClass(of: base),
+              objectModel.fieldLivesInRuntimeRecord(owner, field: index),
+              let symbol = objectModel.runtimeRecordSymbol(for: owner)
+        else { return pointer }
+        let record = out.temp()
+        out.emit("\(record) = call ptr @\"\(symbol)\"(ptr \(pointer))")
+        return record
+    }
+
+    private mutating func runtimeFieldTarget(_ pointer: String, base: BIRPlace, index: Int) -> String {
+        guard let owner = swiftClass(of: base),
+              objectModel.fieldLivesInRuntimeRecord(owner, field: index),
+              let symbol = objectModel.runtimeRecordSymbol(for: owner)
+        else { return pointer }
+        let record = out.temp()
+        out.emit("\(record) = call ptr @\"\(symbol)\"(ptr \(pointer))")
+        return record
+    }
+
     mutating func render() -> String {
         for block in function.blocks {
             if case .gosub(_, let resume) = block.terminator { gosubResumes.append(resume); usesGosub = true }
@@ -837,7 +864,7 @@ struct FunctionEmitter {
         case .storeField(let place, let value):
             guard case .field(let base, let index, let type) = place else { break }
             let (result, _) = lowerValue(value)
-            let target = placePointer(base)
+            let target = runtimeFieldTarget(placePointer(base), base: base, index: index)
             let fieldName = constants.constant(fieldDisplayName(of: place))
             switch type {
             case .number where swiftClass(of: base) != nil:
@@ -883,7 +910,7 @@ struct FunctionEmitter {
                 out.emit("\(array) = load ptr, ptr \(slotName(variable))")
                 out.emit("call void @basic_rt_array_assign(ptr \(array), ptr \(box), ptr \(constants.constant(variable.name)))")
             case .field(let base, let index, _):
-                let target = placePointer(base)
+                let target = runtimeFieldTarget(placePointer(base), base: base, index: index)
                 out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(box), ptr \(constants.constant(fieldDisplayName(of: place))))")
             default:
                 fail("Cannot assign an array here")
@@ -1403,7 +1430,7 @@ struct FunctionEmitter {
             out.emit("\(result) = load ptr, ptr \(slotName(variable))")
             return result
         case .field(let base, let index, _):
-            let parent = placePointer(base)
+            let parent = runtimeFieldTarget(placePointer(base), base: base, index: index)
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_composite_get_array(ptr \(parent), i64 \(index))")
             return result
@@ -1421,7 +1448,7 @@ struct FunctionEmitter {
             out.emit("\(result) = load ptr, ptr \(slotName(variable))")
             return result
         case .field(let base, let index, _):
-            let parent = placePointer(base)
+            let parent = runtimeFieldTarget(placePointer(base), base: base, index: index)
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_composite_get_dictionary(ptr \(parent), i64 \(index))")
             return result
@@ -1856,7 +1883,8 @@ struct FunctionEmitter {
             let elementType = arrayExpression.type.elementType ?? .number
             return lowerValue(.element(BIRVariable(name: name, type: elementType, scope: .local, storage: .array(rank: indexes.count)), indexes), fromArray: array, offset: offset)
         case .field(let base, let index, let type):
-            let (parent, _) = lowerValue(base)
+            let (loaded, _) = lowerValue(base)
+            let parent = runtimeFieldTarget(loaded, base: base, index: index)
             let result = out.temp()
             if let owner = swiftClass(of: base), let getter = objectModel.fieldGetSymbol(for: owner, field: index) {
                 switch type {

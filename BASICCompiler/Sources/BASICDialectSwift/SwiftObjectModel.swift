@@ -55,6 +55,10 @@ public struct SwiftObjectModel: ObjectModel {
         public let methodSlots: [String: Int]
         /// This class's position in ``SwiftObjectModel/classes``.
         public let ordinal: Int
+        /// Byte offset of the pointer to this object's runtime record, when
+        /// the class has container fields — inherited from the base when the
+        /// base already has one, so a hierarchy shares a single record.
+        public let sideOffset: Int?
 
         var name: String { composite.name }
         var instanceSize: Int { metadata.instanceSize }
@@ -66,6 +70,22 @@ public struct SwiftObjectModel: ObjectModel {
     public let classes: [ClassLayout]
     /// Why each declined class was declined.
     public let notes: [String]
+    /// The program's name as a Swift module name.
+    ///
+    /// A `.bas` file may be called `class-containers.bas`, and a Swift module
+    /// may not contain a hyphen — so the characters Swift refuses become
+    /// underscores rather than the whole program losing its classes. Only the
+    /// *symbol* names change; nothing a BASIC programmer types does.
+    public static func swiftModuleName(_ name: String) -> String {
+        var out = ""
+        for scalar in name.unicodeScalars {
+            out.unicodeScalars.append(CharacterSet.alphanumerics.contains(scalar) || scalar == "_" ? scalar : "_")
+        }
+        // A leading digit is legal in a file name and not in an identifier.
+        if let first = out.unicodeScalars.first, CharacterSet.decimalDigits.contains(first) { out = "m" + out }
+        return out.isEmpty ? "program" : out
+    }
+
     /// Imported frameworks, by module name (R4).
     public let imports: [String: SwiftAPI]
 
@@ -146,7 +166,7 @@ public struct SwiftObjectModel: ObjectModel {
                 methods: methods
             ))
         }
-        return try SwiftManglingProbe(module: module.name, declarations: declarations).run()
+        return try SwiftManglingProbe(module: swiftModuleName(module.name), declarations: declarations).run()
     }
 
     /// How a BASIC type is spelled in the probe, or nil when it has no Swift
@@ -199,14 +219,12 @@ public struct SwiftObjectModel: ObjectModel {
         // framework; it never takes our layout, and a program class that
         // holds or inherits one is declined for now (R4.x).
         let external = Set(module.types.filter { $0.externalModule != nil }.map(\.name))
-        guard Self.isIdentifier(module.name) else {
-            return ([], ["no class is a Swift object: the module name '\(module.name)' is not a Swift identifier"])
-        }
+
         var reasons: [String: String] = [:]
         for type in module.types where type.isClass && !external.contains(type.name) {
             if !Self.isIdentifier(type.displayName) {
                 reasons[type.name] = "'\(type.displayName)' is not a Swift identifier"
-            } else if (try? SwiftMangling.mangleClass(module: module.name, name: type.displayName)) == nil {
+            } else if (try? SwiftMangling.mangleClass(module: swiftModuleName(module.name), name: type.displayName)) == nil {
                 reasons[type.name] = "its name needs Swift's word substitution, which basicc does not emit yet (R0.5)"
             } else {
                 accepted.insert(type.name)
@@ -253,10 +271,15 @@ public struct SwiftObjectModel: ObjectModel {
                             reasons[held] = "\(type.displayName).\(field.displayName) holds one, and \(type.displayName) is a runtime record"
                             changed = true
                         }
+                    case .array, .dictionary, .variant:
+                        // Kept by the runtime, not laid out here (R2.2, R2.3).
+                        // The class holds a record and these fields live in
+                        // it; see `sideOffset`.
+                        continue
                     default:
                         if isSwift {
                             accepted.remove(type.name)
-                            reasons[type.name] = "its field \(field.displayName) is \(field.type.name), a runtime container (R2)"
+                            reasons[type.name] = "its field \(field.displayName) is \(field.type.name), which has no place in a Swift object yet"
                             changed = true
                         }
                     }
@@ -302,6 +325,22 @@ public struct SwiftObjectModel: ObjectModel {
         type == .boolean ? (1, 1) : (8, 8)
     }
 
+    /// Whether a field lives in the object's runtime record rather than in
+    /// the object.
+    ///
+    /// Arrays, dictionaries and VARIANTs have ownership rules the runtime
+    /// already implements exactly — an array field hands back the array
+    /// *borrowed* so `a.items(1) = 2` mutates in place, while a VARIANT hands
+    /// back an owned copy. Re-deriving that by hand is where a silent
+    /// difference from the interpreter would come from, so these fields stay
+    /// where their semantics already live and the object holds the record.
+    static func livesInRuntimeRecord(_ type: BIRType) -> Bool {
+        switch type {
+        case .array, .dictionary, .variant, .system, .closure: return true
+        default: return false
+        }
+    }
+
     static func layout(_ composite: BIRCompositeType, in module: BIRModule, bases: [String: ClassLayout], ordinal: Int, probed: SwiftManglingProbe.Symbols) -> ClassLayout {
         let mangled = probed.classes[composite.displayName]!
         let baseLayout = composite.base.flatMap { index in
@@ -310,7 +349,7 @@ public struct SwiftObjectModel: ObjectModel {
         let superclass: SwiftClassMetadata.Superclass
         if let baseLayout {
             superclass = SwiftClassMetadata.Superclass(
-                module: module.name, name: baseLayout.composite.displayName,
+                module: swiftModuleName(module.name), name: baseLayout.composite.displayName,
                 immediateMembers: (try? baseLayout.metadata.slots()) ?? [],
                 instanceSize: baseLayout.instanceSize
             )
@@ -318,8 +357,10 @@ public struct SwiftObjectModel: ObjectModel {
             superclass = SwiftObjectLowering.basicObject
         }
         let inheritedCount = baseLayout?.composite.fields.count ?? 0
-        let ownFields = composite.fields.dropFirst(inheritedCount)
-        let stored = ownFields.map { field -> SwiftClassMetadata.StoredProperty in
+        let ownFields = Array(composite.fields.dropFirst(inheritedCount))
+        // Only the fields the object actually holds get storage; the rest
+        // live in the runtime record and are reached by BIR field index.
+        let stored = ownFields.filter { !livesInRuntimeRecord($0.type) }.map { field -> SwiftClassMetadata.StoredProperty in
             let (size, alignment) = storage(of: field.type)
             return .init(name: field.displayName, size: size, alignment: alignment)
         }
@@ -350,10 +391,23 @@ public struct SwiftObjectModel: ObjectModel {
                 newMethods.append(.init(name: basicName, implementation: symbol))
             }
         }
-        let metadata = SwiftClassMetadata(
-            module: module.name, name: composite.displayName, superclass: superclass,
+        var metadata = SwiftClassMetadata(
+            module: swiftModuleName(module.name), name: composite.displayName, superclass: superclass,
             overrides: overrides, storedProperties: stored, methods: newMethods
         )
+        // One record per hierarchy: a subclass inherits the base's pointer
+        // rather than allocating a second one, so an inherited container
+        // field and an added one land in the same place.
+        let needsRecord = composite.fields.contains { livesInRuntimeRecord($0.type) }
+        let sideOffset: Int?
+        if let inherited = baseLayout?.sideOffset {
+            sideOffset = inherited
+        } else if needsRecord {
+            metadata.hiddenTrailingBytes = 8
+            sideOffset = metadata.hiddenTrailingOffset
+        } else {
+            sideOffset = nil
+        }
         // Slot bookkeeping: inherited slots keep their numbers; new methods
         // follow the own field offsets.
         var slots = baseLayout?.methodSlots ?? [:]
@@ -362,11 +416,20 @@ public struct SwiftObjectModel: ObjectModel {
             slots[method.name] = next
             next += 1
         }
-        let offsets = (baseLayout?.fieldOffsets ?? []) + metadata.ownFieldOffsets
+        // One entry per BIR field, in BIR's order, so `fieldOffsets[i]`
+        // answers for field `i`. A field kept by the runtime has no offset
+        // in the object and holds -1.
+        var ownOffsets: [Int] = []
+        var placed = metadata.ownFieldOffsets.makeIterator()
+        for field in ownFields {
+            ownOffsets.append(livesInRuntimeRecord(field.type) ? -1 : (placed.next() ?? -1))
+        }
+        let offsets = (baseLayout?.fieldOffsets ?? []) + ownOffsets
         return ClassLayout(
             composite: composite, mangled: mangled, base: baseLayout?.name,
             fieldOffsets: offsets, metadata: metadata,
-            visibleMethods: visible, methodSlots: slots, ordinal: ordinal
+            visibleMethods: visible, methodSlots: slots, ordinal: ordinal,
+            sideOffset: sideOffset
         )
     }
 
@@ -404,8 +467,19 @@ public struct SwiftObjectModel: ObjectModel {
         return "\(typeName).new.\(arguments.count)"
     }
 
+    public func runtimeRecordSymbol(for typeName: String) -> String? {
+        guard let layout = byName[typeName], layout.sideOffset != nil else { return nil }
+        return "\(layout.name).record"
+    }
+
+    public func fieldLivesInRuntimeRecord(_ typeName: String, field index: Int) -> Bool {
+        guard let layout = byName[typeName], layout.composite.fields.indices.contains(index) else { return false }
+        return Self.livesInRuntimeRecord(layout.composite.fields[index].type)
+    }
+
     public func fieldGetSymbol(for typeName: String, field index: Int) -> String? {
-        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) { return "\(layout.name).get.\(index)" }
+        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index),
+           layout.fieldOffsets[index] >= 0 { return "\(layout.name).get.\(index)" }
         // An imported class's storage is the framework's: reached through its
         // property accessors, never by an offset we computed.
         if let entry = importedByName[typeName], entry.type.fields.indices.contains(index) { return "\(typeName).get.\(index)" }
@@ -413,7 +487,8 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     public func fieldSetSymbol(for typeName: String, field index: Int) -> String? {
-        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index) { return "\(layout.name).set.\(index)" }
+        if let layout = byName[typeName], layout.fieldOffsets.indices.contains(index),
+           layout.fieldOffsets[index] >= 0 { return "\(layout.name).set.\(index)" }
         if let entry = importedByName[typeName], entry.type.fields.indices.contains(index),
            Self.property(named: entry.type.fields[index].name, of: entry.klass, in: entry.api)?.isSettable == true {
             return "\(typeName).set.\(index)"
@@ -734,8 +809,20 @@ public struct SwiftObjectModel: ObjectModel {
         let fields = layout.composite.fields
         var out = ""
 
-        // Field accessors, all fields, by index.
-        for (index, field) in fields.enumerated() {
+        // The record this object carries, for the fields the runtime keeps.
+        if let sideOffset = layout.sideOffset {
+            out += """
+            define ptr @"\(name).record"(ptr %o) {
+              %p = getelementptr inbounds i8, ptr %o, i64 \(sideOffset)
+              %v = load ptr, ptr %p, align 8
+              ret ptr %v
+            }
+
+            """
+        }
+
+        // Field accessors, for the fields the object lays out itself.
+        for (index, field) in fields.enumerated() where layout.fieldOffsets[index] >= 0 {
             let offset = layout.fieldOffsets[index]
             switch field.type {
             case .number:
@@ -815,7 +902,17 @@ public struct SwiftObjectModel: ObjectModel {
         // Loading from a runtime record: how defaults, unboxing and `NEW` all
         // get their field values — the runtime's, exactly.
         out += "define void @\"\(name).load\"(ptr %o, ptr %rt) {\n"
-        for (index, field) in fields.enumerated() {
+        if let sideOffset = layout.sideOffset {
+            // The record *is* the runtime's copy of this object: taking it
+            // whole is what gives every container field the runtime's own
+            // copy semantics, with nothing here to get wrong.
+            out += "  %side = call ptr @basic_rt_composite_copy(ptr %rt)\n"
+            out += "  %sidep = getelementptr inbounds i8, ptr %o, i64 \(sideOffset)\n"
+            out += "  %sideold = load ptr, ptr %sidep, align 8\n"
+            out += "  store ptr %side, ptr %sidep, align 8\n"
+            out += "  call void @basic_rt_composite_release(ptr %sideold)\n"
+        }
+        for (index, field) in fields.enumerated() where layout.fieldOffsets[index] >= 0 {
             switch field.type {
             case .number:
                 out += "  %n\(index) = call double @basic_rt_composite_get_number(ptr %rt, i64 \(index))\n"
@@ -842,8 +939,15 @@ public struct SwiftObjectModel: ObjectModel {
 
         // Storing into a runtime record: the runtime's own copy semantics.
         out += "define ptr @\"\(name).toRuntime\"(ptr %o) {\n"
-        out += "  %rt = call ptr @basic_rt_composite_new(i64 \(layout.typeIndex))\n"
-        for (index, field) in fields.enumerated() {
+        if layout.sideOffset != nil {
+            // Start from a copy of the record, which already holds every
+            // container field, then write the object's own fields over it.
+            out += "  %side = call ptr @\"\(name).record\"(ptr %o)\n"
+            out += "  %rt = call ptr @basic_rt_composite_copy(ptr %side)\n"
+        } else {
+            out += "  %rt = call ptr @basic_rt_composite_new(i64 \(layout.typeIndex))\n"
+        }
+        for (index, field) in fields.enumerated() where layout.fieldOffsets[index] >= 0 {
             switch field.type {
             case .number:
                 out += "  %n\(index) = call double @\"\(name).get.\(index)\"(ptr %o)\n"
@@ -875,6 +979,16 @@ public struct SwiftObjectModel: ObjectModel {
           %fields = getelementptr inbounds i8, ptr %o, i64 16
           call void @llvm.memset.p0.i64(ptr %fields, i8 0, i64 \(layout.instanceSize - 16), i1 false)
         """
+        // A freshly cleared object has a null record, and `assign` copies
+        // *into* one — so anything that allocates and then assigns has to
+        // give it a record first.
+        let makeRecord = layout.sideOffset.map { offset in
+            """
+              %newrec = call ptr @basic_rt_composite_new(i64 \(layout.typeIndex))
+              %newrecp = getelementptr inbounds i8, ptr %o, i64 \(offset)
+              store ptr %newrec, ptr %newrecp, align 8
+            """
+        } ?? ""
         // The allocating initializer is what the probe reports; its
         // initializing twin ends in a lowercase `c`, and the destructors are
         // the class prefix plus `fd`/`fD` — neither of which involves a
@@ -920,6 +1034,7 @@ public struct SwiftObjectModel: ObjectModel {
         make:
           %o = \(alloc)
         \(clear)
+        \(makeRecord)
           call void @"\(name).assign"(ptr %o, ptr %src)
           ret ptr %o
         none:
@@ -928,7 +1043,14 @@ public struct SwiftObjectModel: ObjectModel {
         define void @"\(name).assign"(ptr %dst, ptr %src) {
 
         """
-        for (index, field) in fields.enumerated() {
+        if layout.sideOffset != nil {
+            // Value semantics reach inside: `C = A` gives C its own record,
+            // so mutating C's array leaves A's alone.
+            out += "  %srcside = call ptr @\"\(name).record\"(ptr %src)\n"
+            out += "  %dstside = call ptr @\"\(name).record\"(ptr %dst)\n"
+            out += "  call void @basic_rt_composite_assign(ptr %dstside, ptr %srcside)\n"
+        }
+        for (index, field) in fields.enumerated() where layout.fieldOffsets[index] >= 0 {
             let type: String
             switch field.type {
             case .number: type = "double"
@@ -946,7 +1068,12 @@ public struct SwiftObjectModel: ObjectModel {
 
         // Teardown releases what the object owns.
         out += "define swiftcc ptr @\"\(destroying)\"(ptr swiftself %self) {\n"
-        for (index, field) in fields.enumerated() {
+        if let sideOffset = layout.sideOffset {
+            out += "  %sidep = getelementptr inbounds i8, ptr %self, i64 \(sideOffset)\n"
+            out += "  %side = load ptr, ptr %sidep, align 8\n"
+            out += "  call void @basic_rt_composite_release(ptr %side)\n"
+        }
+        for (index, field) in fields.enumerated() where layout.fieldOffsets[index] >= 0 {
             switch field.type {
             case .string:
                 out += "  %s\(index)p = getelementptr inbounds i8, ptr %self, i64 \(layout.fieldOffsets[index])\n"

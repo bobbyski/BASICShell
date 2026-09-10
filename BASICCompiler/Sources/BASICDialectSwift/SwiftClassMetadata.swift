@@ -182,6 +182,18 @@ public struct SwiftClassMetadata: Sendable {
     public let superclass: Superclass
     /// Its overrides.
     public let overrides: [Override]
+    /// Bytes at the end of the instance that the metadata sizes but does not
+    /// describe as a property.
+    ///
+    /// A class with container fields keeps them in a runtime record and holds
+    /// a pointer to it here. It must not appear in the field-offset vector:
+    /// Swift's view of the class comes from the generated interface, and a
+    /// stored property there and not here (or the reverse) shifts every
+    /// method slot after it — the bug R1.3 found. Sizing the allocation for
+    /// it while leaving it undescribed is exactly what tail-allocated storage
+    /// does.
+    public var hiddenTrailingBytes: Int = 0
+
     /// Stored properties this class adds.
     public let storedProperties: [StoredProperty]
     /// Methods this class adds (as opposed to overrides).
@@ -256,9 +268,15 @@ public struct SwiftClassMetadata: Sendable {
     /// rounded, which is how `swiftc` reports it (`{Double, Bool}` is 25).
     public var instanceSize: Int {
         guard let last = storedProperties.last, let offset = ownFieldOffsets.last else {
-            return superclass.instanceSize
+            return superclass.instanceSize + hiddenTrailingBytes
         }
-        return offset + last.size
+        return offset + last.size + hiddenTrailingBytes
+    }
+
+    /// Where the hidden trailing slot starts, when there is one.
+    public var hiddenTrailingOffset: Int? {
+        guard hiddenTrailingBytes > 0 else { return nil }
+        return instanceSize - hiddenTrailingBytes
     }
 
     /// Metadata words this class adds past the inherited part.
