@@ -26,8 +26,15 @@ struct SwiftSymbolGraphTests {
         public init(radius: Double) { self.radius = radius; super.init(name: "circle") }
         public override func area() -> Double { 3.0 * radius * radius }
     }
+    public final class Panel {
+        public enum Finish { case matte, gloss }
+        public var finish: Finish = .matte
+        public init() {}
+        public func refinish(_ to: Finish) {}
+    }
     public func totalArea(_ shapes: [Shape]) -> Double { 0 }
-    public enum Unit { case metric }
+    public enum Unit { case metric, imperial }
+    public enum Outcome { case hit(Double), miss }
     """
 
     /// Builds a package and returns its symbol graph, once per run.
@@ -107,7 +114,9 @@ struct SwiftSymbolGraphTests {
         // records, and an imported object is the framework's.
         #expect(shape.methods.contains { $0.name == "corners" }, "[Int] crosses as a BASIC array")
         #expect(api.skipped.contains { $0.member.hasSuffix("totalArea(_:)") }, "[Shape] parameter")
-        #expect(api.skipped.contains { $0.member.contains("Unit") }, "enums arrive with R4.x")
+        // A plain enum imports now (E2); one with a payload waits for E3/E4,
+        // and is skipped with a reason rather than dropped.
+        #expect(api.skipped.contains { $0.member.contains("Outcome") }, "payload enums arrive with E3/E4")
         for skip in api.skipped {
             #expect(!skip.reason.isEmpty, "\(skip.member) was skipped with no reason")
         }
@@ -129,6 +138,35 @@ struct SwiftSymbolGraphTests {
         // The shape emitted IR cannot call directly, so it goes through a
         // generated shim — the same route an async or handler method takes.
         #expect(SwiftObjectModel.needsShim(corners))
+    }
+
+    /// A plain Swift enum imports as the BASIC ENUM it already is (E2).
+    ///
+    /// Members count from 0 in case order — the order the shim converts by —
+    /// and an enum with a payload is reported, not imported.
+    @Test func plainEnumsImportAsBASICEnums() throws {
+        let api = try #require(Self.graph)
+        let unit = try #require(api.enumerations.values.first { $0.name == "Unit" })
+        #expect(unit.cases == ["metric", "imperial"], "case order is declaration order")
+        #expect(!api.skipped.contains { $0.member == "Unit" })
+        #expect(!api.enumerations.values.contains { $0.name == "Outcome" }, "a payload enum is not plain")
+        let rendered = SwiftInterfaceUnit(api: api).render()
+        #expect(rendered.contains("ENUM Unit\n  metric\n  imperial\nEND ENUM"), "got:\n\(rendered)")
+    }
+
+    /// A nested type, referenced by its qualified path (E2).
+    ///
+    /// The graph spells `Panel.Finish` as two identifiers with a dot between.
+    /// Reading the first one took it for `Panel` itself — a property typed as
+    /// its own class — and a *parameter* of that shape was unsupported
+    /// outright, which is how TUIKit's `Button.Role` never imported.
+    @Test func nestedTypesResolveByTheirWholePath() throws {
+        let api = try #require(Self.graph)
+        let finish = try #require(api.enumerations.values.first { $0.swiftName == "Panel.Finish" })
+        #expect(finish.name == "Panel_Finish", "a BASIC type name has no dot")
+        let panel = try #require(api.classes.first { $0.name == "Panel" })
+        #expect(panel.properties.first { $0.name == "finish" }?.type == .enumeration(precise: finish.precise))
+        #expect(panel.methods.first { $0.name == "refinish" }?.parameters.first?.type == .enumeration(precise: finish.precise))
     }
 
     @Test func classTypesAreCarriedByPreciseIdentifier() throws {

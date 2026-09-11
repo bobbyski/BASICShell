@@ -144,6 +144,8 @@ public struct SwiftPackageResolver {
                 )
                 shim.isAsync = method.isAsync
                 shim.closureParameters = handlers
+                shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
+                shim.stringResult = method.returns == .string
                 for (index, parameter) in passed.enumerated() {
                     if case .object(let precise) = parameter.type, let klass = api.class(precise: precise) {
                         shim.objectParameters[index] = klass.name
@@ -155,6 +157,14 @@ public struct SwiftPackageResolver {
                 if case .array(let element) = method.returns { shim.arrayResult = Self.elementKind(element) }
                 for (index, parameter) in passed.enumerated() {
                     if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
+                }
+                if case .enumeration(let precise) = method.returns, let type = api.enumerations[precise] {
+                    shim.enumResult = Self.plainEnum(type)
+                }
+                for (index, parameter) in passed.enumerated() {
+                    if case .enumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
+                        shim.enumParameters[index] = Self.plainEnum(type)
+                    }
                 }
                 for (index, parameter) in passed.enumerated() {
                     if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
@@ -188,6 +198,7 @@ public struct SwiftPackageResolver {
                     return total + 1
                 }
                 shim.closureParameters = Set(passed.indices.filter { passed[$0].type == .voidClosure })
+                shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 for (index, parameter) in passed.enumerated() {
                     if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
                         shim.protocolParameters[index] = name
@@ -196,6 +207,9 @@ public struct SwiftPackageResolver {
                         shim.objectParameters[index] = k.name
                     }
                     if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
+                    if case .enumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
+                        shim.enumParameters[index] = Self.plainEnum(type)
+                    }
                     guard case .structure = parameter.type else { continue }
                     var next = 0
                     guard let build = Self.rebuild(parameter.type, in: api, prefix: "a\(index)_", next: &next),
@@ -205,7 +219,20 @@ public struct SwiftPackageResolver {
                 methods.append(shim)
             }
         }
-        guard let source = SwiftAsyncShim(module: api.module, methods: methods).source() else { return nil }
+        // Enum-typed properties, read and written through the shim (E2).
+        // Generated for the class that declares each one; a subclass's thunk
+        // calls the same shim.
+        var properties: [SwiftAsyncShim.EnumProperty] = []
+        for klass in api.classes {
+            for property in klass.properties {
+                guard case .enumeration(let precise) = property.type, let type = api.enumerations[precise] else { continue }
+                properties.append(SwiftAsyncShim.EnumProperty(
+                    className: klass.name, name: property.name, type: Self.plainEnum(type),
+                    isSettable: property.isSettable, isActor: klass.isActor
+                ))
+            }
+        }
+        guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties).source() else { return nil }
 
         let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -243,6 +270,11 @@ public struct SwiftPackageResolver {
         return "\(structure.name)(\(arguments.joined(separator: ", ")))"
     }
 
+    /// A plain enum as the shim generator takes it.
+    static func plainEnum(_ type: SwiftAPI.Enumeration) -> SwiftAsyncShim.PlainEnum {
+        SwiftAsyncShim.PlainEnum(swiftName: type.swiftName, cases: type.cases)
+    }
+
     /// The tag the shim generator uses for an array's element kind.
     static func elementKind(_ type: SwiftAPI.ValueType) -> String {
         switch type {
@@ -268,6 +300,7 @@ public struct SwiftPackageResolver {
         case .structure(let precise): return api.structures[precise]?.name ?? "Swift.Never"
         case .protocolType(let precise): return api.protocols[precise] ?? "Swift.Never"
         case .array(let element): return "[\(spelling(element, in: api))]"
+        case .enumeration(let precise): return api.enumerations[precise]?.swiftName ?? "Swift.Never"
         case .unsupported: return "Swift.Never"
         }
     }

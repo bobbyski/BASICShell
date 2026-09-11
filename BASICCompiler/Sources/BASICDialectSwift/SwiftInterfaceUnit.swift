@@ -44,6 +44,16 @@ public struct SwiftInterfaceUnit {
             lines.append("INTERFACE \(name)")
             lines.append("END INTERFACE")
         }
+        // Plain Swift enums, as the BASIC ENUM each already is (E2). Members
+        // count from 0 in case order — the same order the shim converts by —
+        // and PRINT shows the case's name, exactly as for an ENUM written in
+        // BASIC. All of them, not only the ones a signature names: a program
+        // may want `Button_Style.bold` as a constant in its own right.
+        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
+            lines.append("ENUM \(enumeration.name)")
+            for member in enumeration.cases { lines.append("  \(member)") }
+            lines.append("END ENUM")
+        }
         if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
             // `AS DOUBLE`, not VOID: a BASIC closure is an *expression* and
             // must yield something. Swift's `() -> Void` discards it, which
@@ -138,7 +148,9 @@ public struct SwiftInterfaceUnit {
             total + klass.methods.count + klass.properties.count
                 + (chosenInitializer(of: klass) == nil ? 0 : 1)
         }
-        return (imported, api.skipped.count + skippedInitializers.count)
+        // An enum's cases count as members: they are what a program uses.
+        let cases = api.enumerations.values.reduce(0) { $0 + $1.cases.count }
+        return (imported + cases, api.skipped.count + skippedInitializers.count)
     }
 
     /// What was imported and what was not, per framework (R4.8).
@@ -159,6 +171,9 @@ public struct SwiftInterfaceUnit {
                 parts.append("no NEW")
             }
             lines.append("  \(klass.name) — " + parts.joined(separator: ", "))
+        }
+        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
+            lines.append("  \(enumeration.name) — ENUM, \(enumeration.cases.count) case(s)")
         }
         let skips = api.skipped + skippedInitializers
         if skips.isEmpty {
@@ -258,6 +273,9 @@ public struct SwiftInterfaceUnit {
         // A BASIC array travels in a VARIANT — that is how a function hands
         // one back in this language, and `LEN(v)` and `v(i)` walk it.
         case .array: return "VARIANT"
+        // The generated ENUM, so a parameter or property reads as the type it
+        // is; `Button.Style` becomes `Button_Style`, BASIC having no dot.
+        case .enumeration(let precise): return api.enumerations[precise]?.name ?? "DOUBLE"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
@@ -293,6 +311,7 @@ public struct SwiftInterfaceUnit {
         // A placeholder body is discarded, but it still has to type-check,
         // and EMPTY is the VARIANT with nothing in it.
         case .array: return "EMPTY"
+        case .enumeration: return "0"
         case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }

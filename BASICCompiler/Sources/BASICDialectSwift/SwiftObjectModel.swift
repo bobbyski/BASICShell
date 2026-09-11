@@ -626,9 +626,9 @@ public struct SwiftObjectModel: ObjectModel {
                 && seen.insert("newshim.\(entry.klass.name).\(Self.basicArity(initializer, in: entry.api))").inserted {
                 let parameters = initializer.passed.flatMap { parameter -> [String] in
                     if case .structure = parameter.type {
-                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.abiType($0) }
+                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.shimAbiType($0) }
                     }
-                    return [Self.abiType(parameter.type)]
+                    return [Self.shimAbiType(parameter.type)]
                 }
                 out += "declare ptr @basic_new_\(entry.klass.name)_\(Self.basicArity(initializer, in: entry.api))(\(parameters.joined(separator: ", ")))\n"
             }
@@ -640,11 +640,11 @@ public struct SwiftObjectModel: ObjectModel {
                 // parameters rather than one.
                 let parameters = ["ptr"] + method.passed.flatMap { parameter -> [String] in
                     if case .structure = parameter.type {
-                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.abiType($0) }
+                        return (entry.api.leaves(of: parameter.type) ?? []).map { Self.shimAbiType($0) }
                     }
-                    return [Self.abiType(parameter.type)]
+                    return [Self.shimAbiType(parameter.type)]
                 }
-                out += "declare \(Self.abiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
+                out += "declare \(Self.shimAbiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where !Self.needsShim(method) && seen.insert(method.symbol).inserted {
                 // A `throws` method takes a hidden `swifterror` pointer; the
@@ -656,6 +656,15 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "declare swiftcc \(Self.abiReturn(method.returns)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for property in entry.klass.properties {
+                // Through the shim, not Swift's accessor (E2): the accessor
+                // hands back the enum in Swift's own layout.
+                if case .enumeration = property.type {
+                    let getter = "basic_get_\(entry.klass.name)_\(property.name)"
+                    if seen.insert(getter).inserted { out += "declare i64 @\"\(getter)\"(ptr)\n" }
+                    let setter = "basic_set_\(entry.klass.name)_\(property.name)"
+                    if property.isSettable, seen.insert(setter).inserted { out += "declare void @\"\(setter)\"(ptr, i64)\n" }
+                    continue
+                }
                 if seen.insert(property.getterSymbol).inserted {
                     out += "declare swiftcc \(Self.abiReturn(property.type)) @\"\(property.getterSymbol)\"(ptr swiftself)\n"
                 }
@@ -683,7 +692,7 @@ public struct SwiftObjectModel: ObjectModel {
     static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
         initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration: return true
             default: return false
             }
         }
@@ -694,9 +703,10 @@ public struct SwiftObjectModel: ObjectModel {
         // differs from what Swift declared because a defaulted parameter is
         // being left out.
         if case .array = method.returns { return true }
+        if case .enumeration = method.returns { return true }
         return method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration: return true
             default: return false
             }
         }
@@ -712,6 +722,8 @@ public struct SwiftObjectModel: ObjectModel {
         case .double: return "double"
         case .int: return "i64"
         case .bool: return "i1"
+        // An ordinal; the shim turns it into the case (E2).
+        case .enumeration: return "i64"
         case .string: return "i64, ptr"
         case .voidClosure: return "ptr, ptr"
         // Never reached: a struct parameter is expanded into its scalars
@@ -725,11 +737,24 @@ public struct SwiftObjectModel: ObjectModel {
         }
     }
 
+    /// A value's form in a *shim's* C signature: Swift's form, except that a
+    /// String is the runtime's own pointer. `@_cdecl` bridges `Swift.String`
+    /// to one `NSString*`, and passing Swift's two words to that — or reading
+    /// two back — is what crashed the first shim that returned a String.
+    static func shimAbiType(_ type: SwiftAPI.ValueType) -> String {
+        type == .string ? "ptr" : abiType(type)
+    }
+
+    static func shimAbiReturn(_ type: SwiftAPI.ValueType) -> String {
+        type == .string ? "ptr" : abiReturn(type)
+    }
+
     static func abiReturn(_ type: SwiftAPI.ValueType) -> String {
         switch type {
         case .double: return "double"
         case .int: return "i64"
         case .bool: return "i1"
+        case .enumeration: return "i64"
         case .string: return "{ i64, ptr }"
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
@@ -754,6 +779,17 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     /// A method of an imported class or of any class above it.
+    /// The class that declares a property — a subclass inherits it, but the
+    /// shim for an enum-typed one is generated once, for its declarer.
+    static func propertyOwner(named name: String, of klass: SwiftAPI.Class, in api: SwiftAPI) -> SwiftAPI.Class? {
+        var current: SwiftAPI.Class? = klass
+        while let here = current {
+            if here.properties.contains(where: { $0.name.uppercased() == name.uppercased() }) { return here }
+            current = here.superclassPrecise.flatMap { api.class(precise: $0) }
+        }
+        return nil
+    }
+
     static func method(named name: String, of klass: SwiftAPI.Class, in api: SwiftAPI) -> SwiftAPI.Function? {
         var current: SwiftAPI.Class? = klass
         while let here = current {
@@ -781,7 +817,7 @@ public struct SwiftObjectModel: ObjectModel {
             case .structure: return "double \(value)"
             case .double: return "double \(value)"
             case .bool: return "i1 \(value)"
-            case .int:
+            case .int, .enumeration:
                 let r = temp(); body += "  \(r) = fptosi double \(value) to i64\n"; return "i64 \(r)"
             case .string:
                 let r = temp(); body += "  \(r) = call swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr \(value))\n"
@@ -803,7 +839,7 @@ public struct SwiftObjectModel: ObjectModel {
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
             case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .unsupported: return value
-            case .int:
+            case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
                 let a = temp(); body += "  \(a) = extractvalue { i64, ptr } \(value), 0\n"
@@ -811,6 +847,13 @@ public struct SwiftObjectModel: ObjectModel {
                 let r = temp(); body += "  \(r) = call swiftcc ptr @basic_rt_swift_string_out(i64 \(a), ptr \(b))\n"
                 return r
             }
+        }
+        /// A value for a call: Swift's form, or — when the call goes through
+        /// a shim — the same except that a String stays the runtime's
+        /// pointer, which the shim reads itself.
+        func convert(_ value: String, _ type: SwiftAPI.ValueType, _ viaShim: Bool, into body: inout String) -> String {
+            if viaShim, type == .string { return "ptr \(value)" }
+            return toSwift(value, type, into: &body)
         }
         /// A member's parameter list as BASIC declares it, and the argument
         /// each one contributes.
@@ -845,7 +888,7 @@ public struct SwiftObjectModel: ObjectModel {
 
         func basicType(_ type: SwiftAPI.ValueType) -> String {
             switch type {
-            case .double, .int: return "double"
+            case .double, .int, .enumeration: return "double"
             case .bool: return "i1"
             case .string, .object, .voidClosure, .structure, .protocolType, .array, .void, .unsupported: return "ptr"
             }
@@ -862,12 +905,13 @@ public struct SwiftObjectModel: ObjectModel {
             var body = ""
             var arguments: [String] = []
             let (parameters, slots) = basicParameters(initializer.passed)
+            let viaShim = Self.needsInitializerShim(initializer)
             for (index, parameter) in initializer.passed.enumerated() {
                 if case .structure = parameter.type {
                     // Each leaf goes across on its own; the shim rebuilds.
-                    arguments += slots[index].map { toSwift($0.0, $0.1, into: &body) }
+                    arguments += slots[index].map { convert($0.0, $0.1, viaShim, into: &body) }
                 } else {
-                    arguments.append(toSwift(slots[index][0].0, parameter.type, into: &body))
+                    arguments.append(convert(slots[index][0].0, parameter.type, viaShim, into: &body))
                 }
             }
             let arity0 = Self.basicArity(initializer, in: entry.api)
@@ -902,6 +946,20 @@ public struct SwiftObjectModel: ObjectModel {
         // Property accessors, by BIR field index.
         for (index, field) in entry.type.fields.enumerated() {
             guard let property = Self.property(named: field.name, of: entry.klass, in: entry.api) else { continue }
+            if case .enumeration = property.type {
+                // Named after the class that *declares* it, which is the one
+                // the shim was generated for; a subclass reaches the same one.
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                out += "define double @\"\(name).get.\(index)\"(ptr %o) {\n"
+                out += "  %n = call i64 @\"basic_get_\(owner)_\(property.name)\"(ptr %o)\n"
+                out += "  %d = sitofp i64 %n to double\n  ret double %d\n}\n"
+                if property.isSettable {
+                    out += "define void @\"\(name).set.\(index)\"(ptr %o, double %v) {\n"
+                    out += "  %n = fptosi double %v to i64\n"
+                    out += "  call void @\"basic_set_\(owner)_\(property.name)\"(ptr %o, i64 %n)\n  ret void\n}\n"
+                }
+                continue
+            }
             counter = 0
             var body = ""
             let raw = temp()
@@ -959,26 +1017,29 @@ public struct SwiftObjectModel: ObjectModel {
             var arguments: [String] = []
             let (declared, slots) = basicParameters(method.passed)
             var parameters = ["ptr %me"] + declared
+            let viaShim = Self.needsShim(method)
             for (index, parameter) in method.passed.enumerated() {
                 if case .structure = parameter.type {
                     // Each leaf goes across on its own; the shim rebuilds.
-                    arguments += slots[index].map { toSwift($0.0, $0.1, into: &body) }
+                    arguments += slots[index].map { convert($0.0, $0.1, viaShim, into: &body) }
                 } else {
-                    arguments.append(toSwift(slots[index][0].0, parameter.type, into: &body))
+                    arguments.append(convert(slots[index][0].0, parameter.type, viaShim, into: &body))
                 }
             }
             // An async method goes through its shim, which takes the
             // receiver as an ordinary first argument and no swiftself.
             if Self.needsShim(method) {
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
-                let call = "call \(Self.abiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
+                let call = "call \(Self.shimAbiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
                 if method.returns == .void {
                     body += "  \(call)\n"
                     out += "define void @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
                 } else {
                     let raw = temp()
                     body += "  \(raw) = \(call)\n"
-                    let value = fromSwift(raw, method.returns, into: &body)
+                    // A String comes back from a shim as an owned runtime
+                    // string already — exactly what fromSwift would make.
+                    let value = method.returns == .string ? raw : fromSwift(raw, method.returns, into: &body)
                     out += "define \(basicType(method.returns)) @\"F.\(function.name)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(basicType(method.returns)) \(value)\n}\n"
                 }
                 continue

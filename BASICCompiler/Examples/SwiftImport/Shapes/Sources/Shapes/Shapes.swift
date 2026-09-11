@@ -5,6 +5,8 @@
 /// already produces and calls these methods by their own mangled symbols.
 open class Shape {
     public var name: String
+    /// An enum-typed property, which crosses through a shim both ways.
+    public var tint: Tint = .red
 
     public init(name: String) { self.name = name }
 
@@ -15,6 +17,9 @@ open class Shape {
     public func describe() -> String { "\(name) has area \(area())" }
 
     public func rename(_ to: String) { name = to }
+
+    /// An enum parameter (E2).
+    public func painted(_ colour: Tint) -> String { "\(name) painted \(colour)" }
 
     public func sides() -> Int { 0 }
 
@@ -47,7 +52,10 @@ open class Shape {
 /// A control with an event, so a BASIC handler has somewhere to be stored
 /// (R4.5). `onTap` holds a Swift closure — not a wrapper, not a bridge.
 public final class Button {
+    /// Nested, so the import has to name `Button.Style` without a dot.
+    public enum Style { case plain, bold }
     public var label: String
+    public var style: Style = .plain
     private var onTap: (() -> Void)?
 
     public init(label: String) { self.label = label }
@@ -56,6 +64,10 @@ public final class Button {
 
     public func tap() { onTap?() }
 }
+
+/// A plain enum, so an imported one has something to be (E2). BASIC sees
+/// an ordinary `ENUM Tint` whose members count from 0 in case order.
+public enum Tint { case red, green, blue }
 
 /// The framework's own error type. Nothing about it is written for BASIC.
 public enum ShapeError: Error {

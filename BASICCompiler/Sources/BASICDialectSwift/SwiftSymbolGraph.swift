@@ -42,6 +42,11 @@ public struct SwiftAPI: Sendable {
         /// "an array a function hands back" — so `LEN(v)` and `v(i)` walk it
         /// with nothing new in the language.
         indirect case array(element: ValueType)
+        /// A plain enum — every case bare, none with a payload (E2). BASIC sees
+        /// the `ENUM` the interface unit declares for it; the value crosses as
+        /// its ordinal and a shim turns that into the case, so how Swift lays
+        /// the enum out is never assumed.
+        case enumeration(precise: String)
         /// Nothing.
         case void
         /// Something BASIC has no spelling for yet — the spelling is kept for
@@ -60,7 +65,7 @@ public struct SwiftAPI: Sendable {
         public let label: String?
         /// The internal name, which is what BASIC calls the parameter.
         public let name: String
-        public let type: ValueType
+        public var type: ValueType
         /// Whether the declaration gives it a default.
         ///
         /// A parameter BASIC cannot spell does not have to block the member:
@@ -77,8 +82,8 @@ public struct SwiftAPI: Sendable {
         public let name: String
         /// The symbol's mangled form with its `$s` prefix, callable as is.
         public let symbol: String
-        public let parameters: [Parameter]
-        public let returns: ValueType
+        public var parameters: [Parameter]
+        public var returns: ValueType
         /// `true` for an initializer, whose symbol is the *initializing* half;
         /// the allocating half is ``allocatingSymbol``.
         public let isInitializer: Bool
@@ -124,7 +129,7 @@ public struct SwiftAPI: Sendable {
         public let name: String
         /// The property symbol (`…vp`); getter is `…vg`, setter `…vs`.
         public let symbol: String
-        public let type: ValueType
+        public var type: ValueType
         public let isSettable: Bool
 
         public var getterSymbol: String { String(symbol.dropLast(2)) + "vg" }
@@ -132,6 +137,19 @@ public struct SwiftAPI: Sendable {
     }
 
     /// A struct, and the scalars it flattens to.
+    /// A plain Swift enum, as BASIC will know it (E2).
+    public struct Enumeration: Sendable, Equatable {
+        /// The BASIC spelling. A nested enum's dots become underscores —
+        /// `Button.Style` is `Button_Style` — because a BASIC type name cannot
+        /// contain one.
+        public let name: String
+        /// The Swift spelling, for the generated shim.
+        public let swiftName: String
+        public let precise: String
+        /// Cases in declaration order; a case's ordinal is its position here.
+        public let cases: [String]
+    }
+
     public struct Structure: Sendable {
         public let name: String
         /// The precise identifier, `s:6TUIKit4RectV`.
@@ -180,6 +198,8 @@ public struct SwiftAPI: Sendable {
     public var classes: [Class]
     /// Structs, by precise identifier.
     public var structures: [String: Structure] = [:]
+    /// Plain enums, by precise identifier (E2).
+    public var enumerations: [String: Enumeration] = [:]
     /// Protocol names, by precise identifier.
     public var protocols: [String: String] = [:]
     /// Which protocols each class conforms to, by precise identifier.
@@ -199,7 +219,17 @@ public struct SwiftAPI: Sendable {
     public func leaves(of type: ValueType, depth: Int = 0) -> [ValueType]? {
         guard depth < 8 else { return nil }
         guard case .structure(let precise) = type else {
-            return type.isSupported ? [type] : nil
+            // Numbers, booleans and strings only — the rule this was always
+            // documented as. "Supported" is the wrong test: a leaf crosses as
+            // one `@_cdecl` parameter, and an enum, an object, a protocol or
+            // a closure cannot be one. While enums were unsupported that
+            // difference hid; making them importable (E2) turned structs with
+            // an enum field into "flattenable" ones, and their shims stopped
+            // compiling.
+            switch type {
+            case .double, .int, .bool, .string: return [type]
+            default: return nil
+            }
         }
         guard let structure = structures[precise], !structure.fields.isEmpty else { return nil }
         var out: [ValueType] = []
@@ -274,6 +304,51 @@ public struct SwiftAPI: Sendable {
             }
         }
 
+        // Plain enums (E2), before any member: a member's type may name one,
+        // and whether it can cross depends on which enums made it in. Cases
+        // are ordered by where they are written — the symbol list is in no
+        // promised order, and the ordinal BASIC sees must be the case order.
+        var enumSkipReasons: [String: String] = [:]
+        var casesByEnum: [String: [(order: String, line: Int, column: Int, offset: Int, name: String, payload: Bool)]] = [:]
+        for (offset, symbol) in symbols.enumerated() {
+            // The last path component, not the title: a case's title is
+            // qualified (`Tint.red`), and a qualified name backticked in the
+            // shim is a case that does not exist.
+            guard kind(of: symbol) == "swift.enum.case", let precise = precise(of: symbol),
+                  let owner = memberOf[precise],
+                  let name = (symbol["pathComponents"] as? [String])?.last else { continue }
+            let location = symbol["location"] as? [String: Any]
+            let spot = location?["position"] as? [String: Any]
+            let declared = fragments(of: symbol["declarationFragments"]).map(\.spelling).joined()
+            casesByEnum[owner, default: []].append((
+                order: location?["uri"] as? String ?? "", line: spot?["line"] as? Int ?? Int.max,
+                column: spot?["character"] as? Int ?? 0, offset: offset,
+                name: name, payload: declared.contains("(")
+            ))
+        }
+        for symbol in symbols {
+            guard kind(of: symbol) == "swift.enum", let precise = precise(of: symbol),
+                  let path = symbol["pathComponents"] as? [String], !path.isEmpty else { continue }
+            let cases = (casesByEnum[precise] ?? []).sorted {
+                ($0.order, $0.line, $0.column, $0.offset) < ($1.order, $1.line, $1.column, $1.offset)
+            }
+            let declared = fragments(of: symbol["declarationFragments"]).map(\.spelling).joined()
+            if cases.isEmpty {
+                enumSkipReasons[precise] = "it has no cases, so there is nothing to name"
+            } else if cases.contains(where: \.payload) {
+                enumSkipReasons[precise] = "its cases carry payloads; that is E3/E4"
+            } else if declared.contains("<") {
+                enumSkipReasons[precise] = "it is generic, and a BASIC ENUM is not"
+            } else if Set(cases.map { $0.name.uppercased() }).count != cases.count {
+                enumSkipReasons[precise] = "two of its cases differ only in case, which BASIC cannot tell apart; KNOWN AS would, and is not built"
+            } else {
+                api.enumerations[precise] = Enumeration(
+                    name: path.joined(separator: "_"), swiftName: path.joined(separator: "."),
+                    precise: precise, cases: cases.map(\.name)
+                )
+            }
+        }
+
         // Classes next, so members have somewhere to go.
         var classIndex: [String: Int] = [:]
         for symbol in symbols {
@@ -333,7 +408,13 @@ public struct SwiftAPI: Sendable {
                 }
             case "swift.property":
                 let fragments = fragments(of: symbol["declarationFragments"])
-                let type = fragments.first { $0.kind == "typeIdentifier" }.map { valueType(precise: $0.precise, spelling: $0.spelling) } ?? .unsupported("?")
+                var type = leadingTypeIdentifier(fragments).map { valueType(precise: $0.precise, spelling: $0.spelling) } ?? .unsupported("?")
+                // An optional enum has one value no BASIC member names — nil —
+                // and the shim cannot hand that back as an ordinal. Refused by
+                // name rather than generating a shim that does not compile.
+                if case .enumeration = type, isOptional(afterLeadingTypeIn: fragments) {
+                    type = .unsupported("an optional enum, whose nil no member names")
+                }
                 let isLet = fragments.contains { $0.kind == "keyword" && $0.spelling == "let" }
                 // `{ get }` in the declaration marks a read-only computed
                 // property; a stored `var` shows no accessor block.
@@ -348,10 +429,75 @@ public struct SwiftAPI: Sendable {
                 api.classes[index].properties.append(Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: !readOnly))
             case "swift.class", "swift.struct", "swift.protocol":
                 continue
+            case "swift.enum":
+                if api.enumerations[precise] != nil { continue }
+                api.skipped.append(Skip(member: path, reason: enumSkipReasons[precise] ?? "an enum BASIC cannot spell yet"))
+            case "swift.enum.case":
+                if let owner = memberOf[precise], api.enumerations[owner] != nil { continue }
+                api.skipped.append(Skip(member: path, reason: "a case of an enum that did not import; that enum says why"))
             case let other:
                 api.skipped.append(Skip(member: path, reason: "\(other) has no BASIC counterpart yet"))
             }
         }
+        // An enum whose BASIC name is already taken once case is folded — by
+        // a class, or by another enum — would make `DIM x AS Mode` mean two
+        // things. Withdrawn by name rather than letting one silently win.
+        let classNames = Set(api.classes.map { $0.name.uppercased() })
+        var takenEnumNames = Set<String>()
+        for (precise, enumeration) in api.enumerations.sorted(by: { $0.value.name < $1.value.name }) {
+            let folded = enumeration.name.uppercased()
+            if classNames.contains(folded) || !takenEnumNames.insert(folded).inserted {
+                api.enumerations[precise] = nil
+                api.skipped.append(Skip(member: enumeration.swiftName,
+                                        reason: "its BASIC name \(enumeration.name) is already taken"))
+            }
+        }
+        // A reference to an enum that did not import is not a type BASIC can
+        // spell. Rewritten here, before anything reads `passed`, so that a
+        // *defaulted* parameter of such a type is left out — as it was before
+        // E2 — instead of dragging its whole member out with it.
+        func settle(_ type: ValueType) -> ValueType {
+            if case .enumeration(let precise) = type, api.enumerations[precise] == nil { return .unsupported(precise) }
+            return type
+        }
+        func settle(_ function: Function) -> Function {
+            var function = function
+            function.parameters = function.parameters.map { var parameter = $0; parameter.type = settle(parameter.type); return parameter }
+            function.returns = settle(function.returns)
+            return function
+        }
+        var enumWithdrawals: [Skip] = []
+        func keep(_ function: Function, owner: String) -> Bool {
+            guard !function.isSupported else { return true }
+            enumWithdrawals.append(Skip(member: "\(owner).\(function.name)", reason: "it names an enum that did not import"))
+            return false
+        }
+        for index in api.classes.indices {
+            let klass = api.classes[index]
+            let methods = klass.methods.map(settle).filter { keep($0, owner: klass.name) }
+            let initializers = klass.initializers.map(settle).filter { keep($0, owner: klass.name) }
+            let properties = klass.properties.compactMap { original -> Property? in
+                var property = original
+                property.type = settle(property.type)
+                guard property.type.isSupported else {
+                    enumWithdrawals.append(Skip(member: "\(klass.name).\(property.name)", reason: "it names an enum that did not import"))
+                    return nil
+                }
+                // An actor's property is read with `await` from outside and
+                // not written from there at all.
+                if klass.isActor, case .enumeration = property.type, property.isSettable {
+                    return Property(name: property.name, symbol: property.symbol, type: property.type, isSettable: false)
+                }
+                return property
+            }
+            api.classes[index].methods = methods
+            api.classes[index].initializers = initializers
+            api.classes[index].properties = properties
+        }
+        let functions = api.functions.map(settle).filter { keep($0, owner: api.module) }
+        api.functions = functions
+        api.skipped += enumWithdrawals
+
         // A struct is only importable if it flattens to scalars, and that
         // cannot be known while the structs are still being read — so the
         // members that name an unflattenable one are withdrawn here, with a
@@ -587,6 +733,8 @@ public struct SwiftAPI: Sendable {
                 type = .voidClosure
             } else if let array = Self.arrayType(fragments) {
                 type = array
+            } else if let qualified = Self.qualifiedType(Array(afterColon)) {
+                type = qualified
             } else if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
             } else {
@@ -612,11 +760,57 @@ public struct SwiftAPI: Sendable {
         // A bare type identifier is the whole return type; anything wrapped
         // (`[Shape]`, `Shape?`) is more than one fragment and unsupported.
         if let array = arrayType(fragments) { return array }
+        if let qualified = qualifiedType(fragments) { return qualified }
         guard fragments.count == 1, let only = fragments.first, only.kind == "typeIdentifier" else {
             return .unsupported(fragments.map(\.spelling).joined())
         }
         return valueType(precise: only.precise, spelling: only.spelling)
     }
+    /// A type written as a qualified path to a nested type — `Button.Style`,
+    /// which the graph spells as identifiers with a dot between — resolved to
+    /// the type the whole path means, or nil when the fragments are anything
+    /// else. The *last* identifier's precise is that type; reading the first
+    /// took `Button.Style` for `Button`, and a nested enum for its class.
+    static func qualifiedType(_ fragments: [Fragment]) -> ValueType? {
+        let meaningful = fragments.filter { !$0.spelling.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard meaningful.count >= 3, meaningful.count % 2 == 1 else { return nil }
+        for (index, fragment) in meaningful.enumerated() {
+            if index % 2 == 0 {
+                guard fragment.kind == "typeIdentifier" else { return nil }
+            } else {
+                guard fragment.spelling.trimmingCharacters(in: .whitespaces) == "." else { return nil }
+            }
+        }
+        let last = meaningful[meaningful.count - 1]
+        return valueType(precise: last.precise, spelling: meaningful.map(\.spelling).joined())
+    }
+
+    /// The identifier a property's declared type starts with, following a
+    /// qualified path to its end — `Button.Style` gives `Style`, whose
+    /// precise is the nested type's.
+    static func leadingTypeIdentifier(_ fragments: [Fragment]) -> Fragment? {
+        guard var index = fragments.firstIndex(where: { $0.kind == "typeIdentifier" }) else { return nil }
+        while index + 2 < fragments.count,
+              fragments[index + 1].spelling.trimmingCharacters(in: .whitespaces) == ".",
+              fragments[index + 2].kind == "typeIdentifier" {
+            index += 2
+        }
+        return fragments[index]
+    }
+
+    /// Whether the declared type ends in `?` or `!` — an Optional.
+    static func isOptional(afterLeadingTypeIn fragments: [Fragment]) -> Bool {
+        guard var index = fragments.firstIndex(where: { $0.kind == "typeIdentifier" }) else { return false }
+        while index + 2 < fragments.count,
+              fragments[index + 1].spelling.trimmingCharacters(in: .whitespaces) == ".",
+              fragments[index + 2].kind == "typeIdentifier" {
+            index += 2
+        }
+        guard index + 1 < fragments.count else { return false }
+        let next = fragments[index + 1].spelling.trimmingCharacters(in: .whitespaces)
+        return next.hasPrefix("?") || next.hasPrefix("!")
+    }
+
     /// `[T]` read from the fragments of a declared type, or nil when the
     /// fragments are not exactly a bracketed type identifier.
     ///
@@ -660,6 +854,9 @@ public struct SwiftAPI: Sendable {
         // whether it flattens to scalars — this only says what it is.
         case let precise? where precise.hasSuffix("V"): return .structure(precise: precise)
         case let precise? where precise.hasSuffix("P"): return .protocolType(precise: precise)
+        // `O` is an enum. Whether it imported is settled once the enums are
+        // read; a reference to one that did not becomes unsupported then.
+        case let precise? where precise.hasSuffix("O"): return .enumeration(precise: precise)
         default: return .unsupported(spelling)
         }
     }

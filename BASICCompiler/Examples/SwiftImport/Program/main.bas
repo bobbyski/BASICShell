@@ -82,6 +82,19 @@ FOR I = 0 TO LEN(Scaled) - 1
   PRINT "  area x factor:"; Scaled(I)
 NEXT I
 
+' Plain Swift enums (E2). Tint and Button.Style are the framework's own
+' enums; BASIC sees them as ordinary ENUMs — Button.Style is Button_Style,
+' a BASIC type name having no dot — and PRINT shows the case's name.
+R.tint = Tint.blue
+DIM T AS Tint
+T = R.tint
+PRINT "tint:"; T; " ordinal"; STR$(T)
+PRINT R.painted(Tint.green)
+DIM Look AS Button_Style
+B.style = Button_Style.bold
+Look = B.style
+PRINT "button style:"; Look
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)
