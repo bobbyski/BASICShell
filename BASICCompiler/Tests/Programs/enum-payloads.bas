@@ -49,6 +49,11 @@ T = S
 T = Shot.Missed
 PRINT "original:"; S; " copy:"; T
 
+' A VARIANT keeps the case, so it prints the same way.
+DIM V AS VARIANT
+V = S
+PRINT "variant:"; V
+
 S = Shot.Missed
 PRINT "print:"; S
 ON ERROR GOTO NoField

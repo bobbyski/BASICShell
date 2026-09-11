@@ -8,5 +8,6 @@ equal: same case, same fields
 not equal: a field differs
 not equal: a different case
 original:Critical(30, "headshot") copy:Missed
+variant:Critical(30, "headshot")
 print:Missed
 caught, ERR =5

@@ -456,6 +456,10 @@ public struct BIRModule: Sendable {
     /// Every variable named in a FIELD statement, normalized: the runtime
     /// mirrors their values for PUT and GET.
     public var fieldVariables: [String] = []
+    /// For each payload ENUM's record type, how its values print (E3).
+    /// Carried to the runtime in the type's descriptor, so a value inside a
+    /// VARIANT prints as it would be written — as the interpreter prints it.
+    public var enumDescriptors: [String: String] = [:]
 
     /// Creates an empty module.
     public init(name: String) {

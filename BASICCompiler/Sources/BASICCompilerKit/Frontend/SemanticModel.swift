@@ -325,6 +325,17 @@ public final class SemanticModel {
             return out
         }
 
+        /// How a value prints, for the runtime (E3): one line per member —
+        /// its name, then the slot of each of its fields. One table serves a
+        /// PRINT of a declared value and of one inside a VARIANT, so the two
+        /// cannot print differently.
+        public var textDescriptor: String {
+            members.map { member in
+                ([member.name] + fields(of: member.name).compactMap { slotIndex(of: $0.name).map(String.init) })
+                    .joined(separator: ",")
+            }.joined(separator: "\n")
+        }
+
         /// A field's slot in the record; the tag is slot 0.
         public func slotIndex(of field: String) -> Int? {
             slots.firstIndex { $0.name.uppercased() == field.uppercased() }.map { $0 + 1 }

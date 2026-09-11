@@ -118,6 +118,12 @@ public struct BIRBuilder {
         }
         module.functions.append(contentsOf: closures.functions)
         module.types.append(contentsOf: closures.environmentTypes)
+        // A payload ENUM's print table rides in its record type's descriptor
+        // (E3), so a value inside a VARIANT — where nothing is known about it
+        // at compile time — still prints as it would be written.
+        for (name, enumeration) in model.enums where enumeration.isPayload {
+            module.enumDescriptors[name] = enumeration.textDescriptor
+        }
         module.signatures = model.signatures
         module.fieldVariables = model.fieldVariables
         for name in model.functionOrder where model.functions[name]?.isAsync == true {
@@ -553,11 +559,7 @@ final class FunctionBuilder {
     /// `PRINT` of a payload value: `Critical(30, "headshot")` (E3). One line
     /// per member in the descriptor: its name, then its fields' slots.
     func payloadTextCall(_ value: BIRExpression, _ definition: SemanticModel.Enumeration) -> BIRExpression {
-        let descriptor = definition.members.map { member in
-            ([member.name] + definition.fields(of: member.name).compactMap { definition.slotIndex(of: $0.name).map(String.init) })
-                .joined(separator: ",")
-        }.joined(separator: "\n")
-        return .hostCall("basic_rt_enum_payload_text", [value, .string(descriptor)], returns: .string)
+        .hostCall("basic_rt_enum_payload_text", [value, .string(definition.textDescriptor)], returns: .string)
     }
 
     /// The value of `Suit.Clubs`, or nil when the reference is not one.

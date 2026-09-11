@@ -356,6 +356,8 @@ struct LLVMLowering {
         }
         var object: [String: Any] = ["name": type.displayName, "kind": type.isClass ? "class" : "record", "fields": fields]
         if let base = type.base { object["base"] = base }
+        // A payload ENUM's print table (E3), for a value inside a VARIANT.
+        if let table = module.enumDescriptors[type.name] { object["enum"] = table }
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }

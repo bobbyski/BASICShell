@@ -49,7 +49,12 @@ package indirect enum RTValue {
         case .number(let value): return rtNumberText(value)
         case .string(let value): return value.description
         case .boolean(let value): return value ? "TRUE" : "FALSE"
-        case .composite(let composite): return "<\(RTTypes.type(composite.typeIndex).name)>"
+        case .composite(let composite):
+            // A payload ENUM value prints as it would be written (E3), the
+            // same text a PRINT of a declared one gives, as the interpreter
+            // prints either.
+            if let table = RTTypes.enumTables[composite.typeIndex] { return rtEnumPayloadText(composite, table) }
+            return "<\(RTTypes.type(composite.typeIndex).name)>"
         case .closure: return "<FUNCTION>"
         case .system(let object): return "<\(object.typeName)>"
         case .task(let task): return "<TASK #\(task.id) \(task.name)>"
@@ -244,6 +249,10 @@ final class RTCompositeType {
 }
 
 enum RTTypes {
+    /// Print tables for payload ENUM record types, by type index (E3), read
+    /// from the `enum` key of a type's descriptor as it is registered.
+    nonisolated(unsafe) static var enumTables: [Int: String] = [:]
+
     nonisolated(unsafe) static var registry: [RTCompositeType?] = []
 
     static func type(_ index: Int) -> RTCompositeType {
@@ -274,6 +283,11 @@ enum RTTypes {
 
     /// Registers a type from the compiler's JSON descriptor.
     static func register(index: Int, descriptor: String) {
+        if let data = descriptor.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let table = parsed["enum"] as? String {
+            enumTables[index] = table
+        }
         guard let data = descriptor.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             basic_rt_fail("Bad type descriptor for TYPE #\(index)")
