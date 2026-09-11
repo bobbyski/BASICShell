@@ -95,6 +95,20 @@ B.style = Button_Style.bold
 Look = B.style
 PRINT "button style:"; Look
 
+' Swift enums whose cases carry values (E4). Fill is the framework's; BASIC
+' reads it the way it reads a payload ENUM of its own.
+R.fill = Fill.pattern("stripes", 3)
+DIM F AS Fill
+F = R.fill
+PRINT "fill:"; F
+SELECT CASE F
+  CASE Fill.pattern
+    PRINT "pattern named "; F.name; " at scale"; F.scale
+END SELECT
+PRINT R.filled(Fill.solid(0.5))
+F = R.defaultFill()
+PRINT "default fill:"; F
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

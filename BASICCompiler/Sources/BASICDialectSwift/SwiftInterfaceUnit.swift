@@ -51,7 +51,16 @@ public struct SwiftInterfaceUnit {
         // may want `Button_Style.bold` as a constant in its own right.
         for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
             lines.append("ENUM \(enumeration.name)")
-            for member in enumeration.cases { lines.append("  \(member)") }
+            for (index, member) in enumeration.cases.enumerated() {
+                // A case that carries values declares them the way an ENUM
+                // written in BASIC does (E4): `fixed(Value AS DOUBLE)`.
+                let fields = enumeration.payloads.indices.contains(index) ? enumeration.payloads[index] : []
+                if fields.isEmpty {
+                    lines.append("  \(member)")
+                } else {
+                    lines.append("  \(member)(" + fields.map { "\($0.name) AS \(Self.basicType($0.type, in: api))" }.joined(separator: ", ") + ")")
+                }
+            }
             lines.append("END ENUM")
         }
         if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
@@ -276,9 +285,27 @@ public struct SwiftInterfaceUnit {
         // The generated ENUM, so a parameter or property reads as the type it
         // is; `Button.Style` becomes `Button_Style`, BASIC having no dot.
         case .enumeration(let precise): return api.enumerations[precise]?.name ?? "DOUBLE"
+        case .payloadEnumeration(let precise): return api.enumerations[precise]?.name ?? "VARIANT"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
+    }
+
+    /// A value of a payload ENUM for a placeholder body (E4): a bare case if
+    /// there is one, else the first with zero-valued fields.
+    static func payloadPlaceholder(_ precise: String, in api: SwiftAPI) -> String {
+        guard let enumeration = api.enumerations[precise], let first = enumeration.cases.first else { return "EMPTY" }
+        if let bare = enumeration.cases.indices.first(where: { !enumeration.payloads.indices.contains($0) || enumeration.payloads[$0].isEmpty }) {
+            return "\(enumeration.name).\(enumeration.cases[bare])"
+        }
+        let zeros = enumeration.payloads[0].map { field -> String in
+            switch field.type {
+            case .string: return "\"\""
+            case .bool: return "FALSE"
+            default: return "0"
+            }
+        }
+        return "\(enumeration.name).\(first)(" + zeros.joined(separator: ", ") + ")"
     }
 
     /// A value of the right type for a placeholder body.
@@ -303,7 +330,11 @@ public struct SwiftInterfaceUnit {
                 case "STRING": return "\"\""
                 case "BOOLEAN": return "FALSE"
                 case handlerType: return "FUNCTION() AS DOUBLE = 0"
-                default: return "0"
+                default:
+                    if let enumeration = api.enumerations.values.first(where: { $0.name == basic && $0.isPayload }) {
+                        return payloadPlaceholder(enumeration.precise, in: api)
+                    }
+                    return "0"
                 }
             }
             guard !arguments.isEmpty else { return "NEW \(klass.name)" }
@@ -312,6 +343,7 @@ public struct SwiftInterfaceUnit {
         // and EMPTY is the VARIANT with nothing in it.
         case .array: return "EMPTY"
         case .enumeration: return "0"
+        case .payloadEnumeration(let precise): return payloadPlaceholder(precise, in: api)
         case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }

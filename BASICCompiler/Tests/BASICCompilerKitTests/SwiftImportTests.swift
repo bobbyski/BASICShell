@@ -35,6 +35,7 @@ struct SwiftSymbolGraphTests {
     public func totalArea(_ shapes: [Shape]) -> Double { 0 }
     public enum Unit { case metric, imperial }
     public enum Outcome { case hit(Double), miss }
+    public enum Wrapped { case shape(Shape) }
     """
 
     /// Builds a package and returns its symbol graph, once per run.
@@ -116,7 +117,8 @@ struct SwiftSymbolGraphTests {
         #expect(api.skipped.contains { $0.member.hasSuffix("totalArea(_:)") }, "[Shape] parameter")
         // A plain enum imports now (E2); one with a payload waits for E3/E4,
         // and is skipped with a reason rather than dropped.
-        #expect(api.skipped.contains { $0.member.contains("Outcome") }, "payload enums arrive with E3/E4")
+        #expect(api.skipped.contains { $0.member.contains("Wrapped") },
+                "a payload that is not a number, string or boolean is skipped with a reason")
         for skip in api.skipped {
             #expect(!skip.reason.isEmpty, "\(skip.member) was skipped with no reason")
         }
@@ -149,9 +151,22 @@ struct SwiftSymbolGraphTests {
         let unit = try #require(api.enumerations.values.first { $0.name == "Unit" })
         #expect(unit.cases == ["metric", "imperial"], "case order is declaration order")
         #expect(!api.skipped.contains { $0.member == "Unit" })
-        #expect(!api.enumerations.values.contains { $0.name == "Outcome" }, "a payload enum is not plain")
+        #expect(api.enumerations.values.first { $0.name == "Outcome" }?.isPayload == true,
+                "an enum whose cases carry numbers imports (E4)")
         let rendered = SwiftInterfaceUnit(api: api).render()
         #expect(rendered.contains("ENUM Unit\n  metric\n  imperial\nEND ENUM"), "got:\n\(rendered)")
+    }
+
+    /// An enum whose cases carry numbers imports as a payload ENUM (E4). An
+    /// unlabeled value is the field `Value`, BASIC having no positional ones,
+    /// and the interface declares it the way an ENUM written in BASIC would.
+    @Test func scalarPayloadEnumsImport() throws {
+        let api = try #require(Self.graph)
+        let outcome = try #require(api.enumerations.values.first { $0.name == "Outcome" })
+        #expect(outcome.cases == ["hit", "miss"])
+        #expect(outcome.payloads.first?.map(\.name) == ["Value"])
+        #expect(outcome.payloads.first?.first?.type == .double)
+        #expect(SwiftInterfaceUnit(api: api).render().contains("  hit(Value AS DOUBLE)"))
     }
 
     /// A nested type, referenced by its qualified path (E2).

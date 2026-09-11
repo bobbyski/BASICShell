@@ -644,7 +644,7 @@ public struct SwiftObjectModel: ObjectModel {
                     }
                     return [Self.shimAbiType(parameter.type)]
                 }
-                out += "declare \(Self.shimAbiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))\n"
+                out += "declare \(Self.shimAbiReturn(method.returns)) @\(shim)(\((parameters + (Self.returnsPayload(method) ? ["i64"] : [])).joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where !Self.needsShim(method) && seen.insert(method.symbol).inserted {
                 // A `throws` method takes a hidden `swifterror` pointer; the
@@ -658,6 +658,15 @@ public struct SwiftObjectModel: ObjectModel {
             for property in entry.klass.properties {
                 // Through the shim, not Swift's accessor (E2): the accessor
                 // hands back the enum in Swift's own layout.
+                if case .payloadEnumeration = property.type {
+                    // A record each way (E4); the getter also takes the
+                    // record's type index, for the same reason a result does.
+                    let getter = "basic_get_\(entry.klass.name)_\(property.name)"
+                    if seen.insert(getter).inserted { out += "declare ptr @\"\(getter)\"(ptr, i64)\n" }
+                    let setter = "basic_set_\(entry.klass.name)_\(property.name)"
+                    if property.isSettable, seen.insert(setter).inserted { out += "declare void @\"\(setter)\"(ptr, ptr)\n" }
+                    continue
+                }
                 if case .enumeration = property.type {
                     let getter = "basic_get_\(entry.klass.name)_\(property.name)"
                     if seen.insert(getter).inserted { out += "declare i64 @\"\(getter)\"(ptr)\n" }
@@ -692,7 +701,7 @@ public struct SwiftObjectModel: ObjectModel {
     static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
         initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration: return true
             default: return false
             }
         }
@@ -704,12 +713,21 @@ public struct SwiftObjectModel: ObjectModel {
         // being left out.
         if case .array = method.returns { return true }
         if case .enumeration = method.returns { return true }
+        if case .payloadEnumeration = method.returns { return true }
         return method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration: return true
             default: return false
             }
         }
+    }
+
+    /// Whether a method hands back an enum whose cases carry values. Its
+    /// shim takes the BASIC record's type index as a trailing argument (E4):
+    /// the shim is compiled before any program, so it cannot know the index.
+    static func returnsPayload(_ method: SwiftAPI.Function) -> Bool {
+        if case .payloadEnumeration = method.returns { return true }
+        return false
     }
 
     static func shimSymbol(_ method: SwiftAPI.Function, of className: String) -> String {
@@ -724,6 +742,8 @@ public struct SwiftObjectModel: ObjectModel {
         case .bool: return "i1"
         // An ordinal; the shim turns it into the case (E2).
         case .enumeration: return "i64"
+        // The runtime's record; the shim reads it case by case (E4).
+        case .payloadEnumeration: return "ptr"
         case .string: return "i64, ptr"
         case .voidClosure: return "ptr, ptr"
         // Never reached: a struct parameter is expanded into its scalars
@@ -755,6 +775,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .int: return "i64"
         case .bool: return "i1"
         case .enumeration: return "i64"
+        case .payloadEnumeration: return "ptr"
         case .string: return "{ i64, ptr }"
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
@@ -832,13 +853,13 @@ public struct SwiftObjectModel: ObjectModel {
                 // installed it.
                 body += "  call void @basic_rt_closure_retain(ptr \(value))\n"
                 return "ptr @basic_rt_closure_invoke_void, ptr \(value)"
-            case .array, .object, .void, .unsupported: return "ptr \(value)"
+            case .array, .payloadEnumeration, .object, .void, .unsupported: return "ptr \(value)"
             }
         }
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .unsupported: return value
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -847,6 +868,12 @@ public struct SwiftObjectModel: ObjectModel {
                 let r = temp(); body += "  \(r) = call swiftcc ptr @basic_rt_swift_string_out(i64 \(a), ptr \(b))\n"
                 return r
             }
+        }
+        /// The runtime type index of a payload enum's BASIC record (E4), which
+        /// the shim needs to build one and cannot know itself.
+        func payloadTypeIndex(_ precise: String) -> Int {
+            let name = (entry.api.enumerations[precise]?.name ?? "").uppercased()
+            return module.types.first { $0.name == name }?.index ?? -1
         }
         /// A value for a call: Swift's form, or — when the call goes through
         /// a shim — the same except that a String stays the runtime's
@@ -890,7 +917,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int, .enumeration: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .structure, .protocolType, .array, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
             }
         }
 
@@ -946,6 +973,16 @@ public struct SwiftObjectModel: ObjectModel {
         // Property accessors, by BIR field index.
         for (index, field) in entry.type.fields.enumerated() {
             guard let property = Self.property(named: field.name, of: entry.klass, in: entry.api) else { continue }
+            if case .payloadEnumeration(let precise) = property.type {
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n"
+                out += "  %r = call ptr @\"basic_get_\(owner)_\(property.name)\"(ptr %o, i64 \(payloadTypeIndex(precise)))\n  ret ptr %r\n}\n"
+                if property.isSettable {
+                    out += "define void @\"\(name).set.\(index)\"(ptr %o, ptr %v) {\n"
+                    out += "  call void @\"basic_set_\(owner)_\(property.name)\"(ptr %o, ptr %v)\n  ret void\n}\n"
+                }
+                continue
+            }
             if case .enumeration = property.type {
                 // Named after the class that *declares* it, which is the one
                 // the shim was generated for; a subclass reaches the same one.
@@ -1030,6 +1067,7 @@ public struct SwiftObjectModel: ObjectModel {
             // receiver as an ordinary first argument and no swiftself.
             if Self.needsShim(method) {
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
+                if case .payloadEnumeration(let precise) = method.returns { arguments.append("i64 \(payloadTypeIndex(precise))") }
                 let call = "call \(Self.shimAbiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
                 if method.returns == .void {
                     body += "  \(call)\n"

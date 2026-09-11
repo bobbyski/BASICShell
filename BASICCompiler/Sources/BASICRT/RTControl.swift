@@ -44,6 +44,22 @@ public func basic_rt_start() {
         makeBooleanArray: { rtSwiftArrayOut($0.map { RTValue.boolean($0) }, element: .boolean) },
         makeStringArray: { rtSwiftArrayOut($0.map { RTValue.string(RTText($0)) }, element: .string) }
     )
+    // Records of an enum whose cases carry values (E4): the case at slot 0,
+    // then each field name once — the layout the compiler gives the ENUM.
+    BASICRTSwiftBridge.installEnums(
+        make: { index, tag in
+            let composite = RTComposite(typeIndex: index)
+            composite.fields[0] = .number(Double(tag))
+            return rtOwned(composite)
+        },
+        tag: { pointer in pointer.map { Int(rtComposite($0).fields[0].number ?? 0) } ?? 0 },
+        number: { pointer, slot in pointer.map { rtComposite($0).fields[slot].number ?? 0 } ?? 0 },
+        string: { pointer, slot in pointer.map { rtComposite($0).fields[slot].string?.rawString ?? "" } ?? "" },
+        boolean: { pointer, slot in pointer.map { rtComposite($0).fields[slot].truthy } ?? false },
+        setNumber: { pointer, slot, value in rtComposite(pointer).fields[slot] = .number(value) },
+        setString: { pointer, slot, value in rtComposite(pointer).fields[slot] = .string(RTText(value)) },
+        setBoolean: { pointer, slot, value in rtComposite(pointer).fields[slot] = .boolean(value) }
+    )
     #endif
 }
 

@@ -7,6 +7,8 @@ open class Shape {
     public var name: String
     /// An enum-typed property, which crosses through a shim both ways.
     public var tint: Tint = .red
+    /// A property whose enum carries values; a record crosses each way.
+    public var fill: Fill = .none
 
     public init(name: String) { self.name = name }
 
@@ -20,6 +22,10 @@ open class Shape {
 
     /// An enum parameter (E2).
     public func painted(_ colour: Tint) -> String { "\(name) painted \(colour)" }
+
+    /// An enum-with-values parameter and result (E4).
+    public func filled(_ fill: Fill) -> String { "\(name) filled \(fill)" }
+    public func defaultFill() -> Fill { .solid(1) }
 
     public func sides() -> Int { 0 }
 
@@ -68,6 +74,15 @@ public final class Button {
 /// A plain enum, so an imported one has something to be (E2). BASIC sees
 /// an ordinary `ENUM Tint` whose members count from 0 in case order.
 public enum Tint { case red, green, blue }
+
+/// An enum whose cases carry values (E4). BASIC sees `ENUM Fill` with a field
+/// per associated value — `solid(Value AS DOUBLE)`, `pattern(name AS STRING,
+/// scale AS DOUBLE)` — and reads it the way it reads a payload ENUM of its own.
+public enum Fill {
+    case none
+    case solid(Double)
+    case pattern(name: String, scale: Int)
+}
 
 /// The framework's own error type. Nothing about it is written for BASIC.
 public enum ShapeError: Error {

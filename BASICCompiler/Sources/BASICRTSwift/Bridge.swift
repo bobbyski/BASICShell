@@ -60,6 +60,43 @@ public enum BASICRTSwiftBridge {
         fatalError("the BASIC array bridge was not installed: basic_rt_start did not run")
     }
 
+    /// Records of an enum whose cases carry values (E4): make one of a BASIC
+    /// type, and read and write its slots. A shim compiled against a framework
+    /// reaches these by name; the runtime installs them, since only it knows
+    /// what a record is.
+    public nonisolated(unsafe) static var enumMake: (Int, Int) -> UnsafeMutableRawPointer = { _, _ in
+        fatalError("the BASIC enum bridge was not installed: basic_rt_start did not run")
+    }
+    public nonisolated(unsafe) static var enumTag: (UnsafeMutableRawPointer?) -> Int = { _ in 0 }
+    public nonisolated(unsafe) static var enumNumber: (UnsafeMutableRawPointer?, Int) -> Double = { _, _ in 0 }
+    public nonisolated(unsafe) static var enumString: (UnsafeMutableRawPointer?, Int) -> String = { _, _ in "" }
+    public nonisolated(unsafe) static var enumBoolean: (UnsafeMutableRawPointer?, Int) -> Bool = { _, _ in false }
+    public nonisolated(unsafe) static var enumSetNumber: (UnsafeMutableRawPointer, Int, Double) -> Void = { _, _, _ in }
+    public nonisolated(unsafe) static var enumSetString: (UnsafeMutableRawPointer, Int, String) -> Void = { _, _, _ in }
+    public nonisolated(unsafe) static var enumSetBoolean: (UnsafeMutableRawPointer, Int, Bool) -> Void = { _, _, _ in }
+
+    /// Installs the enum-record hooks (E4). Separate from `install`, so the
+    /// runtime's start-up reads as one call per kind of value.
+    public static func installEnums(
+        make: @escaping (Int, Int) -> UnsafeMutableRawPointer,
+        tag: @escaping (UnsafeMutableRawPointer?) -> Int,
+        number: @escaping (UnsafeMutableRawPointer?, Int) -> Double,
+        string: @escaping (UnsafeMutableRawPointer?, Int) -> String,
+        boolean: @escaping (UnsafeMutableRawPointer?, Int) -> Bool,
+        setNumber: @escaping (UnsafeMutableRawPointer, Int, Double) -> Void,
+        setString: @escaping (UnsafeMutableRawPointer, Int, String) -> Void,
+        setBoolean: @escaping (UnsafeMutableRawPointer, Int, Bool) -> Void
+    ) {
+        enumMake = make
+        enumTag = tag
+        enumNumber = number
+        enumString = string
+        enumBoolean = boolean
+        enumSetNumber = setNumber
+        enumSetString = setString
+        enumSetBoolean = setBoolean
+    }
+
     /// Installs the hooks. Called by `basic_rt_start`.
     public static func install(
         readString: @escaping (UnsafeMutableRawPointer?) -> String,
@@ -126,6 +163,47 @@ public func basicRTSwiftArrayOutBooleans(_ values: [Bool]) -> UnsafeMutableRawPo
 @_silgen_name("basic_rt_swift_array_out_strings")
 public func basicRTSwiftArrayOutStrings(_ values: [String]) -> UnsafeMutableRawPointer {
     BASICRTSwiftBridge.makeStringArray(values)
+}
+
+/// The enum-record side of the boundary (E4), by name for a generated shim.
+@_silgen_name("basic_rt_swift_enum_make")
+public func basicRTSwiftEnumMake(_ typeIndex: Int, _ tag: Int) -> UnsafeMutableRawPointer {
+    BASICRTSwiftBridge.enumMake(typeIndex, tag)
+}
+
+@_silgen_name("basic_rt_swift_enum_tag")
+public func basicRTSwiftEnumTag(_ pointer: UnsafeMutableRawPointer?) -> Int {
+    BASICRTSwiftBridge.enumTag(pointer)
+}
+
+@_silgen_name("basic_rt_swift_enum_number")
+public func basicRTSwiftEnumNumber(_ pointer: UnsafeMutableRawPointer?, _ slot: Int) -> Double {
+    BASICRTSwiftBridge.enumNumber(pointer, slot)
+}
+
+@_silgen_name("basic_rt_swift_enum_string")
+public func basicRTSwiftEnumString(_ pointer: UnsafeMutableRawPointer?, _ slot: Int) -> String {
+    BASICRTSwiftBridge.enumString(pointer, slot)
+}
+
+@_silgen_name("basic_rt_swift_enum_boolean")
+public func basicRTSwiftEnumBoolean(_ pointer: UnsafeMutableRawPointer?, _ slot: Int) -> Bool {
+    BASICRTSwiftBridge.enumBoolean(pointer, slot)
+}
+
+@_silgen_name("basic_rt_swift_enum_set_number")
+public func basicRTSwiftEnumSetNumber(_ pointer: UnsafeMutableRawPointer, _ slot: Int, _ value: Double) {
+    BASICRTSwiftBridge.enumSetNumber(pointer, slot, value)
+}
+
+@_silgen_name("basic_rt_swift_enum_set_string")
+public func basicRTSwiftEnumSetString(_ pointer: UnsafeMutableRawPointer, _ slot: Int, _ value: String) {
+    BASICRTSwiftBridge.enumSetString(pointer, slot, value)
+}
+
+@_silgen_name("basic_rt_swift_enum_set_boolean")
+public func basicRTSwiftEnumSetBoolean(_ pointer: UnsafeMutableRawPointer, _ slot: Int, _ value: Bool) {
+    BASICRTSwiftBridge.enumSetBoolean(pointer, slot, value)
 }
 
 /// The `Swift.String` behind a runtime string pointer; null reads as "".

@@ -158,6 +158,14 @@ public struct SwiftPackageResolver {
                 for (index, parameter) in passed.enumerated() {
                     if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
                 }
+                if case .payloadEnumeration(let precise) = method.returns, let type = api.enumerations[precise] {
+                    shim.payloadResult = Self.payloadEnum(type, in: api)
+                }
+                for (index, parameter) in passed.enumerated() {
+                    if case .payloadEnumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
+                        shim.payloadParameters[index] = Self.payloadEnum(type, in: api)
+                    }
+                }
                 if case .enumeration(let precise) = method.returns, let type = api.enumerations[precise] {
                     shim.enumResult = Self.plainEnum(type)
                 }
@@ -207,6 +215,9 @@ public struct SwiftPackageResolver {
                         shim.objectParameters[index] = k.name
                     }
                     if case .array(let element) = parameter.type { shim.arrayParameters[index] = Self.elementKind(element) }
+                    if case .payloadEnumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
+                        shim.payloadParameters[index] = Self.payloadEnum(type, in: api)
+                    }
                     if case .enumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
                         shim.enumParameters[index] = Self.plainEnum(type)
                     }
@@ -232,7 +243,19 @@ public struct SwiftPackageResolver {
                 ))
             }
         }
-        guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties).source() else { return nil }
+        // And those whose enum carries values (E4): a record each way.
+        var payloadProperties: [SwiftAsyncShim.PayloadProperty] = []
+        for klass in api.classes {
+            for property in klass.properties {
+                guard case .payloadEnumeration(let precise) = property.type, let type = api.enumerations[precise] else { continue }
+                payloadProperties.append(SwiftAsyncShim.PayloadProperty(
+                    className: klass.name, name: property.name, type: Self.payloadEnum(type, in: api),
+                    isSettable: property.isSettable, isActor: klass.isActor
+                ))
+            }
+        }
+        guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
+                                          payloadProperties: payloadProperties).source() else { return nil }
 
         let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -270,6 +293,18 @@ public struct SwiftPackageResolver {
         return "\(structure.name)(\(arguments.joined(separator: ", ")))"
     }
 
+    /// An enum whose cases carry values, as the shim generator takes it (E4):
+    /// each case with its fields' Swift types and record slots.
+    static func payloadEnum(_ type: SwiftAPI.Enumeration, in api: SwiftAPI) -> SwiftAsyncShim.PayloadEnum {
+        SwiftAsyncShim.PayloadEnum(swiftName: type.swiftName, cases: type.cases.enumerated().map { index, name in
+            let fields = type.payloads.indices.contains(index) ? type.payloads[index] : []
+            return SwiftAsyncShim.PayloadEnum.Case(name: name, fields: fields.map { field in
+                SwiftAsyncShim.PayloadEnum.Field(label: field.label, swiftType: spelling(field.type, in: api),
+                                                 slot: type.slotIndex(of: field.name) ?? 0)
+            })
+        })
+    }
+
     /// A plain enum as the shim generator takes it.
     static func plainEnum(_ type: SwiftAPI.Enumeration) -> SwiftAsyncShim.PlainEnum {
         SwiftAsyncShim.PlainEnum(swiftName: type.swiftName, cases: type.cases)
@@ -301,6 +336,7 @@ public struct SwiftPackageResolver {
         case .protocolType(let precise): return api.protocols[precise] ?? "Swift.Never"
         case .array(let element): return "[\(spelling(element, in: api))]"
         case .enumeration(let precise): return api.enumerations[precise]?.swiftName ?? "Swift.Never"
+        case .payloadEnumeration(let precise): return api.enumerations[precise]?.swiftName ?? "Swift.Never"
         case .unsupported: return "Swift.Never"
         }
     }
