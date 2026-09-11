@@ -95,6 +95,13 @@ public struct SwiftAsyncShim {
         /// Whether the result is a String, handed back as an owned runtime
         /// string for the same reason.
         public var stringResult = false
+        /// Duration parameters, by position, and whether the result is one:
+        /// a BASIC number of milliseconds, as SLEEP counts them (R5.1).
+        public var durationParameters: Set<Int> = []
+        public var durationResult = false
+        /// How many trailing parameters are defaulted objects or protocols
+        /// BASIC may pass as NULL, meaning Swift's own default (R5.1).
+        public var defaultedPointerSuffix = 0
         /// Parameters whose enum carries values, by position (E4): the
         /// runtime's record arrives and the shim reads it case by case.
         public var payloadParameters: [Int: PayloadEnum] = [:]
@@ -274,6 +281,12 @@ public struct SwiftAsyncShim {
             "@_silgen_name(\"basic_rt_swift_enum_set_boolean\")",
             "private func basicEnumSetBoolean(_ p: UnsafeMutableRawPointer, _ slot: Int, _ v: Bool)",
             "",
+            "/// A Duration as BASIC counts time: milliseconds, as SLEEP does.",
+            "private func basicMilliseconds(_ duration: Swift.Duration) -> Double {",
+            "    let parts = duration.components",
+            "    return Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15",
+            "}",
+            "",
             "/// The array side of the same boundary (R4.7). A `[T]` crosses as",
             "/// the runtime's own array carried in a VARIANT, so BASIC walks it",
             "/// with `LEN(v)` and `v(i)` and learns nothing new.",
@@ -310,7 +323,17 @@ public struct SwiftAsyncShim {
             "        do { box.value = try await body() } catch { box.failure = error }",
             "        semaphore.signal()",
             "    }",
-            "    semaphore.wait()",
+            "    // On the main thread - where a compiled BASIC program runs -",
+            "    // blocking would starve the main actor, and an awaited",
+            "    // @MainActor method such as App.run would never start. So the",
+            "    // main run loop keeps turning until the task is done.",
+            "    if Thread.isMainThread {",
+            "        while semaphore.wait(timeout: .now()) == .timedOut {",
+            "            RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.005))",
+            "        }",
+            "    } else {",
+            "        semaphore.wait()",
+            "    }",
             "    if let failure = box.failure { throw failure }",
             "    return box.value!",
             "}",
@@ -451,15 +474,18 @@ public struct SwiftAsyncShim {
                     parameters.append("_ a\(index): UnsafeMutableRawPointer?")
                     callArguments.append("v\(index)")
                 } else if method.protocolParameters[index] != nil {
-                    parameters.append("_ a\(index): UnsafeMutableRawPointer")
+                    parameters.append("_ a\(index): UnsafeMutableRawPointer?")
                     callArguments.append("p\(index)")
                 } else if method.objectParameters[index] != nil {
-                    parameters.append("_ a\(index): UnsafeMutableRawPointer")
+                    parameters.append("_ a\(index): UnsafeMutableRawPointer?")
                     // Bridged before the call, never inside the task's
                     // closure: capturing a raw pointer there is a concurrency
                     // error in Swift 6, and the object reference is what the
                     // call wants anyway.
                     callArguments.append("o\(index)")
+                } else if method.durationParameters.contains(index) {
+                    parameters.append("_ a\(index): Double")
+                    callArguments.append("Swift.Duration.milliseconds(a\(index))")
                 } else if method.stringParameters.contains(index) {
                     parameters.append("_ a\(index): UnsafeMutableRawPointer?")
                     callArguments.append("t\(index)")
@@ -485,6 +511,8 @@ public struct SwiftAsyncShim {
             if method.isInitializer || method.objectResult != nil || method.arrayResult != nil || method.stringResult
                 || method.payloadResult != nil {
                 result = " -> UnsafeMutableRawPointer"
+            } else if method.durationResult {
+                result = " -> Double"
             } else if method.enumResult != nil {
                 // The ordinal, which BASIC reads as the ENUM member.
                 result = " -> Int"
@@ -492,6 +520,9 @@ public struct SwiftAsyncShim {
                 result = method.returns.map { " -> \($0)" } ?? ""
             }
             func handOut(_ expression: String) -> String {
+                if method.durationResult {
+                    return "basicMilliseconds(\(expression))"
+                }
                 if let type = method.payloadResult {
                     return "basicPayloadOut_\(type.stem)(\(expression), ti)"
                 }
@@ -502,7 +533,15 @@ public struct SwiftAsyncShim {
                     return "basicStringOut(\(expression))"
                 }
                 if method.objectResult != nil {
-                    return "Unmanaged.passUnretained(\(expression)).toOpaque()"
+                    // Retained (+1), as Swift's own calling convention returns
+                    // a class reference: BASIC owns every result it receives
+                    // and releases it when done — a discarded one at the end
+                    // of its statement. Handing it over unretained made that
+                    // release the framework's to lose: TUIKit's AppTimer,
+                    // discarded from `A.schedule(…)`, was freed while TUIKit
+                    // still listed it, its weak timer task stopped, and
+                    // `App.run` never saw a tick (R5.1).
+                    return "Unmanaged.passRetained(\(expression)).toOpaque()"
                 }
                 switch method.arrayResult {
                 case "double": return "basicArrayOutNumbers(\(expression))"
@@ -524,7 +563,13 @@ public struct SwiftAsyncShim {
                 }
             }
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
-                lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
+                // A defaulted trailing object may be NULL (R5.1): optional here,
+                // and the call that leaves it out is chosen below.
+                if index >= callArguments.count - method.defaultedPointerSuffix {
+                    lines.append("    let o\(index) = a\(index).map { Unmanaged<\(className)>.fromOpaque($0).takeUnretainedValue() }")
+                } else {
+                    lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)!).takeUnretainedValue()")
+                }
             }
             // Read out of the runtime's array before the call, for the same
             // reason an object parameter is bridged before it: what goes into
@@ -559,7 +604,11 @@ public struct SwiftAsyncShim {
                 // BASIC variable of the matching INTERFACE type, which the
                 // unit only lets conforming classes satisfy. A failure would
                 // be a compiler bug, and trapping says so immediately.
-                lines.append("    let p\(index) = Unmanaged<AnyObject>.fromOpaque(a\(index)).takeUnretainedValue() as! \(name)")
+                if index >= callArguments.count - method.defaultedPointerSuffix {
+                    lines.append("    let p\(index) = a\(index).map { Unmanaged<AnyObject>.fromOpaque($0).takeUnretainedValue() as! \(name) }")
+                } else {
+                    lines.append("    let p\(index) = Unmanaged<AnyObject>.fromOpaque(a\(index)!).takeUnretainedValue() as! \(name)")
+                }
             }
             // Rebuild each struct from the leaves BASIC passed.
             for (index, structure) in method.structParameters.sorted(by: { $0.key < $1.key }) {
@@ -590,7 +639,31 @@ public struct SwiftAsyncShim {
                 // reference. An imported object is the framework's to manage
                 // (D15), and there is no release path for one yet — so this
                 // keeps it alive rather than handing back a corpse.
-                lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labelled)) }")
+                let suffix = method.defaultedPointerSuffix
+                if suffix == 0 {
+                    lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labelled)) }")
+                } else {
+                    // NULL for a defaulted trailing object means Swift's own
+                    // default: the longest run of trailing NULLs picks the
+                    // call that leaves exactly those out (R5.1).
+                    let count = callArguments.count
+                    func call(keeping kept: Int) -> String {
+                        let arguments = callArguments.indices.prefix(kept).map { index -> String in
+                            let argument = index >= count - suffix ? callArguments[index] + "!" : callArguments[index]
+                            return method.labels[index].map { "\($0): \(argument)" } ?? argument
+                        }
+                        return "\(method.className)(\(arguments.joined(separator: ", ")))"
+                    }
+                    lines.append("    let made: \(method.className)")
+                    for omitted in stride(from: suffix, through: 1, by: -1) {
+                        let test = ((count - omitted)..<count).map { "a\($0) == nil" }.joined(separator: " && ")
+                        lines.append("    \(omitted == suffix ? "if" : "} else if") \(test) {")
+                        lines.append("        made = MainActor.assumeIsolated { \(call(keeping: count - omitted)) }")
+                    }
+                    lines.append("    } else {")
+                    lines.append("        made = MainActor.assumeIsolated { \(call(keeping: count)) }")
+                    lines.append("    }")
+                }
                 lines.append("    return Unmanaged.passRetained(made).toOpaque()")
             } else {
                 // **`MainActor.assumeIsolated`, and it is load-bearing.** A
@@ -604,6 +677,8 @@ public struct SwiftAsyncShim {
                 let called = "\(invocation)"
                 if method.returns == nil {
                     lines.append("    MainActor.assumeIsolated { \(called) }")
+                } else if method.durationResult {
+                    lines.append("    return basicMilliseconds(MainActor.assumeIsolated { \(called) })")
                 } else if let type = method.payloadResult {
                     // Built inside the isolated closure and carried out as a
                     // bit pattern: assumeIsolated wants a Sendable result, and

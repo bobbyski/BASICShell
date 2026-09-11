@@ -699,10 +699,25 @@ public struct SwiftObjectModel: ObjectModel {
     /// than by a plain call: awaited methods (R3.3) and methods taking a
     /// handler (R4.5) are the two shapes emitted IR cannot call directly.
     /// Whether a constructor is reached through a generated shim.
+    /// How many trailing parameters are defaulted objects or protocols, for
+    /// which BASIC may pass NULL to mean "use Swift's default" (R5.1):
+    /// `NEW App(D, NULL)` takes the real clock `App` would have chosen.
+    static func defaultedPointerSuffix(_ function: SwiftAPI.Function) -> Int {
+        var count = 0
+        for parameter in function.passed.reversed() {
+            guard parameter.hasDefault else { break }
+            switch parameter.type {
+            case .object, .protocolType: count += 1
+            default: return count
+            }
+        }
+        return count
+    }
+
     static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
-        initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
+        defaultedPointerSuffix(initializer) > 0 || initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
             default: return false
             }
         }
@@ -715,9 +730,10 @@ public struct SwiftObjectModel: ObjectModel {
         if case .array = method.returns { return true }
         if case .enumeration = method.returns { return true }
         if case .payloadEnumeration = method.returns { return true }
+        if method.returns == .duration { return true }
         return method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration: return true
+            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
             default: return false
             }
         }
@@ -745,6 +761,8 @@ public struct SwiftObjectModel: ObjectModel {
         case .enumeration: return "i64"
         // The runtime's record; the shim reads it case by case (E4).
         case .payloadEnumeration: return "ptr"
+        // Milliseconds as a number; the shim makes the Duration (R5.1).
+        case .duration: return "double"
         case .string: return "i64, ptr"
         case .voidClosure: return "ptr, ptr"
         // Never reached: a struct parameter is expanded into its scalars
@@ -777,6 +795,7 @@ public struct SwiftObjectModel: ObjectModel {
         case .bool: return "i1"
         case .enumeration: return "i64"
         case .payloadEnumeration: return "ptr"
+        case .duration: return "double"
         case .string: return "{ i64, ptr }"
         case .void: return "void"
         // Never a result: a method *returning* a closure is skipped by the
@@ -927,7 +946,7 @@ public struct SwiftObjectModel: ObjectModel {
             // it to the protocol.
             case .protocolType: return "ptr \(value)"
             case .structure: return "double \(value)"
-            case .double: return "double \(value)"
+            case .double, .duration: return "double \(value)"
             case .bool: return "i1 \(value)"
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = fptosi double \(value) to i64\n"; return "i64 \(r)"
@@ -950,7 +969,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -1006,7 +1025,7 @@ public struct SwiftObjectModel: ObjectModel {
 
         func basicType(_ type: SwiftAPI.ValueType) -> String {
             switch type {
-            case .double, .int, .enumeration: return "double"
+            case .double, .int, .enumeration, .duration: return "double"
             case .bool: return "i1"
             case .string, .object, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
             }

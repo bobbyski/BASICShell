@@ -354,6 +354,12 @@ enum RTCoerce {
             if case .empty = value { return RTTypes.defaultValue(type) }
             throw .type("Cannot assign non-dictionary value to \(name)")
         case .composite(let index):
+            // NULL is a value an object or interface variable may hold, as the
+            // interpreter has it — and an INTERFACE has no record type to look
+            // up (its index is -1), so NULL must pass before the lookup does.
+            // Passed to a defaulted Swift parameter it means Swift's own
+            // default (R5.1).
+            if case .null = value { return .null }
             let target = RTTypes.type(index)
             if case .composite(let composite) = value {
                 if composite.typeIndex == index || RTTypes.type(composite.typeIndex).name.uppercased() == target.name.uppercased() { return value }

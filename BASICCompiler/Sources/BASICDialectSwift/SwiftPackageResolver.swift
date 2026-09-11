@@ -146,6 +146,8 @@ public struct SwiftPackageResolver {
                 shim.closureParameters = handlers
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 shim.stringResult = method.returns == .string
+                shim.durationParameters = Set(passed.indices.filter { passed[$0].type == .duration })
+                shim.durationResult = method.returns == .duration
                 for (index, parameter) in passed.enumerated() {
                     if case .object(let precise) = parameter.type, let klass = api.class(precise: precise) {
                         shim.objectParameters[index] = klass.name
@@ -207,6 +209,8 @@ public struct SwiftPackageResolver {
                 }
                 shim.closureParameters = Set(passed.indices.filter { passed[$0].type == .voidClosure })
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
+                shim.durationParameters = Set(passed.indices.filter { passed[$0].type == .duration })
+                shim.defaultedPointerSuffix = SwiftObjectModel.defaultedPointerSuffix(initializer)
                 for (index, parameter) in passed.enumerated() {
                     if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
                         shim.protocolParameters[index] = name
@@ -372,6 +376,7 @@ public struct SwiftPackageResolver {
         case .array(let element): return "[\(spelling(element, in: api))]"
         case .enumeration(let precise): return api.enumerations[precise]?.swiftName ?? "Swift.Never"
         case .payloadEnumeration(let precise): return api.enumerations[precise]?.swiftName ?? "Swift.Never"
+        case .duration: return "Swift.Duration"
         case .unsupported: return "Swift.Never"
         }
     }

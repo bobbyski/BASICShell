@@ -51,6 +51,10 @@ public struct SwiftAPI: Sendable {
         /// sees the payload `ENUM` E3 built; a value crosses as the runtime's
         /// record, converted case by case in the shim.
         case payloadEnumeration(precise: String)
+        /// `Swift.Duration`, as a BASIC number of milliseconds - the unit
+        /// this BASIC's `SLEEP` takes, so `A.schedule(50, ...)` reads like
+        /// `SLEEP 50`. Converted in the shim both ways (R5.1).
+        case duration
         /// Nothing.
         case void
         /// Something BASIC has no spelling for yet — the spelling is kept for
@@ -488,6 +492,9 @@ public struct SwiftAPI: Sendable {
                 if case .enumeration = type, isWrapped(aroundLeadingTypeIn: fragments) {
                     type = .unsupported("a collection of an enum")
                 }
+                // A Duration crosses as an argument or a result, through the
+                // shim; a property accessor hands back the struct itself.
+                if type == .duration { type = .unsupported("a Duration property, which crosses as an argument or result only") }
                 let isLet = fragments.contains { $0.kind == "keyword" && $0.spelling == "let" }
                 // `{ get }` in the declaration marks a read-only computed
                 // property; a stored `var` shows no accessor block.
@@ -1057,6 +1064,7 @@ public struct SwiftAPI: Sendable {
         case "s:Si": return .int
         case "s:Sb": return .bool
         case "s:SS": return .string
+        case "s:s8DurationV": return .duration
         case let precise? where precise.hasSuffix("C"): return .object(precise: precise)
         // `V` is a struct. Whether it can actually cross is decided later, by
         // whether it flattens to scalars — this only says what it is.

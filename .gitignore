@@ -38,3 +38,6 @@ BASICCompiler/Examples/SwiftImport/*/.build/
 # building a framework for its symbol graph never contends with the build the
 # user started in that same package.
 .build-basicc/
+
+# The TUIKit exhibit's build products (R5.1)
+BASICCompiler/Examples/TUIKitExhibit/Program/Build/

@@ -343,6 +343,8 @@ public struct SwiftInterfaceUnit {
         // is; `Button.Style` becomes `Button_Style`, BASIC having no dot.
         case .enumeration(let precise): return api.enumerations[precise]?.name ?? "DOUBLE"
         case .payloadEnumeration(let precise): return api.enumerations[precise]?.name ?? "VARIANT"
+        // Milliseconds, as SLEEP counts them.
+        case .duration: return "DOUBLE"
         case .voidClosure: return handlerType
         case .void, .unsupported: return "VOID"
         }
@@ -401,6 +403,7 @@ public struct SwiftInterfaceUnit {
         case .array: return "EMPTY"
         case .enumeration: return "0"
         case .payloadEnumeration(let precise): return payloadPlaceholder(precise, in: api)
+        case .duration: return "0"
         case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
         }
     }
