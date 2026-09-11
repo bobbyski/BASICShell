@@ -41,6 +41,7 @@ enum RTError {
         // Inside an async body, a failure is the task's, not the program's.
         if let boundary = RTTasks.boundaries.last {
             RTTasks.boundaryError = (prefix.map { "\($0): " } ?? "") + message
+            RTTasks.boundaryNumber = number
             rt_longjmp(boundary, 1)
         }
         lastNumber = number

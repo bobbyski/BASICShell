@@ -147,7 +147,10 @@ public struct SwiftManglingProbe {
                 let returns = method.returns.map { " -> \($0)" } ?? ""
                 let signature = "func \(method.name)(\(method.parameters.joined(separator: ",")))"
                 let modifier = visible.contains(signature) ? "override " : ""
-                lines.append("  \(modifier)public func \(method.name)(\(parameters))\(returns) { fatalError() }")
+                // `throws`, as the interface declares every BASIC method (R4.6):
+                // it is part of the mangled name (`…KF`), so the probe must ask
+                // about the same shape the object file will define.
+                lines.append("  \(modifier)public func \(method.name)(\(parameters)) throws\(returns) { fatalError() }")
                 visible.insert(signature)
             }
             lines.append(declaration.base == nil ? "  public init() { }" : "  public override init() { super.init() }")

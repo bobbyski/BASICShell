@@ -169,7 +169,9 @@ public struct SwiftInterfaceEmitter {
                 return .unrepresentable("the object model does not emit it")
             }
         }
-        return .declared("open func \(swiftIdentifier(name))(\(parameters.joined(separator: ", ")))\(returns)")
+        // `throws` on every one (R4.6): a BASIC error raised in the body
+        // arrives in Swift as a thrown error, as any VB.NET method may raise.
+        return .declared("open func \(swiftIdentifier(name))(\(parameters.joined(separator: ", "))) throws\(returns)")
     }
 
     /// A BASIC type as Swift spells it, or nil when it has no spelling yet.

@@ -18,3 +18,13 @@ open class BASICObject {
     /// constructor chains to.
     public init() {}
 }
+
+/// A BASIC runtime error, as Swift receives it (R4.6). Here, beside
+/// `BASICObject`, because this is the file a Swift client compiles against. `number` is what the
+/// program would have read as `ERR`; the text is what the runtime would
+/// have printed had nothing caught it.
+public struct BASICRuntimeError: Error, CustomStringConvertible, Sendable {
+    public let number: Int
+    public let message: String
+    public var description: String { message }
+}

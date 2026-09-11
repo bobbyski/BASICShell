@@ -562,6 +562,7 @@ public struct SwiftObjectModel: ObjectModel {
     static let bridgeDeclarations = """
     declare swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr)
     declare swiftcc ptr @basic_rt_swift_string_out(i64, ptr)
+    declare swiftcc ptr @basic_rt_swift_error_current()
     declare swiftcc void @basic_rt_swift_error_raise(ptr)
     declare void @basic_rt_closure_invoke_void(ptr)
 
@@ -1572,12 +1573,31 @@ public struct SwiftObjectModel: ObjectModel {
                 }
             }
             parameters.append("ptr swiftself %self")
+            // R4.6 — a BASIC error that reaches Swift arrives as a thrown one.
+            // Every method Swift can call is `throws`, as any VB.NET method
+            // may raise without declaring it. The entry pushes an error
+            // boundary, so a raise inside the BASIC body longjmps back here
+            // rather than past Swift's frames — which killed the process —
+            // and returns with the error in Swift's `swifterror` register.
+            parameters.append("ptr swifterror %err")
+            let prologue = "  %jmpbuf = alloca [64 x i64]\n"
+                + "  call void @basic_rt_task_boundary_push(ptr %jmpbuf)\n"
+                + "  %landed = call i32 @setjmp(ptr %jmpbuf)\n"
+                + "  %failed = icmp ne i32 %landed, 0\n"
+                + "  br i1 %failed, label %fail, label %run\nrun:\n"
+            let pop = "  call void @basic_rt_task_boundary_pop()\n"
+            func failure(_ exit: String) -> String {
+                "fail:\n" + pop
+                    + "  %thrown = call swiftcc ptr @basic_rt_swift_error_current()\n"
+                    + "  store ptr %thrown, ptr %err\n"
+                    + "  \(exit)\n"
+            }
 
             let call = "call \(Self.birABI(method.function.returnType)) @\"\(function)\"(\(arguments.joined(separator: ", ")))"
             switch method.function.returnType {
             case .void:
-                body += "  \(call)\n"
-                out += "define swiftcc void @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret void\n}\n"
+                body += "  \(call)\n" + pop
+                out += "define swiftcc void @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(prologue)\(body)  ret void\n\(failure("ret void"))}\n"
             case .string:
                 let raw = temp()
                 body += "  \(raw) = \(call)\n"
@@ -1585,12 +1605,14 @@ public struct SwiftObjectModel: ObjectModel {
                 body += "  \(text) = call swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr \(raw))\n"
                 // The BASIC result was owned by this frame; the Swift string
                 // carries its own storage now.
-                body += "  call void @basic_rt_string_release(ptr \(raw))\n"
-                out += "define swiftcc { i64, ptr } @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret { i64, ptr } \(text)\n}\n"
+                body += "  call void @basic_rt_string_release(ptr \(raw))\n" + pop
+                out += "define swiftcc { i64, ptr } @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(prologue)\(body)  ret { i64, ptr } \(text)\n\(failure("ret { i64, ptr } zeroinitializer"))}\n"
             default:
                 let raw = temp()
-                body += "  \(raw) = \(call)\n"
-                out += "define swiftcc \(Self.birABI(method.function.returnType)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(body)  ret \(Self.birABI(method.function.returnType)) \(raw)\n}\n"
+                body += "  \(raw) = \(call)\n" + pop
+                let abi = Self.birABI(method.function.returnType)
+                let zero = abi == "double" ? "0.0" : abi == "i1" ? "false" : abi == "ptr" ? "null" : "zeroinitializer"
+                out += "define swiftcc \(abi) @\"\(method.symbol)\"(\(parameters.joined(separator: ", "))) {\n\(prologue)\(body)  ret \(abi) \(raw)\n\(failure("ret \(abi) \(zero)"))}\n"
             }
             out += "\n"
         }

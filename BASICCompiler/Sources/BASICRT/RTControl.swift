@@ -44,6 +44,13 @@ public func basic_rt_start() {
         makeBooleanArray: { rtSwiftArrayOut($0.map { RTValue.boolean($0) }, element: .boolean) },
         makeStringArray: { rtSwiftArrayOut($0.map { RTValue.string(RTText($0)) }, element: .string) }
     )
+    // A BASIC error that crossed a Swift-facing boundary (R4.6), consumed as
+    // Swift reads it.
+    BASICRTSwiftBridge.installErrors(current: {
+        let error = (number: RTTasks.boundaryNumber, message: RTTasks.boundaryError ?? "BASIC error")
+        RTTasks.boundaryError = nil
+        return error
+    })
     // Records of an enum whose cases carry values (E4): the case at slot 0,
     // then each field name once — the layout the compiler gives the ENUM.
     BASICRTSwiftBridge.installEnums(

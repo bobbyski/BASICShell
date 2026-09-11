@@ -97,6 +97,16 @@ public enum BASICRTSwiftBridge {
         enumSetBoolean = setBoolean
     }
 
+    /// The BASIC error that just crossed a Swift-facing boundary (R4.6):
+    /// its number and its text, consumed as it is read. Installed by the
+    /// runtime, which alone keeps the error state.
+    public nonisolated(unsafe) static var currentError: () -> (number: Int, message: String) = { (5, "BASIC error") }
+
+    /// Installs the error hook (R4.6).
+    public static func installErrors(current: @escaping () -> (number: Int, message: String)) {
+        currentError = current
+    }
+
     /// Installs the hooks. Called by `basic_rt_start`.
     public static func install(
         readString: @escaping (UnsafeMutableRawPointer?) -> String,
@@ -163,6 +173,16 @@ public func basicRTSwiftArrayOutBooleans(_ values: [Bool]) -> UnsafeMutableRawPo
 @_silgen_name("basic_rt_swift_array_out_strings")
 public func basicRTSwiftArrayOutStrings(_ values: [String]) -> UnsafeMutableRawPointer {
     BASICRTSwiftBridge.makeStringArray(values)
+}
+
+/// The error a Swift-facing BASIC method throws (R4.6): called by the
+/// method's entry when its boundary catches a raise. `Error` is one
+/// refcounted pointer in Swift's ABI, which is what lets emitted IR store
+/// it straight into the `swifterror` register.
+@_silgen_name("basic_rt_swift_error_current")
+public func basicRTSwiftErrorCurrent() -> Error {
+    let (number, message) = BASICRTSwiftBridge.currentError()
+    return BASICRuntimeError(number: number, message: message)
 }
 
 /// The enum-record side of the boundary (E4), by name for a generated shim.

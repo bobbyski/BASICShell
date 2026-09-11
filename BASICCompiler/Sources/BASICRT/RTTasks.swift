@@ -59,6 +59,9 @@ enum RTTasks {
     nonisolated(unsafe) static var boundaries: [UnsafeMutableRawPointer] = []
     /// The failure the innermost boundary caught.
     nonisolated(unsafe) static var boundaryError: String?
+    /// The error number of the failure that crossed a boundary — what `ERR`
+    /// would have read — for a Swift caller that receives it (R4.6).
+    nonisolated(unsafe) static var boundaryNumber = 0
 
     static func create(name: String, state: RTTask.State) -> RTTask {
         let task = RTTask(id: nextID, name: name, parentID: currentTaskID, state: state)

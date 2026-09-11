@@ -409,12 +409,12 @@ struct SwiftManglingProbeTests {
             ]),
         ])
         let symbols = try probe.run(searchPaths: Self.searchPaths)
-        #expect(symbols.member("area", of: "Box") == "$s6Shapes3BoxC4areaSdyF")
-        #expect(symbols.member("setX", of: "Box") == "$s6Shapes3BoxC4setXyySdF")
+        #expect(symbols.member("area", of: "Box") == "$s6Shapes3BoxC4areaSdyKF")
+        #expect(symbols.member("setX", of: "Box") == "$s6Shapes3BoxC4setXyySdKF")
         // The two the hand mangler refused outright.
-        #expect(symbols.member("scaled", of: "Box") == "$s6Shapes3BoxC6scaledyS2dF")
-        #expect(symbols.member("resize", of: "Box") == "$s6Shapes3BoxC6resizeyySd_SdtF")
-        #expect(symbols.member("label", of: "Box") == "$s6Shapes3BoxC5labelSSyF")
+        #expect(symbols.member("scaled", of: "Box") == "$s6Shapes3BoxC6scaledyS2dKF")
+        #expect(symbols.member("resize", of: "Box") == "$s6Shapes3BoxC6resizeyySd_SdtKF")
+        #expect(symbols.member("label", of: "Box") == "$s6Shapes3BoxC5labelSSyKF")
     }
 
     @Test func propertiesAndInitializersComeBackToo() throws {
@@ -436,6 +436,6 @@ struct SwiftManglingProbeTests {
         let symbols = try probe.run(searchPaths: Self.searchPaths)
         #expect(symbols.metadata(of: "Shape") == "$s6Shapes5ShapeCN")
         #expect(symbols.metadata(of: "Rect") == "$s6Shapes4RectCN")
-        #expect(symbols.member("area", of: "Rect") == "$s6Shapes4RectC4areaSdyF")
+        #expect(symbols.member("area", of: "Rect") == "$s6Shapes4RectC4areaSdyKF")
     }
 }
