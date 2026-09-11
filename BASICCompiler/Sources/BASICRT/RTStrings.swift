@@ -288,3 +288,26 @@ public func basic_rt_string_repeat(_ count: Double, _ pointer: UnsafeMutableRawP
 public func basic_rt_write_quote(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
     rtOwned("\"" + rtText(pointer).replacingOccurrences(of: "\"", with: "\"\"") + "\"")
 }
+
+/// `PRINT` of an `ENUM` value: the member's name, or the number when no
+/// member has that value (E1).
+///
+/// VB's `ToString` on an enum, which is the half of the split `PRINT` takes;
+/// `STR$` is the other half and stays numeric. The table is emitted as two
+/// parallel arrays because that is what a constant is in LLVM IR — and it is
+/// a constant, since which enum an expression belongs to was settled at
+/// compile time.
+@_cdecl("basic_rt_enum_text")
+public func basic_rt_enum_text(
+    _ value: Double,
+    _ names: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ values: UnsafePointer<Double>?,
+    _ count: Int
+) -> UnsafeMutableRawPointer {
+    if let names, let values {
+        for index in 0..<count where values[index] == value {
+            if let name = names[index] { return rtOwned(String(cString: name)) }
+        }
+    }
+    return basic_rt_number_text(value)
+}

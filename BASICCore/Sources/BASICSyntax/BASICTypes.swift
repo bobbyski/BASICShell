@@ -29,6 +29,10 @@ public enum BASICType: Equatable, Sendable {
     case classType(String)
     case interfaceType(String)
     case functionType(String)
+    /// An `ENUM` name (E1). Payload-free, so the value *is* its number and
+    /// this type says only which name table `PRINT` should consult — which
+    /// the compiler resolves statically, exactly as Bobby required.
+    case enumType(String)
     case dictionary
 }
 
@@ -180,6 +184,7 @@ extension BASICType {
         case .classType(let name): return name
         case .interfaceType(let name): return name
         case .functionType(let name): return name
+        case .enumType(let name): return name
         case .dictionary: return "DICTIONARY"
         }
     }

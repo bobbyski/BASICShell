@@ -36,6 +36,57 @@ public struct Parser {
         return expression
     }
 
+    /// `ENUM Suit` — the header of a block `ProgramParser` gathers.
+    ///
+    /// Returns nil for any other line without consuming anything, so this can
+    /// be tried on every line the way the closure-block header is.
+    public mutating func parseEnumHeader() -> String? {
+        let mark = current
+        guard matchIdentifier("ENUM"), case .identifier(let name) = peek else {
+            current = mark
+            return nil
+        }
+        _ = advance()
+        // A header with anything after the name is not an ENUM header; let
+        // the ordinary statement parser produce the real error.
+        guard isStatementEnd else {
+            current = mark
+            return nil
+        }
+        return name
+    }
+
+    /// `END ENUM`, which closes the block.
+    public mutating func parseEndEnum() -> Bool {
+        let mark = current
+        if matchIdentifier("END"), matchIdentifier("ENUM"), isStatementEnd { return true }
+        current = mark
+        return false
+    }
+
+    /// One line inside an `ENUM`: `Hearts`, or `Diamonds = 5`.
+    ///
+    /// `next` is the running ordinal, which an explicit value resets — VB's
+    /// rule, so `Diamonds = 5` makes the case after it 6.
+    public mutating func parseEnumCase(next: inout Int) throws -> EnumCase? {
+        if isStatementEnd { return nil }
+        guard case .identifier(let name) = peek else { throw syntax("Expected an ENUM member name") }
+        _ = advance()
+        var value = next
+        var isExplicit = false
+        if match(.equals) {
+            let negative = match(.minus)
+            guard case .number(let literal) = peek else { throw syntax("Expected a whole number after = in an ENUM") }
+            _ = advance()
+            guard literal == literal.rounded() else { throw syntax("An ENUM member's value must be a whole number") }
+            value = Int(negative ? -literal : literal)
+            isExplicit = true
+        }
+        next = value + 1
+        guard isStatementEnd else { throw syntax("Unexpected text after an ENUM member") }
+        return EnumCase(name: name, value: value, isExplicit: isExplicit)
+    }
+
     public mutating func parseClosureBlockAssignmentHeader() throws -> (
         kind: AssignmentKind,
         variable: VariableName,

@@ -11,7 +11,18 @@ enum TestBuild {
         .appendingPathComponent("Programs")
 
     /// The interpreter, when the sibling package has been built.
+    ///
+    /// `BASIC_INTERPRETER` names one explicitly. Without it the default build
+    /// directory is used, which can hold an interpreter older than the
+    /// language: a feature landed in the interpreter and the compiler at once
+    /// then "fails parity" against a binary that predates it. The override
+    /// lets a run name the interpreter it just built rather than whatever was
+    /// last left in `.build`.
     static let interpreter: String? = {
+        if let named = ProcessInfo.processInfo.environment["BASIC_INTERPRETER"],
+           FileManager.default.isExecutableFile(atPath: named) {
+            return named
+        }
         let path = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("BASICShell/.build/debug/BASICShell").path

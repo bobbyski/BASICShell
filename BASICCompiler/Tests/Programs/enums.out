@@ -1,0 +1,12 @@
+ordinals: 0 5 6 7
+names:HeartsDiamondsClubsSpades
+print:Clubs
+str$ : 6
+equal to Clubs
+greater than Hearts
+plus one:7
+select: clubs
+level:Highvalue 2
+from a number:Diamonds
+no member:42
+default:Hearts

@@ -25,6 +25,8 @@ public final class BASICInterpreter {
     private var functionStack: [FunctionFrame] = []
     private var functionDefinitions: [String: FunctionDefinition] = [:]
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
+    /// `ENUM` declarations, by normalized name (E1).
+    private var enumDefinitions: [String: BASICEnumDefinition] = [:]
     private var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     private var classDefinitions: [String: BASICClassDefinition] = [:]
     private var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
@@ -108,8 +110,25 @@ public final class BASICInterpreter {
         var diagnostics: [BASICDiagnostic] = []
         let rootLines = program.orderedLines
 
+        // Lines are checked one at a time here, which an ENUM body defeats: a
+        // member is a bare identifier and only means something inside the
+        // block. So the block is skipped as a unit, the way `ProgramParser`
+        // gathers it.
+        var insideEnum = false
         for (index, line) in rootLines.enumerated() {
             do {
+                if insideEnum {
+                    var member = try Parser(source: line.source)
+                    if member.parseEndEnum() { insideEnum = false; continue }
+                    var next = 0
+                    _ = try member.parseEnumCase(next: &next)
+                    continue
+                }
+                var enumHeaderParser = try Parser(source: line.source)
+                if enumHeaderParser.parseEnumHeader() != nil {
+                    insideEnum = true
+                    continue
+                }
                 var closureHeaderParser = try Parser(source: line.source)
                 if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     continue
@@ -168,6 +187,8 @@ public final class BASICInterpreter {
             guard diagnostics.isEmpty else { return diagnostics }
 
             do {
+                enumDefinitions = try collectEnums(in: parsed)
+                runtime.enumNames = Set(enumDefinitions.keys)
                 recordDefinitions = try collectRecords(in: parsed)
                 runtime.recordDefinitions = recordDefinitions
                 interfaceDefinitions = try collectInterfaces(in: parsed)
@@ -314,6 +335,8 @@ public final class BASICInterpreter {
         if let violation = BranchScope.violations(in: parsed).first {
             throw BASICError.syntax("\(violation.message) (line \(violation.line.displayLineNumber))")
         }
+        enumDefinitions = try collectEnums(in: parsed)
+        runtime.enumNames = Set(enumDefinitions.keys)
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
@@ -404,9 +427,27 @@ public final class BASICInterpreter {
         activeImportStack: inout [String]
     ) throws -> [ProgramLine] {
         var expanded: [ProgramLine] = []
+        // An ENUM body is passed through untouched. This pass is looking for
+        // IMPORT, and it parses each line on its own — which an ENUM member
+        // defeats, being a bare identifier that only means something inside
+        // the block. Third of the three places that walk lines singly; the
+        // others are `diagnostics()` and `ProgramParser.parse`.
+        var insideEnum = false
         for line in lines {
             let parsedStatement: Statement
             do {
+                if insideEnum {
+                    var member = try Parser(source: line.source)
+                    if member.parseEndEnum() { insideEnum = false }
+                    expanded.append(line)
+                    continue
+                }
+                var enumHeaderParser = try Parser(source: line.source)
+                if enumHeaderParser.parseEnumHeader() != nil {
+                    insideEnum = true
+                    expanded.append(line)
+                    continue
+                }
                 var closureHeaderParser = try Parser(source: line.source)
                 if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     expanded.append(line)
@@ -922,7 +963,9 @@ public final class BASICInterpreter {
 
     private func executeUnchecked(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
         switch statement {
-        case .empty, .remark, .data, .defFunction, .functionTypeDeclaration:
+        // An ENUM is a declaration gathered before the run; there is nothing
+        // to execute when control reaches it.
+        case .empty, .remark, .data, .defFunction, .functionTypeDeclaration, .enumDeclaration:
             return .next
         case .typeDeclaration:
             guard let index = matchingEndType(after: pc, in: parsed) else {
@@ -1757,6 +1800,80 @@ public final class BASICInterpreter {
                     accessClassName: currentClassContext
                 )
             }
+        }
+    }
+
+    /// `ENUM` declarations, gathered before the run (E1).
+    private func collectEnums(in parsed: [ParsedLine]) throws -> [String: BASICEnumDefinition] {
+        var definitions: [String: BASICEnumDefinition] = [:]
+        for line in parsed {
+            guard case .enumDeclaration(let name, let cases) = line.statement else { continue }
+            let normalized = name.uppercased()
+            guard definitions[normalized] == nil else {
+                throw BASICError.runtime("ENUM \(name) is already defined")
+            }
+            var seen = Set<String>()
+            for member in cases where !seen.insert(member.name.uppercased()).inserted {
+                throw BASICError.runtime("ENUM \(name) declares \(member.name) twice")
+            }
+            definitions[normalized] = BASICEnumDefinition(
+                displayName: name, normalizedName: normalized,
+                members: cases.map { ($0.name, $0.value) }
+            )
+        }
+        return definitions
+    }
+
+    /// The value of `Suit.Clubs`, or nil when the reference is not one.
+    private func enumMemberValue(_ reference: VariableReference) throws -> BASICValue? {
+        guard reference.fields.count == 1, reference.indexes.isEmpty,
+              let definition = enumDefinitions[reference.base.normalized]
+        else { return nil }
+        guard let value = definition.value(of: reference.fields[0]) else {
+            throw BASICError.runtime("ENUM \(definition.displayName) has no member \(reference.fields[0])")
+        }
+        return .number(Double(value))
+    }
+
+    /// What `PRINT` shows for an expression.
+    ///
+    /// An `ENUM` shows its member's **name**, which is what VB's `ToString`
+    /// does — `STR$` is the one that shows the number, being BASIC's numeric
+    /// formatter, and that is VB's `CStr` on the same split. A value matching
+    /// no member shows as the number, again as VB does.
+    private func printedText(of expression: Expression) throws -> String {
+        let value = try evaluate(expression)
+        guard let definition = enumType(of: expression),
+              case .number(let number) = value,
+              let name = definition.name(of: number)
+        else { return value.description }
+        return name
+    }
+
+    /// The ENUM an expression is *declared* as, or nil.
+    ///
+    /// Declared, never inferred from the value: a member is an ordinary
+    /// number at run time, so there is nothing in the value to ask. Deciding
+    /// this from the static type is what lets the compiler reach the same
+    /// answer with no run-time tag at all (Bobby: "this must be compile time
+    /// resolved").
+    func enumType(of expression: Expression) -> BASICEnumDefinition? {
+        switch expression {
+        case .variable(let name):
+            guard case .enumType(let type)? = runtime.declaredType(for: VariableReference(base: name))
+            else { return nil }
+            return enumDefinitions[type.uppercased()]
+        case .variableReference(let reference):
+            // `Suit.Clubs` is of type Suit.
+            if reference.fields.count == 1, let definition = enumDefinitions[reference.base.normalized] {
+                return definition
+            }
+            guard reference.fields.isEmpty,
+                  case .enumType(let type)? = runtime.declaredType(for: reference)
+            else { return nil }
+            return enumDefinitions[type.uppercased()]
+        default:
+            return nil
         }
     }
 
@@ -3760,7 +3877,8 @@ public final class BASICInterpreter {
         switch type {
         case .scalar(let scalar): return String(describing: scalar).uppercased()
         case .void: return "VOID"
-        case .record(let name), .classType(let name), .interfaceType(let name), .functionType(let name): return name
+        case .record(let name), .classType(let name), .interfaceType(let name),
+             .functionType(let name), .enumType(let name): return name
         case .dictionary: return "DICTIONARY"
         }
     }
@@ -4928,7 +5046,7 @@ public final class BASICInterpreter {
                     column += spacing.count
                     continue
                 }
-                let text = try evaluate(expression).description
+                let text = try printedText(of: expression)
                 output += text
                 column += text.count
             case .separator(.comma):
@@ -5354,6 +5472,10 @@ public final class BASICInterpreter {
             }
             return runtime.value(for: name)
         case .variableReference(let reference):
+            // `Suit.Clubs` — a member of an ENUM, which is a constant and not
+            // a field of anything. Checked before the variable lookup because
+            // the enum's name is a type, and there is no variable by it.
+            if let value = try enumMemberValue(reference) { return value }
             return try runtime.value(
                 for: reference,
                 indexes: try reference.indexes.map(evaluate),

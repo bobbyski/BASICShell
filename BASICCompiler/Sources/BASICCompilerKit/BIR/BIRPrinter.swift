@@ -264,6 +264,8 @@ public struct BIRPrinter {
             return "\(variable.name)(" + indexes.map(render).joined(separator: ", ") + ")"
         case .text(let value):
             return "text(\(render(value)))"
+        case .enumText(let inner, let members):
+            return "enumtext(" + render(inner) + ", " + members.map { "\($0.value)=\($0.name)" }.joined(separator: " ") + ")"
         case .field(let base, let index, _):
             return "\(render(base)).#\(index)"
         case .construct(let name):

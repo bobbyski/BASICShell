@@ -45,6 +45,14 @@ public indirect enum BIRExpression: Sendable {
     case element(BIRVariable, [BIRExpression])
     /// The text a value shows as — `PRINT`'s rendering — for interpolation.
     case text(BIRExpression)
+    /// An `ENUM` value rendered as its member's **name** (E1).
+    ///
+    /// Its own case rather than a flavour of `.text`, because by this point
+    /// an enum's BIR type is `.number` — a payload-free member *is* a number,
+    /// and which enum it belongs to is a fact about the declaration, not the
+    /// value. The table is carried here so nothing downstream has to look it
+    /// up; a value matching no member renders as the number, as VB does.
+    case enumText(BIRExpression, members: [(value: Int, name: String)])
     /// Field `index` of a composite value.
     case field(BIRExpression, index: Int, type: BIRType)
     /// A default instance of a `TYPE` or `CLASS` (before any `NEW` runs).
@@ -117,7 +125,7 @@ public indirect enum BIRExpression: Sendable {
         switch self {
         case .number, .negate, .arithmetic, .compare, .logical, .logicalNot:
             return .number
-        case .string, .concat:
+        case .string, .concat, .enumText:
             return .string
         case .boolean:
             return .boolean
@@ -177,7 +185,7 @@ public indirect enum BIRExpression: Sendable {
             return true
         case .number, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
             return false
-        case .negate(let a), .logicalNot(let a), .text(let a), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
+        case .negate(let a), .logicalNot(let a), .text(let a), .enumText(let a, _), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
             return a.mayRunCode
         case .arithmetic(_, let a, let b), .concat(let a, let b), .compare(_, let a, let b), .logical(_, let a, let b),
              .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b):

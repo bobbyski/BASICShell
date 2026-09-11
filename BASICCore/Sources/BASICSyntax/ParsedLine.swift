@@ -89,6 +89,50 @@ public enum ProgramParser {
         var index = 0
         while index < sourceLines.count {
             let line = sourceLines[index]
+            // `ENUM Suit ... END ENUM` is gathered before anything else is
+            // tried, because the closure-block header parser *throws* on a
+            // line it does not recognise rather than returning nil — so an
+            // ENUM header never reached this check when it came second.
+            //
+            // It is gathered as a block for the same reason a
+            // closure block is: a member is a bare identifier, and `Hearts` on
+            // its own is indistinguishable from a mistyped assignment unless
+            // something knows it is inside an ENUM. Doing it here keeps every
+            // line of the statement parser context-free.
+            var enumParser = try Parser(source: line.source)
+            if let name = enumParser.parseEnumHeader() {
+                var cases: [EnumCase] = []
+                var next = 0
+                var foundEnd = false
+                index += 1
+                while index < sourceLines.count {
+                    let member = sourceLines[index]
+                    var parser = try Parser(source: member.source)
+                    if parser.parseEndEnum() { foundEnd = true; break }
+                    do {
+                        if let parsed = try parser.parseEnumCase(next: &next) { cases.append(parsed) }
+                    } catch let error as BASICError {
+                        throw Failure(fileName: member.fileName,
+                                      lineNumber: member.sourceLineNumber ?? index + 1, error: error)
+                    }
+                    index += 1
+                }
+                guard foundEnd else {
+                    throw Failure(fileName: line.fileName,
+                                  lineNumber: line.sourceLineNumber ?? index + 1,
+                                  error: .syntax("ENUM \(name) without END ENUM"))
+                }
+                parsed += ParsedLine.flatten(
+                    number: line.number,
+                    fileName: line.fileName,
+                    sourceLineNumber: line.sourceLineNumber ?? parsed.count + 1,
+                    isImported: line.isImported,
+                    statement: .enumDeclaration(name: name, cases: cases)
+                )
+                index += 1
+                continue
+            }
+
             var headerParser = try Parser(source: line.source)
             let header: (
                 kind: AssignmentKind,

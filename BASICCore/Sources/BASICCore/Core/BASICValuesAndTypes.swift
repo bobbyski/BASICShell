@@ -392,6 +392,40 @@ struct BASICRecordDefinition: Equatable {
     let fields: [BASICRecordField]
 }
 
+/// An `ENUM` gathered before the run (E1).
+///
+/// Payload-free, so there is no value kind to add: a member *is* its number,
+/// and this table exists only so `PRINT` can show the name. Which member a
+/// number names is a lookup; which table to consult is decided from the
+/// expression's declared type, never from the value — that is what makes the
+/// same rule work identically in the compiler, where there is no value to ask.
+struct BASICEnumDefinition: Equatable {
+    let displayName: String
+    let normalizedName: String
+    /// Members in declaration order, names as written.
+    let members: [(name: String, value: Int)]
+
+    static func == (lhs: BASICEnumDefinition, rhs: BASICEnumDefinition) -> Bool {
+        lhs.normalizedName == rhs.normalizedName
+            && lhs.members.map(\.name) == rhs.members.map(\.name)
+            && lhs.members.map(\.value) == rhs.members.map(\.value)
+    }
+
+    /// The member with this value, or nil — VB shows the number when no
+    /// member matches, which is what a nil here means.
+    func name(of value: Double) -> String? {
+        guard value == value.rounded() else { return nil }
+        let whole = Int(value)
+        return members.first { $0.value == whole }?.name
+    }
+
+    /// The value of a member by name, case-insensitively as BASIC reads it.
+    func value(of member: String) -> Int? {
+        let wanted = member.uppercased()
+        return members.first { $0.name.uppercased() == wanted }?.value
+    }
+}
+
 struct BASICInterfaceMember: Equatable {
     let displayName: String
     let normalizedName: String

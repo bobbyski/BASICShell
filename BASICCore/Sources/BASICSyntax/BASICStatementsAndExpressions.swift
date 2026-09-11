@@ -32,6 +32,15 @@ public indirect enum Statement: Equatable {
     case labeled(String, Statement)
     case sequence([Statement])
     case importDirective(String)
+    /// `ENUM Suit ... END ENUM` with all its cases (E1).
+    ///
+    /// One statement rather than a declaration plus per-case lines, because a
+    /// case is a bare identifier — `Hearts` on its own is indistinguishable
+    /// from a mistyped assignment unless the parser knows it is inside an
+    /// `ENUM`. `ProgramParser` already pulls a multi-line construct together
+    /// this way for closure blocks, so the block is gathered there and every
+    /// line of the parser stays context-free.
+    case enumDeclaration(name: String, cases: [EnumCase])
     case typeDeclaration(name: String)
     case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endType
@@ -204,6 +213,26 @@ public struct PrintOutput: Equatable {
         self.text = text
         self.terminator = terminator
         self.endColumn = endColumn
+    }
+}
+
+/// One `ENUM` member.
+///
+/// VB's model exactly: a named integer constant. Values start at 0 and count
+/// up; an explicit `= n` resets the run, so `Diamonds = 5` makes the next
+/// case 6. Two names may share a value, which is VB's aliasing.
+public struct EnumCase: Equatable {
+    /// The member's name as written, which is what `PRINT` shows.
+    public let name: String
+    /// The ordinal, resolved at parse time.
+    public let value: Int
+    /// Whether the program wrote `= n` rather than taking the running count.
+    public let isExplicit: Bool
+
+    public init(name: String, value: Int, isExplicit: Bool) {
+        self.name = name
+        self.value = value
+        self.isExplicit = isExplicit
     }
 }
 

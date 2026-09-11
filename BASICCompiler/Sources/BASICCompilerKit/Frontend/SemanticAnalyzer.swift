@@ -35,6 +35,10 @@ struct SemanticAnalyzer {
     /// Runs every pass; throws when anything is contradictory.
     mutating func run() throws -> SemanticModel {
         owner = Array(repeating: nil, count: lines.count)
+        // First of all: an ENUM name is a type name, and `DIM S AS Suit`
+        // cannot be resolved until the parser's `.record("Suit")` can be told
+        // apart from a record of that name.
+        try collectEnums()
         try collectTypeNames()
         // Before members, not after: a class method may take a FUNCTION TYPE
         // as a parameter, and resolving that member needs the signature to
@@ -243,6 +247,38 @@ struct SemanticAnalyzer {
     }
 
     /// `FUNCTION TYPE Name(params) AS type` declarations, anywhere at top level.
+    /// The normalized `ENUM` a declared type names, or nil.
+    ///
+    /// A bare user type name parses as `.record`, because which kind of thing
+    /// a name is depends on declarations the parser has not read yet.
+    func enumName(of type: BASICType) -> String? {
+        switch type {
+        case .record(let name), .enumType(let name):
+            return model.enums[name.uppercased()] != nil ? name.uppercased() : nil
+        default:
+            return nil
+        }
+    }
+
+    /// `ENUM` declarations (E1).
+    private mutating func collectEnums() throws {
+        for (index, line) in lines.enumerated() {
+            guard case .enumDeclaration(let name, let cases) = line.statement else { continue }
+            owner[index] = Self.declaration
+            let normalized = name.uppercased()
+            guard model.enums[normalized] == nil else {
+                throw CompileError("ENUM \(name) is already defined", at: Self.location(of: line))
+            }
+            var seen = Set<String>()
+            for member in cases where !seen.insert(member.name.uppercased()).inserted {
+                throw CompileError("ENUM \(name) declares \(member.name) twice", at: Self.location(of: line))
+            }
+            model.enums[normalized] = SemanticModel.Enumeration(
+                displayName: name, members: cases.map { ($0.name, $0.value) }
+            )
+        }
+    }
+
     private mutating func collectSignatures() throws {
         for (index, line) in lines.enumerated() where owner[index] == nil {
             guard case .functionTypeDeclaration(let name, let parameters, let returnType, let isAsync) = line.statement else { continue }
@@ -371,6 +407,7 @@ struct SemanticAnalyzer {
             if let declared {
                 try record(name, .scalar, try map(declared, for: name.name, at: line), at: line, in: function, changed: &changed)
                 if declared == .scalar(.integer) { model.update(name.normalized, in: function) { $0.isInteger = true } }
+                if let enumName = enumName(of: declared) { model.update(name.normalized, in: function) { $0.enumName = enumName } }
             } else if let value, let type = try typeOf(value, in: function) {
                 try record(name, .scalar, type, at: line, in: function, changed: &changed)
             } else {
@@ -400,6 +437,7 @@ struct SemanticAnalyzer {
             if let declared {
                 try record(name, storage, try map(declared, for: name.name, at: line), at: line, in: function, changed: &changed)
                 if declared == .scalar(.integer) { model.update(name.normalized, in: function) { $0.isInteger = true } }
+                if let enumName = enumName(of: declared) { model.update(name.normalized, in: function) { $0.enumName = enumName } }
             } else {
                 note(name, storage, at: line, in: function, changed: &changed)
             }
@@ -766,7 +804,16 @@ struct SemanticAnalyzer {
         case .scalar(.variant), .scalar(.task): return .variant
         case .dictionary: return .dictionary
         case .void: return .void
+        case .enumType(let typeName):
+            guard model.enums[typeName.uppercased()] != nil else {
+                throw CompileError("\(name) AS \(typeName): unknown ENUM", at: Self.location(of: line))
+            }
+            return .number
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):
+            // An ENUM is a number — that is the payload-free form, not a
+            // shortcut. Which enum it is stays in the declared type, which is
+            // where PRINT reads it from.
+            if model.enums[typeName.uppercased()] != nil { return .number }
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
             if SemanticModel.isSystemClass(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
             guard model.types[typeName.uppercased()] != nil else {

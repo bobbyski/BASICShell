@@ -385,6 +385,7 @@ struct LLVMLowering {
     declare i1 @basic_rt_file_input_boolean(double)
     declare ptr @basic_rt_line_input(ptr)
     declare ptr @basic_rt_number_text(double)
+    declare ptr @basic_rt_enum_text(double, ptr, ptr, i64)
     declare void @basic_rt_using_begin(ptr)
     declare void @basic_rt_using_number(double)
     declare void @basic_rt_using_string(ptr)
@@ -627,6 +628,21 @@ final class ConstantPool {
     /// A private constant holding NUL-terminated text; returns its name.
     func constant(_ text: String) -> String {
         constant(text, returnCount: true).0
+    }
+
+    /// The two parallel arrays an `ENUM`'s name table is (E1): the member
+    /// names as C strings, and their values. Constants, because which enum an
+    /// expression belongs to was decided at compile time — there is nothing
+    /// to look up at run time but the value.
+    func enumTable(_ members: [(value: Int, name: String)]) -> (names: String, values: String, count: Int) {
+        count += 1
+        let namesName = "@.enum.names.\(count)"
+        let valuesName = "@.enum.values.\(count)"
+        let pointers = members.map { "ptr \(constant($0.name))" }
+        definitions.append("\(namesName) = private constant [\(max(members.count, 1)) x ptr] [\(pointers.isEmpty ? "ptr null" : pointers.joined(separator: ", "))]")
+        let numbers = members.map { "double \($0.value).0" }
+        definitions.append("\(valuesName) = private constant [\(max(members.count, 1)) x double] [\(numbers.isEmpty ? "double 0.0" : numbers.joined(separator: ", "))]")
+        return (namesName, valuesName, members.count)
     }
 
     func constant(_ text: String, returnCount: Bool) -> (String, Int) {
@@ -2193,6 +2209,13 @@ struct FunctionEmitter {
             let result = out.temp()
             out.emit("\(result) = fneg double \(lowerValue(inner).0)")
             return (result, false)
+        case .enumText(let inner, let members):
+            let (value, _) = lowerValue(inner)
+            let table = constants.enumTable(members)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_enum_text(double \(value), ptr \(table.names), ptr \(table.values), i64 \(table.count))")
+            owned.append(result)
+            return (result, true)
         case .text(let inner):
             let (value, isOwned) = lowerValue(inner)
             switch inner.type {

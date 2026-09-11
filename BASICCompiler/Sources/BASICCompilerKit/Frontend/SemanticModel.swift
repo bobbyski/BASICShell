@@ -84,6 +84,18 @@ public final class SemanticModel {
         var wasDimensioned = false
         /// Declared INTEGER (or `%`-suffixed).
         var isInteger = false
+        /// The `ENUM` this was declared as, normalized (E1).
+        ///
+        /// Kept beside the BIR type rather than in it: an enum's BIR type is
+        /// `.number`, because a payload-free member *is* a number. This is
+        /// the declaration talking, and it is the only thing that knows which
+        /// name table `PRINT` should read.
+        var enumName: String?
+    }
+
+    /// The `ENUM` a variable was declared as, or nil.
+    public func declaredTypeName(of name: String, in function: String?) -> String? {
+        info(name, in: function)?.enumName
     }
 
     /// The functions an `ON …` registered as event handlers, normalized.
@@ -270,6 +282,25 @@ public final class SemanticModel {
     public static func isSystemClass(_ name: String) -> Bool {
         systemClasses[name] != nil || supportedTUIClasses.contains(name) || richClassNames[name] != nil
     }
+
+    /// One `ENUM` (E1): its members in declaration order, names as written.
+    ///
+    /// Payload-free, so a member *is* its number and there is no BIR type of
+    /// its own — an enum-typed variable is `.number`. This table exists so
+    /// `PRINT` can be lowered to the member's name, which it can because the
+    /// declared type is known here and BIR is built after that.
+    public struct Enumeration: Sendable {
+        public let displayName: String
+        public let members: [(name: String, value: Int)]
+
+        public init(displayName: String, members: [(name: String, value: Int)]) {
+            self.displayName = displayName
+            self.members = members
+        }
+    }
+
+    /// `ENUM`s by normalized name.
+    public internal(set) var enums: [String: Enumeration] = [:]
 
     /// Closure signatures by name: `FUNCTION TYPE`s by their names, and
     /// anonymous ones by their canonical shape.

@@ -11,6 +11,14 @@ final class BASICRuntime {
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
+    /// Normalized names of the program's `ENUM`s (E1).
+    ///
+    /// The parser cannot tell `DIM S AS Suit` from `DIM R AS SomeRecord` —
+    /// both arrive as `.record("...")`, because which one a name is depends
+    /// on declarations the parser has not seen. This set is how a declared
+    /// type is corrected once they have all been gathered.
+    var enumNames: Set<String> = []
+
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
     var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
@@ -1116,6 +1124,11 @@ final class BASICRuntime {
         if case .record(let name) = type, functionTypeDefinitions[name.uppercased()] != nil {
             return .functionType(name)
         }
+        // An ENUM (E1). The declared type is the only thing that says a value
+        // is one — the value itself is an ordinary number.
+        if case .record(let name) = type, enumNames.contains(name.uppercased()) {
+            return .enumType(name)
+        }
         return type
     }
 
@@ -1250,6 +1263,12 @@ final class BASICRuntime {
                 return defaultValue(for: type)
             }
             throw BASICError.type(message: "Cannot assign non-dictionary value to \(variable.name)")
+        }
+        // An ENUM is a number and coerces like one (E1). That is not a
+        // relaxation, it is the whole payload-free form: VB lets you assign
+        // CType(6, Suit) and read CInt(s) back, and so does this.
+        if case .enumType = type {
+            return try coerce(value, to: .scalar(.double), variable: variable)
         }
         guard case .scalar(let scalar) = type else {
             throw BASICError.type(message: "Cannot assign aggregate type \(type.name) yet")
@@ -2372,6 +2391,9 @@ final class BASICRuntime {
         case .scalar(.variant): return .empty
         case .scalar(.task): return .empty
         case .scalar: return .number(0)
+        // Zero, as VB's default for an enum is — which usually names the
+        // first member, and prints as that member.
+        case .enumType: return .number(0)
         case .record(let name):
             guard let definition = recordDefinitions[name.uppercased()] else {
                 return .record(name, [:])
@@ -3137,6 +3159,8 @@ final class BASICRuntime {
         case .scalar(.variant):
             return .empty
         case .scalar:
+            return .number(0)
+        case .enumType:
             return .number(0)
         case .void:
             return .empty

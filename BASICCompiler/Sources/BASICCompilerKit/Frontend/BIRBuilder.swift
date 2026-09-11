@@ -477,6 +477,48 @@ final class FunctionBuilder {
     /// The function name an outlined main subroutine is emitted under.
     static func subroutineName(_ label: String) -> String { "$SUB.\(label)" }
 
+    /// The value of `Suit.Clubs`, or nil when the reference is not one.
+    ///
+    /// Folded at compile time, which is all a payload-free member ever needs
+    /// to be: it is a named integer constant, exactly as VB's is.
+    func enumMember(_ reference: VariableReference) throws -> Int? {
+        guard reference.fields.count == 1, reference.indexes.isEmpty,
+              let definition = model.enums[reference.base.normalized]
+        else { return nil }
+        let wanted = reference.fields[0].uppercased()
+        guard let member = definition.members.first(where: { $0.name.uppercased() == wanted }) else {
+            throw CompileError("ENUM \(definition.displayName) has no member \(reference.fields[0])", at: location)
+        }
+        return member.value
+    }
+
+    /// The `ENUM` an expression is *declared* as, or nil.
+    ///
+    /// Declared, never inferred: a member is a plain number in BIR, so there
+    /// is nothing in the value to ask — which is the point. The interpreter
+    /// answers the same question the same way, from the same declaration.
+    func enumType(of expression: Expression) -> SemanticModel.Enumeration? {
+        switch expression {
+        case .variable(let name):
+            return model.enums[declaredEnumName(of: name)  ?? ""]
+        case .variableReference(let reference):
+            if reference.fields.count == 1, let definition = model.enums[reference.base.normalized] {
+                return definition
+            }
+            guard reference.fields.isEmpty, reference.indexes.isEmpty else { return nil }
+            return model.enums[declaredEnumName(of: reference.base) ?? ""]
+        default:
+            return nil
+        }
+    }
+
+    /// The ENUM name a variable was declared with, from the source type the
+    /// analyzer recorded — BIR has only `.number` by this point, on purpose.
+    private func declaredEnumName(of name: VariableName) -> String? {
+        guard let declared = model.declaredTypeName(of: name.normalized, in: functionName) else { return nil }
+        return model.enums[declared] != nil ? declared : nil
+    }
+
     /// The block a main label begins, once this builder has run. Pruning
     /// renumbers the blocks, so the block is found by its name.
     func blockForLabel(_ label: String) -> BIRBlockID? {
@@ -1613,6 +1655,15 @@ final class FunctionBuilder {
                 if name.normalized == "TAB" { return .tab(try lowerExpression(arguments[0], expecting: .number, context: "TAB")) }
                 if name.normalized == "SPC" { return .spc(try lowerExpression(arguments[0], expecting: .number, context: "SPC")) }
             }
+            // An ENUM prints its member's *name* — VB's `ToString`, where
+            // `STR$` is VB's `CStr` and stays numeric. Resolved here, from
+            // the declared type, because BIR below this point has only a
+            // number and nothing to ask.
+            if let definition = enumType(of: expression) {
+                let members = definition.members.map { (value: $0.value, name: $0.name) }
+                return .value(.enumText(try lowerExpression(expression, expecting: .number, context: "PRINT"),
+                                        members: members))
+            }
             return .value(try lowerExpression(expression, expecting: nil, context: "PRINT"))
         }
     }
@@ -1668,6 +1719,9 @@ final class FunctionBuilder {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             return try lowerCall(name, arguments)
         case .variableReference(let reference):
+            // `Suit.Clubs` — an ENUM member, which is a constant folded here
+            // and not a field of any value (E1).
+            if let member = try enumMember(reference) { return .number(Double(member)) }
             if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.count == 1 {
                 return try lowerSystemCall(.load(variable(reference.base)), typeName, VariableName(name: reference.fields[0], column: reference.base.column), [])
             }
