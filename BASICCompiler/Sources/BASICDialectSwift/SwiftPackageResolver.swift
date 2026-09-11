@@ -230,6 +230,41 @@ public struct SwiftPackageResolver {
                 methods.append(shim)
             }
         }
+        // Members on enums (E5): the receiver arrives as the enum value — an
+        // ordinal or a record — or, for a static, there is none.
+        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
+            let stem = enumeration.swiftName.replacingOccurrences(of: ".", with: "_")
+            for (member, isStatic, isProperty) in SwiftInterfaceUnit.members(of: enumeration) {
+                let passed = member.passed
+                var shim = SwiftAsyncShim.Method(
+                    className: stem, name: member.name, labels: passed.map(\.label),
+                    parameterTypes: passed.map { Self.spelling($0.type, in: api) },
+                    returns: member.returns == .void ? nil : Self.spelling(member.returns, in: api),
+                    isThrowing: member.isThrowing
+                )
+                shim.isAsync = false
+                shim.isProperty = isProperty
+                shim.receiver = isStatic ? .type(enumeration.swiftName)
+                    : enumeration.isPayload ? .payloadEnum(Self.payloadEnum(enumeration, in: api)) : .plainEnum(Self.plainEnum(enumeration))
+                shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
+                shim.stringResult = member.returns == .string
+                for (index, parameter) in passed.enumerated() {
+                    switch parameter.type {
+                    case .object(let precise): shim.objectParameters[index] = api.class(precise: precise)?.name
+                    case .enumeration(let precise): shim.enumParameters[index] = api.enumerations[precise].map(Self.plainEnum)
+                    case .payloadEnumeration(let precise): shim.payloadParameters[index] = api.enumerations[precise].map { Self.payloadEnum($0, in: api) }
+                    default: break
+                    }
+                }
+                switch member.returns {
+                case .object(let precise): shim.objectResult = api.class(precise: precise)?.name
+                case .enumeration(let precise): shim.enumResult = api.enumerations[precise].map(Self.plainEnum)
+                case .payloadEnumeration(let precise): shim.payloadResult = api.enumerations[precise].map { Self.payloadEnum($0, in: api) }
+                default: break
+                }
+                methods.append(shim)
+            }
+        }
         // Enum-typed properties, read and written through the shim (E2).
         // Generated for the class that declares each one; a subclass's thunk
         // calls the same shim.

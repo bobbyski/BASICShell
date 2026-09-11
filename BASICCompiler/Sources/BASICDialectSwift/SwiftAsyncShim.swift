@@ -101,6 +101,13 @@ public struct SwiftAsyncShim {
         /// The enum-with-values this returns, when it does; the shim builds
         /// the record, given its type index as a trailing argument.
         public var payloadResult: PayloadEnum?
+        /// What the member is called on (E5): an object, as for every class
+        /// member; an enum value, arriving as its ordinal or its record; or,
+        /// for a static, the type itself, by its Swift name.
+        public enum Receiver: Sendable { case object, plainEnum(PlainEnum), payloadEnum(PayloadEnum), type(String) }
+        public var receiver: Receiver = .object
+        /// Whether the member is a property, read without parentheses.
+        public var isProperty = false
 
         public init(className: String, name: String, labels: [String?],
                     parameterTypes: [String], returns: String?, isThrowing: Bool) {
@@ -316,12 +323,14 @@ public struct SwiftAsyncShim {
         for method in methods {
             for type in method.enumParameters.values where !enums.contains(type) { enums.append(type) }
             if let type = method.enumResult, !enums.contains(type) { enums.append(type) }
+            if case .plainEnum(let type) = method.receiver, !enums.contains(type) { enums.append(type) }
         }
         for property in properties where !enums.contains(property.type) { enums.append(property.type) }
         var payloadEnums: [PayloadEnum] = []
         for method in methods {
             for type in method.payloadParameters.values where !payloadEnums.contains(type) { payloadEnums.append(type) }
             if let type = method.payloadResult, !payloadEnums.contains(type) { payloadEnums.append(type) }
+            if case .payloadEnum(let type) = method.receiver, !payloadEnums.contains(type) { payloadEnums.append(type) }
         }
         for property in payloadProperties where !payloadEnums.contains(property.type) { payloadEnums.append(property.type) }
         if !enums.isEmpty || !payloadEnums.isEmpty {
@@ -405,7 +414,14 @@ public struct SwiftAsyncShim {
             // function pointer and the closure it should invoke — and becomes
             // an ordinary Swift closure right here, which is the whole point:
             // the framework stores a Swift closure, not a wrapper object.
-            var parameters = method.isInitializer ? [] : ["_ me: UnsafeMutableRawPointer"]
+            var parameters: [String]
+            switch method.receiver {
+            case _ where method.isInitializer: parameters = []
+            case .object: parameters = ["_ me: UnsafeMutableRawPointer"]
+            case .plainEnum: parameters = ["_ me: Int"]
+            case .payloadEnum: parameters = ["_ me: UnsafeMutableRawPointer?"]
+            case .type: parameters = []
+            }
             var callArguments: [String] = []
             for (index, type) in method.parameterTypes.enumerated() {
                 if method.closureParameters.contains(index) {
@@ -455,6 +471,11 @@ public struct SwiftAsyncShim {
             let labelled = zip(method.labels, callArguments.indices)
                 .map { label, index in label.map { "\($0): \(callArguments[index])" } ?? callArguments[index] }
                 .joined(separator: ", ")
+            // The member itself: on the object or the enum value, or on the
+            // type for a static (E5); a property takes no parentheses.
+            let target: String
+            if case .type(let swiftName) = method.receiver { target = swiftName } else { target = "object" }
+            let invocation = method.isProperty ? "\(target).`\(method.name)`" : "\(target).\(method.name)(\(labelled))"
             // A class result crosses as a pointer too, unretained: an
             // imported object belongs to the framework, and BASIC holding one
             // aliases it rather than owning a copy (ruling D15).
@@ -495,7 +516,12 @@ public struct SwiftAsyncShim {
             lines.append("@_cdecl(\"\(method.symbol)\")")
             lines.append("public func \(method.symbol)(\(parameters.joined(separator: ", ")))\(result) {")
             if !method.isInitializer {
-                lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+                switch method.receiver {
+                case .object: lines.append("    let object = Unmanaged<\(method.className)>.fromOpaque(me).takeUnretainedValue()")
+                case .plainEnum(let type): lines.append("    let object = basicEnumIn_\(type.stem)(me)")
+                case .payloadEnum(let type): lines.append("    let object = basicPayloadIn_\(type.stem)(me)")
+                case .type: break
+                }
             }
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
                 lines.append("    let o\(index) = Unmanaged<\(className)>.fromOpaque(a\(index)).takeUnretainedValue()")
@@ -541,8 +567,8 @@ public struct SwiftAsyncShim {
             }
             if method.isAsync {
                 let awaited = method.isThrowing
-                    ? "try await object.\(method.name)(\(labelled))"
-                    : "await object.\(method.name)(\(labelled))"
+                    ? "try await \(invocation)"
+                    : "await \(invocation)"
                 lines.append("    do {")
                 if method.returns == nil {
                     lines.append("        _ = try basicAwait { \(awaited) }")
@@ -554,7 +580,7 @@ public struct SwiftAsyncShim {
                 lines.append("    }")
             } else if method.isThrowing {
                 lines.append("    do {")
-                let called = "try object.\(method.name)(\(labelled))"
+                let called = "try \(invocation)"
                 lines.append(method.returns == nil ? "        _ = \(called)" : "        return \(handOut(called))")
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
@@ -575,7 +601,7 @@ public struct SwiftAsyncShim {
                 // true; stating it is what lets a main-actor framework be
                 // imported at all. It traps rather than corrupts if a future
                 // caller is ever elsewhere.
-                let called = "object.\(method.name)(\(labelled))"
+                let called = "\(invocation)"
                 if method.returns == nil {
                     lines.append("    MainActor.assumeIsolated { \(called) }")
                 } else if let type = method.payloadResult {

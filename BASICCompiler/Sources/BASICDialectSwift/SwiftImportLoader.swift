@@ -31,6 +31,10 @@ public struct SwiftImportLoader {
         public let externalClasses: [String: String]
         /// Objects the link must include.
         public let objects: [String]
+        /// Members on imported enums, for the front end (E5).
+        public var enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:]
+        /// Free functions whose bodies the object model supplies (E5).
+        public var externalFunctions: Set<String> = []
     }
 
     /// Where the program lives; its `Package.swift` names the dependencies.
@@ -49,6 +53,8 @@ public struct SwiftImportLoader {
             var imports: [String: SwiftAPI] = [:]
             var externalClasses: [String: String] = [:]
             var objects: [String] = []
+            var enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:]
+            var externalFunctions: Set<String> = []
         }
         let collected = Collected()
         loader.resolveForeignImport = { name, location in
@@ -67,6 +73,8 @@ public struct SwiftImportLoader {
                     collected.objects.append(shim)
                 }
                 let unit = SwiftInterfaceUnit(api: api)
+                collected.enumMembers.merge(unit.enumMembers) { $1 }
+                collected.externalFunctions.formUnion(unit.enumMemberFunctionNames)
                 for className in unit.externalClassNames {
                     collected.externalClasses[className] = api.module
                 }
@@ -93,6 +101,7 @@ public struct SwiftImportLoader {
         }
         let lines = try loader.load(path: path)
         return Result(lines: lines, imports: collected.imports,
-                      externalClasses: collected.externalClasses, objects: collected.objects)
+                      externalClasses: collected.externalClasses, objects: collected.objects,
+                      enumMembers: collected.enumMembers, externalFunctions: collected.externalFunctions)
     }
 }

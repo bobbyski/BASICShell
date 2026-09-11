@@ -283,6 +283,18 @@ public final class SemanticModel {
         systemClasses[name] != nil || supportedTUIClasses.contains(name) || richClassNames[name] != nil
     }
 
+    /// Which free function an imported enum member is (E5).
+    public struct EnumMemberRef: Sendable, Equatable {
+        public let function: String
+        public let isStatic: Bool
+        public let isProperty: Bool
+        public init(function: String, isStatic: Bool, isProperty: Bool) {
+            self.function = function
+            self.isStatic = isStatic
+            self.isProperty = isProperty
+        }
+    }
+
     /// One `ENUM` (E1): its members in declaration order, names as written.
     ///
     /// Payload-free, so a member *is* its number and there is no BIR type of
@@ -340,6 +352,43 @@ public final class SemanticModel {
         public func slotIndex(of field: String) -> Int? {
             slots.firstIndex { $0.name.uppercased() == field.uppercased() }.map { $0 + 1 }
         }
+    }
+
+    /// Members on imported enums (E5): normalized enum name, then member.
+    /// Set by the builder from what the importer declared.
+    public internal(set) var enumMembers: [String: [String: EnumMemberRef]] = [:]
+
+    /// `B.inner`, `B.blended(x)` or `Tint.favourite` as the call to the free
+    /// function the importer declared for that member, or nil (E5).
+    ///
+    /// One rewrite, asked by both the analyzer and the builder, so the two
+    /// agree on what a member access means. `enumOf` names the ENUM a
+    /// variable holds — which only the caller, knowing its scope, can say.
+    func enumMemberCall(_ expression: Expression, enumOf: (VariableName) -> String?) -> Expression? {
+        guard !enumMembers.isEmpty else { return nil }
+        func call(_ reference: EnumMemberRef, _ at: VariableName, _ arguments: [Expression]) -> Expression {
+            .functionCall(VariableName(name: reference.function, column: at.column), arguments)
+        }
+        switch expression {
+        case .variableReference(let reference) where reference.fields.count == 1 && reference.indexes.isEmpty:
+            let member = reference.fields[0].uppercased()
+            if let found = enumMembers[reference.base.normalized]?[member], found.isStatic {
+                return call(found, reference.base, [])
+            }
+            if let enumName = enumOf(reference.base), let found = enumMembers[enumName]?[member], !found.isStatic {
+                return call(found, reference.base, [.variable(reference.base)])
+            }
+        case .methodCall(let reference, let method, let arguments) where reference.fields.isEmpty && reference.indexes.isEmpty:
+            if let found = enumMembers[reference.base.normalized]?[method.normalized], found.isStatic {
+                return call(found, method, arguments)
+            }
+            if let enumName = enumOf(reference.base), let found = enumMembers[enumName]?[method.normalized], !found.isStatic {
+                return call(found, method, [.variable(reference.base)] + arguments)
+            }
+        default:
+            break
+        }
+        return nil
     }
 
     /// `ENUM`s by normalized name.

@@ -23,12 +23,20 @@ public struct BIRBuilder {
     /// keeps the compiler from emitting bodies for members the framework
     /// already implements.
     private let externalClasses: [String: String]
+    /// Free functions whose bodies a dialect supplies — an imported enum's
+    /// members (E5).
+    private let externalFunctions: Set<String>
+    /// Which of those functions each enum member is (E5).
+    private let enumMembers: [String: [String: SemanticModel.EnumMemberRef]]
 
     /// Creates a builder; `defaultStringSubstitution` is how OPTION
     /// STRING-SUB starts (the shell's default is on).
-    public init(defaultStringSubstitution: Bool = true, externalClasses: [String: String] = [:]) {
+    public init(defaultStringSubstitution: Bool = true, externalClasses: [String: String] = [:],
+                externalFunctions: Set<String> = [], enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:]) {
         self.defaultStringSubstitution = defaultStringSubstitution
         self.externalClasses = externalClasses
+        self.externalFunctions = externalFunctions
+        self.enumMembers = enumMembers
     }
 
     /// Builds the module for a program.
@@ -45,6 +53,7 @@ public struct BIRBuilder {
             })
         }
         var analyzer = SemanticAnalyzer(lines: lines)
+        analyzer.model.enumMembers = enumMembers
         let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
         module.globals = model.globalVariables
@@ -83,6 +92,11 @@ public struct BIRBuilder {
             // placeholder is discarded and the object model supplies a thunk
             // onto the framework's own symbol.
             if let owner = model.functions[name]?.owner, externalClasses[owner] != nil {
+                function.isExternal = true
+                function.blocks = []
+            } else if externalFunctions.contains(name) {
+                // An imported enum's member (E5): declared so calls type-check,
+                // with a thunk from the object model rather than a body.
                 function.isExternal = true
                 function.blocks = []
             }
@@ -595,6 +609,14 @@ final class FunctionBuilder {
         default:
             return nil
         }
+    }
+
+    /// The ENUM a variable holds (E5): a VB-style one by its declaration, a
+    /// payload one by its record type — the question the analyzer asks too.
+    func receiverEnum(_ name: VariableName) -> String? {
+        if let declared = declaredEnumName(of: name) { return declared }
+        if case .composite(let typeName) = variable(name).type, model.enums[typeName] != nil { return typeName }
+        return nil
     }
 
     /// The ENUM name a variable was declared with, from the source type the
@@ -1783,6 +1805,12 @@ final class FunctionBuilder {
 
     /// Lowers an expression, checking it against the type the context needs.
     func lowerExpression(_ expression: Expression, expecting: BIRType?, context: String) throws -> BIRExpression {
+        // `B.inner` / `Tint.favourite` is a call to the free function the
+        // importer declared for that enum member (E5); the rewritten call is
+        // not a member access, so this cannot recur.
+        if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0) }) {
+            return try lowerExpression(call, expecting: expecting, context: context)
+        }
         let lowered = try lowerExpression(expression)
         guard let expecting, lowered.type != expecting else { return lowered }
         if expecting == .variant || lowered.type == .variant { return convert(lowered, to: expecting, name: nil) }
@@ -1796,6 +1824,18 @@ final class FunctionBuilder {
     }
 
     private func lowerExpression(_ expression: Expression) throws -> BIRExpression {
+
+        // `B.inner` / `Tint.favourite` is a call to the free function the
+
+        // importer declared for that enum member (E5); the rewritten call is
+
+        // not a member access, so this cannot recur.
+
+        if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0) }) {
+
+            return try lowerExpression(call)
+
+        }
         switch expression {
         case .number(let value): return .number(value)
         case .string(let value):

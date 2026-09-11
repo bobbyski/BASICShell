@@ -166,6 +166,14 @@ public struct SwiftAPI: Sendable {
 
         public var isPayload: Bool { payloads.contains { !$0.isEmpty } }
 
+        /// Members declared on the enum (E5). BASIC calls them with a dot, as
+        /// VB calls an enum's members: on a value for an instance member, on
+        /// the type for a static one.
+        public var instanceMethods: [Function] = []
+        public var instanceProperties: [Property] = []
+        public var staticMethods: [Function] = []
+        public var staticProperties: [Property] = []
+
         /// The BASIC record's slots after the tag: each field name once, in the
         /// order the cases first mention them — the rule E3's compiler uses
         /// for the ENUM this renders as, so the two lay the record out alike.
@@ -426,7 +434,7 @@ public struct SwiftAPI: Sendable {
             // Synthesized members (`Unit.!=`) belong to the standard library.
             if precise.contains("::SYNTHESIZED::") { continue }
             switch kind(of: symbol) {
-            case "swift.method", "swift.init", "swift.func":
+            case "swift.method", "swift.init", "swift.func", "swift.type.method":
                 let isInit = kind(of: symbol) == "swift.init"
                 let function = Function(
                     name: isInit ? "init" : name,
@@ -451,14 +459,21 @@ public struct SwiftAPI: Sendable {
                     api.skipped.append(Skip(member: path, reason: "no BASIC spelling for " + bad.joined(separator: ", ")))
                     continue
                 }
-                if let owner = memberOf[precise], let index = classIndex[owner] {
+                let isStatic = kind(of: symbol) == "swift.type.method"
+                if let owner = memberOf[precise], api.enumerations[owner] != nil, !isInit {
+                    // A member of an imported enum (E5).
+                    if isStatic { api.enumerations[owner]!.staticMethods.append(function) }
+                    else { api.enumerations[owner]!.instanceMethods.append(function) }
+                } else if isStatic {
+                    api.skipped.append(Skip(member: path, reason: "a static member of something other than an enum; BASIC reaches statics on enums only, for now"))
+                } else if let owner = memberOf[precise], let index = classIndex[owner] {
                     if isInit { api.classes[index].initializers.append(function) } else { api.classes[index].methods.append(function) }
                 } else if kind(of: symbol) == "swift.func" {
                     api.functions.append(function)
                 } else {
                     api.skipped.append(Skip(member: path, reason: "member of something that is not a class"))
                 }
-            case "swift.property":
+            case "swift.property", "swift.type.property":
                 let fragments = fragments(of: symbol["declarationFragments"])
                 var type = leadingTypeIdentifier(fragments).map { valueType(precise: $0.precise, spelling: $0.spelling) } ?? .unsupported("?")
                 // An optional enum has one value no BASIC member names — nil —
@@ -477,6 +492,23 @@ public struct SwiftAPI: Sendable {
                 // `{ get }` in the declaration marks a read-only computed
                 // property; a stored `var` shows no accessor block.
                 let readOnly = isLet || fragments.contains { $0.spelling.contains("{ get }") }
+                let isStaticProperty = kind(of: symbol) == "swift.type.property"
+                if let owner = memberOf[precise], api.enumerations[owner] != nil {
+                    guard type.isSupported else {
+                        if case .unsupported(let s) = type { api.skipped.append(Skip(member: path, reason: "no BASIC spelling for \(s)")) }
+                        continue
+                    }
+                    // Read-only from BASIC (E5): an enum's properties are
+                    // computed, and a value of it is not a place to store into.
+                    let member = Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: false)
+                    if isStaticProperty { api.enumerations[owner]!.staticProperties.append(member) }
+                    else { api.enumerations[owner]!.instanceProperties.append(member) }
+                    continue
+                }
+                if isStaticProperty {
+                    api.skipped.append(Skip(member: path, reason: "a static member of something other than an enum; BASIC reaches statics on enums only, for now"))
+                    continue
+                }
                 guard let owner = memberOf[precise], let index = classIndex[owner] else {
                     api.skipped.append(Skip(member: path, reason: "a property of something that is not a class")); continue
                 }
@@ -553,6 +585,44 @@ public struct SwiftAPI: Sendable {
             api.classes[index].methods = methods
             api.classes[index].initializers = initializers
             api.classes[index].properties = properties
+        }
+        // Enum members settle the same way, and cross only what the shim can
+        // carry for them: numbers, strings, booleans, enums and objects (E5).
+        func crossesForEnum(_ type: ValueType) -> Bool {
+            switch type {
+            case .double, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
+            default: return false
+            }
+        }
+        for precise in api.enumerations.keys.sorted() {
+            guard var enumeration = api.enumerations[precise] else { continue }
+            let owner = enumeration.name
+            func keepMember(_ function: Function) -> Bool {
+                guard keep(function, owner: owner) else { return false }
+                guard crossesForEnum(function.returns), function.passed.allSatisfy({ crossesForEnum($0.type) }) else {
+                    enumWithdrawals.append(Skip(member: "\(owner).\(function.name)",
+                                                reason: "a member of an enum crosses numbers, strings, booleans, enums and objects for now"))
+                    return false
+                }
+                return true
+            }
+            func settleProperties(_ list: [Property]) -> [Property] {
+                list.compactMap { original in
+                    var property = original
+                    property.type = settle(property.type)
+                    guard property.type.isSupported, crossesForEnum(property.type) else {
+                        enumWithdrawals.append(Skip(member: "\(owner).\(property.name)",
+                                                    reason: "a member of an enum crosses numbers, strings, booleans, enums and objects for now"))
+                        return nil
+                    }
+                    return property
+                }
+            }
+            enumeration.instanceMethods = enumeration.instanceMethods.map(settle).filter(keepMember)
+            enumeration.staticMethods = enumeration.staticMethods.map(settle).filter(keepMember)
+            enumeration.instanceProperties = settleProperties(enumeration.instanceProperties)
+            enumeration.staticProperties = settleProperties(enumeration.staticProperties)
+            api.enumerations[precise] = enumeration
         }
         let functions = api.functions.map(settle).filter { keep($0, owner: api.module) }
         api.functions = functions

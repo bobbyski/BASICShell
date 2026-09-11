@@ -109,6 +109,14 @@ PRINT R.filled(Fill.solid(0.5))
 F = R.defaultFill()
 PRINT "default fill:"; F
 
+' Members on enums (E5), reached with a dot as VB reaches an enum's members:
+' on a value for an instance member, on the type for a static one.
+PRINT "warm:"; T.isWarm; " blended: "; T.blended(Tint.red)
+DIM Fav AS Tint
+Fav = Tint.favourite
+PRINT "favourite:"; Fav
+PRINT "fill empty:"; F.isEmpty
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

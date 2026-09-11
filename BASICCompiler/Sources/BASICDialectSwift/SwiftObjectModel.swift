@@ -602,6 +602,7 @@ public struct SwiftObjectModel: ObjectModel {
         out += SwiftClassMetadata.usedDirective(used)
         out += importedDeclarations()
         for name in importedByName.keys.sorted() { out += perImportedClass(importedByName[name]!) }
+        for key in imports.keys.sorted() { out += perImportedEnumMembers(imports[key]!) }
         out += helpers()
         return out
     }
@@ -823,6 +824,96 @@ public struct SwiftObjectModel: ObjectModel {
     /// Thunks over an imported class: BASIC's calling convention on the
     /// outside, Swift's on the inside, with values converted where they cross
     /// (ruling R2.0).
+    /// A BIR type's LLVM form in a thunk's signature.
+    static func llvmBasicType(_ type: BIRType) -> String {
+        switch type {
+        case .number: return "double"
+        case .boolean: return "i1"
+        case .void: return "void"
+        default: return "ptr"
+        }
+    }
+
+    /// Thunks for members declared on imported enums (E5): BASIC's call to
+    /// the free function the interface declared for `B.inner`, onto the shim
+    /// that turns the receiver into the Swift enum and calls the member. A
+    /// VB-style value arrives as its ordinal, one with payloads as its record,
+    /// and a static has no receiver at all.
+    func perImportedEnumMembers(_ api: SwiftAPI) -> String {
+        var out = ""
+        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
+            let stem = enumeration.swiftName.replacingOccurrences(of: ".", with: "_")
+            for (member, isStatic, _) in SwiftInterfaceUnit.members(of: enumeration) {
+                let functionName = SwiftInterfaceUnit.enumMemberFunction(enum: enumeration.name, member: member.name).uppercased()
+                guard let function = module.functions.first(where: { $0.name == functionName }) else { continue }
+                var counter = 0
+                func temp() -> String { counter += 1; return "%t\(counter)" }
+                var body = ""
+                let declared = function.parameters.enumerated().map { "\(Self.llvmBasicType($0.element.type)) %a\($0.offset)" }
+                var passed: [String] = []
+                var shimTypes: [String] = []
+                var offset = 0
+                if !isStatic {
+                    if enumeration.isPayload {
+                        passed.append("ptr %a0"); shimTypes.append("ptr")
+                    } else {
+                        let ordinal = temp()
+                        body += "  \(ordinal) = fptosi double %a0 to i64\n"
+                        passed.append("i64 \(ordinal)"); shimTypes.append("i64")
+                    }
+                    offset = 1
+                }
+                for (index, parameter) in member.passed.enumerated() {
+                    let value = "%a\(index + offset)"
+                    switch parameter.type {
+                    case .int, .enumeration:
+                        let whole = temp()
+                        body += "  \(whole) = fptosi double \(value) to i64\n"
+                        passed.append("i64 \(whole)"); shimTypes.append("i64")
+                    case .double:
+                        passed.append("double \(value)"); shimTypes.append("double")
+                    case .bool:
+                        passed.append("i1 \(value)"); shimTypes.append("i1")
+                    default:
+                        // A string stays the runtime's pointer, which the shim
+                        // reads; an object or a record is a pointer anyway.
+                        passed.append("ptr \(value)"); shimTypes.append("ptr")
+                    }
+                }
+                if case .payloadEnumeration(let precise) = member.returns {
+                    let index = module.types.first { $0.name == (api.enumerations[precise]?.name ?? "").uppercased() }?.index ?? -1
+                    passed.append("i64 \(index)"); shimTypes.append("i64")
+                }
+                let shimReturn: String
+                switch member.returns {
+                case .void: shimReturn = "void"
+                case .double: shimReturn = "double"
+                case .bool: shimReturn = "i1"
+                case .int, .enumeration: shimReturn = "i64"
+                default: shimReturn = "ptr"
+                }
+                let shim = "basic_handler_\(stem)_\(member.name)"
+                out += "declare \(shimReturn) @\"\(shim)\"(\(shimTypes.joined(separator: ", ")))\n"
+                let call = "call \(shimReturn) @\"\(shim)\"(\(passed.joined(separator: ", ")))"
+                let returnType = Self.llvmBasicType(function.returnType)
+                if shimReturn == "void" {
+                    out += "define void @\"F.\(functionName)\"(\(declared.joined(separator: ", "))) {\n\(body)  \(call)\n  ret void\n}\n"
+                } else {
+                    let raw = temp()
+                    body += "  \(raw) = \(call)\n"
+                    var value = raw
+                    if shimReturn == "i64" {
+                        let number = temp()
+                        body += "  \(number) = sitofp i64 \(raw) to double\n"
+                        value = number
+                    }
+                    out += "define \(returnType) @\"F.\(functionName)\"(\(declared.joined(separator: ", "))) {\n\(body)  ret \(returnType) \(value)\n}\n"
+                }
+            }
+        }
+        return out
+    }
+
     func perImportedClass(_ entry: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)) -> String {
         let name = entry.type.name
         var out = "; \(entry.module).\(entry.klass.name), imported\n"

@@ -33,7 +33,11 @@ struct SwiftSymbolGraphTests {
         public func refinish(_ to: Finish) {}
     }
     public func totalArea(_ shapes: [Shape]) -> Double { 0 }
-    public enum Unit { case metric, imperial }
+    public enum Unit {
+        case metric, imperial
+        public var isMetric: Bool { self == .metric }
+        public static var standard: Unit { .metric }
+    }
     public enum Outcome { case hit(Double), miss }
     public enum Wrapped { case shape(Shape) }
     """
@@ -167,6 +171,22 @@ struct SwiftSymbolGraphTests {
         #expect(outcome.payloads.first?.map(\.name) == ["Value"])
         #expect(outcome.payloads.first?.first?.type == .double)
         #expect(SwiftInterfaceUnit(api: api).render().contains("  hit(Value AS DOUBLE)"))
+    }
+
+    /// Members on an enum import (E5): an instance property is a free
+    /// function taking the value, a static one takes nothing, and the front
+    /// end is told which member each function is.
+    @Test func enumMembersImportAsFunctions() throws {
+        let api = try #require(Self.graph)
+        let unit = try #require(api.enumerations.values.first { $0.name == "Unit" })
+        #expect(unit.instanceProperties.map(\.name) == ["isMetric"])
+        #expect(unit.staticProperties.map(\.name) == ["standard"])
+        let interface = SwiftInterfaceUnit(api: api)
+        let rendered = interface.render()
+        #expect(rendered.contains("FUNCTION Unit__isMetric(Receiver AS Unit) AS BOOLEAN"), "got:\n\(rendered)")
+        #expect(rendered.contains("FUNCTION Unit__standard() AS Unit"), "got:\n\(rendered)")
+        #expect(interface.enumMembers["UNIT"]?["ISMETRIC"]?.isStatic == false)
+        #expect(interface.enumMembers["UNIT"]?["STANDARD"]?.isStatic == true)
     }
 
     /// A nested type, referenced by its qualified path (E2).

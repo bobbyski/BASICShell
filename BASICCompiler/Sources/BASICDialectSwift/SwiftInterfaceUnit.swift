@@ -63,6 +63,24 @@ public struct SwiftInterfaceUnit {
             }
             lines.append("END ENUM")
         }
+        // Members on enums (E5): each is a free function the front end calls
+        // for `B.inner` or `Tint.favourite`. The body is a placeholder, as
+        // every imported member's is, and the object model supplies a thunk.
+        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
+            for (member, isStatic, _) in Self.members(of: enumeration) {
+                let receiver = isStatic ? [] : ["Receiver AS \(enumeration.name)"]
+                let parameters = (receiver + Self.declared(member.passed, in: api)).joined(separator: ", ")
+                let name = Self.enumMemberFunction(enum: enumeration.name, member: member.name)
+                if member.returns == .void {
+                    lines.append("FUNCTION \(name)(\(parameters)) AS VOID")
+                    lines.append("END FUNCTION")
+                } else {
+                    lines.append("FUNCTION \(name)(\(parameters)) AS \(Self.basicType(member.returns, in: api))")
+                    lines.append("  RETURN \(Self.placeholder(member.returns, in: api))")
+                    lines.append("END FUNCTION")
+                }
+            }
+        }
         if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
             // `AS DOUBLE`, not VOID: a BASIC closure is an *expression* and
             // must yield something. Swift's `() -> Void` discards it, which
@@ -108,6 +126,44 @@ public struct SwiftInterfaceUnit {
             lines.append("END CLASS")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The free function an enum member is declared as (E5): `Tint__isWarm`.
+    public static func enumMemberFunction(enum enumName: String, member: String) -> String {
+        "\(enumName)__\(member)"
+    }
+
+    /// An enum's members as functions (E5): each with whether it is static
+    /// and whether it is a property, which is read without parentheses.
+    public static func members(of enumeration: SwiftAPI.Enumeration) -> [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)] {
+        func asFunction(_ property: SwiftAPI.Property) -> SwiftAPI.Function {
+            SwiftAPI.Function(name: property.name, symbol: property.symbol, parameters: [], returns: property.type,
+                              isInitializer: false, isOverridable: false)
+        }
+        return enumeration.instanceProperties.map { (asFunction($0), false, true) }
+            + enumeration.instanceMethods.map { ($0, false, false) }
+            + enumeration.staticProperties.map { (asFunction($0), true, true) }
+            + enumeration.staticMethods.map { ($0, true, false) }
+    }
+
+    /// Which free function each enum member is, for the front end (E5):
+    /// normalized enum name, then normalized member name.
+    public var enumMembers: [String: [String: SemanticModel.EnumMemberRef]] {
+        var table: [String: [String: SemanticModel.EnumMemberRef]] = [:]
+        for enumeration in api.enumerations.values {
+            for (member, isStatic, isProperty) in Self.members(of: enumeration) {
+                table[enumeration.name.uppercased(), default: [:]][member.name.uppercased()] = SemanticModel.EnumMemberRef(
+                    function: Self.enumMemberFunction(enum: enumeration.name, member: member.name).uppercased(),
+                    isStatic: isStatic, isProperty: isProperty)
+            }
+        }
+        return table
+    }
+
+    /// The normalized names of those free functions, whose bodies the
+    /// object model supplies.
+    public var enumMemberFunctionNames: Set<String> {
+        Set(enumMembers.values.flatMap { $0.values.map(\.function) })
     }
 
     /// The initializer BASIC's `NEW` means: the first the graph lists whose
@@ -157,8 +213,9 @@ public struct SwiftInterfaceUnit {
             total + klass.methods.count + klass.properties.count
                 + (chosenInitializer(of: klass) == nil ? 0 : 1)
         }
-        // An enum's cases count as members: they are what a program uses.
-        let cases = api.enumerations.values.reduce(0) { $0 + $1.cases.count }
+        // An enum's cases count as members: they are what a program uses; so
+        // do the members declared on it (E5).
+        let cases = api.enumerations.values.reduce(0) { $0 + $1.cases.count + Self.members(of: $1).count }
         return (imported + cases, api.skipped.count + skippedInitializers.count)
     }
 

@@ -157,7 +157,8 @@ func compilation(for invocation: Invocation) -> Compilation {
             // turned `${...}` substitution off for every program without a
             // project — caught by parity, which is what it is for.
             let module = try BIRBuilder(defaultStringSubstitution: project?.stringSubstitution ?? true,
-                                        externalClasses: result.externalClasses)
+                                        externalClasses: result.externalClasses,
+                                        externalFunctions: result.externalFunctions, enumMembers: result.enumMembers)
                 .build(result.lines, moduleName: Compilation.moduleName(for: sourcePath))
             var resolved = Compilation(
                 dialect: SwiftDialect(imports: result.imports),
@@ -255,7 +256,8 @@ case "import-probe":
         // The front end over the whole program, generated units included —
         // and then lowering, which is where the interface unit and the
         // object model have to agree about which members exist.
-        let module = try BIRBuilder(externalClasses: result.externalClasses)
+        let module = try BIRBuilder(externalClasses: result.externalClasses,
+                                        externalFunctions: result.externalFunctions, enumMembers: result.enumMembers)
             .build(result.lines, moduleName: Compilation.moduleName(for: source))
         _ = try SwiftDialect(imports: result.imports).lower(module, options: CompileOptions())
         print("shims compiled, interfaces type-check, thunks emit")

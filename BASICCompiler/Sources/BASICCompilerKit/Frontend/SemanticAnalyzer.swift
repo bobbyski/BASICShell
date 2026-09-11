@@ -654,7 +654,22 @@ struct SemanticAnalyzer {
 
     /// The static type of an expression, or nil while it depends on a
     /// variable whose type is not known yet.
+    /// The ENUM a variable holds, when it holds one (E5): a VB-style enum by
+    /// its declaration, a payload one by its record type.
+    func receiverEnum(_ name: VariableName, in function: String?) -> String? {
+        if let declared = model.declaredTypeName(of: name.normalized, in: function) { return declared }
+        if case .composite(let typeName)? = model.info(name.normalized, in: function)?.type, model.enums[typeName] != nil {
+            return typeName
+        }
+        return nil
+    }
+
     func typeOf(_ expression: Expression, in function: String?) throws -> BIRType? {
+        // `B.inner` / `Tint.favourite` is a call to the free function the
+        // importer declared for that enum member (E5).
+        if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0, in: function) }) {
+            return try typeOf(call, in: function)
+        }
         switch expression {
         case .number: return .number
         case .string, .interpolatedString: return .string

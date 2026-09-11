@@ -73,7 +73,16 @@ public final class Button {
 
 /// A plain enum, so an imported one has something to be (E2). BASIC sees
 /// an ordinary `ENUM Tint` whose members count from 0 in case order.
-public enum Tint { case red, green, blue }
+public enum Tint {
+    case red, green, blue
+
+    /// Members on an enum (E5): BASIC reaches them the way VB reaches an
+    /// enum's members, with a dot on the value — `T.isWarm`, `T.blended(…)`
+    /// — and on the type for a static, `Tint.favourite`.
+    public var isWarm: Bool { self == .red }
+    public func blended(with other: Tint) -> String { "\(self) and \(other)" }
+    public static var favourite: Tint { .green }
+}
 
 /// An enum whose cases carry values (E4). BASIC sees `ENUM Fill` with a field
 /// per associated value — `solid(Value AS DOUBLE)`, `pattern(name AS STRING,
@@ -82,6 +91,12 @@ public enum Fill {
     case none
     case solid(Double)
     case pattern(name: String, scale: Int)
+
+    /// A member on an enum whose cases carry values (E5).
+    public var isEmpty: Bool {
+        if case .none = self { return true }
+        return false
+    }
 }
 
 /// The framework's own error type. Nothing about it is written for BASIC.
