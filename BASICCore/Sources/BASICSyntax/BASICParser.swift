@@ -72,9 +72,24 @@ public struct Parser {
         if isStatementEnd { return nil }
         guard case .identifier(let name) = peek else { throw syntax("Expected an ENUM member name") }
         _ = advance()
+        // A payload case (E3): `Hit(Damage AS DOUBLE, Multiplier AS DOUBLE)`,
+        // the same `name AS type` a TYPE field uses, so it reads as BASIC.
+        var fields: [EnumCaseField] = []
+        if match(.leftParen), !match(.rightParen) {
+            repeat {
+                guard case .identifier(let fieldName) = peek else { throw syntax("Expected a field name in an ENUM member") }
+                _ = advance()
+                guard matchIdentifier("AS") else { throw syntax("Expected AS") }
+                fields.append(EnumCaseField(name: fieldName, type: try parseTypeSpec(allowVoid: false).type))
+            } while match(.comma)
+            guard match(.rightParen) else { throw syntax("Expected )") }
+        }
         var value = next
         var isExplicit = false
         if match(.equals) {
+            // Swift refuses a raw value on a case with associated values, and
+            // for the same reason: the number would claim to be the whole value.
+            guard fields.isEmpty else { throw syntax("An ENUM member with fields cannot also be given a value") }
             let negative = match(.minus)
             guard case .number(let literal) = peek else { throw syntax("Expected a whole number after = in an ENUM") }
             _ = advance()
@@ -84,7 +99,7 @@ public struct Parser {
         }
         next = value + 1
         guard isStatementEnd else { throw syntax("Unexpected text after an ENUM member") }
-        return EnumCase(name: name, value: value, isExplicit: isExplicit)
+        return EnumCase(name: name, value: value, isExplicit: isExplicit, fields: fields)
     }
 
     public mutating func parseClosureBlockAssignmentHeader() throws -> (

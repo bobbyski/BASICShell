@@ -228,11 +228,26 @@ public struct EnumCase: Equatable {
     public let value: Int
     /// Whether the program wrote `= n` rather than taking the running count.
     public let isExplicit: Bool
+    /// The fields a payload case carries — `Hit(Damage AS DOUBLE)` (E3).
+    /// Empty for a VB-style member.
+    public let fields: [EnumCaseField]
 
-    public init(name: String, value: Int, isExplicit: Bool) {
+    public init(name: String, value: Int, isExplicit: Bool, fields: [EnumCaseField] = []) {
         self.name = name
         self.value = value
         self.isExplicit = isExplicit
+        self.fields = fields
+    }
+}
+
+/// One field of an `ENUM` payload case: `Damage AS DOUBLE`.
+public struct EnumCaseField: Equatable {
+    public let name: String
+    public let type: BASICType
+
+    public init(name: String, type: BASICType) {
+        self.name = name
+        self.type = type
     }
 }
 

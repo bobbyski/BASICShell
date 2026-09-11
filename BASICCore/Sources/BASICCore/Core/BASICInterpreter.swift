@@ -1816,6 +1816,12 @@ public final class BASICInterpreter {
             for member in cases where !seen.insert(member.name.uppercased()).inserted {
                 throw BASICError.runtime("ENUM \(name) declares \(member.name) twice")
             }
+            // Parsed, and refused by name until the value exists (E3): a
+            // payload case is not a number, and treating it as one would be
+            // the silent difference this whole design exists to prevent.
+            if let carrying = cases.first(where: { !$0.fields.isEmpty }) {
+                throw BASICError.runtime("ENUM \(name): \(carrying.name) carries fields, and payload members are not built yet (E3)")
+            }
             definitions[normalized] = BASICEnumDefinition(
                 displayName: name, normalizedName: normalized,
                 members: cases.map { ($0.name, $0.value) }

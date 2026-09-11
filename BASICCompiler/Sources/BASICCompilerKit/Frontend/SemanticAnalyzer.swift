@@ -273,6 +273,11 @@ struct SemanticAnalyzer {
             for member in cases where !seen.insert(member.name.uppercased()).inserted {
                 throw CompileError("ENUM \(name) declares \(member.name) twice", at: Self.location(of: line))
             }
+            // The same refusal the interpreter makes, in the same words.
+            if let carrying = cases.first(where: { !$0.fields.isEmpty }) {
+                throw CompileError("ENUM \(name): \(carrying.name) carries fields, and payload members are not built yet (E3)",
+                                   at: Self.location(of: line))
+            }
             model.enums[normalized] = SemanticModel.Enumeration(
                 displayName: name, members: cases.map { ($0.name, $0.value) }
             )
