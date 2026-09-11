@@ -477,13 +477,96 @@ final class FunctionBuilder {
     /// The function name an outlined main subroutine is emitted under.
     static func subroutineName(_ label: String) -> String { "$SUB.\(label)" }
 
+    /// A bare member of a payload ENUM — `Shot.Missed` — as a record value,
+    /// or nil when the reference is not one (E3).
+    func payloadMember(_ reference: VariableReference) throws -> BIRExpression? {
+        guard reference.fields.count == 1, reference.indexes.isEmpty,
+              let definition = model.enums[reference.base.normalized], definition.isPayload
+        else { return nil }
+        guard let member = definition.member(named: reference.fields[0]) else {
+            throw CompileError("ENUM \(definition.displayName) has no member \(reference.fields[0])", at: location)
+        }
+        let fields = definition.fields(of: member.name)
+        guard fields.isEmpty else {
+            throw CompileError("\(definition.displayName).\(member.name) carries fields; write \(definition.displayName).\(member.name)(\(fields.map(\.name).joined(separator: ", ")))", at: location)
+        }
+        return payloadValue(definition, typeName: reference.base.normalized, member: member, arguments: [])
+    }
+
+    /// `Shot.Hit(12)` — a payload member built with its fields (E3), or nil.
+    func payloadConstruction(_ reference: VariableReference, _ method: VariableName, _ arguments: [Expression]) throws -> BIRExpression? {
+        guard reference.fields.isEmpty, reference.indexes.isEmpty,
+              let definition = model.enums[reference.base.normalized], definition.isPayload
+        else { return nil }
+        guard let member = definition.member(named: method.name) else {
+            throw CompileError("ENUM \(definition.displayName) has no member \(method.name)", at: location)
+        }
+        let fields = definition.fields(of: member.name)
+        guard fields.count == arguments.count else {
+            throw CompileError("\(definition.displayName).\(member.name) takes \(fields.count) field(s)", at: location)
+        }
+        let values = try zip(fields, arguments).map { field, argument in
+            try lowerExpression(argument, expecting: SemanticAnalyzer.builtInFieldType(field.type),
+                                context: "\(definition.displayName).\(member.name)")
+        }
+        return payloadValue(definition, typeName: reference.base.normalized, member: member, arguments: values)
+    }
+
+    /// A payload record: the case at slot 0, then that case's fields. Every
+    /// other slot keeps the default `basic_rt_composite_new` gave it, which
+    /// is what makes `=` on two values mean "same case, same fields".
+    private func payloadValue(_ definition: SemanticModel.Enumeration, typeName: String,
+                              member: (name: String, value: Int), arguments: [BIRExpression]) -> BIRExpression {
+        let slot = hidden("enum", .composite(typeName))
+        emit(.store(slot, .construct(typeName)))
+        emit(.storeField(.field(.variable(slot), index: 0, type: .number), .number(Double(member.value))))
+        for (field, value) in zip(definition.fields(of: member.name), arguments) {
+            guard let index = definition.slotIndex(of: field.name) else { continue }
+            emit(.storeField(.field(.variable(slot), index: index, type: value.type), value))
+        }
+        return .load(slot)
+    }
+
+    /// `S.Damage` on a payload ENUM value (E3), through the runtime, which
+    /// checks the case: a field the current case lacks is an error naming the
+    /// case, in the words the interpreter uses.
+    func payloadField(_ reference: VariableReference) throws -> BIRExpression? {
+        guard reference.fields.count == 1, reference.indexes.isEmpty,
+              case .composite(let typeName) = variable(reference.base).type,
+              let definition = model.enums[typeName], definition.isPayload
+        else { return nil }
+        let fieldName = reference.fields[0]
+        guard let index = definition.slotIndex(of: fieldName),
+              let type = definition.slots.first(where: { $0.name.uppercased() == fieldName.uppercased() })?.type
+        else { throw CompileError("\(definition.displayName) has no field \(fieldName)", at: location) }
+        let carrying = definition.members.filter { member in
+            definition.fields(of: member.name).contains { $0.name.uppercased() == fieldName.uppercased() }
+        }.map { String($0.value) }
+        let descriptor = [reference.base.name, definition.displayName, fieldName,
+                          definition.members.map(\.name).joined(separator: ","),
+                          carrying.joined(separator: ",")].joined(separator: "\n")
+        let checked = BIRExpression.hostCall("basic_rt_enum_field",
+            [.load(variable(reference.base)), .number(Double(index)), .string(descriptor)], returns: .variant)
+        return .unbox(checked, SemanticAnalyzer.builtInFieldType(type), name: fieldName)
+    }
+
+    /// `PRINT` of a payload value: `Critical(30, "headshot")` (E3). One line
+    /// per member in the descriptor: its name, then its fields' slots.
+    func payloadTextCall(_ value: BIRExpression, _ definition: SemanticModel.Enumeration) -> BIRExpression {
+        let descriptor = definition.members.map { member in
+            ([member.name] + definition.fields(of: member.name).compactMap { definition.slotIndex(of: $0.name).map(String.init) })
+                .joined(separator: ",")
+        }.joined(separator: "\n")
+        return .hostCall("basic_rt_enum_payload_text", [value, .string(descriptor)], returns: .string)
+    }
+
     /// The value of `Suit.Clubs`, or nil when the reference is not one.
     ///
     /// Folded at compile time, which is all a payload-free member ever needs
     /// to be: it is a named integer constant, exactly as VB's is.
     func enumMember(_ reference: VariableReference) throws -> Int? {
         guard reference.fields.count == 1, reference.indexes.isEmpty,
-              let definition = model.enums[reference.base.normalized]
+              let definition = model.enums[reference.base.normalized], !definition.isPayload
         else { return nil }
         let wanted = reference.fields[0].uppercased()
         guard let member = definition.members.first(where: { $0.name.uppercased() == wanted }) else {
@@ -503,7 +586,7 @@ final class FunctionBuilder {
             return model.enums[declaredEnumName(of: name)  ?? ""]
         case .variableReference(let reference):
             if reference.fields.count == 1, let definition = model.enums[reference.base.normalized] {
-                return definition
+                return definition.isPayload ? nil : definition
             }
             guard reference.fields.isEmpty, reference.indexes.isEmpty else { return nil }
             return model.enums[declaredEnumName(of: reference.base) ?? ""]
@@ -669,6 +752,12 @@ final class FunctionBuilder {
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
+            // A payload member's fields are read, not written (E3); the
+            // interpreter refuses the same assignment in the same words.
+            if !reference.fields.isEmpty, case .composite(let typeName) = variable(reference.base).type,
+               let definition = model.enums[typeName], definition.isPayload {
+                throw CompileError("\(definition.displayName)'s fields cannot be assigned; assign a new value", at: location)
+            }
             if case .system = variable(reference.base).type, reference.fields.count == 1, reference.indexes.isEmpty {
                 guard let value else { return }
                 emit(.systemSet(.load(variable(reference.base)), property: reference.fields[0], boxed(try lowerExpression(value))))
@@ -1620,6 +1709,18 @@ final class FunctionBuilder {
                 return .compare(comparison, .unbox(.load(subject), .number, name: nil), try lowerExpression(expression, expecting: .number, context: "CASE IS"))
             }
         }
+        if case .composite(let typeName) = subject.type, let definition = model.enums[typeName], definition.isPayload {
+            // `CASE Shot.Hit` matches the case, whatever its fields (E3); a
+            // built value compares as one, case and fields.
+            guard case .equals(let expression) = clause else {
+                throw CompileError("CASE on an ENUM value takes a member, not a range or comparison", at: location)
+            }
+            if case .variableReference(let reference) = expression, reference.fields.count == 1, reference.indexes.isEmpty,
+               reference.base.normalized == typeName, let member = definition.member(named: reference.fields[0]) {
+                return .compare(.equal, .field(.load(subject), index: 0, type: .number), .number(Double(member.value)))
+            }
+            return .valueEqual(boxed(.load(subject)), boxed(try lowerExpression(expression, expecting: subject.type, context: "CASE")))
+        }
         switch clause {
         case .equals(let expression):
             return .compare(.equal, .load(subject), try lowerExpression(expression, expecting: subject.type, context: "CASE"))
@@ -1664,7 +1765,12 @@ final class FunctionBuilder {
                 return .value(.enumText(try lowerExpression(expression, expecting: .number, context: "PRINT"),
                                         members: members))
             }
-            return .value(try lowerExpression(expression, expecting: nil, context: "PRINT"))
+            let lowered = try lowerExpression(expression, expecting: nil, context: "PRINT")
+            // A payload value prints as it would be written (E3).
+            if case .composite(let typeName) = lowered.type, let definition = model.enums[typeName], definition.isPayload {
+                return .value(payloadTextCall(lowered, definition))
+            }
+            return .value(lowered)
         }
     }
 
@@ -1721,6 +1827,10 @@ final class FunctionBuilder {
         case .variableReference(let reference):
             // `Suit.Clubs` — an ENUM member, which is a constant folded here
             // and not a field of any value (E1).
+            // A payload ENUM (E3): a bare member is a record built here, and
+            // a field read goes through the runtime, which checks the case.
+            if let value = try payloadMember(reference) { return value }
+            if let value = try payloadField(reference) { return value }
             if let member = try enumMember(reference) { return .number(Double(member)) }
             if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.count == 1 {
                 return try lowerSystemCall(.load(variable(reference.base)), typeName, VariableName(name: reference.fields[0], column: reference.base.column), [])
@@ -1735,6 +1845,8 @@ final class FunctionBuilder {
             }
             return try lowerNew(className, arguments)
         case .methodCall(let reference, let method, let arguments):
+            // `Shot.Hit(12)` builds a payload member (E3).
+            if let value = try payloadConstruction(reference, method, arguments) { return value }
             if isFileService(reference) {
                 let (member, lowered, returns) = try lowerFileService(method, arguments)
                 guard returns != .void else {

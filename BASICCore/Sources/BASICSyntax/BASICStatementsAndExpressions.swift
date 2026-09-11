@@ -240,6 +240,39 @@ public struct EnumCase: Equatable {
     }
 }
 
+extension EnumCase {
+    /// Why an ENUM with payload members is not a legal one, or nil (E3).
+    ///
+    /// Here, in the module both engines import, so the interpreter and the
+    /// compiler refuse the same programs in the same words.
+    public static func payloadProblem(enumName: String, cases: [EnumCase]) -> String? {
+        guard cases.contains(where: { !$0.fields.isEmpty }) else { return nil }
+        // Swift's rule, for Swift's reason: with fields in play the number is
+        // the enum's to assign, and one written by hand would claim otherwise.
+        if let explicit = cases.first(where: \.isExplicit) {
+            return "ENUM \(enumName): \(explicit.name) is given a value, and an ENUM whose members carry fields numbers its own members"
+        }
+        var seen: [String: BASICType] = [:]
+        for member in cases {
+            for field in member.fields {
+                switch field.type {
+                case .scalar(.double), .scalar(.integer), .scalar(.string), .scalar(.boolean):
+                    break
+                default:
+                    return "ENUM \(enumName): field \(field.name) is \(field.type.name); a member's fields are numbers, strings or booleans"
+                }
+                // One slot per field name across the members, so one type.
+                let key = field.name.uppercased()
+                if let earlier = seen[key], earlier != field.type {
+                    return "ENUM \(enumName): field \(field.name) is \(earlier.name) in one member and \(field.type.name) in another"
+                }
+                seen[key] = field.type
+            }
+        }
+        return nil
+    }
+}
+
 /// One field of an `ENUM` payload case: `Damage AS DOUBLE`.
 public struct EnumCaseField: Equatable {
     public let name: String

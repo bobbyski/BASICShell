@@ -386,6 +386,8 @@ struct LLVMLowering {
     declare ptr @basic_rt_line_input(ptr)
     declare ptr @basic_rt_number_text(double)
     declare ptr @basic_rt_enum_text(double, ptr, ptr, i64)
+    declare ptr @basic_rt_enum_field(ptr, double, ptr)
+    declare ptr @basic_rt_enum_payload_text(ptr, ptr)
     declare void @basic_rt_using_begin(ptr)
     declare void @basic_rt_using_number(double)
     declare void @basic_rt_using_string(ptr)

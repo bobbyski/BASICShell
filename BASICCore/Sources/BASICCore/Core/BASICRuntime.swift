@@ -18,6 +18,8 @@ final class BASICRuntime {
     /// on declarations the parser has not seen. This set is how a declared
     /// type is corrected once they have all been gathered.
     var enumNames: Set<String> = []
+    /// The ENUMs themselves, for payload defaults and coercion (E3).
+    var enumDefinitions: [String: BASICEnumDefinition] = [:]
 
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
@@ -1267,7 +1269,14 @@ final class BASICRuntime {
         // An ENUM is a number and coerces like one (E1). That is not a
         // relaxation, it is the whole payload-free form: VB lets you assign
         // CType(6, Suit) and read CInt(s) back, and so does this.
-        if case .enumType = type {
+        if case .enumType(let name) = type {
+            // A payload ENUM's value is a record of its own kind and nothing
+            // else (E3) — not a number, and not another enum's value.
+            if let definition = enumDefinitions[name.uppercased()], definition.isPayload {
+                if case .record(let valueName, _) = value, valueName == definition.normalizedName { return value }
+                if case .empty = value { return defaultValue(for: type) }
+                throw BASICError.type(message: "Cannot assign a non-\(definition.displayName) value to \(variable.name)")
+            }
             return try coerce(value, to: .scalar(.double), variable: variable)
         }
         guard case .scalar(let scalar) = type else {
@@ -2391,9 +2400,15 @@ final class BASICRuntime {
         case .scalar(.variant): return .empty
         case .scalar(.task): return .empty
         case .scalar: return .number(0)
-        // Zero, as VB's default for an enum is — which usually names the
-        // first member, and prints as that member.
-        case .enumType: return .number(0)
+        // A payload ENUM's default is its first member with its fields at
+        // their defaults (E3); a VB-style enum's is zero, as VB's is — which
+        // usually names the first member, and prints as that member.
+        case .enumType(let name):
+            guard let definition = enumDefinitions[name.uppercased()], definition.isPayload,
+                  let first = definition.members.first else { return .number(0) }
+            var values: [String: BASICValue] = [BASICEnumDefinition.tagKey: .number(Double(first.value))]
+            for field in definition.fields(of: first.name) { values[field.name.uppercased()] = defaultValue(for: field.type) }
+            return .record(definition.normalizedName, values)
         case .record(let name):
             guard let definition = recordDefinitions[name.uppercased()] else {
                 return .record(name, [:])

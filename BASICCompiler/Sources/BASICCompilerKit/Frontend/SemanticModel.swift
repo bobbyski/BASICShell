@@ -292,10 +292,42 @@ public final class SemanticModel {
     public struct Enumeration: Sendable {
         public let displayName: String
         public let members: [(name: String, value: Int)]
+        /// Each member's fields, by normalized member name (E3); empty for a
+        /// VB-style member.
+        public let fields: [String: [(name: String, type: BASICType)]]
 
-        public init(displayName: String, members: [(name: String, value: Int)]) {
+        public init(displayName: String, members: [(name: String, value: Int)],
+                    fields: [String: [(name: String, type: BASICType)]] = [:]) {
             self.displayName = displayName
             self.members = members
+            self.fields = fields
+        }
+
+        /// Whether any member carries fields. Such an ENUM's values are
+        /// records — the case at slot 0, then each field name once.
+        public var isPayload: Bool { fields.values.contains { !$0.isEmpty } }
+
+        public func fields(of member: String) -> [(name: String, type: BASICType)] { fields[member.uppercased()] ?? [] }
+
+        public func member(named name: String) -> (name: String, value: Int)? {
+            let wanted = name.uppercased()
+            return members.first { $0.name.uppercased() == wanted }
+        }
+
+        /// The record's slots after the tag: each field name once, in the
+        /// order the members first mention them.
+        public var slots: [(name: String, type: BASICType)] {
+            var seen = Set<String>()
+            var out: [(name: String, type: BASICType)] = []
+            for member in members {
+                for field in fields(of: member.name) where seen.insert(field.name.uppercased()).inserted { out.append(field) }
+            }
+            return out
+        }
+
+        /// A field's slot in the record; the tag is slot 0.
+        public func slotIndex(of field: String) -> Int? {
+            slots.firstIndex { $0.name.uppercased() == field.uppercased() }.map { $0 + 1 }
         }
     }
 

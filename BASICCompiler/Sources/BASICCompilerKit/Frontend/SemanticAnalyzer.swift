@@ -40,6 +40,7 @@ struct SemanticAnalyzer {
         // apart from a record of that name.
         try collectEnums()
         try collectTypeNames()
+        try registerPayloadEnumTypes()
         // Before members, not after: a class method may take a FUNCTION TYPE
         // as a parameter, and resolving that member needs the signature to
         // exist already. The interpreter accepts such a method and basicc
@@ -254,9 +255,37 @@ struct SemanticAnalyzer {
     func enumName(of type: BASICType) -> String? {
         switch type {
         case .record(let name), .enumType(let name):
-            return model.enums[name.uppercased()] != nil ? name.uppercased() : nil
+            // A payload ENUM prints from its value, not from a name table.
+            guard let enumeration = model.enums[name.uppercased()], !enumeration.isPayload else { return nil }
+            return name.uppercased()
         default:
             return nil
+        }
+    }
+
+    /// A payload ENUM's values are records (E3): the case at slot 0, then
+    /// each field name once. Numbered after every TYPE and CLASS — `highest
+    /// index + 1`, the rule a built-in event class uses — so no index is
+    /// ever shared.
+    private mutating func registerPayloadEnumTypes() throws {
+        for (normalized, enumeration) in model.enums.sorted(by: { $0.key < $1.key }) where enumeration.isPayload {
+            guard model.types[normalized] == nil else {
+                throw CompileError("ENUM \(enumeration.displayName) shares its name with a TYPE or CLASS", at: nil)
+            }
+            func field(_ name: String, _ type: BASICType) -> SemanticModel.Field {
+                SemanticModel.Field(
+                    name: name.uppercased(), displayName: name, type: Self.builtInFieldType(type),
+                    visibility: .public, owner: normalized, dimensions: [], jsonName: nil,
+                    defaultValue: nil, isInteger: type == .scalar(.integer), metadata: [:]
+                )
+            }
+            model.addType(SemanticModel.CompositeType(
+                name: normalized, displayName: enumeration.displayName, kind: .record,
+                index: (model.types.values.map(\.index).max() ?? -1) + 1,
+                fields: [field("$CASE", .scalar(.integer))] + enumeration.slots.map { field($0.name, $0.type) },
+                methods: [:], base: nil, interfaces: [], members: [:],
+                location: BIRLocation(file: nil, line: 0, statement: 0, lineNumber: nil)
+            ))
         }
     }
 
@@ -273,13 +302,13 @@ struct SemanticAnalyzer {
             for member in cases where !seen.insert(member.name.uppercased()).inserted {
                 throw CompileError("ENUM \(name) declares \(member.name) twice", at: Self.location(of: line))
             }
-            // The same refusal the interpreter makes, in the same words.
-            if let carrying = cases.first(where: { !$0.fields.isEmpty }) {
-                throw CompileError("ENUM \(name): \(carrying.name) carries fields, and payload members are not built yet (E3)",
-                                   at: Self.location(of: line))
+            // The interpreter checks the same rules in the same words (E3).
+            if let problem = EnumCase.payloadProblem(enumName: name, cases: cases) {
+                throw CompileError(problem, at: Self.location(of: line))
             }
             model.enums[normalized] = SemanticModel.Enumeration(
-                displayName: name, members: cases.map { ($0.name, $0.value) }
+                displayName: name, members: cases.map { ($0.name, $0.value) },
+                fields: Dictionary(uniqueKeysWithValues: cases.map { ($0.name.uppercased(), $0.fields.map { ($0.name, $0.type) }) })
             )
         }
     }
@@ -810,15 +839,18 @@ struct SemanticAnalyzer {
         case .dictionary: return .dictionary
         case .void: return .void
         case .enumType(let typeName):
-            guard model.enums[typeName.uppercased()] != nil else {
+            guard let enumeration = model.enums[typeName.uppercased()] else {
                 throw CompileError("\(name) AS \(typeName): unknown ENUM", at: Self.location(of: line))
             }
-            return .number
+            return enumeration.isPayload ? .composite(typeName.uppercased()) : .number
         case .record(let typeName), .classType(let typeName), .interfaceType(let typeName):
             // An ENUM is a number — that is the payload-free form, not a
             // shortcut. Which enum it is stays in the declared type, which is
             // where PRINT reads it from.
-            if model.enums[typeName.uppercased()] != nil { return .number }
+            // A payload ENUM's value is its synthesized record (E3).
+            if let enumeration = model.enums[typeName.uppercased()] {
+                return enumeration.isPayload ? .composite(typeName.uppercased()) : .number
+            }
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
             if SemanticModel.isSystemClass(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
             guard model.types[typeName.uppercased()] != nil else {

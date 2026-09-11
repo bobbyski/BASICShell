@@ -1,0 +1,12 @@
+default:Missed
+print:Hit(12)
+damage:12
+select: hit for12
+print:Critical(30, "headshot")
+select: landed30 headshot
+equal: same case, same fields
+not equal: a field differs
+not equal: a different case
+original:Critical(30, "headshot") copy:Missed
+print:Missed
+caught, ERR =5

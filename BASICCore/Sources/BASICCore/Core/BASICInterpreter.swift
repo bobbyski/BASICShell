@@ -189,6 +189,7 @@ public final class BASICInterpreter {
             do {
                 enumDefinitions = try collectEnums(in: parsed)
                 runtime.enumNames = Set(enumDefinitions.keys)
+                runtime.enumDefinitions = enumDefinitions
                 recordDefinitions = try collectRecords(in: parsed)
                 runtime.recordDefinitions = recordDefinitions
                 interfaceDefinitions = try collectInterfaces(in: parsed)
@@ -337,6 +338,7 @@ public final class BASICInterpreter {
         }
         enumDefinitions = try collectEnums(in: parsed)
         runtime.enumNames = Set(enumDefinitions.keys)
+        runtime.enumDefinitions = enumDefinitions
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions
         interfaceDefinitions = try collectInterfaces(in: parsed)
@@ -1226,6 +1228,14 @@ public final class BASICInterpreter {
             )
             return .next
         case .referenceAssignment(let reference, let expression):
+            // A payload member's fields are read, not written (E3) — as in
+            // Swift, where a case's values are set by building a new value.
+            // The compiler refuses the same assignment in the same words.
+            if !reference.fields.isEmpty,
+               case .enumType(let declared)? = runtime.declaredType(for: VariableReference(base: reference.base)),
+               let definition = enumDefinitions[declared.uppercased()], definition.isPayload {
+                throw BASICError.runtime("\(definition.displayName)'s fields cannot be assigned; assign a new value")
+            }
             let value = try expression.map(evaluate)
             try runtime.assign(
                 reference: reference,
@@ -1816,16 +1826,16 @@ public final class BASICInterpreter {
             for member in cases where !seen.insert(member.name.uppercased()).inserted {
                 throw BASICError.runtime("ENUM \(name) declares \(member.name) twice")
             }
-            // Parsed, and refused by name until the value exists (E3): a
-            // payload case is not a number, and treating it as one would be
-            // the silent difference this whole design exists to prevent.
-            if let carrying = cases.first(where: { !$0.fields.isEmpty }) {
-                throw BASICError.runtime("ENUM \(name): \(carrying.name) carries fields, and payload members are not built yet (E3)")
+            // The compiler checks the same rules in the same words (E3).
+            if let problem = EnumCase.payloadProblem(enumName: name, cases: cases) {
+                throw BASICError.runtime(problem)
             }
-            definitions[normalized] = BASICEnumDefinition(
+            var definition = BASICEnumDefinition(
                 displayName: name, normalizedName: normalized,
                 members: cases.map { ($0.name, $0.value) }
             )
+            definition.fields = Dictionary(uniqueKeysWithValues: cases.map { ($0.name.uppercased(), $0.fields) })
+            definitions[normalized] = definition
         }
         return definitions
     }
@@ -1835,10 +1845,80 @@ public final class BASICInterpreter {
         guard reference.fields.count == 1, reference.indexes.isEmpty,
               let definition = enumDefinitions[reference.base.normalized]
         else { return nil }
-        guard let value = definition.value(of: reference.fields[0]) else {
+        guard let member = definition.member(named: reference.fields[0]) else {
             throw BASICError.runtime("ENUM \(definition.displayName) has no member \(reference.fields[0])")
         }
-        return .number(Double(value))
+        guard definition.isPayload else { return .number(Double(member.value)) }
+        // In a payload ENUM every value is a record, fields or none (E3). A
+        // member *with* fields named bare is missing them — except as a
+        // CASE, which `payloadCaseTag` answers before this is reached.
+        let fields = definition.fields(of: member.name)
+        guard fields.isEmpty else {
+            throw BASICError.runtime("\(definition.displayName).\(member.name) carries fields; write \(definition.displayName).\(member.name)(\(fields.map(\.name).joined(separator: ", ")))")
+        }
+        return .record(definition.normalizedName, [BASICEnumDefinition.tagKey: .number(Double(member.value))])
+    }
+
+    /// `Shot.Hit(12)` — a payload member built with its fields (E3), or nil.
+    private func enumConstruction(_ receiver: VariableReference, _ method: VariableName, _ arguments: [Expression]) throws -> BASICValue? {
+        guard receiver.fields.isEmpty, receiver.indexes.isEmpty,
+              let definition = enumDefinitions[receiver.base.normalized], definition.isPayload
+        else { return nil }
+        guard let member = definition.member(named: method.name) else {
+            throw BASICError.runtime("ENUM \(definition.displayName) has no member \(method.name)")
+        }
+        let fields = definition.fields(of: member.name)
+        guard fields.count == arguments.count else {
+            throw BASICError.runtime("\(definition.displayName).\(member.name) takes \(fields.count) field(s)")
+        }
+        var values: [String: BASICValue] = [BASICEnumDefinition.tagKey: .number(Double(member.value))]
+        for (field, argument) in zip(fields, arguments) {
+            values[field.name.uppercased()] = try runtime.coerce(
+                evaluate(argument), to: field.type, variable: VariableName(name: field.name, column: 0))
+        }
+        return .record(definition.normalizedName, values)
+    }
+
+    /// `S.Damage` on a variable declared as a payload ENUM, or nil (E3).
+    ///
+    /// The case decides which fields exist: reading one the current case does
+    /// not have is an error naming the case, never a quiet zero.
+    private func enumFieldValue(_ reference: VariableReference) throws -> BASICValue? {
+        guard reference.fields.count == 1, reference.indexes.isEmpty,
+              case .enumType(let declared)? = runtime.declaredType(for: VariableReference(base: reference.base)),
+              let definition = enumDefinitions[declared.uppercased()], definition.isPayload,
+              case .record(_, let values) = runtime.value(for: reference.base),
+              let tag = values[BASICEnumDefinition.tagKey]?.number,
+              let member = definition.member(atTag: tag)
+        else { return nil }
+        let wanted = reference.fields[0].uppercased()
+        guard definition.fields(of: member.name).contains(where: { $0.name.uppercased() == wanted }) else {
+            throw BASICError.runtime("\(reference.base.name) is \(definition.displayName).\(member.name), which has no field \(reference.fields[0])")
+        }
+        return values[wanted] ?? .empty
+    }
+
+    /// The tag `CASE Shot.Hit` names, when the clause is a bare member of a
+    /// payload ENUM (E3).
+    private func payloadCaseTag(_ expression: Expression) -> Int? {
+        guard case .variableReference(let reference) = expression, reference.fields.count == 1, reference.indexes.isEmpty,
+              let definition = enumDefinitions[reference.base.normalized], definition.isPayload
+        else { return nil }
+        return definition.member(named: reference.fields[0])?.value
+    }
+
+    /// A payload value as it would be written: `Critical(30, "headshot")`,
+    /// or just `Missed` for a member with no fields (E3).
+    static func payloadText(_ definition: BASICEnumDefinition, _ values: [String: BASICValue]) -> String {
+        guard let tag = values[BASICEnumDefinition.tagKey]?.number, let member = definition.member(atTag: tag) else { return "" }
+        let fields = definition.fields(of: member.name)
+        guard !fields.isEmpty else { return member.name }
+        let shown = fields.map { field -> String in
+            let value = values[field.name.uppercased()] ?? .empty
+            if case .string = value { return "\"" + value.description + "\"" }
+            return value.description
+        }
+        return member.name + "(" + shown.joined(separator: ", ") + ")"
     }
 
     /// What `PRINT` shows for an expression.
@@ -1849,6 +1929,11 @@ public final class BASICInterpreter {
     /// no member shows as the number, again as VB does.
     private func printedText(of expression: Expression) throws -> String {
         let value = try evaluate(expression)
+        // A payload value carries its case, so it prints from the value —
+        // which is also why one inside a VARIANT prints the same (E3).
+        if case .record(let typeName, let values) = value, let definition = enumDefinitions[typeName], definition.isPayload {
+            return Self.payloadText(definition, values)
+        }
         guard let definition = enumType(of: expression),
               case .number(let number) = value,
               let name = definition.name(of: number)
@@ -5378,6 +5463,12 @@ public final class BASICInterpreter {
     private func caseClause(_ clause: CaseClause, matches testValue: BASICValue) throws -> Bool {
         switch clause {
         case .equals(let expression):
+            // `CASE Shot.Hit` matches the case, whatever its fields (E3);
+            // `CASE Shot.Hit(12)` is a value, and compares as one.
+            if let tag = payloadCaseTag(expression) {
+                guard case .record(_, let values) = testValue else { return false }
+                return values[BASICEnumDefinition.tagKey]?.number == Double(tag)
+            }
             return try compare(testValue, .equal, evaluate(expression))
         case .range(let lower, let upper):
             return try compare(testValue, .greaterEqual, evaluate(lower)) && compare(testValue, .lessEqual, evaluate(upper))
@@ -5482,6 +5573,8 @@ public final class BASICInterpreter {
             // a field of anything. Checked before the variable lookup because
             // the enum's name is a type, and there is no variable by it.
             if let value = try enumMemberValue(reference) { return value }
+            // `S.Damage` — a payload member's field, guarded by the case.
+            if let value = try enumFieldValue(reference) { return value }
             return try runtime.value(
                 for: reference,
                 indexes: try reference.indexes.map(evaluate),
@@ -5528,6 +5621,9 @@ public final class BASICInterpreter {
             }
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(evaluate), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):
+            // `Shot.Hit(12)` builds a payload member (E3); the enum's name is
+            // a type, not a receiver.
+            if let value = try enumConstruction(receiver, method, arguments) { return value }
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className, let arguments):
             if className.uppercased() == "FILE" {

@@ -404,11 +404,34 @@ struct BASICEnumDefinition: Equatable {
     let normalizedName: String
     /// Members in declaration order, names as written.
     let members: [(name: String, value: Int)]
+    /// Each member's fields, by normalized member name (E3); empty for a
+    /// VB-style member.
+    var fields: [String: [EnumCaseField]] = [:]
+
+    /// The key a payload value keeps its case under. `$` cannot begin a BASIC
+    /// field name, so it can never collide with one.
+    static let tagKey = "$CASE"
+
+    /// Whether any member carries fields. Such an ENUM's values are records —
+    /// the case plus that case's fields — rather than numbers.
+    var isPayload: Bool { fields.values.contains { !$0.isEmpty } }
+
+    func fields(of member: String) -> [EnumCaseField] { fields[member.uppercased()] ?? [] }
+
+    func member(named name: String) -> (name: String, value: Int)? {
+        let wanted = name.uppercased()
+        return members.first { $0.name.uppercased() == wanted }
+    }
+
+    func member(atTag tag: Double) -> (name: String, value: Int)? {
+        members.first { Double($0.value) == tag }
+    }
 
     static func == (lhs: BASICEnumDefinition, rhs: BASICEnumDefinition) -> Bool {
         lhs.normalizedName == rhs.normalizedName
             && lhs.members.map(\.name) == rhs.members.map(\.name)
             && lhs.members.map(\.value) == rhs.members.map(\.value)
+            && lhs.fields == rhs.fields
     }
 
     /// The member with this value, or nil — VB shows the number when no
