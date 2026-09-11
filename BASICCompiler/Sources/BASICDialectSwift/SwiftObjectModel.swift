@@ -108,7 +108,14 @@ public struct SwiftObjectModel: ObjectModel {
     public let probed: SwiftManglingProbe.Symbols
 
     /// Analyses `module` and lays out every class that qualifies.
-    public init(module: BIRModule, imports: [String: SwiftAPI] = [:], probed: SwiftManglingProbe.Symbols = .init()) {
+    /// Classes whose base is an imported Swift class, compiled as Swift (R1.5).
+    private let hosted: [SwiftHostedClasses.Entry]
+    /// Their classes, by precise identifier.
+    private var hostedPrecise: Set<String> { Set(hosted.map(\.klass.precise)) }
+
+    public init(module: BIRModule, imports: [String: SwiftAPI] = [:], probed: SwiftManglingProbe.Symbols = .init(),
+                hosted: [SwiftHostedClasses.Entry] = []) {
+        self.hosted = hosted
         self.probed = probed
         self.module = module
         self.imports = imports
@@ -121,9 +128,12 @@ public struct SwiftObjectModel: ObjectModel {
             else { continue }
             imported[type.name] = (moduleName, api, klass, type)
         }
+        // A hosted class is taken exactly as an imported one: swiftc laid it
+        // out, and its symbol graph says what it is (R1.5).
+        for entry in hosted { imported[entry.composite.name] = (entry.module, entry.api, entry.klass, entry.composite) }
         self.importedByName = imported
         self.refusals = Self.refusals(module, imported: Set(imported.keys))
-        var (accepted, notes) = Self.analyse(module)
+        var (accepted, notes) = Self.analyse(module, hosted: Set(hosted.map(\.composite.name)))
         // A class whose symbols the probe did not report cannot be emitted:
         // its name would be a guess, and a guessed symbol either fails to
         // link or resolves to the wrong thing.
@@ -265,13 +275,14 @@ public struct SwiftObjectModel: ObjectModel {
     ///
     /// Iterated to a fixed point, since declining one class can decline
     /// another that holds it.
-    static func analyse(_ module: BIRModule) -> (accepted: Set<String>, notes: [String]) {
+    static func analyse(_ module: BIRModule, hosted: Set<String> = []) -> (accepted: Set<String>, notes: [String]) {
         var notes: [String] = []
         var accepted = Set<String>()
         // An imported class is the framework's object, laid out by the
         // framework; it never takes our layout, and a program class that
         // holds or inherits one is declined for now (R4.x).
-        let external = Set(module.types.filter { $0.externalModule != nil }.map(\.name))
+        // A hosted class (R1.5) is laid out by swiftc, like an imported one.
+        let external = Set(module.types.filter { $0.externalModule != nil }.map(\.name)).union(hosted)
 
         var reasons: [String: String] = [:]
         for type in module.types where type.isClass && !external.contains(type.name) {
@@ -604,6 +615,7 @@ public struct SwiftObjectModel: ObjectModel {
         out += importedDeclarations()
         for name in importedByName.keys.sorted() { out += perImportedClass(importedByName[name]!) }
         for key in imports.keys.sorted() { out += perImportedEnumMembers(imports[key]!) }
+        for entry in hosted { out += hostedBridges(entry) }
         out += helpers()
         return out
     }
@@ -618,7 +630,14 @@ public struct SwiftObjectModel: ObjectModel {
         var out = "; ---- imported Swift frameworks ----\n"
         var seen = Set<String>()
         for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
-            out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
+            if hostedPrecise.contains(entry.klass.precise) {
+                // A class whose base is resilient has no static metadata to
+                // name: it is instantiated at run time, and asked for through
+                // its accessor (R1.5).
+                out += "declare swiftcc { ptr, i64 } @\"\(entry.klass.symbol)Ma\"(i64)\n"
+            } else {
+                out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
+            }
             for initializer in entry.klass.initializers where seen.insert(initializer.allocatingSymbol).inserted {
                 let parameters = initializer.passed.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
@@ -844,6 +863,62 @@ public struct SwiftObjectModel: ObjectModel {
     /// Thunks over an imported class: BASIC's calling convention on the
     /// outside, Swift's on the inside, with values converted where they cross
     /// (ruling R2.0).
+    /// The Swift-callable entry each hosted override calls (R1.5): Swift's
+    /// calling convention outside, the BASIC body inside. Swift's own
+    /// dispatch — `describe()` calling `area()` — lands here.
+    func hostedBridges(_ entry: SwiftHostedClasses.Entry) -> String {
+        var out = ""
+        for (functionName, method) in entry.overrides {
+            guard let function = module.functions.first(where: { $0.name == functionName }) else { continue }
+            var counter = 0
+            func temp() -> String { counter += 1; return "%h\(counter)" }
+            var body = ""
+            var parameters = ["ptr %me"]
+            var arguments = ["ptr %me"]
+            for (index, parameter) in method.parameters.enumerated() {
+                switch parameter.type {
+                case .double:
+                    parameters.append("double %a\(index)"); arguments.append("double %a\(index)")
+                case .int:
+                    parameters.append("i64 %a\(index)")
+                    let number = temp()
+                    body += "  \(number) = sitofp i64 %a\(index) to double\n"
+                    arguments.append("double \(number)")
+                case .bool:
+                    parameters.append("i1 %a\(index)"); arguments.append("i1 %a\(index)")
+                default:
+                    // A Swift.String is two words at the boundary.
+                    parameters.append("i64 %a\(index)w0, ptr %a\(index)w1")
+                    let text = temp()
+                    body += "  \(text) = call swiftcc ptr @basic_rt_swift_string_out(i64 %a\(index)w0, ptr %a\(index)w1)\n"
+                    arguments.append("ptr \(text)")
+                }
+            }
+            let call = "call \(Self.birABI(function.returnType)) @\"F.\(functionName)\"(\(arguments.joined(separator: ", ")))"
+            let symbol = "basic.hosted.\(functionName)"
+            let signature = parameters.joined(separator: ", ")
+            switch method.returns {
+            case .void:
+                out += "define swiftcc void @\"\(symbol)\"(\(signature)) {\n\(body)  \(call)\n  ret void\n}\n"
+            case .double:
+                let raw = temp()
+                out += "define swiftcc double @\"\(symbol)\"(\(signature)) {\n\(body)  \(raw) = \(call)\n  ret double \(raw)\n}\n"
+            case .int:
+                let raw = temp(), whole = temp()
+                out += "define swiftcc i64 @\"\(symbol)\"(\(signature)) {\n\(body)  \(raw) = \(call)\n  \(whole) = fptosi double \(raw) to i64\n  ret i64 \(whole)\n}\n"
+            case .bool:
+                let raw = temp()
+                out += "define swiftcc i1 @\"\(symbol)\"(\(signature)) {\n\(body)  \(raw) = \(call)\n  ret i1 \(raw)\n}\n"
+            default:
+                let raw = temp(), text = temp()
+                out += "define swiftcc { i64, ptr } @\"\(symbol)\"(\(signature)) {\n\(body)  \(raw) = \(call)\n"
+                    + "  \(text) = call swiftcc { i64, ptr } @basic_rt_swift_string_in(ptr \(raw))\n"
+                    + "  call void @basic_rt_string_release(ptr \(raw))\n  ret { i64, ptr } \(text)\n}\n"
+            }
+        }
+        return out
+    }
+
     /// A BIR type's LLVM form in a thunk's signature.
     static func llvmBasicType(_ type: BIRType) -> String {
         switch type {
@@ -1060,7 +1135,14 @@ public struct SwiftObjectModel: ObjectModel {
                 // than a pointer, and a struct arrives in pieces.
                 body += "  \(result) = call ptr @basic_new_\(entry.klass.name)_\(arity0)(\(arguments.joined(separator: ", ")))\n"
             } else {
-                arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
+                if hostedPrecise.contains(entry.klass.precise) {
+                    let response = temp(), metadata = temp()
+                    body += "  \(response) = call swiftcc { ptr, i64 } @\"\(entry.klass.symbol)Ma\"(i64 0)\n"
+                    body += "  \(metadata) = extractvalue { ptr, i64 } \(response), 0\n"
+                    arguments.append("ptr swiftself \(metadata)")
+                } else {
+                    arguments.append("ptr swiftself @\"\(entry.klass.symbol)N\"")
+                }
                 body += "  \(result) = call swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(arguments.joined(separator: ", ")))\n"
             }
             // Keyed on the arity BASIC sees, which is the *flattened* one:
@@ -1160,6 +1242,9 @@ public struct SwiftObjectModel: ObjectModel {
         }
         for method in methods {
             guard let function = module.functions.first(where: { $0.name == "\(name).\(method.name.uppercased())" }) else { continue }
+            // A hosted class's own methods are BASIC bodies, lowered as
+            // BASIC; only what the framework supplies gets a thunk (R1.5).
+            guard function.isExternal else { continue }
             counter = 0
             var body = ""
             var arguments: [String] = []
@@ -1670,9 +1755,18 @@ public struct SwiftObjectModel: ObjectModel {
         """
         var probes: [(label: Int, metadata: String)] = classes.map { ($0.ordinal, "\($0.mangled)N") }
         probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
+        let accessed = Set(imported.filter { hostedPrecise.contains($0.klass.precise) }.map { "\($0.klass.symbol)N" })
         for (k, metadata) in probes {
             out += "check\(k):\n"
-            out += "  %eq\(k) = icmp eq ptr %isa, @\"\(metadata)\"\n"
+            if accessed.contains(metadata) {
+                // Hosted (R1.5): the metadata comes from the accessor.
+                let accessor = String(metadata.dropLast()) + "Ma"
+                out += "  %md\(k) = call swiftcc { ptr, i64 } @\"\(accessor)\"(i64 0)\n"
+                out += "  %mp\(k) = extractvalue { ptr, i64 } %md\(k), 0\n"
+                out += "  %eq\(k) = icmp eq ptr %isa, %mp\(k)\n"
+            } else {
+                out += "  %eq\(k) = icmp eq ptr %isa, @\"\(metadata)\"\n"
+            }
             out += "  br i1 %eq\(k), label %found\(k), label %check\(k + 1)\n"
         }
         out += "check\(probes.count):\n  br label %step\n"

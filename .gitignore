@@ -41,3 +41,4 @@ BASICCompiler/Examples/SwiftImport/*/.build/
 
 # The TUIKit exhibit's build products (R5.1)
 BASICCompiler/Examples/TUIKitExhibit/Program/Build/
+BASICCompiler/Examples/SwiftResilient/Program/Build/

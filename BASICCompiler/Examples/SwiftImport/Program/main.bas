@@ -117,6 +117,23 @@ Fav = Tint.favourite
 PRINT "favourite:"; Fav
 PRINT "fill empty:"; F.isEmpty
 
+' A BASIC class that inherits a Swift class (R1.5). swiftc lays Square out
+' as a real Swift subclass of Shape; its area is BASIC's, and Swift's own
+' describe() — which calls area() — dispatches into the BASIC body.
+CLASS Square
+  INHERITS Shape
+  PUBLIC Side AS DOUBLE
+  OVERRIDES FUNCTION area() AS DOUBLE
+    RETURN ME.Side * ME.Side
+  END FUNCTION
+END CLASS
+
+DIM Sq AS Square
+Sq = NEW Square("square")
+Sq.Side = 3
+PRINT "area, BASIC calling BASIC:"; Sq.area()
+PRINT Sq.describe()
+
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

@@ -357,6 +357,78 @@ struct SwiftImportEndToEndTests {
         #expect(coverage.contains("11 of 11 members imported (100%)"), "got: \(coverage)")
     }
 
+    /// A BASIC class inheriting a class from a *resilient* framework (R1.5).
+    ///
+    /// Library evolution means the base's size is a run-time fact, so a
+    /// subclass cannot be laid out by basicc; it is written as Swift and
+    /// laid out by swiftc. What this pins: the framework's field and the
+    /// program's live in one object, and Swift's own dispatch — `summary()`
+    /// calling `width()` and `label()` — reaches the BASIC bodies.
+    @Test func aBASICClassInheritsAResilientSwiftClass() throws {
+        _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
+                         "basicc must be built at \(Self.compiler)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("hosted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Canvas")
+        let sources = package.appendingPathComponent("Sources/Canvas")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Canvas", products: [.library(name: "Canvas", targets: ["Canvas"])],
+            targets: [.target(name: "Canvas", swiftSettings: [.unsafeFlags(["-enable-library-evolution"])])])
+        """.write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try """
+        open class Widget {
+            public var name: String
+            public init(name: String) { self.name = name }
+            open func width() -> Double { 1 }
+            open func label() -> String { name }
+            public func summary() -> String { "\\(label()) is \\(Int(width())) wide" }
+        }
+        """.write(to: sources.appendingPathComponent("Canvas.swift"), atomically: true, encoding: .utf8)
+
+        let program = root.appendingPathComponent("Program")
+        try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Program", dependencies: [.package(path: "../Canvas")], targets: [])
+        """.write(to: program.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let source = program.appendingPathComponent("main.bas")
+        try """
+        IMPORT "Canvas"
+        CLASS Panel
+          INHERITS Widget
+          PUBLIC Columns AS DOUBLE
+          PUBLIC Title AS STRING
+          OVERRIDES FUNCTION width() AS DOUBLE
+            RETURN ME.Columns * 8
+          END FUNCTION
+          OVERRIDES FUNCTION label() AS STRING
+            RETURN ME.Title + " (" + ME.name + ")"
+          END FUNCTION
+        END CLASS
+        DIM P AS Panel
+        P = NEW Panel("main")
+        P.Columns = 10
+        P.Title = "Editor"
+        PRINT P.summary()
+        P.name = "side"
+        P.Columns = 3
+        PRINT P.summary()
+        PRINT P.width(); P.Columns
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let binary = root.appendingPathComponent("run-program").path
+        let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
+        #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
+        let run = try ProcessRunner.run(binary, [])
+        #expect(run.exitCode == 0, "run failed: \(run.stderr)")
+        #expect(run.stdout == "Editor (main) is 80 wide\nEditor (side) is 24 wide\n243\n", "got:\n\(run.stdout)")
+    }
+
     /// The compiler under test, built into this package's scratch path.
     static var compiler: String {
         let root = URL(fileURLWithPath: #filePath)

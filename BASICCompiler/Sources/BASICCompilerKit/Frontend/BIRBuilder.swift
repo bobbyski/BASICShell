@@ -1508,7 +1508,11 @@ final class FunctionBuilder {
             guard arguments.isEmpty else { throw CompileError("CLASS \(type.displayName) has no constructor", at: location) }
             return .construct(typeName)
         }
-        if externalClasses.contains(typeName) {
+        // A program class that inherits NEW from an imported one is laid out
+        // by swiftc (R1.5), so it is constructed as the framework's classes
+        // are.
+        let owner = String(constructor.name.prefix(while: { $0 != "." }))
+        if externalClasses.contains(typeName) || externalClasses.contains(owner) {
             // The framework's initializer both allocates and initializes, so
             // this is one call rather than construct-then-call-NEW.
             let parameters = Array(constructor.parameters.dropFirst())

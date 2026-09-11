@@ -257,6 +257,10 @@ public struct SwiftAPI: Sendable {
     public var structures: [String: Structure] = [:]
     /// Plain enums, by precise identifier (E2).
     public var enumerations: [String: Enumeration] = [:]
+    /// Where the framework's compiled module lives, so code generated against
+    /// it later — a BASIC class inheriting one of its classes (R1.5) — can
+    /// be compiled with the same search paths the shims use.
+    public var searchPaths: [String] = []
     /// Protocol names, by precise identifier.
     public var protocols: [String: String] = [:]
     /// Which protocols each class conforms to, by precise identifier.

@@ -90,7 +90,18 @@ public struct SwiftDialect: DialectCompiler {
             FileHandle.standardError.write(Data("basicc: note: \(error)\n".utf8))
             probed = SwiftManglingProbe.Symbols()
         }
-        let objects = SwiftObjectModel(module: module, imports: imports, probed: probed)
+        // Program classes whose base is an imported Swift class are written as
+        // Swift and compiled by swiftc (R1.5), then taken by the object model
+        // as imported classes. Their object joins the link.
+        var hostedEntries: [SwiftHostedClasses.Entry] = []
+        var hostedObjects: [String] = []
+        let hosted = SwiftHostedClasses.find(in: module, imports: imports)
+        if !hosted.isEmpty {
+            let built = try SwiftHostedClasses.build(hosted, module: module)
+            hostedEntries = built.entries
+            hostedObjects = [built.object]
+        }
+        let objects = SwiftObjectModel(module: module, imports: imports, probed: probed, hosted: hostedEntries)
         // Refusals before anything is emitted: these are the shapes that
         // used to compile and then crash, and a diagnostic naming the
         // declaration is the whole difference.
@@ -99,7 +110,7 @@ public struct SwiftDialect: DialectCompiler {
             FileHandle.standardError.write(Data("basicc: note: \(note)\n".utf8))
         }
         let base = try TraditionalDialect().lower(module, options: options, objectModel: objects)
-        return LoweredModule(name: base.name, llvmIR: base.llvmIR)
+        return LoweredModule(name: base.name, llvmIR: base.llvmIR, extraObjects: hostedObjects)
     }
 
     public func runtimeLibrary(for target: TargetTriple) -> RuntimeLibrary {

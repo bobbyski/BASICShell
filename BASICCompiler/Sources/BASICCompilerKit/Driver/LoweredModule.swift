@@ -12,8 +12,13 @@ public struct LoweredModule: Sendable {
     /// The module name, used for the object file and diagnostics.
     public let name: String
 
+    /// Objects the lowering produced that the link must include — a
+    /// dialect's own generated code, compiled by another compiler (R1.5).
+    public var extraObjects: [String] = []
+
     /// Creates a lowered module.
-    public init(name: String, llvmIR: String) {
+    public init(name: String, llvmIR: String, extraObjects: [String] = []) {
+        self.extraObjects = extraObjects
         self.name = name
         self.llvmIR = llvmIR
     }

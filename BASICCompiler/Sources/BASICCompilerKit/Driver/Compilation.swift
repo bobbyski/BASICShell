@@ -101,7 +101,8 @@ public struct Compilation: Sendable {
         } else {
             runtimeObject = try cachedRuntimeObject(runtime)
         }
-        try toolchain.link(objects: [objectPath, runtimeObject] + compilation.extraObjects, output: output, extraArguments: runtime.linkArguments)
+        try toolchain.link(objects: [objectPath, runtimeObject] + compilation.extraObjects + lowered.extraObjects,
+                           output: output, extraArguments: runtime.linkArguments)
     }
 
     /// Compiles a source file to assembly text at `output`, for the SwiftPM
