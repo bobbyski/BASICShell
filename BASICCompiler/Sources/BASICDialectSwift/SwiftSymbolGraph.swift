@@ -555,10 +555,13 @@ public struct SwiftAPI: Sendable {
                     type = .unsupported("an optional enum, whose nil no member names")
                 }
                 // `[Track]` leads with `Track`, which is the array's element and
-                // not its type. E4 made such an enum importable, and the shim
-                // then type-checked a Track against a [Track]; refused by name.
-                if case .enumeration = type, isWrapped(aroundLeadingTypeIn: fragments) {
-                    type = .unsupported("a collection of an enum")
+                // not its type. That was refused for enums only, so
+                // `AUIView.children: [AUIView]` imported as one AUIView and
+                // `AUIComboBox.items: [String]` as a STRING — an accessor
+                // handing an array back as a pointer or a string. Refused for
+                // every type now, generic applications included.
+                if isWrapped(aroundLeadingTypeIn: fragments) {
+                    type = .unsupported("a collection or generic property; a property of one does not cross yet")
                 }
                 // A closure property — `var onChange: ((Double) -> Void)?`. Read
                 // from the declaration as written, because the arrow lives in the
@@ -1234,7 +1237,9 @@ public struct SwiftAPI: Sendable {
         }
         guard index + 1 < fragments.count else { return false }
         let next = fragments[index + 1].spelling.trimmingCharacters(in: .whitespaces)
-        return next.hasPrefix("]") || next.hasPrefix(">") || next.hasPrefix(":")
+        // `]` closes an array, `:` is a dictionary's key, `>` closes a generic
+        // argument, and `<` opens one — `AUIOutlet<Control>` is not an AUIOutlet.
+        return next.hasPrefix("]") || next.hasPrefix(">") || next.hasPrefix(":") || next.hasPrefix("<")
     }
 
     /// Whether the declared type ends in `?` or `!` — an Optional.
