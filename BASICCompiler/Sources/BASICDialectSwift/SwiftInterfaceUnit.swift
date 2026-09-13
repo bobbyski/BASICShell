@@ -436,6 +436,9 @@ public struct SwiftInterfaceUnit {
         switch type {
         case .handler(let parameters, let returns, _):
             return handlerTypeName(parameters, returns)
+        // The CLASS a box is declared as (P1.3e).
+        case .opaque(let precise, _):
+            return SwiftAPI.basicName(api.structures[precise]?.name ?? "VARIANT")
         // A Swift `Int` is a BASIC number too: the interpreter keeps every
         // number as a Double, and INTEGER is a declaration, not a machine
         // width. Conversion happens at the boundary.
@@ -541,6 +544,8 @@ public struct SwiftInterfaceUnit {
         // A TYPE record's placeholder: EMPTY, which a record takes as its
         // default value.
         case .structure: return "EMPTY"
+        // A box is an object to BASIC, and an object's placeholder is NULL.
+        case .opaque: return "NULL"
         case .void, .voidClosure, .handler, .protocolType, .unsupported: return "0"
         }
     }

@@ -172,6 +172,15 @@ public struct SwiftPackageResolver {
                     shim.payloadResult = Self.payloadEnum(type, in: api)
                 }
                 if case .structure = method.returns { shim.structResult = Self.recordStruct(method.returns, in: api) }
+                // A boxed struct's Swift name, with `?` when it may be nil.
+                if case .opaque(let precise, let isOptional) = method.returns {
+                    shim.opaqueResult = api.structures[precise].map { $0.name + (isOptional ? "?" : "") }
+                }
+                for (index, parameter) in passed.enumerated() {
+                    if case .opaque(let precise, let isOptional) = parameter.type {
+                        shim.opaqueParameters[index] = api.structures[precise].map { $0.name + (isOptional ? "?" : "") }
+                    }
+                }
                 for (index, parameter) in passed.enumerated() {
                     if case .payloadEnumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
                         shim.payloadParameters[index] = Self.payloadEnum(type, in: api)
@@ -231,6 +240,11 @@ public struct SwiftPackageResolver {
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 shim.durationParameters = Set(passed.indices.filter { passed[$0].type == .duration })
                 shim.defaultedPointerSuffix = SwiftObjectModel.defaultedPointerSuffix(initializer)
+                for (index, parameter) in passed.enumerated() {
+                    if case .opaque(let precise, let isOptional) = parameter.type {
+                        shim.opaqueParameters[index] = api.structures[precise].map { $0.name + (isOptional ? "?" : "") }
+                    }
+                }
                 for (index, parameter) in passed.enumerated() {
                     if case .protocolType(let precise) = parameter.type, let name = api.protocols[precise] {
                         shim.protocolParameters[index] = name
@@ -350,10 +364,22 @@ public struct SwiftPackageResolver {
                                                                       type: type, isSettable: property.isSettable))
             }
         }
+        // Properties whose immutable struct crosses in a box (P1.3e).
+        var opaqueProperties: [SwiftAsyncShim.OpaqueProperty] = []
+        for klass in api.classes where !klass.isOpaque {
+            for property in klass.properties {
+                guard case .opaque(let precise, let isOptional) = property.type,
+                      let swiftName = api.structures[precise]?.name else { continue }
+                opaqueProperties.append(SwiftAsyncShim.OpaqueProperty(className: klass.name, name: property.name,
+                                                                      swiftName: swiftName, isOptional: isOptional,
+                                                                      isSettable: property.isSettable))
+            }
+        }
         guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
                                           payloadProperties: payloadProperties,
                                           handlerProperties: handlerProperties,
-                                          structProperties: structProperties).source() else { return nil }
+                                          structProperties: structProperties,
+                                          opaqueProperties: opaqueProperties).source() else { return nil }
 
         let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -444,6 +470,8 @@ public struct SwiftPackageResolver {
     /// A Swift type's spelling in generated shim source.
     static func spelling(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
+        case .opaque(let precise, let isOptional):
+            return (api.structures[precise]?.name ?? "Any") + (isOptional ? "?" : "")
         case .handler(let parameters, let returns, let isOptional):
             let shape = "(" + parameters.map { spelling($0, in: api) }.joined(separator: ", ") + ") -> "
                 + (returns == .void ? "Swift.Void" : spelling(returns, in: api))

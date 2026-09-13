@@ -607,6 +607,76 @@ struct SwiftImportEndToEndTests {
         #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n1 2 3 4\n10 2 3 40\n300 150\n", "got:\n\(run.stdout)")
     }
 
+    /// Boxed structs (P1.3e): an immutable struct that is not a record crosses
+    /// in a box BASIC holds by reference, in every position.
+    ///
+    /// `Swatch` publishes none of what its initializer takes, so it cannot be a
+    /// record; it is immutable, so a shared box is indistinguishable from a
+    /// copy. It is made by one method, handed to another, stored in an
+    /// optional property, read back, and cleared with NULL.
+    @Test func immutableStructsCrossInABox() throws {
+        _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
+                         "basicc must be built at \(Self.compiler)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("boxes-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Paints")
+        let sources = package.appendingPathComponent("Sources/Paints")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Paints", products: [.library(name: "Paints", targets: ["Paints"])], targets: [.target(name: "Paints")])
+        """.write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try """
+        public struct Swatch {
+            let code: Int
+            public init(code: Int) { self.code = code }
+            public var isWarm: Bool { code > 500 }
+        }
+        public final class Palette {
+            public var favorite: Swatch?
+            public init() {}
+            public func mix(_ code: Int) -> Swatch { Swatch(code: code) }
+            public func describe(_ swatch: Swatch) -> String { "swatch \\(swatch.code) warm \\(swatch.isWarm)" }
+            public func describeFavorite() -> String { favorite.map(describe) ?? "no favorite" }
+        }
+        """.write(to: sources.appendingPathComponent("Paints.swift"), atomically: true, encoding: .utf8)
+
+        let program = root.appendingPathComponent("Program")
+        try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Program", dependencies: [.package(path: "../Paints")], targets: [])
+        """.write(to: program.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let source = program.appendingPathComponent("main.bas")
+        try """
+        IMPORT "Paints"
+        DIM P AS Palette
+        P = NEW Palette()
+        PRINT P.describeFavorite()
+        DIM Red AS Swatch
+        Red = P.mix(700)
+        PRINT P.describe(Red)
+        P.favorite = Red
+        PRINT P.describeFavorite()
+        DIM Again AS Swatch
+        Again = P.favorite
+        PRINT P.describe(Again)
+        P.favorite = NULL
+        PRINT P.describeFavorite()
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let binary = root.appendingPathComponent("run-program").path
+        let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
+        #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
+        let run = try ProcessRunner.run(binary, [])
+        #expect(run.exitCode == 0, "run failed: \(run.stderr)")
+        #expect(run.stdout == "no favorite\nswatch 700 warm true\nswatch 700 warm true\nswatch 700 warm true\nno favorite\n",
+                "got:\n\(run.stdout)")
+    }
+
     /// The compiler under test, built into this package's scratch path.
     static var compiler: String {
         let root = URL(fileURLWithPath: #filePath)

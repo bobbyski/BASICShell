@@ -622,15 +622,25 @@ public struct SwiftObjectModel: ObjectModel {
 
     // MARK: - Imported classes (R4)
 
+    /// The metadata every box shares (P1.3e).
+    static let opaqueMetadata = "$s12BASICRTSwift11BASICOpaqueCN"
+
     /// `declare`s for every framework symbol this module calls.
     func importedDeclarations() -> String {
         guard !importedByName.isEmpty else { return "" }
         // The bridge itself is declared by `declarations`, which runs for a
         // module with imports whether or not it also has classes of its own.
         var out = "; ---- imported Swift frameworks ----\n"
+        if importedByName.values.contains(where: { $0.klass.isOpaque }) {
+            out += "@\"\(Self.opaqueMetadata)\" = external global %swift.type, align 8\n"
+            out += "declare i64 @basic_rt_opaque_type_index(ptr)\n"
+            out += "declare ptr @basic_rt_opaque_text(ptr)\n"
+        }
         var seen = Set<String>()
         for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
-            if hostedPrecise.contains(entry.klass.precise) {
+            if entry.klass.isOpaque {
+                // Declared once below, for every box (P1.3e).
+            } else if hostedPrecise.contains(entry.klass.precise) {
                 // A class whose base is resilient has no static metadata to
                 // name: it is instantiated at run time, and asked for through
                 // its accessor (R1.5).
@@ -687,6 +697,14 @@ public struct SwiftObjectModel: ObjectModel {
                 }
                 // Through the shim, not Swift's accessor (E2): the accessor
                 // hands back the enum in Swift's own layout.
+                if case .opaque = property.type {
+                    // A box each way, through the shim (P1.3e).
+                    let getter = "basic_get_\(entry.klass.name)_\(property.name)"
+                    if seen.insert(getter).inserted { out += "declare ptr @\"\(getter)\"(ptr, i64)\n" }
+                    let setter = "basic_set_\(entry.klass.name)_\(property.name)"
+                    if property.isSettable, seen.insert(setter).inserted { out += "declare void @\"\(setter)\"(ptr, ptr)\n" }
+                    continue
+                }
                 if case .structure = property.type {
                     // A record each way, as a payload enum's is (P1.3c).
                     let getter = "basic_get_\(entry.klass.name)_\(property.name)"
@@ -753,7 +771,7 @@ public struct SwiftObjectModel: ObjectModel {
     static func needsInitializerShim(_ initializer: SwiftAPI.Function) -> Bool {
         defaultedPointerSuffix(initializer) > 0 || initializer.passed.count != initializer.parameters.count || initializer.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
+            case .structure, .opaque, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
             default: return false
             }
         }
@@ -767,15 +785,16 @@ public struct SwiftObjectModel: ObjectModel {
         // sees it: a direct call would return a value the thunk has no
         // signature for, and an object returned at +1 would leak.
         if method.discardsResult { return true }
-        // A struct result becomes a record in the shim (P1.3c).
+        // A struct result becomes a record in the shim (P1.3c), a boxed one a box (P1.3e).
         if case .structure = method.returns { return true }
+        if case .opaque = method.returns { return true }
         if case .array = method.returns { return true }
         if case .enumeration = method.returns { return true }
         if case .payloadEnumeration = method.returns { return true }
         if method.returns == .duration { return true }
         return method.isAsync || method.passed.count != method.parameters.count || method.passed.contains {
             switch $0.type {
-            case .structure, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
+            case .structure, .opaque, .protocolType, .voidClosure, .array, .enumeration, .payloadEnumeration, .duration: return true
             default: return false
             }
         }
@@ -786,8 +805,10 @@ public struct SwiftObjectModel: ObjectModel {
     /// the shim is compiled before any program, so it cannot know the index.
     static func returnsPayload(_ method: SwiftAPI.Function) -> Bool {
         if case .payloadEnumeration = method.returns { return true }
-        // A struct result is a record too, and needs its type index (P1.3c).
+        // A struct result is a record too, and needs its type index (P1.3c);
+        // so is a box, which carries its CLASS's (P1.3e).
         if case .structure = method.returns { return true }
+        if case .opaque = method.returns { return true }
         return false
     }
 
@@ -798,7 +819,7 @@ public struct SwiftObjectModel: ObjectModel {
     /// A Swift value's ABI form at a call boundary. A `String` is two words.
     static func abiType(_ type: SwiftAPI.ValueType) -> String {
         switch type {
-        case .handler: return "ptr"
+        case .handler, .opaque: return "ptr"
         // One Double in a struct, passed in the same register as a Double.
         case .double, .cgFloat: return "double"
         case .int: return "i64"
@@ -836,7 +857,7 @@ public struct SwiftObjectModel: ObjectModel {
 
     static func abiReturn(_ type: SwiftAPI.ValueType) -> String {
         switch type {
-        case .handler: return "ptr"
+        case .handler, .opaque: return "ptr"
         case .double, .cgFloat: return "double"
         case .int: return "i64"
         case .bool: return "i1"
@@ -1045,7 +1066,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a BASIC value to Swift's ABI form; returns the argument text.
         func toSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .handler: return "ptr \(value)"
+            case .handler, .opaque: return "ptr \(value)"
             // An object pointer, handed straight through; the shim casts
             // it to the protocol.
             case .protocolType: return "ptr \(value)"
@@ -1073,7 +1094,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .cgFloat, .bool, .object, .void, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
+            case .double, .cgFloat, .bool, .object, .void, .voidClosure, .handler, .opaque, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -1087,6 +1108,11 @@ public struct SwiftObjectModel: ObjectModel {
         /// the shim needs to build one and cannot know itself.
         func payloadTypeIndex(_ precise: String) -> Int {
             let name = (entry.api.enumerations[precise]?.name ?? "").uppercased()
+            return module.types.first { $0.name == name }?.index ?? -1
+        }
+        /// The runtime type index of a boxed struct's CLASS (P1.3e).
+        func opaqueTypeIndex(_ precise: String) -> Int {
+            let name = SwiftAPI.basicName(entry.api.structures[precise]?.name ?? "").uppercased()
             return module.types.first { $0.name == name }?.index ?? -1
         }
         /// The runtime type index of a struct's TYPE record (P1.3c).
@@ -1136,7 +1162,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .cgFloat, .int, .enumeration, .duration: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .handler, .opaque, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
             }
         }
 
@@ -1216,6 +1242,16 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "  %fn = call ptr @basic_rt_closure_function(ptr %v)\n"
                 out += "  %env = call ptr @basic_rt_closure_environment(ptr %v)\n"
                 out += "  call void @\"\(setter)\"(ptr %o, ptr %fn, ptr %env)\n  ret void\n}\n"
+                continue
+            }
+            if case .opaque(let precise, _) = property.type {
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n"
+                out += "  %r = call ptr @\"basic_get_\(owner)_\(property.name)\"(ptr %o, i64 \(opaqueTypeIndex(precise)))\n  ret ptr %r\n}\n"
+                if property.isSettable {
+                    out += "define void @\"\(name).set.\(index)\"(ptr %o, ptr %v) {\n"
+                    out += "  call void @\"basic_set_\(owner)_\(property.name)\"(ptr %o, ptr %v)\n  ret void\n}\n"
+                }
                 continue
             }
             if case .structure(let precise) = property.type {
@@ -1327,6 +1363,7 @@ public struct SwiftObjectModel: ObjectModel {
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
                 if case .payloadEnumeration(let precise) = method.returns { arguments.append("i64 \(payloadTypeIndex(precise))") }
                 if case .structure(let precise) = method.returns { arguments.append("i64 \(structTypeIndex(precise))") }
+                if case .opaque(let precise, _) = method.returns { arguments.append("i64 \(opaqueTypeIndex(precise))") }
                 let call = "call \(Self.shimAbiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
                 if method.returns == .void {
                     body += "  \(call)\n"
@@ -1785,7 +1822,10 @@ public struct SwiftObjectModel: ObjectModel {
         // semantics: an imported Swift object is the framework's, and there
         // is no copy constructor to call. Ruling D15 — `A = B` on an
         // imported object aliases it, as it would in Swift.
-        let imported = importedByName.values.sorted { $0.type.name < $1.type.name }
+        // Boxes share one class, so they are recognized by one probe of their
+        // own below rather than one each (P1.3e).
+        let imported = importedByName.values.filter { !$0.klass.isOpaque }.sorted { $0.type.name < $1.type.name }
+        let hasBoxes = importedByName.values.contains { $0.klass.isOpaque }
         var out = """
         declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 
@@ -1818,6 +1858,8 @@ public struct SwiftObjectModel: ObjectModel {
         """
         var probes: [(label: Int, metadata: String)] = classes.map { ($0.ordinal, "\($0.mangled)N") }
         probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
+        let boxLabel: Int? = hasBoxes ? probes.count : nil
+        if let boxLabel { probes.append((boxLabel, Self.opaqueMetadata)) }
         let accessed = Set(imported.filter { hostedPrecise.contains($0.klass.precise) }.map { "\($0.klass.symbol)N" })
         for (k, metadata) in probes {
             out += "check\(k):\n"
@@ -1837,6 +1879,18 @@ public struct SwiftObjectModel: ObjectModel {
         for (k, _) in probes { out += "found\(k):\n  ret i64 \(k)\n" }
         out += "none:\n  ret i64 -1\n}\n\n"
 
+        // What each dispatcher does for a box (P1.3e): a Swift object like any
+        // other for its lifetime, and asked for its type and text, which every
+        // box carries because every box is the same class.
+        let boxArms: [String: String] = [
+            "copy": "  call void @swift_retain(ptr %o)\n  ret ptr %o\n",
+            "assign": "  ret void\n",
+            "release": "  call void @swift_release(ptr %o)\n  ret void\n",
+            "typeIndex": "  %bk = call i64 @basic_rt_opaque_type_index(ptr %o)\n  ret i64 %bk\n",
+            "text": "  %bt = call ptr @basic_rt_opaque_text(ptr %o)\n  ret ptr %bt\n",
+            "print": "  %bp = call ptr @basic_rt_opaque_text(ptr %o)\n  call void @basic_rt_print_text(ptr %bp)\n  call void @basic_rt_string_release(ptr %bp)\n  ret void\n",
+            "box": "  %bs = call ptr @basic_rt_opaque_text(ptr %o)\n  %bv = call ptr @basic_rt_value_from_string(ptr %bs)\n  call void @basic_rt_string_release(ptr %bs)\n  ret ptr %bv\n",
+        ]
         /// A dispatcher: switch on classOf, one arm per class, runtime default.
         func dispatcher(_ name: String, signature: String, arguments: String, subject: String,
                         arm: (ClassLayout) -> String, importedArm: (Int) -> String, fallback: String) -> String {
@@ -1844,7 +1898,9 @@ public struct SwiftObjectModel: ObjectModel {
             text += "  %k = call i64 @\"obj.classOf\"(ptr \(subject))\n"
             text += "  switch i64 %k, label %rt [ " + probes.map { "i64 \($0.label), label %c\($0.label)" }.joined(separator: " ") + " ]\n"
             for layout in classes { text += "c\(layout.ordinal):\n" + arm(layout) }
-            for k in classes.count..<probes.count { text += "c\(k):\n" + importedArm(k) }
+            for k in classes.count..<probes.count {
+                text += "c\(k):\n" + (k == boxLabel ? boxArms[name, default: fallback] : importedArm(k))
+            }
             text += "rt:\n" + fallback + "}\n\n"
             return text
         }

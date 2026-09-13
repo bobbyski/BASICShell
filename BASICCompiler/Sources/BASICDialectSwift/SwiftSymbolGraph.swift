@@ -64,6 +64,13 @@ public struct SwiftAPI: Sendable {
         /// closures, and the shim wraps the compiled body in a Swift closure
         /// that converts each argument on the way in.
         indirect case handler(parameters: [ValueType], returns: ValueType, isOptional: Bool)
+        /// An immutable struct BASIC holds by reference, in a box (P1.3e):
+        /// `AUIColor`, which wraps a platform color object and is neither
+        /// numbers nor a record. Its BASIC type is a CLASS of the same name.
+        /// **An optional one is the common case** — `textColor: AUIColor?` —
+        /// and a box is a reference, so nil is simply NULL: what a record could
+        /// not hold, a box can.
+        case opaque(precise: String, isOptional: Bool)
         /// `Swift.Duration`, as a BASIC number of milliseconds - the unit
         /// this BASIC's `SLEEP` takes, so `A.schedule(50, ...)` reads like
         /// `SLEEP 50`. Converted in the shim both ways (R5.1).
@@ -270,6 +277,11 @@ public struct SwiftAPI: Sendable {
         /// always one a value publishes — so a struct crosses as a record only
         /// when every field is also a property.
         public var properties: Set<String> = []
+        /// Whether anything can change a value in place — a settable property
+        /// or a `mutating` method (P1.3e). A mutable struct is not boxed:
+        /// sharing one box between BASIC variables would make a change
+        /// through one visible through another, and a struct is a value.
+        public var isMutable: Bool = false
     }
 
     /// A class.
@@ -290,6 +302,9 @@ public struct SwiftAPI: Sendable {
         /// because the isolation is not the main actor's. TUIKit's drivers
         /// are actors, which is how this surfaced.
         public var isActor: Bool = false
+        /// A box around an immutable struct rather than a class (P1.3e). It has
+        /// no metadata of its own to link: every box is a `BASICOpaque`.
+        public var isOpaque: Bool = false
         public var initializers: [Function]
         public var methods: [Function]
         public var properties: [Property]
@@ -574,6 +589,10 @@ public struct SwiftAPI: Sendable {
                     continue
                 }
                 let isStatic = kind(of: symbol) == "swift.type.method"
+                if let owner = memberOf[precise], api.structures[owner] != nil,
+                   fragments(of: symbol["declarationFragments"]).contains(where: { $0.kind == "keyword" && $0.spelling == "mutating" }) {
+                    api.structures[owner]?.isMutable = true
+                }
                 if let owner = memberOf[precise], api.enumerations[owner] != nil, !isInit {
                     // A member of an imported enum (E5).
                     if isStatic { api.enumerations[owner]!.staticMethods.append(function) }
@@ -631,10 +650,12 @@ public struct SwiftAPI: Sendable {
                     if isOptional(afterLeadingTypeIn: fragments) {
                         type = .unsupported("an optional scalar, whose nil BASIC cannot hold")
                     }
-                // An optional struct, likewise: a record has no value for nil.
-                case .structure:
+                // An optional struct is an optional box, if it can be boxed —
+                // settled later, when every struct's shape is known. A record
+                // has no value for nil, and is refused then.
+                case .structure(let precise):
                     if isOptional(afterLeadingTypeIn: fragments) {
-                        type = .unsupported("an optional struct, whose nil a BASIC record cannot hold")
+                        type = .opaque(precise: precise, isOptional: true)
                     }
                 default: break
                 }
@@ -644,7 +665,13 @@ public struct SwiftAPI: Sendable {
                 let isLet = fragments.contains { $0.kind == "keyword" && $0.spelling == "let" }
                 // `{ get }` in the declaration marks a read-only computed
                 // property; a stored `var` shows no accessor block.
-                let readOnly = isLet || fragments.contains { $0.spelling.contains("{ get }") }
+                // Joined first: the graph splits an accessor block across
+                // fragments — `" { "`, `get`, `" }"` — so looking for `{ get }`
+                // in any one of them never matched, and every computed property
+                // read as settable. A class was rescued later by the export
+                // check dropping a setter that does not exist; a struct's
+                // mutability (P1.3e) had no such rescue.
+                let readOnly = isLet || fragments.map(\.spelling).joined().contains("{ get }")
                 let isStaticProperty = kind(of: symbol) == "swift.type.property"
                 if let owner = memberOf[precise], api.enumerations[owner] != nil {
                     guard type.isSupported else {
@@ -678,6 +705,7 @@ public struct SwiftAPI: Sendable {
                 // name is what reads a value of the struct back (P1.3c).
                 if let owner = memberOf[precise], api.structures[owner] != nil {
                     api.structures[owner]?.properties.insert(name)
+                    if !readOnly { api.structures[owner]?.isMutable = true }
                 }
                 guard let owner = memberOf[precise], let index = classIndex[owner] else {
                     api.skipped.append(Skip(member: path, reason: "a property of something that is not a class")); continue
@@ -720,7 +748,29 @@ public struct SwiftAPI: Sendable {
         // spell. Rewritten here, before anything reads `passed`, so that a
         // *defaulted* parameter of such a type is left out — as it was before
         // E2 — instead of dragging its whole member out with it.
+        /// Whether a struct crosses as a box (P1.3e): described, immutable, and
+        /// not a record.
+        func boxable(_ precise: String) -> Bool {
+            guard let structure = api.structures[precise], !structure.isMutable,
+                  !structure.fields.isEmpty || !structure.properties.isEmpty else { return false }
+            return !api.crossesAsRecord(.structure(precise: precise))
+        }
         func settle(_ type: ValueType) -> ValueType {
+            // A struct that is not a record, and that nothing can mutate,
+            // crosses as a box (P1.3e) — in every position, so a value read
+            // from one member can be handed to another. *Not* "does not
+            // flatten": AUIColor's first initializer takes four numbers, but
+            // the value wraps a platform color, `red` is not a property it
+            // publishes, and four numbers would lose a light/dark color. A
+            // record (CGRect, AUIEdgeInsets) keeps its flattened arguments.
+            if case .structure(let precise) = type, boxable(precise) {
+                return .opaque(precise: precise, isOptional: false)
+            }
+            // `T?` of a struct is read as an optional box, and kept only when
+            // the struct can be boxed: an optional record has no nil to hold.
+            if case .opaque(let precise, _) = type, !boxable(precise) {
+                return .unsupported("an optional struct, whose nil a BASIC record cannot hold")
+            }
             guard case .enumeration(let precise) = type else { return type }
             guard let enumeration = api.enumerations[precise] else { return .unsupported(precise) }
             // One whose cases carry values crosses as a record, not an ordinal.
@@ -898,6 +948,28 @@ public struct SwiftAPI: Sendable {
                 return true
             }
         }
+        // A CLASS for every boxed struct a member names (P1.3e), so BASIC can
+        // hold one, pass one on and hand one back. Empty for now: the value
+        // crosses; what the struct itself can do comes next.
+        var boxed: [String] = []
+        func note(_ type: ValueType) {
+            if case .opaque(let precise, _) = type, !boxed.contains(precise) { boxed.append(precise) }
+        }
+        for klass in api.classes {
+            klass.properties.forEach { note($0.type) }
+            for function in klass.methods + klass.initializers {
+                function.parameters.forEach { note($0.type) }
+                note(function.returns)
+            }
+        }
+        for precise in boxed.sorted() {
+            guard let structure = api.structures[precise], api.class(precise: precise) == nil else { continue }
+            var box = Class(name: Self.basicName(structure.name), symbol: "$s" + precise.dropFirst(2), precise: precise,
+                            superclassPrecise: nil, isOpen: false, isFinal: true, isActor: false,
+                            initializers: [], methods: [], properties: [])
+            box.isOpaque = true
+            api.classes.append(box)
+        }
         return api
     }
 
@@ -919,7 +991,8 @@ public struct SwiftAPI: Sendable {
         // `Ref<Value>` has a metadata accessor rather than one fixed symbol —
         // and emitting a reference to metadata that does not exist is a link
         // error rather than anything a program could have done differently.
-        let withdrawn = Set(classes.filter { !has($0.symbol + "N") }.map(\.precise))
+        // A box has no metadata of its own: every one is a BASICOpaque.
+        let withdrawn = Set(classes.filter { !$0.isOpaque && !has($0.symbol + "N") }.map(\.precise))
         if !withdrawn.isEmpty {
             for klass in classes where withdrawn.contains(klass.precise) {
                 skipped.append(Skip(member: klass.name, reason: "the framework exports no type metadata for it; a generic class has none to export"))
@@ -1120,6 +1193,12 @@ public struct SwiftAPI: Sendable {
                 type = array
             } else if let qualified = Self.qualifiedType(Array(afterColon)) {
                 type = qualified
+            } else if afterColon.count == 2, let first = afterColon.first, first.kind == "typeIdentifier",
+                      let precise = first.precise, precise.hasSuffix("V"),
+                      afterColon.last?.spelling.trimmingCharacters(in: .whitespaces) == "?" {
+                // `AUIColor?`: a struct that may be nil — an optional box, if the
+                // struct can be boxed, settled later (P1.3e).
+                type = .opaque(precise: precise, isOptional: true)
             } else if afterColon.count == 1, let only = afterColon.first, only.kind == "typeIdentifier" {
                 type = valueType(precise: only.precise, spelling: only.spelling)
             } else {
@@ -1146,11 +1225,23 @@ public struct SwiftAPI: Sendable {
         // (`[Shape]`, `Shape?`) is more than one fragment and unsupported.
         if let array = arrayType(fragments) { return array }
         if let qualified = qualifiedType(fragments) { return qualified }
+        // An optional struct result: an optional box, settled later (P1.3e).
+        if fragments.count == 2, let first = fragments.first, first.kind == "typeIdentifier",
+           let precise = first.precise, precise.hasSuffix("V"),
+           fragments.last?.spelling.trimmingCharacters(in: .whitespaces) == "?" {
+            return .opaque(precise: precise, isOptional: true)
+        }
         guard fragments.count == 1, let only = fragments.first, only.kind == "typeIdentifier" else {
             return .unsupported(fragments.map(\.spelling).joined())
         }
         return valueType(precise: only.precise, spelling: only.spelling)
     }
+    /// A Swift type name as BASIC spells it: a nested `AUIView.Metrics` is
+    /// `AUIView_Metrics`, as a nested enum's is.
+    static func basicName(_ swiftName: String) -> String {
+        swiftName.replacingOccurrences(of: ".", with: "_")
+    }
+
     /// The symbol the binary exports for a graph identifier.
     ///
     /// **The graph names a type's current module; the mangling names its
