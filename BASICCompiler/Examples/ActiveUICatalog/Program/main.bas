@@ -41,8 +41,20 @@ DIM Go AS AUIButton
 Go = NEW AUIButton("Press me")
 PRINT "button title   : "; Go.title
 
-' A window, built around the label. Nothing is shown: making the window is
+' A stack, ActiveUI's layout container, holding the label and the button.
+' Its spacing is a CGFloat — which kept the stack from being constructed at
+' all until the compiler spelled a CGFloat's symbol the way the binary does.
+DIM Column AS AUIStack
+Column = NEW AUIStack(AUIStack_Axis.vertical, 12, AUIStack_CrossAxisAlignment.leading, AUIStack_LayoutMode.flow)
+Column.addChild(Caption)
+Column.addChild(Go)
+PRINT "stack axis     : "; Column.axis
+PRINT "stack spacing  : "; Column.spacing
+Column.spacing = 20
+PRINT "spacing now    : "; Column.spacing
+
+' A window, built around the stack. Nothing is shown: making the window is
 ' the test, and a catalog page that opens a window belongs behind --run.
 DIM Shell AS AUIWindow
-Shell = NEW AUIWindow("Catalog", Caption, AUIRootPlacement.centered)
+Shell = NEW AUIWindow("Catalog", Column, AUIRootPlacement.centered)
 PRINT "window title   : "; Shell.title

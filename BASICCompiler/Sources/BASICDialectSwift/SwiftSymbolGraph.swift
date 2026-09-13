@@ -21,6 +21,13 @@ public struct SwiftAPI: Sendable {
         case double
         /// `Swift.Int` — a BASIC number, converted at the boundary.
         case int
+        /// `CGFloat` — a BASIC number. On a 64-bit Apple platform it is a
+        /// struct wrapping one `Double`, passed and returned in the same
+        /// register, so a direct call needs no conversion at all; only the
+        /// generated Swift source has to spell it `CGFloat`. Read as a struct
+        /// from another module, it withdrew 110 of ActiveUI's members,
+        /// `AUIStack`'s initializer among them.
+        case cgFloat
         /// `Swift.Bool`.
         case bool
         /// `Swift.String`, converted at the boundary (R2.0).
@@ -315,7 +322,7 @@ public struct SwiftAPI: Sendable {
             // an enum field into "flattenable" ones, and their shims stopped
             // compiling.
             switch type {
-            case .double, .int, .bool, .string: return [type]
+            case .double, .cgFloat, .int, .bool, .string: return [type]
             default: return nil
             }
         }
@@ -452,7 +459,7 @@ public struct SwiftAPI: Sendable {
             let modifiers = Set(fragments.filter { $0.kind == "keyword" }.map(\.spelling))
             classIndex[precise] = api.classes.count
             api.classes.append(Class(
-                name: name, symbol: "$s" + precise.dropFirst(2), precise: precise,
+                name: name, symbol: Self.linkedSymbol(precise), precise: precise,
                 superclassPrecise: inherits[precise],
                 // `open` is an access level, not a declaration keyword —
                 // the fragments say `class`, the accessLevel says `open`.
@@ -494,7 +501,7 @@ public struct SwiftAPI: Sendable {
                 }
                 var function = Function(
                     name: isInit ? "init" : name,
-                    symbol: "$s" + precise.dropFirst(2),
+                    symbol: Self.linkedSymbol(precise),
                     parameters: parameters(of: symbol),
                     returns: returns,
                     isInitializer: isInit,
@@ -601,7 +608,7 @@ public struct SwiftAPI: Sendable {
                     }
                     // Read-only from BASIC (E5): an enum's properties are
                     // computed, and a value of it is not a place to store into.
-                    let member = Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: false)
+                    let member = Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: false)
                     if isStaticProperty { api.enumerations[owner]!.staticProperties.append(member) }
                     else { api.enumerations[owner]!.instanceProperties.append(member) }
                     continue
@@ -616,7 +623,7 @@ public struct SwiftAPI: Sendable {
                         // Assigning one is a separate slice, so it is read-only
                         // here rather than half-writable.
                         api.classes[index].staticProperties.append(
-                            Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: false))
+                            Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: false))
                         continue
                     }
                     api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
@@ -633,7 +640,7 @@ public struct SwiftAPI: Sendable {
                     api.skipped.append(Skip(member: path, reason: "a read-only closure property; there is nothing for BASIC to assign"))
                     continue
                 }
-                api.classes[index].properties.append(Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: !readOnly))
+                api.classes[index].properties.append(Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: !readOnly))
             case "swift.class", "swift.struct", "swift.protocol":
                 continue
             case "swift.enum":
@@ -695,7 +702,7 @@ public struct SwiftAPI: Sendable {
         // a class's static: numbers, strings, booleans, enums and objects.
         func crossesForEnum(_ type: ValueType) -> Bool {
             switch type {
-            case .double, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
+            case .double, .cgFloat, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
             default: return false
             }
         }
@@ -721,7 +728,21 @@ public struct SwiftAPI: Sendable {
                 }
                 return property
             }
+            // **One method of a name, the first**: BASIC has no overloading,
+            // and each becomes one FUNCTION and one shim symbol. Two `frame`s
+            // on AUIView — one withdrawn over its CGFloat until CGFloat linked —
+            // then defined `basic_handler_AUIView_frame` twice. The rule NEW
+            // and statics already follow.
+            var methodNames = Set<String>()
             let methods = klass.methods.map(settle).map(discardingResult).filter { keep($0, owner: klass.name) }
+                .filter { method in
+                    guard methodNames.insert(method.name.uppercased()).inserted else {
+                        enumWithdrawals.append(Skip(member: "\(klass.name).\(method.name)",
+                                                    reason: "BASIC has one member of a name, and an earlier \(method.name) was imported"))
+                        return false
+                    }
+                    return true
+                }
             let initializers = klass.initializers.map(settle).filter { keep($0, owner: klass.name) }
             let properties = klass.properties.compactMap { original -> Property? in
                 var property = original
@@ -879,7 +900,15 @@ public struct SwiftAPI: Sendable {
                 }
                 return true
             }
-            classes[index].initializers = klass.initializers.filter { has($0.allocatingSymbol) }
+            classes[index].initializers = klass.initializers.filter { initializer in
+                guard has(initializer.allocatingSymbol) else {
+                    // Said out loud, as a method is: this one was silent, which
+                    // is how a CGFloat mangling mismatch hid behind "no NEW".
+                    skipped.append(Skip(member: "\(klass.name).init", reason: "the framework does not export it"))
+                    return false
+                }
+                return true
+            }
             classes[index].properties = klass.properties.compactMap { property in
                 guard has(property.getterSymbol) else {
                     skipped.append(Skip(member: "\(klass.name).\(property.name)",
@@ -1069,6 +1098,31 @@ public struct SwiftAPI: Sendable {
         }
         return valueType(precise: only.precise, spelling: only.spelling)
     }
+    /// The symbol the binary exports for a graph identifier.
+    ///
+    /// **The graph names a type's current module; the mangling names its
+    /// original one.** `CGFloat` moved into CoreFoundation, but it is declared
+    /// as originally defined in CoreGraphics, and a mangled name keeps the
+    /// original module so that old binaries still link. The graph identifier
+    /// `…14CoreFoundation7CGFloatV…` therefore names a symbol that does not
+    /// exist — the binary exports `…12CoreGraphics7CGFloatV…` — and every
+    /// member mentioning a CGFloat, `AUIStack`'s initializer among them, was
+    /// withdrawn as unexported. Substituting the module back is safe for the
+    /// mangling: its back-references count entities, not characters.
+    static func linkedSymbol(_ precise: String) -> String {
+        var symbol = "$s" + precise.dropFirst(2)
+        for (current, original) in originallyDefinedIn {
+            symbol = symbol.replacingOccurrences(of: current, with: original)
+        }
+        return symbol
+    }
+
+    /// Types the SDK moved between modules, as the graph spells them and as
+    /// their mangling does.
+    static let originallyDefinedIn: [(String, String)] = [
+        ("14CoreFoundation7CGFloatV", "12CoreGraphics7CGFloatV"),
+    ]
+
     /// The type text of a declaration: what follows the first colon, without
     /// an accessor block. `var onChange: ((Double) -> Void)? { get set }`
     /// gives `((Double) -> Void)?`.
@@ -1105,6 +1159,7 @@ public struct SwiftAPI: Sendable {
             switch spelling.split(separator: ":").last?.trimmingCharacters(in: .whitespaces) {
             case "Int": return .int
             case "Double": return .double
+            case "CGFloat": return .cgFloat
             case "Bool": return .bool
             case "String": return .string
             default: return nil
@@ -1290,6 +1345,7 @@ public struct SwiftAPI: Sendable {
     static func valueType(precise: String?, spelling: String) -> ValueType {
         switch precise {
         case "s:Sd": return .double
+        case "s:14CoreFoundation7CGFloatV", "s:12CoreGraphics7CGFloatV": return .cgFloat
         case "s:Si": return .int
         case "s:Sb": return .bool
         case "s:SS": return .string

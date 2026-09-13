@@ -787,7 +787,8 @@ public struct SwiftObjectModel: ObjectModel {
     static func abiType(_ type: SwiftAPI.ValueType) -> String {
         switch type {
         case .handler: return "ptr"
-        case .double: return "double"
+        // One Double in a struct, passed in the same register as a Double.
+        case .double, .cgFloat: return "double"
         case .int: return "i64"
         case .bool: return "i1"
         // An ordinal; the shim turns it into the case (E2).
@@ -824,7 +825,7 @@ public struct SwiftObjectModel: ObjectModel {
     static func abiReturn(_ type: SwiftAPI.ValueType) -> String {
         switch type {
         case .handler: return "ptr"
-        case .double: return "double"
+        case .double, .cgFloat: return "double"
         case .int: return "i64"
         case .bool: return "i1"
         case .enumeration: return "i64"
@@ -979,7 +980,7 @@ public struct SwiftObjectModel: ObjectModel {
                         let whole = temp()
                         body += "  \(whole) = fptosi double \(value) to i64\n"
                         passed.append("i64 \(whole)"); shimTypes.append("i64")
-                    case .double:
+                    case .double, .cgFloat:
                         passed.append("double \(value)"); shimTypes.append("double")
                     case .bool:
                         passed.append("i1 \(value)"); shimTypes.append("i1")
@@ -996,7 +997,7 @@ public struct SwiftObjectModel: ObjectModel {
                 let shimReturn: String
                 switch member.returns {
                 case .void: shimReturn = "void"
-                case .double: shimReturn = "double"
+                case .double, .cgFloat: shimReturn = "double"
                 case .bool: shimReturn = "i1"
                 case .int, .enumeration: shimReturn = "i64"
                 default: shimReturn = "ptr"
@@ -1037,7 +1038,7 @@ public struct SwiftObjectModel: ObjectModel {
             // it to the protocol.
             case .protocolType: return "ptr \(value)"
             case .structure: return "double \(value)"
-            case .double, .duration: return "double \(value)"
+            case .double, .cgFloat, .duration: return "double \(value)"
             case .bool: return "i1 \(value)"
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = fptosi double \(value) to i64\n"; return "i64 \(r)"
@@ -1060,7 +1061,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
+            case .double, .cgFloat, .bool, .object, .void, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -1116,7 +1117,7 @@ public struct SwiftObjectModel: ObjectModel {
 
         func basicType(_ type: SwiftAPI.ValueType) -> String {
             switch type {
-            case .double, .int, .enumeration, .duration: return "double"
+            case .double, .cgFloat, .int, .enumeration, .duration: return "double"
             case .bool: return "i1"
             case .string, .object, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
             }

@@ -326,6 +326,7 @@ public struct SwiftPackageResolver {
                 func swift(_ type: SwiftAPI.ValueType) -> String {
                     switch type {
                     case .int: return "Int"
+                    case .cgFloat: return "CGFloat"
                     case .bool: return "Bool"
                     case .string: return "String"
                     default: return "Double"
@@ -413,6 +414,8 @@ public struct SwiftPackageResolver {
                 + (returns == .void ? "Swift.Void" : spelling(returns, in: api))
             return isOptional ? "(\(shape))?" : shape
         case .double: return "Swift.Double"
+        // Spelled as itself in generated source: a Double is not implicitly one.
+        case .cgFloat: return "CGFloat"
         case .int: return "Swift.Int"
         case .bool: return "Swift.Bool"
         case .string: return "Swift.String"

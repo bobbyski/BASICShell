@@ -770,7 +770,7 @@ public struct SwiftAsyncShim {
             var releases: [String] = []
             for (index, swift) in property.parameters.enumerated() {
                 switch swift {
-                case "Int": callArguments.append("Swift.Double(a\(index))")
+                case "Int", "CGFloat": callArguments.append("Swift.Double(a\(index))")
                 case "String":
                     statements.append("let s\(index) = basicStringOut(a\(index))")
                     callArguments.append("s\(index)")
@@ -791,6 +791,10 @@ public struct SwiftAsyncShim {
                 statements.append("let r = \(call)")
                 statements += releases
                 statements.append("return Swift.Int(r)")
+            case "CGFloat"?:
+                statements.append("let r = \(call)")
+                statements += releases
+                statements.append("return CGFloat(r)")
             default:
                 statements.append("let r = \(call)")
                 statements += releases

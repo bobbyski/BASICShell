@@ -418,7 +418,7 @@ public struct SwiftInterfaceUnit {
         // A Swift `Int` is a BASIC number too: the interpreter keeps every
         // number as a Double, and INTEGER is a declaration, not a machine
         // width. Conversion happens at the boundary.
-        case .double, .int: return "DOUBLE"
+        case .double, .cgFloat, .int: return "DOUBLE"
         case .bool: return "BOOLEAN"
         case .string: return "STRING"
         case .object(let precise): return api.class(precise: precise)?.name ?? "VARIANT"
@@ -463,7 +463,7 @@ public struct SwiftInterfaceUnit {
     /// A value of the right type for a placeholder body.
     static func placeholder(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
-        case .double, .int: return "0"
+        case .double, .cgFloat, .int: return "0"
         case .bool: return "FALSE"
         case .string: return "\"\""
         case .object(let precise):
