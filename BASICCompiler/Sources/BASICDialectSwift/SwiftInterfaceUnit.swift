@@ -393,6 +393,14 @@ public struct SwiftInterfaceUnit {
                     if let enumeration = api.enumerations.values.first(where: { $0.name == basic && $0.isPayload }) {
                         return payloadPlaceholder(enumeration.precise, in: api)
                     }
+                    // An object or interface argument takes NULL, not zero.
+                    // Constructing one here would recurse through whatever
+                    // *its* initializer takes, and a number is not a value of
+                    // a class type: `NEW AUIWindow("", 0, 0)` is how the
+                    // placeholder for `AUIMultiWindowApp.newWindow` failed to
+                    // type-check, with `rootView` expecting an AUIView.
+                    if api.classes.contains(where: { $0.name == basic })
+                        || api.protocols.values.contains(basic) { return "NULL" }
                     return "0"
                 }
             }

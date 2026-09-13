@@ -105,6 +105,15 @@ public struct SwiftAPI: Sendable {
         public let isInitializer: Bool
         /// Whether a subclass may override it (`open`).
         public let isOverridable: Bool
+        /// Whether BASIC calls it for its effect and drops what it returns.
+        ///
+        /// A member whose *result* has no BASIC spelling is still callable —
+        /// `AUIApplication.run()` returns an `AUIRunResult` nobody in BASIC
+        /// can hold, and refusing it means a BASIC program cannot start an
+        /// ActiveUI app at all. ActivePascal made the same ruling ("imported
+        /// as a procedure — result is discarded"), and it is the right one:
+        /// the alternative is not a safer program, it is no program.
+        public var discardsResult: Bool = false
         /// Whether it must be awaited.
         ///
         /// Like `throws`, this is load-bearing: an `async` function has an
@@ -455,7 +464,17 @@ public struct SwiftAPI: Sendable {
                 if case .unsupported("Self") = returns, let owner = memberOf[precise], classIndex[owner] != nil {
                     returns = .object(precise: owner)
                 }
-                let function = Function(
+                // A generic member has no one symbol to call: Swift passes the
+                // type arguments as metadata, and BASIC has none to give.
+                // `AUIOutlineNode.represented<Value>(as:)` reached the shim as
+                // an ordinary call once its result stopped blocking it, and
+                // `swiftc` could not infer `Value` — rightly.
+                if let generics = symbol["swiftGenerics"] as? [String: Any],
+                   let typeParameters = generics["parameters"] as? [[String: Any]], !typeParameters.isEmpty {
+                    api.skipped.append(Skip(member: path, reason: "a generic member; BASIC has no type argument to give it"))
+                    continue
+                }
+                var function = Function(
                     name: isInit ? "init" : name,
                     symbol: "$s" + precise.dropFirst(2),
                     parameters: parameters(of: symbol),
@@ -470,6 +489,17 @@ public struct SwiftAPI: Sendable {
                     isThrowing: fragments(of: symbol["declarationFragments"])
                         .contains { $0.kind == "keyword" && $0.spelling == "throws" }
                 )
+                // A member blocked *only* by its result is still callable for
+                // its effect. `AUIApplication.run()` returns an `AUIRunResult`
+                // — a typealias, which is not a type BASIC can name — and
+                // refusing it means no BASIC program can start an ActiveUI app
+                // at all. The result is dropped inside the shim, where ARC
+                // still sees it.
+                if !function.isSupported, !function.isInitializer,
+                   function.parameters.allSatisfy({ $0.type.isSupported || $0.hasDefault }) {
+                    function.returns = .void
+                    function.discardsResult = true
+                }
                 if !function.isSupported {
                     let bad = function.parameters.compactMap { p -> String? in
                         if case .unsupported(let spelling) = p.type { return "\(p.name): \(spelling)" }
@@ -605,9 +635,19 @@ public struct SwiftAPI: Sendable {
             enumWithdrawals.append(Skip(member: "\(owner).\(function.name)", reason: "it names an enum that did not import"))
             return false
         }
+        /// A member blocked only by its result becomes a procedure.
+        func discardingResult(_ function: Function) -> Function {
+            guard !function.isSupported, !function.isInitializer,
+                  function.parameters.allSatisfy({ $0.type.isSupported || $0.hasDefault })
+            else { return function }
+            var procedure = function
+            procedure.returns = .void
+            procedure.discardsResult = true
+            return procedure
+        }
         for index in api.classes.indices {
             let klass = api.classes[index]
-            let methods = klass.methods.map(settle).filter { keep($0, owner: klass.name) }
+            let methods = klass.methods.map(settle).map(discardingResult).filter { keep($0, owner: klass.name) }
             let initializers = klass.initializers.map(settle).filter { keep($0, owner: klass.name) }
             let properties = klass.properties.compactMap { original -> Property? in
                 var property = original

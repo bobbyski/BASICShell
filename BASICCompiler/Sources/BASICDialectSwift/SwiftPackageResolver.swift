@@ -143,6 +143,7 @@ public struct SwiftPackageResolver {
                     isThrowing: method.isThrowing
                 )
                 shim.isAsync = method.isAsync
+                shim.discardsResult = method.discardsResult
                 shim.closureParameters = handlers
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 shim.stringResult = method.returns == .string

@@ -40,6 +40,8 @@ public struct SwiftAsyncShim {
         public let isThrowing: Bool
         /// Whether it is awaited, or merely takes a handler (R4.5).
         public var isAsync: Bool = true
+        /// Whether the Swift result is dropped rather than handed back.
+        public var discardsResult: Bool = false
         /// Whether this constructs the class rather than calling a method.
         ///
         /// A constructor needs a shim for the same reasons a method does — a
@@ -675,7 +677,13 @@ public struct SwiftAsyncShim {
                 // imported at all. It traps rather than corrupts if a future
                 // caller is ever elsewhere.
                 let called = "\(invocation)"
-                if method.returns == nil {
+                if method.discardsResult {
+                    // Dropped *inside* the isolated closure, deliberately:
+                    // `assumeIsolated` hands its result back across the
+                    // isolation boundary and so demands a Sendable one, which
+                    // a framework's own result type need not be.
+                    lines.append("    MainActor.assumeIsolated { _ = \(called) }")
+                } else if method.returns == nil {
                     lines.append("    MainActor.assumeIsolated { \(called) }")
                 } else if method.durationResult {
                     lines.append("    return basicMilliseconds(MainActor.assumeIsolated { \(called) })")
