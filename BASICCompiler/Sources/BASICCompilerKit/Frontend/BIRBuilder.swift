@@ -597,6 +597,12 @@ final class FunctionBuilder {
     /// is nothing in the value to ask — which is the point. The interpreter
     /// answers the same question the same way, from the same declaration.
     func enumType(of expression: Expression) -> SemanticModel.Enumeration? {
+        // An imported member reads as a call once rewritten —
+        // `AUIApplication.appearance` is `AUIApplication__appearance()` — so
+        // its type is that call's, answered by the case below.
+        if let call = model.enumMemberCall(expression, enumOf: receiverEnum) {
+            return enumType(of: call)
+        }
         switch expression {
         case .variable(let name):
             return model.enums[declaredEnumName(of: name)  ?? ""]
@@ -616,6 +622,13 @@ final class FunctionBuilder {
             }
             guard reference.fields.isEmpty, reference.indexes.isEmpty else { return nil }
             return model.enums[declaredEnumName(of: reference.base) ?? ""]
+        // A FUNCTION declared AS an ENUM. `Pick(0)` reads as a call or an array
+        // element, so a variable of that name keeps the array reading.
+        case .callOrArray(let name, _), .functionCall(let name, _):
+            guard model.info(name.normalized, in: functionName) == nil,
+                  let enumName = model.functions[name.normalized]?.returnEnumName
+            else { return nil }
+            return model.enums[enumName]
         default:
             return nil
         }

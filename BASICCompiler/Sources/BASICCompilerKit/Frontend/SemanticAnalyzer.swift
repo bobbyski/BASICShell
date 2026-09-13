@@ -200,11 +200,13 @@ struct SemanticAnalyzer {
                         BIRVariable(name: $0.variable.normalized, type: try map($0.type, for: $0.variable.name, at: line), scope: .local)
                     }
                     let birReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name.name, at: line)
-                    model.addFunction(SemanticModel.Function(
+                    var method = SemanticModel.Function(
                         name: functionName, displayName: name.name, parameters: birParameters, returnType: birReturn,
                         body: (index + 1)..<end, expression: nil, location: location, owner: typeName,
                         visibility: visibility, explicitImplementations: explicit
-                    ))
+                    )
+                    method.returnEnumName = enumName(of: returnType)
+                    model.addFunction(method)
                     model.updateType(typeName) { $0.methods[name.normalized] = functionName }
                     for bodyIndex in index...end { owner[bodyIndex] = functionName }
                     index = end
@@ -363,6 +365,7 @@ struct SemanticAnalyzer {
                     owner: nil, visibility: .public, explicitImplementations: []
                 )
                 function.isAsync = isAsync
+                function.returnEnumName = enumName(of: returnType)
                 model.addFunction(function)
                 for bodyIndex in index...end { owner[bodyIndex] = name.normalized }
                 index = end + 1

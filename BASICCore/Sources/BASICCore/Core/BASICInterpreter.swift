@@ -1963,6 +1963,20 @@ public final class BASICInterpreter {
                   case .enumType(let type)? = runtime.declaredType(for: reference)
             else { return nil }
             return enumDefinitions[type.uppercased()]
+        // A FUNCTION declared AS an ENUM: its result is one, and prints as its
+        // member's name exactly as a variable of the ENUM does — VB's rule.
+        // `Pick(0)` reads as a call or an array element until run time, so a
+        // declared array of that name keeps the array reading.
+        case .callOrArray(let name, _), .functionCall(let name, _):
+            guard runtime.declaredType(for: VariableReference(base: name)) == nil,
+                  let function = functionDefinitions[name.normalized]
+            else { return nil }
+            switch function.returnType {
+            case .enumType(let type), .record(let type):
+                return enumDefinitions[type.uppercased()]
+            default:
+                return nil
+            }
         default:
             return nil
         }

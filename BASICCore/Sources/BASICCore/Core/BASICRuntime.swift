@@ -1182,7 +1182,14 @@ final class BASICRuntime {
         throw BASICError.type(message: "suffix \(variable.name.last!) conflicts with AS \(declaredType.name)")
     }
 
-    func coerce(_ value: BASICValue, to type: BASICType, variable: VariableName) throws -> BASICValue {
+    func coerce(_ value: BASICValue, to declared: BASICType, variable: VariableName) throws -> BASICValue {
+        // **Resolved here, for every caller.** A bare user type name parses as
+        // `.record` until something says what it names, and a variable is
+        // resolved when it is declared — but a FUNCTION's return type was not,
+        // so `FUNCTION Pick() AS Shade` checked `RETURN Shade.Dark` against a
+        // *record* named Shade and refused it. Resolving an already-resolved
+        // type changes nothing, so doing it once here covers them all.
+        let type = resolvedDeclaredType(declared)
         if case .functionType(let name) = type {
             if case .empty = value {
                 return .empty

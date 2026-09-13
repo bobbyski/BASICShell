@@ -35,6 +35,10 @@ public final class SemanticModel {
         public let explicitImplementations: [BASICExplicitInterfaceImplementation]
         /// `ASYNC FUNCTION`: a call launches a task; AWAIT yields the value.
         public var isAsync: Bool = false
+        /// The ENUM a `FUNCTION ... AS <enum>` returns. BIR lowers the result
+        /// to a number, and PRINT showing the member's *name* — VB's rule —
+        /// needs to know what the number means.
+        public var returnEnumName: String?
     }
 
     /// One field of a `TYPE` or `CLASS`.
