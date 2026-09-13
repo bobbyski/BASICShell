@@ -496,6 +496,8 @@ struct SwiftImportEndToEndTests {
         M.isQuietProvider = FUNCTION() AS BOOLEAN = TRUE
         M.set(4)
         M.set(1)
+        M.onLevel = NULL
+        M.set(2)
         PRINT "scaled "; M.scaled()
         PRINT M.describe()
         """.write(to: source, atomically: true, encoding: .utf8)
@@ -505,7 +507,7 @@ struct SwiftImportEndToEndTests {
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
         let run = try ProcessRunner.run(binary, [])
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
-        #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nscaled 3\nquiet\n", "got:\n\(run.stdout)")
+        #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nstep 2 rose TRUE\nscaled 6\nquiet\n", "got:\n\(run.stdout)")
     }
 
     /// The compiler under test, built into this package's scratch path.

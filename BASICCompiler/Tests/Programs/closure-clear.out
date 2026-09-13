@@ -1,0 +1,4 @@
+set: 42
+cleared
+set again: 42
+calling a cleared closure is an error

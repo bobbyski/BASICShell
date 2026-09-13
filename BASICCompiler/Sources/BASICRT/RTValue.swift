@@ -346,7 +346,10 @@ enum RTCoerce {
             }
             return .boolean(number == 1)
         case .closure:
+            // NULL clears a closure — VB's Nothing — as it does in the
+            // interpreter.
             if case .empty = value { return .empty }
+            if case .null = value { return .empty }
             guard case .closure = value else { throw .type("Type Mismatch") }
             return value
         case .dictionary:
@@ -713,7 +716,8 @@ public func basic_rt_value_dictionary(_ pointer: UnsafeMutableRawPointer?, _ nam
 public func basic_rt_value_closure(_ pointer: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
     switch rtValue(pointer) {
     case .closure(let closure): return Unmanaged.passRetained(closure).toOpaque()
-    case .empty: return nil
+    // An unset closure, and NULL — VB's Nothing — which clears one.
+    case .empty, .null: return nil
     default: basic_rt_fail_type("Type Mismatch")
     }
 }

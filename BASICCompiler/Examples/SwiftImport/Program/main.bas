@@ -156,6 +156,11 @@ R.resize(6)
 PRINT "resize to 2:"
 R.resize(2)
 PRINT "padded area, margin from BASIC:"; R.paddedArea()
+' NULL clears a handler, as VB's Nothing clears a delegate: the framework's
+' closure becomes nil, so this resize is heard only by onChange.
+R.onResize = NULL
+PRINT "resize to 3, onResize cleared:"
+R.resize(3)
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

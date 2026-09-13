@@ -514,6 +514,13 @@ final class BASICRuntime {
             case .dictionary(let dictionary):
                 value = try dictionaryValue(dictionary, at: indexes, name: reference.base.name)
             default:
+                // A closure variable called while unset — never assigned, or
+                // cleared with NULL — reads as an array element here, and "is
+                // not an array" misdescribed it. Its declaration says what is
+                // actually wrong, in the words the compiled runtime uses.
+                if case .functionType? = declaredType(for: VariableReference(base: reference.base)) {
+                    throw BASICError.runtime("Closure was never set")
+                }
                 throw BASICError.runtime("\(reference.base.name) is not an array")
             }
         }
@@ -1191,7 +1198,13 @@ final class BASICRuntime {
         // type changes nothing, so doing it once here covers them all.
         let type = resolvedDeclaredType(declared)
         if case .functionType(let name) = type {
+            // NULL clears a closure, as VB's Nothing clears a delegate: NULL is
+            // this dialect's Nothing. Refusing it meant a handler, once set,
+            // could never be taken away.
             if case .empty = value {
+                return .empty
+            }
+            if case .null = value {
                 return .empty
             }
             guard let definition = functionTypeDefinitions[name.uppercased()] else {
