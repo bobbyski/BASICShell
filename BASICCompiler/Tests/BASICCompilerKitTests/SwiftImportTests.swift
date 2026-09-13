@@ -458,7 +458,11 @@ struct SwiftImportEndToEndTests {
             public var onStep: ((Int, Bool) -> Void)?
             public var scaleProvider: (() -> Double)?
             public var isQuietProvider: (() -> Bool)?
+            public var onLabel: ((String) -> Void)?
+            public var unitProvider: (() -> String)?
             public init() {}
+            public func label(_ text: String) { onLabel?(text) }
+            public func reading() -> String { "\\(level) " + (unitProvider?() ?? "?") }
             public func set(_ newLevel: Double) {
                 let rose = newLevel > level
                 level = newLevel
@@ -484,6 +488,10 @@ struct SwiftImportEndToEndTests {
           PRINT "level "; Level
           RETURN 0
         END FUNCTION
+        FUNCTION Labeled(Text AS STRING) AS DOUBLE
+          PRINT "label " + Text + " (" + STR$(LEN(Text)) + ")"
+          RETURN 0
+        END FUNCTION
         FUNCTION Stepped(Whole AS DOUBLE, Rose AS BOOLEAN) AS DOUBLE
           PRINT "step "; Whole; " rose "; Rose
           RETURN 0
@@ -500,6 +508,10 @@ struct SwiftImportEndToEndTests {
         M.set(2)
         PRINT "scaled "; M.scaled()
         PRINT M.describe()
+        M.onLabel = FUNCTION(Text AS STRING) AS DOUBLE = Labeled(Text)
+        M.unitProvider = FUNCTION() AS STRING = "dB" + "!"
+        M.label("peak")
+        PRINT M.reading()
         """.write(to: source, atomically: true, encoding: .utf8)
 
         let binary = root.appendingPathComponent("run-program").path
@@ -507,7 +519,7 @@ struct SwiftImportEndToEndTests {
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
         let run = try ProcessRunner.run(binary, [])
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
-        #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nstep 2 rose TRUE\nscaled 6\nquiet\n", "got:\n\(run.stdout)")
+        #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nstep 2 rose TRUE\nscaled 6\nquiet\nlabel peak ( 4)\n2.0 dB!\n", "got:\n\(run.stdout)")
     }
 
     /// The compiler under test, built into this package's scratch path.

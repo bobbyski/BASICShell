@@ -107,6 +107,19 @@ public enum BASICRTSwiftBridge {
         currentError = current
     }
 
+    /// Releases a runtime string the Swift side made (P1.2b). A handler shim
+    /// hands a BASIC closure body a string it made, and the body *borrows* it
+    /// — retaining on entry, releasing at exit — so the shim releases its own
+    /// once the call returns; a provider's returned string is owned, and is
+    /// released once read.
+    public nonisolated(unsafe) static var releaseString: (UnsafeMutableRawPointer?) -> Void = { _ in
+        fatalError("the BASIC string bridge was not installed: basic_rt_start did not run")
+    }
+
+    public static func installStringRelease(_ release: @escaping (UnsafeMutableRawPointer?) -> Void) {
+        releaseString = release
+    }
+
     /// Installs the hooks. Called by `basic_rt_start`.
     public static func install(
         readString: @escaping (UnsafeMutableRawPointer?) -> String,
@@ -240,6 +253,12 @@ public func basicRTSwiftStringIn(_ pointer: UnsafeMutableRawPointer?) -> String 
 @_silgen_name("basic_rt_swift_string_out")
 public func basicRTSwiftStringOut(_ text: String) -> UnsafeMutableRawPointer {
     BASICRTSwiftBridge.makeString(text)
+}
+
+/// Releases a runtime string (P1.2b).
+@_silgen_name("basic_rt_swift_string_release")
+public func basicRTSwiftStringRelease(_ pointer: UnsafeMutableRawPointer?) {
+    BASICRTSwiftBridge.releaseString(pointer)
 }
 
 

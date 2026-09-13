@@ -44,6 +44,9 @@ public func basic_rt_start() {
         makeBooleanArray: { rtSwiftArrayOut($0.map { RTValue.boolean($0) }, element: .boolean) },
         makeStringArray: { rtSwiftArrayOut($0.map { RTValue.string(RTText($0)) }, element: .string) }
     )
+    // A string a handler shim makes for a BASIC closure body is borrowed by
+    // the body, so the shim releases it after the call (P1.2b).
+    BASICRTSwiftBridge.installStringRelease { basic_rt_string_release($0) }
     // A BASIC error that crossed a Swift-facing boundary (R4.6), consumed as
     // Swift reads it.
     BASICRTSwiftBridge.installErrors(current: {

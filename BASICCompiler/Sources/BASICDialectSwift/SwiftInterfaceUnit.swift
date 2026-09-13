@@ -158,7 +158,11 @@ public struct SwiftInterfaceUnit {
 
     /// A handler's scalar as BASIC spells it: every number is a DOUBLE.
     static func handlerBasicType(_ type: SwiftAPI.ValueType) -> String {
-        type == .bool ? "BOOLEAN" : "DOUBLE"
+        switch type {
+        case .bool: return "BOOLEAN"
+        case .string: return "STRING"
+        default: return "DOUBLE"
+        }
     }
 
     /// The free function an enum member is declared as (E5): `Tint__isWarm`.

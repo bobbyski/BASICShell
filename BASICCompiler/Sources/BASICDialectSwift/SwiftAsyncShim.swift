@@ -287,6 +287,8 @@ public struct SwiftAsyncShim {
             "private func basicStringIn(_ p: UnsafeMutableRawPointer?) -> String",
             "@_silgen_name(\"basic_rt_swift_string_out\")",
             "private func basicStringOut(_ s: String) -> UnsafeMutableRawPointer",
+            "@_silgen_name(\"basic_rt_swift_string_release\")",
+            "private func basicStringRelease(_ p: UnsafeMutableRawPointer?)",
             "",
             "/// Records of an enum whose cases carry values (E4): made, read and",
             "/// written through the runtime, which alone knows what a record is.",
@@ -750,21 +752,51 @@ public struct SwiftAsyncShim {
             ]
         }
         for property in handlerProperties {
-            func cType(_ swift: String) -> String { swift == "Bool" ? "Swift.Bool" : "Swift.Double" }
+            func cType(_ swift: String) -> String {
+                switch swift {
+                case "Bool": return "Swift.Bool"
+                case "String": return "UnsafeMutableRawPointer?"
+                default: return "Swift.Double"
+                }
+            }
             let cParameters = (["UnsafeMutableRawPointer?"] + property.parameters.map(cType)).joined(separator: ", ")
             let cResult = property.returns.map(cType) ?? "Swift.Double"
             let names = property.parameters.indices.map { "a\($0)" }
-            let arguments = (["environment.raw"] + zip(names, property.parameters).map { name, swift in
-                swift == "Int" ? "Swift.Double(\(name))" : name
-            }).joined(separator: ", ")
-            let call = "body(\(arguments))"
-            let expression: String
-            switch property.returns {
-            case nil: expression = "_ = \(call)"
-            case "Int"?: expression = "Swift.Int(\(call))"
-            default: expression = call
+            // A string argument is made here and borrowed by the body, so it is
+            // released once the call returns; a string result is owned, and is
+            // released once read.
+            var statements: [String] = []
+            var callArguments = ["environment.raw"]
+            var releases: [String] = []
+            for (index, swift) in property.parameters.enumerated() {
+                switch swift {
+                case "Int": callArguments.append("Swift.Double(a\(index))")
+                case "String":
+                    statements.append("let s\(index) = basicStringOut(a\(index))")
+                    callArguments.append("s\(index)")
+                    releases.append("basicStringRelease(s\(index))")
+                default: callArguments.append("a\(index)")
+                }
             }
-            let head = names.isEmpty ? "" : names.joined(separator: ", ") + " in "
+            let call = "body(\(callArguments.joined(separator: ", ")))"
+            switch property.returns {
+            case nil:
+                statements.append("_ = \(call)")
+                statements += releases
+            case "String"?:
+                statements.append("let r = \(call)")
+                statements += releases
+                statements += ["let text = basicStringIn(r)", "basicStringRelease(r)", "return text"]
+            case "Int"?:
+                statements.append("let r = \(call)")
+                statements += releases
+                statements.append("return Swift.Int(r)")
+            default:
+                statements.append("let r = \(call)")
+                statements += releases
+                statements.append("return r")
+            }
+            let head = names.isEmpty ? "" : " " + names.joined(separator: ", ") + " in"
             lines.append("@_cdecl(\"\(property.setter)\")")
             lines.append("public func \(property.setter)(_ me: UnsafeMutableRawPointer, _ fn: UnsafeRawPointer?, _ env: UnsafeMutableRawPointer?) {")
             lines.append("    let object = Unmanaged<\(property.className)>.fromOpaque(me).takeUnretainedValue()")
@@ -777,7 +809,9 @@ public struct SwiftAsyncShim {
             lines.append("    let body = unsafeBitCast(fn, to: (@convention(c) (\(cParameters)) -> \(cResult)).self)")
             lines.append("    let environment = BASICEnvironment(raw: env)")
             lines.append("    MainActor.assumeIsolated {")
-            lines.append("        object.`\(property.name)` = { \(head)\(expression) }")
+            lines.append("        object.`\(property.name)` = {\(head)")
+            for statement in statements { lines.append("            \(statement)") }
+            lines.append("        }")
             lines.append("    }")
             lines.append("}")
             lines.append("")

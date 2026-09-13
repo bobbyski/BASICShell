@@ -1078,11 +1078,11 @@ public struct SwiftAPI: Sendable {
 
     /// A closure type BASIC can supply, or nil (P1.2).
     ///
-    /// Every parameter and the result must be `Int`, `Double` or `Bool` —
-    /// what a BASIC closure body takes and returns natively, as a `double` or
-    /// an `i1`. The optional wrapper a settable handler property has is
-    /// accepted: an unset BASIC closure is what hands over nil. Strings wait
-    /// for a bridge that releases the runtime string after the call.
+    /// Every parameter and the result must be `Int`, `Double`, `Bool` or
+    /// `String` — what a BASIC closure body takes and returns natively, as a
+    /// `double`, an `i1` or a runtime string. The optional wrapper a settable
+    /// handler property has is accepted: an unset BASIC closure is what hands
+    /// over nil.
     static func handlerType(_ written: String) -> ValueType? {
         var text = written
         for attribute in ["@escaping", "@MainActor", "@Sendable", "@autoclosure"] {
@@ -1103,6 +1103,7 @@ public struct SwiftAPI: Sendable {
             case "Int": return .int
             case "Double": return .double
             case "Bool": return .bool
+            case "String": return .string
             default: return nil
             }
         }

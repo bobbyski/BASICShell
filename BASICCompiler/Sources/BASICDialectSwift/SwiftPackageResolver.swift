@@ -327,6 +327,7 @@ public struct SwiftPackageResolver {
                     switch type {
                     case .int: return "Int"
                     case .bool: return "Bool"
+                    case .string: return "String"
                     default: return "Double"
                     }
                 }
