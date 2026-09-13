@@ -21,7 +21,7 @@ open class Shape {
     public func rename(_ to: String) { name = to }
 
     /// An enum parameter (E2).
-    public func painted(_ colour: Tint) -> String { "\(name) painted \(colour)" }
+    public func painted(_ color: Tint) -> String { "\(name) painted \(color)" }
 
     /// An enum-with-values parameter and result (E4).
     public func filled(_ fill: Fill) -> String { "\(name) filled \(fill)" }
@@ -39,7 +39,7 @@ open class Shape {
     /// Arrays crossing both ways (R4.7). Nothing here is written for
     /// BASIC either: these are the `[String]` and `[Double]` any Swift
     /// caller would pass, and BASIC hands over one of its own arrays.
-    public func labelled(_ labels: [String]) -> [String] {
+    public func labeled(_ labels: [String]) -> [String] {
         labels.map { "\($0) is \(name)" }
     }
 
@@ -81,7 +81,7 @@ public enum Tint {
     /// — and on the type for a static, `Tint.favorite`.
     public var isWarm: Bool { self == .red }
     public func blended(with other: Tint) -> String { "\(self) and \(other)" }
-    public static var favourite: Tint { .green }
+    public static var favorite: Tint { .green }
 }
 
 /// An enum whose cases carry values (E4). BASIC sees `ENUM Fill` with a field

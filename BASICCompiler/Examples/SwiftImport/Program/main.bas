@@ -67,7 +67,7 @@ DIM Names(1) AS STRING
 Names(0) = "first"
 Names(1) = "second"
 DIM Said AS VARIANT
-Said = R.labelled(Names)
+Said = R.labeled(Names)
 FOR I = 0 TO LEN(Said) - 1
   PRINT "  "; Said(I)
 NEXT I
@@ -113,8 +113,8 @@ PRINT "default fill:"; F
 ' on a value for an instance member, on the type for a static one.
 PRINT "warm:"; T.isWarm; " blended: "; T.blended(Tint.red)
 DIM Fav AS Tint
-Fav = Tint.favourite
-PRINT "favourite:"; Fav
+Fav = Tint.favorite
+PRINT "favorite:"; Fav
 PRINT "fill empty:"; F.isEmpty
 
 ' A BASIC class that inherits a Swift class (R1.5). swiftc lays Square out

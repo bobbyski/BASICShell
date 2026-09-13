@@ -496,14 +496,14 @@ public struct SwiftAsyncShim {
                     callArguments.append("a\(index)")
                 }
             }
-            let labelled = zip(method.labels, callArguments.indices)
+            let labeled = zip(method.labels, callArguments.indices)
                 .map { label, index in label.map { "\($0): \(callArguments[index])" } ?? callArguments[index] }
                 .joined(separator: ", ")
             // The member itself: on the object or the enum value, or on the
             // type for a static (E5); a property takes no parentheses.
             let target: String
             if case .type(let swiftName) = method.receiver { target = swiftName } else { target = "object" }
-            let invocation = method.isProperty ? "\(target).`\(method.name)`" : "\(target).\(method.name)(\(labelled))"
+            let invocation = method.isProperty ? "\(target).`\(method.name)`" : "\(target).\(method.name)(\(labeled))"
             // A class result crosses as a pointer too, unretained: an
             // imported object belongs to the framework, and BASIC holding one
             // aliases it rather than owning a copy (ruling D15).
@@ -643,7 +643,7 @@ public struct SwiftAsyncShim {
                 // keeps it alive rather than handing back a corpse.
                 let suffix = method.defaultedPointerSuffix
                 if suffix == 0 {
-                    lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labelled)) }")
+                    lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labeled)) }")
                 } else {
                     // NULL for a defaulted trailing object means Swift's own
                     // default: the longest run of trailing NULLs picks the

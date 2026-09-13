@@ -15,7 +15,7 @@ import Foundation
 ///
 /// ## Two representations, one program
 ///
-/// Not every class qualifies (see ``analyse``), and an interface-typed
+/// Not every class qualifies (see ``analyze``), and an interface-typed
 /// variable may hold either kind. So the whole-object operations —
 /// `obj.copy`, `obj.release`, `obj.typeIndex`, … — decide **at run time**
 /// which representation they were handed: an object whose metadata chain
@@ -133,7 +133,7 @@ public struct SwiftObjectModel: ObjectModel {
         for entry in hosted { imported[entry.composite.name] = (entry.module, entry.api, entry.klass, entry.composite) }
         self.importedByName = imported
         self.refusals = Self.refusals(module, imported: Set(imported.keys))
-        var (accepted, notes) = Self.analyse(module, hosted: Set(hosted.map(\.composite.name)))
+        var (accepted, notes) = Self.analyze(module, hosted: Set(hosted.map(\.composite.name)))
         // A class whose symbols the probe did not report cannot be emitted:
         // its name would be a guess, and a guessed symbol either fails to
         // link or resolves to the wrong thing.
@@ -204,7 +204,7 @@ public struct SwiftObjectModel: ObjectModel {
     /// same method signatures. Anything the analysis would decline is left
     /// out, so a program pays only for the classes it gets.
     public static func probe(_ module: BIRModule) throws -> SwiftManglingProbe.Symbols {
-        let (accepted, _) = analyse(module)
+        let (accepted, _) = analyze(module)
         let byIndex = Dictionary(uniqueKeysWithValues: module.types.map { ($0.index, $0) })
         var declarations: [SwiftManglingProbe.Declaration] = []
         for composite in dependencyOrder(accepted, in: module) where composite.externalModule == nil {
@@ -275,7 +275,7 @@ public struct SwiftObjectModel: ObjectModel {
     ///
     /// Iterated to a fixed point, since declining one class can decline
     /// another that holds it.
-    static func analyse(_ module: BIRModule, hosted: Set<String> = []) -> (accepted: Set<String>, notes: [String]) {
+    static func analyze(_ module: BIRModule, hosted: Set<String> = []) -> (accepted: Set<String>, notes: [String]) {
         var notes: [String] = []
         var accepted = Set<String>()
         // An imported class is the framework's object, laid out by the
