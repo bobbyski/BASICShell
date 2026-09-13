@@ -82,12 +82,24 @@ public struct SwiftInterfaceUnit {
                 }
             }
         }
+        // One FUNCTION TYPE per closure shape a program can hand over: the
+        // `() -> Void` a method takes (R4.5), and each shape a handler
+        // property has (P1.2). `AS DOUBLE` for a handler that returns nothing:
+        // a BASIC closure is an *expression* and must yield something, and
+        // Swift's `-> Void` discards it — the handler runs for its effect.
+        var functionTypes: [String] = []
+        func declare(_ line: String) { if !functionTypes.contains(line) { functionTypes.append(line) } }
         if api.classes.contains(where: { $0.methods.contains { $0.parameters.contains { $0.type == .voidClosure } } }) {
-            // `AS DOUBLE`, not VOID: a BASIC closure is an *expression* and
-            // must yield something. Swift's `() -> Void` discards it, which
-            // is the honest mapping — the handler is run for its effect.
-            lines.append("FUNCTION TYPE \(Self.handlerType)() AS DOUBLE")
+            declare(Self.handlerDeclaration([], .void))
         }
+        for klass in api.classes {
+            for property in klass.properties {
+                if case .handler(let parameters, let returns, _) = property.type {
+                    declare(Self.handlerDeclaration(parameters, returns))
+                }
+            }
+        }
+        lines += functionTypes
         // Bases before subclasses, so INHERITS always names a declared class.
         for klass in ordered() {
             lines.append("CLASS \(klass.name)")
@@ -127,6 +139,26 @@ public struct SwiftInterfaceUnit {
             lines.append("END CLASS")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The FUNCTION TYPE a handler shape is declared as (P1.2):
+    /// `SwiftHandler` for `() -> Void`, `SwiftHandler_DOUBLE` for
+    /// `(Double) -> Void`, `SwiftProvider_BOOLEAN` for `() -> Bool`.
+    public static func handlerTypeName(_ parameters: [SwiftAPI.ValueType], _ returns: SwiftAPI.ValueType) -> String {
+        let stem = returns == .void ? handlerType : "SwiftProvider_" + handlerBasicType(returns)
+        return stem + parameters.map { "_" + handlerBasicType($0) }.joined()
+    }
+
+    /// Its declaration: `FUNCTION TYPE SwiftHandler_DOUBLE(Value1 AS DOUBLE) AS DOUBLE`.
+    static func handlerDeclaration(_ parameters: [SwiftAPI.ValueType], _ returns: SwiftAPI.ValueType) -> String {
+        let declared = parameters.enumerated().map { "Value\($0.offset + 1) AS \(handlerBasicType($0.element))" }
+        let result = returns == .void ? "DOUBLE" : handlerBasicType(returns)
+        return "FUNCTION TYPE \(handlerTypeName(parameters, returns))(\(declared.joined(separator: ", "))) AS \(result)"
+    }
+
+    /// A handler's scalar as BASIC spells it: every number is a DOUBLE.
+    static func handlerBasicType(_ type: SwiftAPI.ValueType) -> String {
+        type == .bool ? "BOOLEAN" : "DOUBLE"
     }
 
     /// The free function an enum member is declared as (E5): `Tint__isWarm`.
@@ -377,6 +409,8 @@ public struct SwiftInterfaceUnit {
 
     static func basicType(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
+        case .handler(let parameters, let returns, _):
+            return handlerTypeName(parameters, returns)
         // A Swift `Int` is a BASIC number too: the interpreter keeps every
         // number as a Double, and INTEGER is a declaration, not a machine
         // width. Conversion happens at the boundary.
@@ -467,7 +501,7 @@ public struct SwiftInterfaceUnit {
         case .enumeration: return "0"
         case .payloadEnumeration(let precise): return payloadPlaceholder(precise, in: api)
         case .duration: return "0"
-        case .void, .voidClosure, .structure, .protocolType, .unsupported: return "0"
+        case .void, .voidClosure, .handler, .structure, .protocolType, .unsupported: return "0"
         }
     }
 }

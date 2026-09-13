@@ -317,8 +317,29 @@ public struct SwiftPackageResolver {
                 ))
             }
         }
+        // Handler properties (P1.2): a setter per property, for the class
+        // that declares it; a subclass's thunk calls the same one.
+        var handlerProperties: [SwiftAsyncShim.HandlerProperty] = []
+        for klass in api.classes {
+            for property in klass.properties {
+                guard case .handler(let parameters, let returns, let isOptional) = property.type else { continue }
+                func swift(_ type: SwiftAPI.ValueType) -> String {
+                    switch type {
+                    case .int: return "Int"
+                    case .bool: return "Bool"
+                    default: return "Double"
+                    }
+                }
+                handlerProperties.append(SwiftAsyncShim.HandlerProperty(
+                    className: klass.name, name: property.name,
+                    parameters: parameters.map(swift), returns: returns == .void ? nil : swift(returns),
+                    isOptional: isOptional
+                ))
+            }
+        }
         guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
-                                          payloadProperties: payloadProperties).source() else { return nil }
+                                          payloadProperties: payloadProperties,
+                                          handlerProperties: handlerProperties).source() else { return nil }
 
         let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -386,6 +407,10 @@ public struct SwiftPackageResolver {
     /// A Swift type's spelling in generated shim source.
     static func spelling(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> String {
         switch type {
+        case .handler(let parameters, let returns, let isOptional):
+            let shape = "(" + parameters.map { spelling($0, in: api) }.joined(separator: ", ") + ") -> "
+                + (returns == .void ? "Swift.Void" : spelling(returns, in: api))
+            return isOptional ? "(\(shape))?" : shape
         case .double: return "Swift.Double"
         case .int: return "Swift.Int"
         case .bool: return "Swift.Bool"

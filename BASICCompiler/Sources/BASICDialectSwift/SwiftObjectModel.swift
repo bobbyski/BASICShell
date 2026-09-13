@@ -677,6 +677,14 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "declare swiftcc \(Self.abiReturn(method.returns)) @\"\(method.symbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for property in entry.klass.properties {
+                // A handler property is set through its shim, which builds a
+                // Swift closure from the BASIC body (P1.2). There is no getter
+                // to declare: a Swift closure is not a value BASIC can hold.
+                if case .handler = property.type {
+                    let setter = "basic_set_\(entry.klass.name)_\(property.name)"
+                    if seen.insert(setter).inserted { out += "declare void @\"\(setter)\"(ptr, ptr, ptr)\n" }
+                    continue
+                }
                 // Through the shim, not Swift's accessor (E2): the accessor
                 // hands back the enum in Swift's own layout.
                 if case .payloadEnumeration = property.type {
@@ -778,6 +786,7 @@ public struct SwiftObjectModel: ObjectModel {
     /// A Swift value's ABI form at a call boundary. A `String` is two words.
     static func abiType(_ type: SwiftAPI.ValueType) -> String {
         switch type {
+        case .handler: return "ptr"
         case .double: return "double"
         case .int: return "i64"
         case .bool: return "i1"
@@ -814,6 +823,7 @@ public struct SwiftObjectModel: ObjectModel {
 
     static func abiReturn(_ type: SwiftAPI.ValueType) -> String {
         switch type {
+        case .handler: return "ptr"
         case .double: return "double"
         case .int: return "i64"
         case .bool: return "i1"
@@ -1022,6 +1032,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a BASIC value to Swift's ABI form; returns the argument text.
         func toSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
+            case .handler: return "ptr \(value)"
             // An object pointer, handed straight through; the shim casts
             // it to the protocol.
             case .protocolType: return "ptr \(value)"
@@ -1049,7 +1060,7 @@ public struct SwiftObjectModel: ObjectModel {
         /// Converts a Swift result back to BASIC's form.
         func fromSwift(_ value: String, _ type: SwiftAPI.ValueType, into body: inout String) -> String {
             switch type {
-            case .double, .bool, .object, .void, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
+            case .double, .bool, .object, .void, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .duration, .unsupported: return value
             case .int, .enumeration:
                 let r = temp(); body += "  \(r) = sitofp i64 \(value) to double\n"; return r
             case .string:
@@ -1107,7 +1118,7 @@ public struct SwiftObjectModel: ObjectModel {
             switch type {
             case .double, .int, .enumeration, .duration: return "double"
             case .bool: return "i1"
-            case .string, .object, .voidClosure, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
+            case .string, .object, .voidClosure, .handler, .structure, .protocolType, .array, .payloadEnumeration, .void, .unsupported: return "ptr"
             }
         }
 
@@ -1170,6 +1181,25 @@ public struct SwiftObjectModel: ObjectModel {
         // Property accessors, by BIR field index.
         for (index, field) in entry.type.fields.enumerated() {
             guard let property = Self.property(named: field.name, of: entry.klass, in: entry.api) else { continue }
+            if case .handler = property.type {
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                let setter = "basic_set_\(owner)_\(property.name)"
+                // Read back, a handler gives BASIC no closure: the framework
+                // holds a Swift closure, and pretending it is a BASIC one would
+                // misstate what calling it does.
+                out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n  ret ptr null\n}\n"
+                out += "define void @\"\(name).set.\(index)\"(ptr %o, ptr %v) {\n"
+                out += "entry:\n  %isnull = icmp eq ptr %v, null\n  br i1 %isnull, label %clear, label %install\n"
+                out += "clear:\n  call void @\"\(setter)\"(ptr %o, ptr null, ptr null)\n  ret void\n"
+                // Retained for as long as the framework may call it — a handler
+                // outlives the statement that installed it, as R4.5's do. A
+                // closure's environment is immutable, so it is read once here.
+                out += "install:\n  call void @basic_rt_closure_retain(ptr %v)\n"
+                out += "  %fn = call ptr @basic_rt_closure_function(ptr %v)\n"
+                out += "  %env = call ptr @basic_rt_closure_environment(ptr %v)\n"
+                out += "  call void @\"\(setter)\"(ptr %o, ptr %fn, ptr %env)\n  ret void\n}\n"
+                continue
+            }
             if case .payloadEnumeration(let precise) = property.type {
                 let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
                 out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n"

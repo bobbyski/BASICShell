@@ -429,6 +429,85 @@ struct SwiftImportEndToEndTests {
         #expect(run.stdout == "Editor (main) is 80 wide\nEditor (side) is 24 wide\n243\n", "got:\n\(run.stdout)")
     }
 
+    /// Handler properties (P1.2): BASIC assigns its own closures to a Swift
+    /// class's closure properties, and Swift calls them.
+    ///
+    /// What this pins is the direction a program cannot see from BASIC
+    /// alone: the framework calls the closure — with a number, with a number
+    /// and a boolean — and uses what a provider returns. It also pins the
+    /// store itself, which once fell through to the runtime-record path and
+    /// wrote a closure pointer into the Swift object's own memory.
+    @Test func handlerPropertiesAreCalledBySwift() throws {
+        _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
+                         "basicc must be built at \(Self.compiler)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("handlers-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Gauges")
+        let sources = package.appendingPathComponent("Sources/Gauges")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Gauges", products: [.library(name: "Gauges", targets: ["Gauges"])], targets: [.target(name: "Gauges")])
+        """.write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try """
+        public final class Meter {
+            public var level: Double = 0
+            public var onLevel: ((Double) -> Void)?
+            public var onStep: ((Int, Bool) -> Void)?
+            public var scaleProvider: (() -> Double)?
+            public var isQuietProvider: (() -> Bool)?
+            public init() {}
+            public func set(_ newLevel: Double) {
+                let rose = newLevel > level
+                level = newLevel
+                onLevel?(newLevel)
+                onStep?(Int(newLevel), rose)
+            }
+            public func scaled() -> Double { level * (scaleProvider?() ?? 1) }
+            public func describe() -> String { (isQuietProvider?() ?? false) ? "quiet" : "loud" }
+        }
+        """.write(to: sources.appendingPathComponent("Gauges.swift"), atomically: true, encoding: .utf8)
+
+        let program = root.appendingPathComponent("Program")
+        try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Program", dependencies: [.package(path: "../Gauges")], targets: [])
+        """.write(to: program.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let source = program.appendingPathComponent("main.bas")
+        try """
+        IMPORT "Gauges"
+        FUNCTION Heard(Level AS DOUBLE) AS DOUBLE
+          PRINT "level "; Level
+          RETURN 0
+        END FUNCTION
+        FUNCTION Stepped(Whole AS DOUBLE, Rose AS BOOLEAN) AS DOUBLE
+          PRINT "step "; Whole; " rose "; Rose
+          RETURN 0
+        END FUNCTION
+        DIM M AS Meter
+        M = NEW Meter()
+        M.onLevel = FUNCTION(Level AS DOUBLE) AS DOUBLE = Heard(Level)
+        M.onStep = FUNCTION(Whole AS DOUBLE, Rose AS BOOLEAN) AS DOUBLE = Stepped(Whole, Rose)
+        M.scaleProvider = FUNCTION() AS DOUBLE = 3
+        M.isQuietProvider = FUNCTION() AS BOOLEAN = TRUE
+        M.set(4)
+        M.set(1)
+        PRINT "scaled "; M.scaled()
+        PRINT M.describe()
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let binary = root.appendingPathComponent("run-program").path
+        let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
+        #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
+        let run = try ProcessRunner.run(binary, [])
+        #expect(run.exitCode == 0, "run failed: \(run.stderr)")
+        #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nscaled 3\nquiet\n", "got:\n\(run.stdout)")
+    }
+
     /// The compiler under test, built into this package's scratch path.
     static var compiler: String {
         let root = URL(fileURLWithPath: #filePath)

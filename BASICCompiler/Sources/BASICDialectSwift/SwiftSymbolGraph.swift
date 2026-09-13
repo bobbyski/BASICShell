@@ -51,6 +51,12 @@ public struct SwiftAPI: Sendable {
         /// sees the payload `ENUM` E3 built; a value crosses as the runtime's
         /// record, converted case by case in the shim.
         case payloadEnumeration(precise: String)
+        /// A closure BASIC supplies whose parameters and result are numbers or
+        /// booleans (P1.2) — `onChange: ((Double) -> Void)?`,
+        /// `valueProvider: (() -> Double)?`. BASIC assigns one of its own
+        /// closures, and the shim wraps the compiled body in a Swift closure
+        /// that converts each argument on the way in.
+        indirect case handler(parameters: [ValueType], returns: ValueType, isOptional: Bool)
         /// `Swift.Duration`, as a BASIC number of milliseconds - the unit
         /// this BASIC's `SLEEP` takes, so `A.schedule(50, ...)` reads like
         /// `SLEEP 50`. Converted in the shim both ways (R5.1).
@@ -554,14 +560,18 @@ public struct SwiftAPI: Sendable {
                 if case .enumeration = type, isWrapped(aroundLeadingTypeIn: fragments) {
                     type = .unsupported("a collection of an enum")
                 }
-                // A closure property — `var onDock: ((AUIFolderEdge) -> Void)?`
-                // — reads as its innermost type for the same reason a closure
-                // parameter did: the arrow lives in the colon's fragment. A
-                // handler property is a real shape and a common one, but it is
-                // not a value BASIC holds yet, so it is refused by name rather
-                // than generating an accessor that returns the wrong type.
-                if fragments.map(\.spelling).joined().contains("->") {
-                    type = .unsupported("a closure property; BASIC takes a handler as an argument, not as a property, for now")
+                // A closure property — `var onChange: ((Double) -> Void)?`. Read
+                // from the declaration as written, because the arrow lives in the
+                // colon's fragment and the leading identifier is the innermost
+                // type. One BASIC can supply is a handler (P1.2); anything else
+                // is refused by name rather than read as its inner type.
+                let declaration = fragments.map(\.spelling).joined()
+                if declaration.contains("->") {
+                    if let handler = Self.handlerType(declaredTypeText(declaration)) {
+                        type = handler
+                    } else {
+                        type = .unsupported("a closure property whose parameters or result are not numbers or booleans, for now")
+                    }
                 }
                 // An optional scalar has no BASIC spelling for nil, exactly as
                 // an optional enum has none. Only enums were refused, so
@@ -614,6 +624,10 @@ public struct SwiftAPI: Sendable {
                 }
                 guard type.isSupported else {
                     if case .unsupported(let s) = type { api.skipped.append(Skip(member: path, reason: "no BASIC spelling for \(s)")) }
+                    continue
+                }
+                if case .handler = type, readOnly {
+                    api.skipped.append(Skip(member: path, reason: "a read-only closure property; there is nothing for BASIC to assign"))
                     continue
                 }
                 api.classes[index].properties.append(Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: !readOnly))
@@ -1052,6 +1066,66 @@ public struct SwiftAPI: Sendable {
         }
         return valueType(precise: only.precise, spelling: only.spelling)
     }
+    /// The type text of a declaration: what follows the first colon, without
+    /// an accessor block. `var onChange: ((Double) -> Void)? { get set }`
+    /// gives `((Double) -> Void)?`.
+    static func declaredTypeText(_ declaration: String) -> String {
+        guard let colon = declaration.firstIndex(of: ":") else { return "" }
+        var text = String(declaration[declaration.index(after: colon)...])
+        for block in ["{ get set }", "{ get }", "{ set }"] { text = text.replacingOccurrences(of: block, with: "") }
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A closure type BASIC can supply, or nil (P1.2).
+    ///
+    /// Every parameter and the result must be `Int`, `Double` or `Bool` —
+    /// what a BASIC closure body takes and returns natively, as a `double` or
+    /// an `i1`. The optional wrapper a settable handler property has is
+    /// accepted: an unset BASIC closure is what hands over nil. Strings wait
+    /// for a bridge that releases the runtime string after the call.
+    static func handlerType(_ written: String) -> ValueType? {
+        var text = written
+        for attribute in ["@escaping", "@MainActor", "@Sendable", "@autoclosure"] {
+            text = text.replacingOccurrences(of: attribute, with: "")
+        }
+        text = text.trimmingCharacters(in: .whitespaces)
+        var isOptional = false
+        if text.hasPrefix("("), text.hasSuffix(")?") {
+            text = String(text.dropFirst().dropLast(2))
+            isOptional = true
+        }
+        guard text.hasPrefix("("), let arrow = text.range(of: ") -> ", options: .backwards) else { return nil }
+        let inside = text[text.index(after: text.startIndex)..<arrow.lowerBound]
+        let result = text[arrow.upperBound...].trimmingCharacters(in: .whitespaces)
+        func scalar(_ spelling: Substring) -> ValueType? {
+            // A label, if the closure type names its parameter: `(_ value: Int)`.
+            switch spelling.split(separator: ":").last?.trimmingCharacters(in: .whitespaces) {
+            case "Int": return .int
+            case "Double": return .double
+            case "Bool": return .bool
+            default: return nil
+            }
+        }
+        var parameters: [ValueType] = []
+        if !inside.trimmingCharacters(in: .whitespaces).isEmpty {
+            // Any nesting means a parameter that is itself a closure or tuple.
+            guard !inside.contains("(") else { return nil }
+            for part in inside.split(separator: ",") {
+                guard let type = scalar(part) else { return nil }
+                parameters.append(type)
+            }
+        }
+        let returns: ValueType
+        if result == "Void" || result == "()" {
+            returns = .void
+        } else if let type = scalar(Substring(result)) {
+            returns = type
+        } else {
+            return nil
+        }
+        return .handler(parameters: parameters, returns: returns, isOptional: isOptional)
+    }
+
     /// A type written as a qualified path to a nested type — `Button.Style`,
     /// which the graph spells as identifiers with a dot between — resolved to
     /// the type the whole path means, or nil when the fragments are anything

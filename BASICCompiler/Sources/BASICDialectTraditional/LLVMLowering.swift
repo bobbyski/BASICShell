@@ -899,7 +899,12 @@ struct FunctionEmitter {
                 out.emit("call void @\"\(objectModel.fieldSetSymbol(for: swiftClass(of: base)!, field: index)!)\"(ptr \(target), double \(result))")
             case .boolean where swiftClass(of: base) != nil:
                 out.emit("call void @\"\(objectModel.fieldSetSymbol(for: swiftClass(of: base)!, field: index)!)\"(ptr \(target), i1 \(result))")
-            case .string where swiftClass(of: base) != nil, .composite where swiftClass(of: base) != nil:
+            // A closure too (P1.2): a handler property on a Swift object is
+            // set through the object model's thunk. Falling through to the
+            // runtime-record store wrote a closure pointer into the Swift
+            // object's own memory as though it were a record's field.
+            case .string where swiftClass(of: base) != nil, .composite where swiftClass(of: base) != nil,
+                 .closure where swiftClass(of: base) != nil:
                 out.emit("call void @\"\(objectModel.fieldSetSymbol(for: swiftClass(of: base)!, field: index)!)\"(ptr \(target), ptr \(result))")
             case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(result))")
             case .boolean: out.emit("call void @basic_rt_composite_set_boolean(ptr \(target), i64 \(index), i1 \(result))")

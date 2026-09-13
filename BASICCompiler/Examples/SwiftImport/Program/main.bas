@@ -134,6 +134,28 @@ Sq.Side = 3
 PRINT "area, BASIC calling BASIC:"; Sq.area()
 PRINT Sq.describe()
 
+' Handler properties (P1.2). BASIC assigns its own closures to the framework's
+' closure properties; Swift calls them with arguments, and uses what a
+' provider returns. Nothing here is a wrapper: the framework holds a real Swift
+' closure that calls the BASIC body.
+FUNCTION Resized(Width AS DOUBLE) AS DOUBLE
+  PRINT "  BASIC heard a resize to"; Width
+  RETURN 0
+END FUNCTION
+
+FUNCTION Changed(Width AS DOUBLE, Grew AS BOOLEAN) AS DOUBLE
+  PRINT "  width is now"; Width; ", grew: "; Grew
+  RETURN 0
+END FUNCTION
+
+R.onResize = FUNCTION(Width AS DOUBLE) AS DOUBLE = Resized(Width)
+R.onChange = FUNCTION(Width AS DOUBLE, Grew AS BOOLEAN) AS DOUBLE = Changed(Width, Grew)
+R.marginProvider = FUNCTION() AS DOUBLE = 1
+PRINT "resize to 6:"
+R.resize(6)
+PRINT "resize to 2:"
+R.resize(2)
+PRINT "padded area, margin from BASIC:"; R.paddedArea()
 ON ERROR GOTO Broken
 PRINT "scaled by 2:"; R.scaled(2)
 PRINT "scaled by -1:"; R.scaled(-1)

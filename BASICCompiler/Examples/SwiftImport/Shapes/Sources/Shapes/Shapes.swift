@@ -116,6 +116,26 @@ public final class Rect: Shape {
 
     public override func area() -> Double { width * height }
     public override func sides() -> Int { 4 }
+
+    /// Called with the new width whenever `resize(to:)` runs — a handler a
+    /// BASIC program assigns (P1.2).
+    public var onResize: ((Double) -> Void)?
+    /// Called with the whole width and whether it grew.
+    public var onChange: ((Int, Bool) -> Void)?
+    /// Asked for a margin whenever `paddedArea()` is worked out — a provider.
+    public var marginProvider: (() -> Double)?
+
+    public func resize(to newWidth: Double) {
+        let grew = newWidth > width
+        width = newWidth
+        onResize?(newWidth)
+        onChange?(Int(newWidth), grew)
+    }
+
+    public func paddedArea() -> Double {
+        let margin = marginProvider?() ?? 0
+        return (width + 2 * margin) * (height + 2 * margin)
+    }
 }
 
 public final class Circle: Shape {
