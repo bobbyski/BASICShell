@@ -83,12 +83,20 @@ public struct SwiftPackageResolver {
         // a busy directory. Stable rather than temporary, so a second compile
         // of the same program costs nothing.
         let scratch = (path as NSString).appendingPathComponent(".build-basicc")
+        // **`--target`, the module being imported — not `--product`.** An
+        // import names a module, and a module is a target. `--product` quietly
+        // falls back to building *every* target when the product is an
+        // automatic one, and ActiveUI's `ActiveUIWindowsSmoke` runner does a
+        // `@testable import` that cannot build in release: the import failed
+        // over a test executable it never needed. Only this target's objects
+        // are linked (below), and building it builds what it depends on.
         let build = try ProcessRunner.run("/usr/bin/xcrun", [
-            "swift", "build", "-c", "release", "--product", importName,
+            "swift", "build", "-c", "release", "--target", importName,
             "--scratch-path", scratch,
         ], workingDirectory: path)
         guard build.exitCode == 0 else {
-            throw Failure(importName: importName, problem: "swift build failed in \(path):\n\(Self.lastLines(build.stderr))")
+            throw Failure(importName: importName,
+                          problem: "swift build failed in \(path):\n\(Self.errorLines(stdout: build.stdout, stderr: build.stderr))")
         }
         let graph = try ProcessRunner.run("/usr/bin/xcrun", [
             // `--scratch-path` belongs to `swift package`, not to the
@@ -110,8 +118,7 @@ public struct SwiftPackageResolver {
             throw Failure(importName: importName, problem: detail)
         }
         let objectDirectory = "\(scratch)/release/\(importName).build"
-        let objects = ((try? FileManager.default.contentsOfDirectory(atPath: objectDirectory)) ?? [])
-            .filter { $0.hasSuffix(".o") }.sorted().map { (objectDirectory as NSString).appendingPathComponent($0) }
+        let objects = Self.currentObjects(in: objectDirectory)
         guard !objects.isEmpty else {
             throw Failure(importName: importName, problem: "swift build produced no objects in \(objectDirectory)")
         }
@@ -246,11 +253,12 @@ public struct SwiftPackageResolver {
                 methods.append(shim)
             }
         }
-        // Members on enums (E5): the receiver arrives as the enum value — an
-        // ordinal or a record — or, for a static, there is none.
-        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
-            let stem = enumeration.swiftName.replacingOccurrences(of: ".", with: "_")
-            for (member, isStatic, isProperty) in SwiftInterfaceUnit.members(of: enumeration) {
+        // Members reached as free functions — an enum's (E5), a class's
+        // statics. The receiver arrives as the enum value — an ordinal or a
+        // record — or, for a static, there is none.
+        for owner in SwiftInterfaceUnit.memberOwners(in: api) {
+            let stem = owner.stem
+            for (member, isStatic, isProperty) in owner.members {
                 let passed = member.passed
                 var shim = SwiftAsyncShim.Method(
                     className: stem, name: member.name, labels: passed.map(\.label),
@@ -260,8 +268,12 @@ public struct SwiftPackageResolver {
                 )
                 shim.isAsync = false
                 shim.isProperty = isProperty
-                shim.receiver = isStatic ? .type(enumeration.swiftName)
-                    : enumeration.isPayload ? .payloadEnum(Self.payloadEnum(enumeration, in: api)) : .plainEnum(Self.plainEnum(enumeration))
+                shim.discardsResult = member.discardsResult
+                if isStatic {
+                    shim.receiver = .type(owner.swiftName)
+                } else if let enumeration = owner.enumeration {
+                    shim.receiver = enumeration.isPayload ? .payloadEnum(Self.payloadEnum(enumeration, in: api)) : .plainEnum(Self.plainEnum(enumeration))
+                }
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 shim.stringResult = member.returns == .string
                 for (index, parameter) in passed.enumerated() {
@@ -426,6 +438,38 @@ public struct SwiftPackageResolver {
             if name.hasPrefix("$s") { found.insert(name) }
         }
         return found
+    }
+
+    /// The objects the *current* build of a target produced.
+    ///
+    /// SwiftPM never deletes the object of a source that is gone, so listing
+    /// the directory links leftovers from earlier builds: ActiveUI's held 281
+    /// objects for 194 sources, and the 87 extras referenced symbols the fresh
+    /// build no longer defines — an undefined-symbol link failure in code
+    /// nobody had touched. The target's `output-file-map.json` names exactly
+    /// the objects this build wrote; the directory listing is only a fallback.
+    static func currentObjects(in directory: String) -> [String] {
+        let mapPath = (directory as NSString).appendingPathComponent("output-file-map.json")
+        if let data = FileManager.default.contents(atPath: mapPath),
+           let map = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]] {
+            let objects = map.compactMap { source, outputs in source.isEmpty ? nil : outputs["object"] }
+                .filter { FileManager.default.fileExists(atPath: $0) }
+                .sorted()
+            if !objects.isEmpty { return objects }
+        }
+        return ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
+            .filter { $0.hasSuffix(".o") }.sorted().map { (directory as NSString).appendingPathComponent($0) }
+    }
+
+    /// A failed tool's `error:` lines, from both streams.
+    ///
+    /// `swift build` prints compiler diagnostics on stdout. Showing the tail
+    /// of stderr reported a harmless warning as the failure, while the real
+    /// error — `module 'ActiveUI' was not compiled for testing` — sat unseen
+    /// in the other stream.
+    static func errorLines(stdout: String, stderr: String, count: Int = 12) -> String {
+        let errors = (stdout + "\n" + stderr).split(separator: "\n").filter { $0.contains("error:") }
+        return errors.isEmpty ? lastLines(stderr, count: count) : errors.prefix(count).joined(separator: "\n")
     }
 
     static func lastLines(_ text: String, count: Int = 12) -> String {

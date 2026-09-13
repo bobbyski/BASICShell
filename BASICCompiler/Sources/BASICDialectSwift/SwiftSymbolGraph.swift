@@ -157,8 +157,16 @@ public struct SwiftAPI: Sendable {
         public var type: ValueType
         public let isSettable: Bool
 
-        public var getterSymbol: String { String(symbol.dropLast(2)) + "vg" }
-        public var setterSymbol: String { String(symbol.dropLast(2)) + "vs" }
+        public var getterSymbol: String { accessor("vg") }
+        public var setterSymbol: String { accessor("vs") }
+
+        /// The accessor's symbol from the property's. A *static* property's
+        /// symbol ends `…vpZ` and its getter `…vgZ`: swapping the last two
+        /// characters of that made `…vvg`, which nothing exports, so every
+        /// class static property was withdrawn as having no getter.
+        private func accessor(_ kind: String) -> String {
+            symbol.hasSuffix("vpZ") ? String(symbol.dropLast(3)) + kind + "Z" : String(symbol.dropLast(2)) + kind
+        }
     }
 
     /// A struct, and the scalars it flattens to.
@@ -252,6 +260,10 @@ public struct SwiftAPI: Sendable {
         public var initializers: [Function]
         public var methods: [Function]
         public var properties: [Property]
+        /// Static members — VB's `Shared` — reached as `Class.member`,
+        /// through the free-function path an enum's members take (E5).
+        public var staticMethods: [Function] = []
+        public var staticProperties: [Property] = []
     }
 
     /// One member left out, and why.
@@ -513,8 +525,13 @@ public struct SwiftAPI: Sendable {
                     // A member of an imported enum (E5).
                     if isStatic { api.enumerations[owner]!.staticMethods.append(function) }
                     else { api.enumerations[owner]!.instanceMethods.append(function) }
+                } else if isStatic, !isInit, let owner = memberOf[precise], let index = classIndex[owner] {
+                    // A class's static member: VB's `Shared`, called on the
+                    // type. `AUIApplication.run(_:placement:)` is how an app
+                    // starts, and it is one.
+                    api.classes[index].staticMethods.append(function)
                 } else if isStatic {
-                    api.skipped.append(Skip(member: path, reason: "a static member of something other than an enum; BASIC reaches statics on enums only, for now"))
+                    api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
                 } else if let owner = memberOf[precise], let index = classIndex[owner] {
                     if isInit { api.classes[index].initializers.append(function) } else { api.classes[index].methods.append(function) }
                 } else if kind(of: symbol) == "swift.func" {
@@ -577,7 +594,19 @@ public struct SwiftAPI: Sendable {
                     continue
                 }
                 if isStaticProperty {
-                    api.skipped.append(Skip(member: path, reason: "a static member of something other than an enum; BASIC reaches statics on enums only, for now"))
+                    if let owner = memberOf[precise], let index = classIndex[owner] {
+                        guard type.isSupported else {
+                            if case .unsupported(let s) = type { api.skipped.append(Skip(member: path, reason: "no BASIC spelling for \(s)")) }
+                            continue
+                        }
+                        // Read from BASIC as `AUIApplication.runsInBackground`.
+                        // Assigning one is a separate slice, so it is read-only
+                        // here rather than half-writable.
+                        api.classes[index].staticProperties.append(
+                            Property(name: name, symbol: "$s" + precise.dropFirst(2), type: type, isSettable: false))
+                        continue
+                    }
+                    api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
                     continue
                 }
                 guard let owner = memberOf[precise], let index = classIndex[owner] else {
@@ -645,8 +674,36 @@ public struct SwiftAPI: Sendable {
             procedure.discardsResult = true
             return procedure
         }
+        // What a member reached as a free function crosses — an enum's (E5) or
+        // a class's static: numbers, strings, booleans, enums and objects.
+        func crossesForEnum(_ type: ValueType) -> Bool {
+            switch type {
+            case .double, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
+            default: return false
+            }
+        }
         for index in api.classes.indices {
             let klass = api.classes[index]
+            func keepShared(_ function: Function) -> Bool {
+                guard keep(function, owner: klass.name) else { return false }
+                guard crossesForEnum(function.returns), function.passed.allSatisfy({ crossesForEnum($0.type) }) else {
+                    enumWithdrawals.append(Skip(member: "\(klass.name).\(function.name)",
+                                                reason: "a static member crosses numbers, strings, booleans, enums and objects for now"))
+                    return false
+                }
+                return true
+            }
+            api.classes[index].staticMethods = klass.staticMethods.map(settle).map(discardingResult).filter(keepShared)
+            api.classes[index].staticProperties = klass.staticProperties.compactMap { original -> Property? in
+                var property = original
+                property.type = settle(property.type)
+                guard property.type.isSupported, crossesForEnum(property.type) else {
+                    enumWithdrawals.append(Skip(member: "\(klass.name).\(property.name)",
+                                                reason: "a static member crosses numbers, strings, booleans, enums and objects for now"))
+                    return nil
+                }
+                return property
+            }
             let methods = klass.methods.map(settle).map(discardingResult).filter { keep($0, owner: klass.name) }
             let initializers = klass.initializers.map(settle).filter { keep($0, owner: klass.name) }
             let properties = klass.properties.compactMap { original -> Property? in
@@ -668,13 +725,7 @@ public struct SwiftAPI: Sendable {
             api.classes[index].properties = properties
         }
         // Enum members settle the same way, and cross only what the shim can
-        // carry for them: numbers, strings, booleans, enums and objects (E5).
-        func crossesForEnum(_ type: ValueType) -> Bool {
-            switch type {
-            case .double, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
-            default: return false
-            }
-        }
+        // carry for them (E5) — `crossesForEnum`, above.
         for precise in api.enumerations.keys.sorted() {
             guard var enumeration = api.enumerations[precise] else { continue }
             let owner = enumeration.name
@@ -823,6 +874,20 @@ public struct SwiftAPI: Sendable {
                 // actor's property, and for any computed one without a setter.
                 return Property(name: property.name, symbol: property.symbol,
                                 type: property.type, isSettable: false)
+            }
+            classes[index].staticMethods = klass.staticMethods.filter { method in
+                guard has(method.symbol) else {
+                    skipped.append(Skip(member: "\(klass.name).\(method.name)", reason: "the framework does not export it"))
+                    return false
+                }
+                return true
+            }
+            classes[index].staticProperties = klass.staticProperties.filter { property in
+                guard has(property.getterSymbol) else {
+                    skipped.append(Skip(member: "\(klass.name).\(property.name)", reason: "the framework exports no getter for it"))
+                    return false
+                }
+                return true
             }
         }
     }

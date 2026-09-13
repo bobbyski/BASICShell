@@ -940,10 +940,10 @@ public struct SwiftObjectModel: ObjectModel {
     /// and a static has no receiver at all.
     func perImportedEnumMembers(_ api: SwiftAPI) -> String {
         var out = ""
-        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
-            let stem = enumeration.swiftName.replacingOccurrences(of: ".", with: "_")
-            for (member, isStatic, _) in SwiftInterfaceUnit.members(of: enumeration) {
-                let functionName = SwiftInterfaceUnit.enumMemberFunction(enum: enumeration.name, member: member.name).uppercased()
+        for owner in SwiftInterfaceUnit.memberOwners(in: api) {
+            let stem = owner.stem
+            for (member, isStatic, _) in owner.members {
+                let functionName = SwiftInterfaceUnit.enumMemberFunction(enum: owner.name, member: member.name).uppercased()
                 guard let function = module.functions.first(where: { $0.name == functionName }) else { continue }
                 var counter = 0
                 func temp() -> String { counter += 1; return "%t\(counter)" }
@@ -953,7 +953,7 @@ public struct SwiftObjectModel: ObjectModel {
                 var shimTypes: [String] = []
                 var offset = 0
                 if !isStatic {
-                    if enumeration.isPayload {
+                    if owner.enumeration?.isPayload == true {
                         passed.append("ptr %a0"); shimTypes.append("ptr")
                     } else {
                         let ordinal = temp()

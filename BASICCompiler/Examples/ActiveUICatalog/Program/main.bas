@@ -32,6 +32,10 @@ DIM Side AS AUILabel_Alignment
 Side = AUILabel_Alignment.center
 PRINT "enum variable  : "; Side
 
+' Static members — VB's Shared — read on the class itself, with no instance.
+PRINT "appearance     : "; AUIApplication.appearance
+PRINT "logs uncaught  : "; AUIApplication.logsUncaughtExceptions
+
 ' A button, and its title read back through the framework.
 DIM Go AS AUIButton
 Go = NEW AUIButton("Press me")

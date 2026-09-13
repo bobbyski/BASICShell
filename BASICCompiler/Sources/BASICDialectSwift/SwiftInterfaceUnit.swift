@@ -63,14 +63,15 @@ public struct SwiftInterfaceUnit {
             }
             lines.append("END ENUM")
         }
-        // Members on enums (E5): each is a free function the front end calls
-        // for `B.inner` or `Tint.favorite`. The body is a placeholder, as
-        // every imported member's is, and the object model supplies a thunk.
-        for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
-            for (member, isStatic, _) in Self.members(of: enumeration) {
-                let receiver = isStatic ? [] : ["Receiver AS \(enumeration.name)"]
+        // Members reached as free functions: an enum's (E5), for `B.inner` or
+        // `Tint.favorite`, and a class's statics, for `AUIApplication.run(r)`.
+        // The body is a placeholder, as every imported member's is, and the
+        // object model supplies a thunk.
+        for owner in Self.memberOwners(in: api) {
+            for (member, isStatic, _) in owner.members {
+                let receiver = isStatic ? [] : ["Receiver AS \(owner.name)"]
                 let parameters = (receiver + Self.declared(member.passed, in: api)).joined(separator: ", ")
-                let name = Self.enumMemberFunction(enum: enumeration.name, member: member.name)
+                let name = Self.enumMemberFunction(enum: owner.name, member: member.name)
                 if member.returns == .void {
                     lines.append("FUNCTION \(name)(\(parameters)) AS VOID")
                     lines.append("END FUNCTION")
@@ -146,18 +147,69 @@ public struct SwiftInterfaceUnit {
             + enumeration.staticMethods.map { ($0, true, false) }
     }
 
-    /// Which free function each enum member is, for the front end (E5):
-    /// normalized enum name, then normalized member name.
+    /// Which free function each member is, for the front end: normalized
+    /// type name, then normalized member name. An enum's members (E5) and a
+    /// class's statics share the table, because the front end's question —
+    /// "is `X.member` a call to a function?" — is the same one for both.
     public var enumMembers: [String: [String: SemanticModel.EnumMemberRef]] {
         var table: [String: [String: SemanticModel.EnumMemberRef]] = [:]
-        for enumeration in api.enumerations.values {
-            for (member, isStatic, isProperty) in Self.members(of: enumeration) {
-                table[enumeration.name.uppercased(), default: [:]][member.name.uppercased()] = SemanticModel.EnumMemberRef(
-                    function: Self.enumMemberFunction(enum: enumeration.name, member: member.name).uppercased(),
+        for owner in Self.memberOwners(in: api) {
+            for (member, isStatic, isProperty) in owner.members {
+                table[owner.name.uppercased(), default: [:]][member.name.uppercased()] = SemanticModel.EnumMemberRef(
+                    function: Self.enumMemberFunction(enum: owner.name, member: member.name).uppercased(),
                     isStatic: isStatic, isProperty: isProperty)
             }
         }
         return table
+    }
+
+    /// A type whose members BASIC reaches as free functions `<Type>__<member>`.
+    public struct MemberOwner {
+        /// The BASIC name: `Tint`, `AUIApplication`.
+        public let name: String
+        /// The Swift spelling, which a static's shim calls on.
+        public let swiftName: String
+        /// The shim symbol stem. A class's statics get their own, because a
+        /// class may have an instance member and a static of one name —
+        /// `AUIApplication.run()` and `AUIApplication.run(_:placement:)` — and
+        /// the two shims would otherwise define the same symbol.
+        public let stem: String
+        /// The enum, when the owner is one: its instance members take a value.
+        public let enumeration: SwiftAPI.Enumeration?
+        public let members: [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)]
+    }
+
+    /// Every owner, enums then classes, each member name once.
+    ///
+    /// **The first member of a name wins**, because BASIC has no overloading
+    /// and each becomes one free function: `AUIApplication` has three static
+    /// `run`s. The same rule `NEW` follows for initializers.
+    public static func memberOwners(in api: SwiftAPI) -> [MemberOwner] {
+        func firstOfEachName(_ list: [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)])
+            -> [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)] {
+            var seen = Set<String>()
+            return list.filter { seen.insert($0.0.name.uppercased()).inserted }
+        }
+        let enums = api.enumerations.values.sorted(by: { $0.name < $1.name }).map { enumeration in
+            MemberOwner(name: enumeration.name, swiftName: enumeration.swiftName,
+                        stem: enumeration.swiftName.replacingOccurrences(of: ".", with: "_"),
+                        enumeration: enumeration, members: firstOfEachName(members(of: enumeration)))
+        }
+        let classes = api.classes.sorted(by: { $0.name < $1.name }).compactMap { klass -> MemberOwner? in
+            let shared = firstOfEachName(staticMembers(of: klass))
+            guard !shared.isEmpty else { return nil }
+            return MemberOwner(name: klass.name, swiftName: klass.name, stem: "\(klass.name)_shared",
+                               enumeration: nil, members: shared)
+        }
+        return enums + classes
+    }
+
+    /// A class's static members as functions, properties first.
+    public static func staticMembers(of klass: SwiftAPI.Class) -> [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)] {
+        klass.staticProperties.map {
+            (SwiftAPI.Function(name: $0.name, symbol: $0.symbol, parameters: [], returns: $0.type,
+                               isInitializer: false, isOverridable: false), true, true)
+        } + klass.staticMethods.map { ($0, true, false) }
     }
 
     /// The normalized names of those free functions, whose bodies the
@@ -215,8 +267,9 @@ public struct SwiftInterfaceUnit {
         }
         // An enum's cases count as members: they are what a program uses; so
         // do the members declared on it (E5).
-        let cases = api.enumerations.values.reduce(0) { $0 + $1.cases.count + Self.members(of: $1).count }
-        return (imported + cases, api.skipped.count + skippedInitializers.count)
+        let cases = api.enumerations.values.reduce(0) { $0 + $1.cases.count }
+        let members = Self.memberOwners(in: api).reduce(0) { $0 + $1.members.count }
+        return (imported + cases + members, api.skipped.count + skippedInitializers.count)
     }
 
     /// What was imported and what was not, per framework (R4.8).
@@ -231,6 +284,8 @@ public struct SwiftInterfaceUnit {
             if let base = klass.superclassPrecise.flatMap({ self.api.class(precise: $0) }) { parts.append("inherits \(base.name)") }
             parts.append("\(klass.properties.count) propert\(klass.properties.count == 1 ? "y" : "ies")")
             parts.append("\(klass.methods.count) method(s)")
+            let shared = klass.staticMethods.count + klass.staticProperties.count
+            if shared > 0 { parts.append("\(shared) shared") }
             if let initializer = chosenInitializer(of: klass) {
                 parts.append("NEW(\(Self.names(initializer.passed, in: api).joined(separator: ", ")))")
             } else {
