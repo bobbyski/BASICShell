@@ -604,11 +604,31 @@ final class FunctionBuilder {
             if reference.fields.count == 1, let definition = model.enums[reference.base.normalized] {
                 return definition.isPayload ? nil : definition
             }
+            // A field read — `Caption.alignment`. The field's declared ENUM
+            // is the only record of what the number means once BIR has
+            // lowered it, and without this PRINT showed the ordinal while the
+            // same enum in a variable showed its name.
+            if reference.fields.count == 1, reference.indexes.isEmpty,
+               case .composite(let typeName)? = model.info(reference.base.normalized, in: functionName)?.type,
+               let field = fieldNamed(reference.fields[0], on: typeName),
+               let name = field.enumName, let definition = model.enums[name], !definition.isPayload {
+                return definition
+            }
             guard reference.fields.isEmpty, reference.indexes.isEmpty else { return nil }
             return model.enums[declaredEnumName(of: reference.base) ?? ""]
         default:
             return nil
         }
+    }
+
+    /// A field by name on a type or any of its bases.
+    private func fieldNamed(_ name: String, on typeName: String) -> SemanticModel.Field? {
+        var current: String? = typeName
+        while let owner = current, let type = model.types[owner] {
+            if let field = type.fields.first(where: { $0.name == name.uppercased() }) { return field }
+            current = type.base
+        }
+        return nil
     }
 
     /// The ENUM a variable holds (E5): a VB-style one by its declaration, a

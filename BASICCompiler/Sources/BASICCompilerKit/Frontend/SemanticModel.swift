@@ -52,6 +52,12 @@ public final class SemanticModel {
         public let jsonName: String?
         /// The declared default, when the field has one.
         public let defaultValue: BIRDefault?
+        /// The ENUM this field was declared with, when it was declared with
+        /// one. BIR lowers a payload-free ENUM to a number, so the name is
+        /// the only thing left that knows `alignment` is an
+        /// `AUILabel_Alignment` — and PRINT showing the *name* is VB's rule,
+        /// which needs the type to look the name up in.
+        public var enumName: String?
         /// Whether a numeric field was declared INTEGER.
         public let isInteger: Bool
         /// The field's `meta { … }` entries.

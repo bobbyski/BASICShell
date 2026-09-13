@@ -164,6 +164,7 @@ struct SemanticAnalyzer {
                             name: fieldName.uppercased(), displayName: fieldName, type: resolved,
                             visibility: visibility, owner: typeName, dimensions: dimensions,
                             jsonName: json?.name, defaultValue: defaultLiteral,
+                            enumName: self.enumName(of: fieldType),
                             isInteger: fieldType == .scalar(.integer),
                             metadata: metadata.mapValues(literal)
                         ))

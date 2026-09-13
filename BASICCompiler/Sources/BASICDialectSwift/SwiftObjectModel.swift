@@ -747,6 +747,10 @@ public struct SwiftObjectModel: ObjectModel {
         // Anything emitted IR cannot call directly, or whose argument list
         // differs from what Swift declared because a defaulted parameter is
         // being left out.
+        // A discarded result is dropped *inside* the shim, where ARC still
+        // sees it: a direct call would return a value the thunk has no
+        // signature for, and an object returned at +1 would leak.
+        if method.discardsResult { return true }
         if case .array = method.returns { return true }
         if case .enumeration = method.returns { return true }
         if case .payloadEnumeration = method.returns { return true }
