@@ -17,8 +17,8 @@ public enum ProcessRunner {
         try run("/usr/bin/xcrun", [tool] + arguments)
     }
 
-    /// Runs an executable and waits for it, draining both pipes so a chatty
-    /// tool cannot deadlock on a full pipe buffer.
+    /// Runs an executable and waits for it, capturing both streams through
+    /// files so a chatty tool cannot deadlock on a full pipe buffer.
     public static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, workingDirectory: String? = nil) throws -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -26,16 +26,36 @@ public enum ProcessRunner {
         if let environment { process.environment = environment }
         if let workingDirectory { process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory) }
 
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
+        // **Both streams go to files, and nothing here blocks.** A pipe holds
+        // 64KB: read stdout to EOF and *then* stderr, and a tool that fills
+        // stderr meanwhile can no longer write, never exits, and is never read
+        // — `swift package dump-symbol-graph` over ActiveUI emits 3,000+
+        // warning lines and hung exactly there for ten hours.
+        //
+        // Draining the second pipe on `DispatchQueue.global()` fixes that one
+        // and buys a worse one: every concurrent call blocks a pool thread
+        // waiting for its reader, and the suite runs dozens of builds at once,
+        // so the pool starves and nobody finishes. A file has no capacity to
+        // run out of, so the child writes freely and we read after it exits.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basicc-run-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outURL = directory.appendingPathComponent("stdout")
+        let errURL = directory.appendingPathComponent("stderr")
+        FileManager.default.createFile(atPath: outURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        let outHandle = try FileHandle(forWritingTo: outURL)
+        let errHandle = try FileHandle(forWritingTo: errURL)
+        process.standardOutput = outHandle
+        process.standardError = errHandle
         try process.run()
-
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        try? outHandle.close()
+        try? errHandle.close()
 
+        let outData = (try? Data(contentsOf: outURL)) ?? Data()
+        let errData = (try? Data(contentsOf: errURL)) ?? Data()
         return Result(
             exitCode: process.terminationStatus,
             stdout: String(decoding: outData, as: UTF8.self),

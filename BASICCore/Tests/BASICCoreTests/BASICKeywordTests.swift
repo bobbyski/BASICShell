@@ -20,7 +20,7 @@ struct BASICKeywordTests {
     /// This is the test that matters. Adding a statement to ``Parser``
     /// means adding it to `statementKeywords`, and that now fails here until
     /// the word reaches ``BASICKeywords`` — which is what makes it complete,
-    /// highlight in the shell editor, and colour in Studio. Before this, all
+    /// highlight in the shell editor, and color in Studio. Before this, all
     /// four of those were separate acts of memory and three of them were
     /// routinely forgotten.
     @Test("the parser dispatches on nothing the vocabulary has not heard of")
@@ -87,7 +87,7 @@ struct BASICKeywordTests {
     /// Every pseudo class the vocabulary lists is one the interpreter builds.
     ///
     /// Proved by constructing each, not by comparing lists — the same reason
-    /// the type-name test declares a variable. A pseudo class is recognised by
+    /// the type-name test declares a variable. A pseudo class is recognized by
     /// a string comparison inside `.newObject`, which no derivation from the
     /// parser can see, so this is the only thing standing between that switch
     /// and the vocabulary.
@@ -95,7 +95,7 @@ struct BASICKeywordTests {
     /// The assertion is narrow on purpose: constructing a `VectorTerminal` on a
     /// host with no terminal may well fail, and that is not what is being
     /// tested. "Unknown CLASS" is — it is what the interpreter says when the
-    /// name reached the bottom of the switch unrecognised.
+    /// name reached the bottom of the switch unrecognized.
     @Test("every pseudo class in the vocabulary can be constructed")
     func pseudoClassesAreConstructible() {
         for name in BASICKeywords.pseudoClasses.sorted() {

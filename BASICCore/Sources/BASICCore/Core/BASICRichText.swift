@@ -39,7 +39,7 @@ struct BASICRichObject {
     var title: String?
     /// Render width in columns.
     var width: Int = 80
-    /// Whether ANSI colour is emitted.
+    /// Whether ANSI color is emitted.
     var isColored: Bool = true
     /// Whether a syntax render shows line numbers.
     var showsLineNumbers: Bool = false
@@ -220,7 +220,7 @@ extension BASICRuntime {
             // have to repeat it on every render.
             //
             // `body` as a bare String, not `Panel(body)`. That convenience
-            // initialiser wraps the text in RichSwift's `Text`, which parses
+            // initializer wraps the text in RichSwift's `Text`, which parses
             // markup unconditionally — `context.markup` is only honoured by
             // `String`'s own conformance. Through `Text`, a program printing
             // `[bold]x[/bold]` got `x`, its brackets eaten by a styling
@@ -297,12 +297,12 @@ extension BASICRuntime {
         }
     }
 
-    /// Renders source with syntax colour.
+    /// Renders source with syntax color.
     ///
     /// **BASIC does not go through RichSwift.** `RichSwift.Syntax` keys its
     /// keywords off a private dictionary and falls back to *Swift's* for any
     /// language it does not know — so `Syntax(code, language: "basic")` would
-    /// colour `LET` and `PRINT` as plain text while lighting up `class` and
+    /// color `LET` and `PRINT` as plain text while lighting up `class` and
     /// `func`. BASIC is tokenized by ``BASICSyntaxTokenizer``, which reads
     /// ``BASICKeywords``, so it agrees with `LIST` and both editors.
     ///

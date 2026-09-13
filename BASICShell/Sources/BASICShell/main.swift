@@ -4117,7 +4117,7 @@ extension ConsoleHost: BASICTUIPresentationHost {
 //
 // Not `loadSource` and `RUN`. A startup file is fed to the session one line at
 // a time through exactly the path a typed line takes, which is what makes
-// `alias ll='ls -la'` work in it — `alias` is a command the session recognises
+// `alias ll='ls -la'` work in it — `alias` is a command the session recognizes
 // when a person types it, not a BASIC statement the parser knows, so an rc read
 // as a *program* cannot contain one. That was the first thing tried and the
 // reason this is not that. Multi-line blocks still work: the session buffers

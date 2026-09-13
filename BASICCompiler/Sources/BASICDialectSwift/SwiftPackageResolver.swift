@@ -191,10 +191,21 @@ public struct SwiftPackageResolver {
             }
         }
         // Constructors need shims for the same reasons methods do.
+        //
+        // **One shim per arity, and the first one wins** — the same rule the
+        // object model applies to its thunks, because the two have to agree on
+        // which initializer `NEW C(x, y)` means. BASIC has a single NEW per
+        // class, and two Swift initializers collapse onto one arity once
+        // defaulted parameters are dropped: ActiveUI's `AUIStepper` has two
+        // that both take three, and the shim defined the same `@_cdecl` symbol
+        // twice, which does not compile.
+        var emittedNew = Set<String>()
         for klass in api.classes {
             for initializer in klass.initializers {
                 let passed = initializer.passed
                 guard SwiftObjectModel.needsInitializerShim(initializer) else { continue }
+                let arity = SwiftObjectModel.basicArity(initializer, in: api)
+                guard emittedNew.insert("\(klass.name).\(arity)").inserted else { continue }
                 var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: "init",
                     labels: passed.map(\.label),

@@ -216,7 +216,7 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
                 // away a `desktop.fillStyle` set before it — so the theme was
                 // dressing the windows and the desktop was reverting to the
                 // terminal's own background. Setting it before *and* after is
-                // what makes the colour stick.
+                // what makes the color stick.
                 let theme = registry.pendingTheme
                 if !presents.isEmpty || theme != nil {
                     _ = app.addTimer(every: .milliseconds(1), repeats: false) { [weak app] in

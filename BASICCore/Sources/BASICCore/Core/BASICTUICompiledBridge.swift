@@ -11,7 +11,7 @@ import TUIKit
 /// The TUIKit binding as a compiled program sees it.
 ///
 /// `basicc` has its own runtime and no interpreter, but a control's
-/// behaviour was settled here control by control — which word a table
+/// behavior was settled here control by control — which word a table
 /// answers, what a short row does, where a menu bar goes. A second copy of
 /// that in the compiler's runtime would drift from this one the first time
 /// either changed, and a difference between the two is exactly what the

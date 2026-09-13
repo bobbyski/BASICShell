@@ -29,7 +29,7 @@ extension BASICTUIRegistry {
 /// A full-screen window that paints only its chrome rows.
 ///
 /// The desktop is *behind* the root window, so a root that paints its whole
-/// background hides it — and the theme's desktop colour never appears no
+/// background hides it — and the theme's desktop color never appears no
 /// matter how carefully it is chosen. That is what made the gallery grey.
 ///
 /// The gallery's own `GalleryShellWindow` paints the menu row and the status
@@ -620,7 +620,7 @@ extension BASICRuntime {
     /// gallery's own fallback paints a neutral grey.
     ///
     /// That grey is what a plain terminal showed instead of Turbo's blue. So
-    /// the cell fill borrows the vector backdrop's top colour when there is
+    /// the cell fill borrows the vector backdrop's top color when there is
     /// one, and only falls back to grey when the theme describes no desktop by
     /// either route — which makes the two renderings agree.
     @MainActor
@@ -630,7 +630,7 @@ extension BASICRuntime {
         app.desktop.fillStyle = CellStyle(background: Self.tuiDesktopFill(for: theme))
     }
 
-    /// The colour the desktop should be painted, for a theme.
+    /// The color the desktop should be painted, for a theme.
     ///
     /// Separated from `applyTUITheme` so it can be tested without an
     /// application or a terminal — which is how the Modern Turbo case was

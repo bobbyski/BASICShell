@@ -4,8 +4,8 @@
 // metadata basicc emitted, and this file compiles against the
 // .swiftinterface basicc generated. Nothing here knows it came from BASIC.
 //
-// Members arrive UPPERCASED: BASIC is case-insensitive and BIR normalises
-// names, so the Swift face gets the normalised spelling. Carrying the source
+// Members arrive UPPERCASED: BASIC is case-insensitive and BIR normalizes
+// names, so the Swift face gets the normalized spelling. Carrying the source
 // spelling through is a tracked item, not a decision.
 
 import BASICRTSwift

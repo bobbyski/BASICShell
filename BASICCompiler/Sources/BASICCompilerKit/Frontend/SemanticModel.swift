@@ -358,7 +358,7 @@ public final class SemanticModel {
     /// Set by the builder from what the importer declared.
     public internal(set) var enumMembers: [String: [String: EnumMemberRef]] = [:]
 
-    /// `B.inner`, `B.blended(x)` or `Tint.favourite` as the call to the free
+    /// `B.inner`, `B.blended(x)` or `Tint.favorite` as the call to the free
     /// function the importer declared for that member, or nil (E5).
     ///
     /// One rewrite, asked by both the analyzer and the builder, so the two

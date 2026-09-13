@@ -1809,7 +1809,7 @@ final class FunctionBuilder {
 
     /// Lowers an expression, checking it against the type the context needs.
     func lowerExpression(_ expression: Expression, expecting: BIRType?, context: String) throws -> BIRExpression {
-        // `B.inner` / `Tint.favourite` is a call to the free function the
+        // `B.inner` / `Tint.favorite` is a call to the free function the
         // importer declared for that enum member (E5); the rewritten call is
         // not a member access, so this cannot recur.
         if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0) }) {
@@ -1829,7 +1829,7 @@ final class FunctionBuilder {
 
     private func lowerExpression(_ expression: Expression) throws -> BIRExpression {
 
-        // `B.inner` / `Tint.favourite` is a call to the free function the
+        // `B.inner` / `Tint.favorite` is a call to the free function the
 
         // importer declared for that enum member (E5); the rewritten call is
 

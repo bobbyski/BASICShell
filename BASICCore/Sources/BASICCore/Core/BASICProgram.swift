@@ -127,8 +127,8 @@ public final class BASICProgram: @unchecked Sendable {
     private static let ansiNumber = "\u{001B}[38;5;141m"
 
     // The whole vocabulary, not a 58-word subset of it. `LIST` used to print
-    // `CLS`, `OPEN`, `PSET` and every builtin in the plain-text colour while
-    // colouring `PRINT` — which reads as though the interpreter did not know
+    // `CLS`, `OPEN`, `PSET` and every builtin in the plain-text color while
+    // coloring `PRINT` — which reads as though the interpreter did not know
     // its own language.
     private static let listingKeywords: Set<String> = BASICKeywords.all
 

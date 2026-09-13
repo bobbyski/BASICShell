@@ -78,7 +78,7 @@ public enum Tint {
 
     /// Members on an enum (E5): BASIC reaches them the way VB reaches an
     /// enum's members, with a dot on the value — `T.isWarm`, `T.blended(…)`
-    /// — and on the type for a static, `Tint.favourite`.
+    /// — and on the type for a static, `Tint.favorite`.
     public var isWarm: Bool { self == .red }
     public func blended(with other: Tint) -> String { "\(self) and \(other)" }
     public static var favourite: Tint { .green }

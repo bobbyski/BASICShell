@@ -11,7 +11,7 @@
 //  alternative was a second tokenizer that would disagree with the first about
 //  what a label is.
 //
-//  So the *tokenizer* lives here, knows nothing about colour, and produces
+//  So the *tokenizer* lives here, knows nothing about color, and produces
 //  spans in BASIC's vocabulary. Each renderer maps those onto whatever it can
 //  actually paint — TUIKit's `HighlightKind` in the shell's editor, ANSI in
 //  RichSyntax. Neither mapping is in this file, and neither tokenizes.
@@ -40,7 +40,7 @@ public enum BASICSyntaxToken: Hashable, Sendable, CaseIterable {
     case comment
 }
 
-/// One coloured run: a character offset, a length, and what it is.
+/// One colored run: a character offset, a length, and what it is.
 public struct BASICSyntaxSpan: Hashable, Sendable {
     /// Offset in characters from the start of the line.
     public let start: Int
@@ -184,7 +184,7 @@ public enum BASICSyntaxTokenizer {
     ///
     /// `$` is part of the word: BASIC's string-typed names end in one, and
     /// `MID$` and `TASKSTATUS$` are keywords. Stopping before it would match
-    /// the *prefix* against the vocabulary and colour half an identifier.
+    /// the *prefix* against the vocabulary and color half an identifier.
     private static func wordEnd(in characters: [Character], from start: Int) -> Int {
         var end = start
         while end < characters.count,

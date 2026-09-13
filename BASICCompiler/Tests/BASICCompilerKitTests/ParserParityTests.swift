@@ -24,7 +24,7 @@ struct ParserParityTests {
         TestBuild.programs.filter { path in
             // Import expansion is the compiler's own layer, so a program
             // that imports is not the same *text* both ways. The programs
-            // that do are covered by the behaviour suite instead.
+            // that do are covered by the behavior suite instead.
             guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
             return !text.uppercased().contains("IMPORT ")
         }

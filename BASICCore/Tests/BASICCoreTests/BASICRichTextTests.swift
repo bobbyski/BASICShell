@@ -146,7 +146,7 @@ struct BASICRichTextTests {
     ///
     /// `RichSwift.Syntax` keys its keywords off a private dictionary and falls
     /// back to **Swift's** for any language it does not know, so
-    /// `Syntax(code, language: "basic")` colours `class` and `func` while
+    /// `Syntax(code, language: "basic")` colors `class` and `func` while
     /// leaving `PRINT` plain. BASIC is tokenized by `BASICSyntaxTokenizer`
     /// instead, which reads `BASICKeywords`.
     @Test("BASIC syntax is coloured as BASIC, not as Swift")
@@ -155,7 +155,7 @@ struct BASICRichTextTests {
         let s = RichSyntax()
         print s.render$("PRINT func guard", "basic")
         """).joined()
-        // PRINT is a BASIC keyword and must be coloured. `func` and `guard` are
+        // PRINT is a BASIC keyword and must be colored. `func` and `guard` are
         // Swift's and not BASIC's — note `class` would be a poor test, because
         // it happens to be a keyword in both.
         let keyword = "\u{001B}[38;5;39m"

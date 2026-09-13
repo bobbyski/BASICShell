@@ -11,13 +11,13 @@
 //  | Where                                | Words | Used for                  |
 //  |--------------------------------------|-------|---------------------------|
 //  | `BASICCompletionEngine`              |    57 | tab-completion            |
-//  | `BASICProgram.listingKeywords`       |    58 | `LIST` colouring          |
+//  | `BASICProgram.listingKeywords`       |    58 | `LIST` coloring          |
 //  | `BASICParser.statementKeywords`      |    87 | parser dispatch           |
 //  | `MonacoEditor.swift` (BASICStudio)   |   153 | the Studio editor         |
 //
 //  The consequences were not academic. The shell's editor rendered `CLS`,
 //  `OPEN`, `LOCATE`, `PSET` and every builtin as plain text while Studio
-//  coloured them; Studio knew nothing of `ASYNC`, `AWAIT`, `TASK` or
+//  colored them; Studio knew nothing of `ASYNC`, `AWAIT`, `TASK` or
 //  `HTTPGETASYNC`, so the async features had no highlighting there at all. And
 //  completion offered `WHILE`, `WEND`, `DO`, `LOOP`, `BREAK`, `CONTINUE`,
 //  `CONST` and `DECLARE` — none of which this language implements. Tab-complete
@@ -41,7 +41,7 @@
 //
 //  Words the language does *not* implement are deliberately absent. Advertising
 //  a keyword nobody wrote is worse than not advertising it: completion offers
-//  it, an editor colours it, and the program still does not run.
+//  it, an editor colors it, and the program still does not run.
 public enum BASICKeywords {
     /// Every intrinsic function the interpreter implements, uppercase.
     ///
@@ -58,9 +58,9 @@ public enum BASICKeywords {
     ]
 
 
-    /// What a word is, which is what a highlighter needs in order to colour it.
+    /// What a word is, which is what a highlighter needs in order to color it.
     ///
-    /// Semantic rather than visual: Studio gives each its own colour, the
+    /// Semantic rather than visual: Studio gives each its own color, the
     /// terminal editor currently folds several together, and neither choice
     /// belongs in this file.
     public enum Category: Sendable, Hashable, CaseIterable {
@@ -134,7 +134,7 @@ public enum BASICKeywords {
     /// ```
     ///
     /// They are not user classes and never appear in `CLASS` definitions: the
-    /// interpreter recognises the name in `.newObject` and hands back a
+    /// interpreter recognizes the name in `.newObject` and hands back a
     /// `systemObject` the host implements.
     ///
     /// They were missing from this file until the vocabulary was audited for
@@ -226,7 +226,7 @@ public enum BASICKeywords {
     // Built once. A word in more than one category — `CLASS` declares and also
     // names a type, `SEEK` is both a function and an OPTION word — takes the
     // first that claims it, in the order below. Highlighting has to pick one
-    // colour, and the declaration reading is the one a reader meets first.
+    // color, and the declaration reading is the one a reader meets first.
     private static let categories: [String: Category] = {
         var table: [String: Category] = [:]
         for (words, category) in [

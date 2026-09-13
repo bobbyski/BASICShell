@@ -91,7 +91,7 @@ public enum ProgramParser {
             let line = sourceLines[index]
             // `ENUM Suit ... END ENUM` is gathered before anything else is
             // tried, because the closure-block header parser *throws* on a
-            // line it does not recognise rather than returning nil — so an
+            // line it does not recognize rather than returning nil — so an
             // ENUM header never reached this check when it came second.
             //
             // It is gathered as a block for the same reason a

@@ -33,7 +33,7 @@ public struct SwiftAPI: Sendable {
         /// A protocol — `TerminalDriver`. BASIC sees an INTERFACE, and any
         /// imported class the graph says conforms may be passed (R4.7).
         case protocolType(precise: String)
-        /// A struct of scalars — a rect, a point, a colour (R4.4). It crosses
+        /// A struct of scalars — a rect, a point, a color (R4.4). It crosses
         /// **flattened**: BASIC passes the leaf values and the shim builds the
         /// struct, so `Window.init(frame: Rect)` reads `NEW Window(x, y, w, h)`.
         case structure(precise: String)
@@ -444,11 +444,22 @@ public struct SwiftAPI: Sendable {
             switch kind(of: symbol) {
             case "swift.method", "swift.init", "swift.func", "swift.type.method":
                 let isInit = kind(of: symbol) == "swift.init"
+                // **`-> Self` is the class it is declared on.** A fluent
+                // framework says `Self` so a subclass's chain keeps its own
+                // type — `button.image(systemSymbol:).bezel(.rounded)` — and
+                // read literally it is a type nothing names, which withdrew
+                // 130 of ActiveUI's members. From BASIC the receiver's own
+                // class is the honest answer: the value returned is the
+                // receiver, and BASIC holds it as the class it asked for.
+                var returns = isInit ? ValueType.void : returnType(of: symbol)
+                if case .unsupported("Self") = returns, let owner = memberOf[precise], classIndex[owner] != nil {
+                    returns = .object(precise: owner)
+                }
                 let function = Function(
                     name: isInit ? "init" : name,
                     symbol: "$s" + precise.dropFirst(2),
                     parameters: parameters(of: symbol),
-                    returns: isInit ? .void : returnType(of: symbol),
+                    returns: returns,
                     isInitializer: isInit,
                     isOverridable: (symbol["accessLevel"] as? String) == "open",
                     // `throws` shows up as a keyword fragment; the return type
@@ -495,6 +506,25 @@ public struct SwiftAPI: Sendable {
                 // then type-checked a Track against a [Track]; refused by name.
                 if case .enumeration = type, isWrapped(aroundLeadingTypeIn: fragments) {
                     type = .unsupported("a collection of an enum")
+                }
+                // A closure property — `var onDock: ((AUIFolderEdge) -> Void)?`
+                // — reads as its innermost type for the same reason a closure
+                // parameter did: the arrow lives in the colon's fragment. A
+                // handler property is a real shape and a common one, but it is
+                // not a value BASIC holds yet, so it is refused by name rather
+                // than generating an accessor that returns the wrong type.
+                if fragments.map(\.spelling).joined().contains("->") {
+                    type = .unsupported("a closure property; BASIC takes a handler as an argument, not as a property, for now")
+                }
+                // An optional scalar has no BASIC spelling for nil, exactly as
+                // an optional enum has none. Only enums were refused, so
+                // `String?` crossed as a String and the shim would not unwrap.
+                switch type {
+                case .string, .double, .int, .bool:
+                    if isOptional(afterLeadingTypeIn: fragments) {
+                        type = .unsupported("an optional scalar, whose nil BASIC cannot hold")
+                    }
+                default: break
                 }
                 // A Duration crosses as an argument or a result, through the
                 // shim; a property accessor hands back the struct itself.
@@ -703,7 +733,7 @@ public struct SwiftAPI: Sendable {
         func has(_ symbol: String) -> Bool { exported.contains(String(symbol.dropFirst(2))) || exported.contains(symbol) }
 
         // A class whose *metadata* is not exported cannot be constructed or
-        // recognised at run time. A generic class is the usual reason —
+        // recognized at run time. A generic class is the usual reason —
         // `Ref<Value>` has a metadata accessor rather than one fixed symbol —
         // and emitting a reference to metadata that does not exist is a link
         // error rather than anything a program could have done differently.
@@ -872,6 +902,16 @@ public struct SwiftAPI: Sendable {
             }
             if shape == "() -> Void" {
                 type = .voidClosure
+            } else if shape.contains("->") {
+                // **Any other function type, refused by name.** The graph
+                // merges a closure's punctuation into the *same* fragment as
+                // the colon — `text: () -> String` is `text`, `": () -> "`,
+                // `String` — so dropping through the colon throws the arrow
+                // away and leaves a lone `String`. That is how a text
+                // *provider* imported as a text, and the shim then handed a
+                // String where a closure belonged. R4.5 carries `() -> Void`;
+                // a closure that takes or returns anything does not cross yet.
+                type = .unsupported(shape)
             } else if let array = Self.arrayType(fragments) {
                 type = array
             } else if let qualified = Self.qualifiedType(Array(afterColon)) {

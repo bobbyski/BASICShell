@@ -64,7 +64,7 @@ public struct SwiftInterfaceUnit {
             lines.append("END ENUM")
         }
         // Members on enums (E5): each is a free function the front end calls
-        // for `B.inner` or `Tint.favourite`. The body is a placeholder, as
+        // for `B.inner` or `Tint.favorite`. The body is a placeholder, as
         // every imported member's is, and the object model supplies a thunk.
         for enumeration in api.enumerations.values.sorted(by: { $0.name < $1.name }) {
             for (member, isStatic, _) in Self.members(of: enumeration) {

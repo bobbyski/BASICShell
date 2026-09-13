@@ -1397,7 +1397,7 @@ extension BASICRuntime {
                 // A timeline segment on the track most recently added, so a
                 // track reads as its label followed by its segments — and each
                 // one carries its kind, which `track` cannot: active, waiting
-                // and failed are what colour the row.
+                // and failed are what color the row.
                 guard let timeline = subject as? TimelineChart else {
                     throw BASICError.runtime("\(typeName) has no segments")
                 }
@@ -1905,7 +1905,7 @@ extension BASICRuntime {
                 // a program builds itself — a status strip's own labels — is
                 // not inside a themed control and so is not re-dressed by
                 // `applyTheme`. Without this a BASIC status strip keeps the
-                // terminal's default colours while everything around it changes
+                // terminal's default colors while everything around it changes
                 // theme. "header" is the strip's own style; "headerplain" is the
                 // same without bold, for the segments that should not shout.
                 if let label = subject as? Label {

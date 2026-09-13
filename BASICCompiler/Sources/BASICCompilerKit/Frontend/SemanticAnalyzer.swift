@@ -665,7 +665,7 @@ struct SemanticAnalyzer {
     }
 
     func typeOf(_ expression: Expression, in function: String?) throws -> BIRType? {
-        // `B.inner` / `Tint.favourite` is a call to the free function the
+        // `B.inner` / `Tint.favorite` is a call to the free function the
         // importer declared for that enum member (E5).
         if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0, in: function) }) {
             return try typeOf(call, in: function)

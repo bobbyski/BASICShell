@@ -9,7 +9,7 @@
 //  `JavaScriptHighlighter`: one file per language. It does no tokenizing —
 //  that moved to BASICCore when `RichSyntax` needed the same answer, and a
 //  second tokenizer here would eventually disagree with that one about what a
-//  label is. All this file decides is colour.
+//  label is. All this file decides is color.
 //
 
 import BASICCore
@@ -26,7 +26,7 @@ extension BASICSyntaxToken {
     /// also no way to override what a kind paints as: `SyntaxTextView` reads
     /// `span.kind.cellStyle`, and `cellStyle` is a fixed switch.
     ///
-    /// So the kind is the only colour channel there is, and three of these are
+    /// So the kind is the only color channel there is, and three of these are
     /// chosen for **what they render as** rather than for what they are called:
     ///
     /// | Token      | Kind            | Renders as        |
@@ -55,7 +55,7 @@ extension BASICSyntaxToken {
     }
 }
 
-/// Colours a line of BASIC for TUIKit.
+/// Colors a line of BASIC for TUIKit.
 ///
 /// BASIC has no block comments and no multi-line strings, so every line is
 /// independent and the threaded `state` never leaves `.initial`.
