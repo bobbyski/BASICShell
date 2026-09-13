@@ -265,6 +265,11 @@ public struct SwiftAPI: Sendable {
         /// not an initializer that exists. What a value is *built from* is
         /// exactly what its initializer takes.
         public var fields: [(name: String, type: ValueType)] = []
+        /// Its property names (P1.3c). A value becomes a BASIC record by
+        /// reading each field back, and the name an initializer takes is not
+        /// always one a value publishes — so a struct crosses as a record only
+        /// when every field is also a property.
+        public var properties: Set<String> = []
     }
 
     /// A class.
@@ -326,6 +331,19 @@ public struct SwiftAPI: Sendable {
     ///
     /// Bounded against a cycle, which a value type cannot have but a
     /// malformed graph could describe.
+    /// Whether a value of a struct crosses as a BASIC TYPE record (P1.3c):
+    /// it flattens to numbers, booleans and strings, and every field on the
+    /// way down is a property a value can be read by.
+    public func crossesAsRecord(_ type: ValueType, depth: Int = 0) -> Bool {
+        guard depth < 8, case .structure(let precise) = type, let structure = structures[precise],
+              !structure.fields.isEmpty, leaves(of: type) != nil else { return false }
+        return structure.fields.allSatisfy { field in
+            guard structure.properties.contains(field.name) else { return false }
+            if case .structure = field.type { return crossesAsRecord(field.type, depth: depth + 1) }
+            return true
+        }
+    }
+
     public func leaves(of type: ValueType, depth: Int = 0) -> [ValueType]? {
         guard depth < 8 else { return nil }
         guard case .structure(let precise) = type else {
@@ -609,9 +627,14 @@ public struct SwiftAPI: Sendable {
                 // an optional enum has none. Only enums were refused, so
                 // `String?` crossed as a String and the shim would not unwrap.
                 switch type {
-                case .string, .double, .int, .bool:
+                case .string, .double, .cgFloat, .int, .bool:
                     if isOptional(afterLeadingTypeIn: fragments) {
                         type = .unsupported("an optional scalar, whose nil BASIC cannot hold")
+                    }
+                // An optional struct, likewise: a record has no value for nil.
+                case .structure:
+                    if isOptional(afterLeadingTypeIn: fragments) {
+                        type = .unsupported("an optional struct, whose nil a BASIC record cannot hold")
                     }
                 default: break
                 }
@@ -650,6 +673,11 @@ public struct SwiftAPI: Sendable {
                     }
                     api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
                     continue
+                }
+                // A struct's property is not imported as a member yet, but its
+                // name is what reads a value of the struct back (P1.3c).
+                if let owner = memberOf[precise], api.structures[owner] != nil {
+                    api.structures[owner]?.properties.insert(name)
                 }
                 guard let owner = memberOf[precise], let index = classIndex[owner] else {
                     api.skipped.append(Skip(member: path, reason: "a property of something that is not a class")); continue
@@ -845,8 +873,11 @@ public struct SwiftAPI: Sendable {
                                             reason: "it is \(api.protocols[precise] ?? precise), a protocol; a property of one does not cross yet"))
                     return false
                 case .structure(let precise):
+                    // A struct of numbers, booleans and strings crosses as a
+                    // BASIC TYPE record (P1.3c): `frame: CGRect` reads as one.
+                    guard !api.crossesAsRecord(property.type) else { return true }
                     api.skipped.append(Skip(member: "\(klass.name).\(property.name)",
-                                            reason: "it is \(api.structures[precise]?.name ?? precise), a struct; a struct crosses as arguments, not as a value"))
+                                            reason: "it is \(api.structures[precise]?.name ?? precise), a struct that does not cross as a record — a field is not a number, boolean or string it publishes"))
                     return false
                 default:
                     return true
@@ -984,8 +1015,8 @@ public struct SwiftAPI: Sendable {
                 return "\(parameter.name) is \(name), a struct that does not flatten to numbers, booleans or strings"
             }
         }
-        if case .structure(let precise) = function.returns {
-            return "it returns \(structures[precise]?.name ?? precise); a struct comes back as one value and BASIC has no name for it yet"
+        if case .structure(let precise) = function.returns, !crossesAsRecord(function.returns) {
+            return "it returns \(structures[precise]?.name ?? precise), a struct that does not cross as a record"
         }
         return nil
     }
@@ -1143,10 +1174,13 @@ public struct SwiftAPI: Sendable {
     /// them. A rect is built from a point and a size, which is the order and
     /// the labels `CGRect(origin:size:)` has.
     static let coreGraphicsStructures: [Structure] = [
-        Structure(name: "CGPoint", precise: "c:@S@CGPoint", fields: [("x", .cgFloat), ("y", .cgFloat)]),
-        Structure(name: "CGSize", precise: "c:@S@CGSize", fields: [("width", .cgFloat), ("height", .cgFloat)]),
+        Structure(name: "CGPoint", precise: "c:@S@CGPoint", fields: [("x", .cgFloat), ("y", .cgFloat)],
+                  properties: ["x", "y"]),
+        Structure(name: "CGSize", precise: "c:@S@CGSize", fields: [("width", .cgFloat), ("height", .cgFloat)],
+                  properties: ["width", "height"]),
         Structure(name: "CGRect", precise: "c:@S@CGRect",
-                  fields: [("origin", .structure(precise: "c:@S@CGPoint")), ("size", .structure(precise: "c:@S@CGSize"))]),
+                  fields: [("origin", .structure(precise: "c:@S@CGPoint")), ("size", .structure(precise: "c:@S@CGSize"))],
+                  properties: ["origin", "size"]),
     ]
 
     /// Types the SDK moved between modules, as the graph spells them and as

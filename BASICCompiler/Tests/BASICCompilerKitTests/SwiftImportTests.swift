@@ -528,7 +528,10 @@ struct SwiftImportEndToEndTests {
     /// The answers are computed from every field, in positions a transposed
     /// field would get wrong: a rect's origin and size, a point's x and y. A
     /// defaulted geometry parameter keeps Swift's default rather than becoming
-    /// two more arguments, so `NEW Canvas(1)` still means what it did.
+    /// two more arguments, so `NEW Canvas(1)` still means what it did. And a
+    /// struct as a value (P1.3c): a `CGRect` property read into a BASIC TYPE
+    /// record, changed field by field, written back and read again, and a
+    /// `CGSize` result.
     @Test func coreGraphicsGeometryCrossesAsNumbers() throws {
         _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
                          "basicc must be built at \(Self.compiler)")
@@ -560,6 +563,8 @@ struct SwiftImportEndToEndTests {
                 Double(hypot(b.x - a.x, b.y - a.y)) * scale
             }
             public func widthOfDefault() -> Double { Double(size.width) }
+            public var bounds: CGRect = CGRect(x: 1, y: 2, width: 3, height: 4)
+            public func fitted(_ width: Double) -> CGSize { CGSize(width: width, height: width / 2) }
         }
         """.write(to: sources.appendingPathComponent("Plotting.swift"), atomically: true, encoding: .utf8)
 
@@ -580,6 +585,18 @@ struct SwiftImportEndToEndTests {
         PRINT C.contains(5, 25, 10, 20, 300, 400)
         PRINT C.distance(0, 0, 3, 4)
         PRINT C.widthOfDefault()
+        DIM B AS CGRect
+        B = C.bounds
+        PRINT B.origin_x; " "; B.origin_y; " "; B.size_width; " "; B.size_height
+        B.origin_x = 10
+        B.size_height = 40
+        C.bounds = B
+        DIM Again AS CGRect
+        Again = C.bounds
+        PRINT Again.origin_x; " "; Again.origin_y; " "; Again.size_width; " "; Again.size_height
+        DIM F AS CGSize
+        F = C.fitted(300)
+        PRINT F.width; " "; F.height
         """.write(to: source, atomically: true, encoding: .utf8)
 
         let binary = root.appendingPathComponent("run-program").path
@@ -587,7 +604,7 @@ struct SwiftImportEndToEndTests {
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
         let run = try ProcessRunner.run(binary, [])
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
-        #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n", "got:\n\(run.stdout)")
+        #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n1 2 3 4\n10 2 3 40\n300 150\n", "got:\n\(run.stdout)")
     }
 
     /// The compiler under test, built into this package's scratch path.

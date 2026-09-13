@@ -77,10 +77,31 @@ public struct SwiftInterfaceUnit {
                     lines.append("END FUNCTION")
                 } else {
                     lines.append("FUNCTION \(name)(\(parameters)) AS \(Self.basicType(member.returns, in: api))")
-                    lines.append("  RETURN \(Self.placeholder(member.returns, in: api))")
+                    lines += Self.placeholderReturn(member.returns, in: api, indent: "  ")
                     lines.append("END FUNCTION")
                 }
             }
+        }
+        // One TYPE per struct a value of which crosses as a record (P1.3c),
+        // its fields flattened the way a parameter of it already is:
+        // `CGRect` has `origin_x`, `origin_y`, `size_width`, `size_height`,
+        // which is also how .NET's Rectangle reads — flat.
+        var recordTypes: [String] = []
+        for klass in api.classes {
+            for property in klass.properties {
+                if case .structure(let precise) = property.type, !recordTypes.contains(precise) { recordTypes.append(precise) }
+            }
+            for method in klass.methods {
+                if case .structure(let precise) = method.returns, !recordTypes.contains(precise) { recordTypes.append(precise) }
+            }
+        }
+        for precise in recordTypes.sorted(by: { (api.structures[$0]?.name ?? $0) < (api.structures[$1]?.name ?? $1) }) {
+            let type = SwiftAPI.ValueType.structure(precise: precise)
+            guard let structure = api.structures[precise], let names = Self.leafNames(of: type, in: api),
+                  let leaves = api.leaves(of: type) else { continue }
+            lines.append("TYPE \(structure.name)")
+            for (name, leaf) in zip(names, leaves) { lines.append("  \(name) AS \(Self.basicType(leaf, in: api))") }
+            lines.append("END TYPE")
         }
         // One FUNCTION TYPE per closure shape a program can hand over: the
         // `() -> Void` a method takes (R4.5), and each shape a handler
@@ -132,7 +153,7 @@ public struct SwiftInterfaceUnit {
                 } else {
                     let type = Self.basicType(method.returns, in: api)
                     lines.append("  FUNCTION \(method.name)(\(parameters)) AS \(type)")
-                    lines.append("    RETURN \(Self.placeholder(method.returns, in: api))")
+                    lines += Self.placeholderReturn(method.returns, in: api, indent: "    ")
                     lines.append("  END FUNCTION")
                 }
             }
@@ -425,7 +446,9 @@ public struct SwiftInterfaceUnit {
         // A handler BASIC hands over; the generated unit declares it as the
         // language's own function type.
         // Flattened at the call, so it never names a BASIC type of its own.
-        case .structure: return "DOUBLE"
+        // A struct value is the TYPE record the unit declares for it (P1.3c);
+        // as a parameter it is flattened before this is asked.
+        case .structure(let precise): return api.structures[precise]?.name ?? "DOUBLE"
         // An INTERFACE, declared by the unit; any conforming imported class
         // may be passed where one is wanted.
         case .protocolType(let precise): return api.protocols[precise] ?? "VARIANT"
@@ -458,6 +481,16 @@ public struct SwiftInterfaceUnit {
             }
         }
         return "\(enumeration.name).\(first)(" + zeros.joined(separator: ", ") + ")"
+    }
+
+    /// A placeholder body's return. A TYPE record is returned from a local
+    /// declared as one (P1.3c): the type checker reads `EMPTY` as a number,
+    /// and a record has no literal to stand in for it.
+    static func placeholderReturn(_ type: SwiftAPI.ValueType, in api: SwiftAPI, indent: String) -> [String] {
+        if case .structure(let precise) = type, let structure = api.structures[precise] {
+            return ["\(indent)DIM BASICPlaceholder AS \(structure.name)", "\(indent)RETURN BASICPlaceholder"]
+        }
+        return ["\(indent)RETURN \(placeholder(type, in: api))"]
     }
 
     /// A value of the right type for a placeholder body.
@@ -505,7 +538,10 @@ public struct SwiftInterfaceUnit {
         case .enumeration: return "0"
         case .payloadEnumeration(let precise): return payloadPlaceholder(precise, in: api)
         case .duration: return "0"
-        case .void, .voidClosure, .handler, .structure, .protocolType, .unsupported: return "0"
+        // A TYPE record's placeholder: EMPTY, which a record takes as its
+        // default value.
+        case .structure: return "EMPTY"
+        case .void, .voidClosure, .handler, .protocolType, .unsupported: return "0"
         }
     }
 }

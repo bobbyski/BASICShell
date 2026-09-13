@@ -171,6 +171,7 @@ public struct SwiftPackageResolver {
                 if case .payloadEnumeration(let precise) = method.returns, let type = api.enumerations[precise] {
                     shim.payloadResult = Self.payloadEnum(type, in: api)
                 }
+                if case .structure = method.returns { shim.structResult = Self.recordStruct(method.returns, in: api) }
                 for (index, parameter) in passed.enumerated() {
                     if case .payloadEnumeration(let precise) = parameter.type, let type = api.enumerations[precise] {
                         shim.payloadParameters[index] = Self.payloadEnum(type, in: api)
@@ -339,9 +340,20 @@ public struct SwiftPackageResolver {
                 ))
             }
         }
+        // Properties whose struct crosses as a record (P1.3c), for the class
+        // that declares each one.
+        var structProperties: [SwiftAsyncShim.StructProperty] = []
+        for klass in api.classes {
+            for property in klass.properties {
+                guard case .structure = property.type, let type = Self.recordStruct(property.type, in: api) else { continue }
+                structProperties.append(SwiftAsyncShim.StructProperty(className: klass.name, name: property.name,
+                                                                      type: type, isSettable: property.isSettable))
+            }
+        }
         guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
                                           payloadProperties: payloadProperties,
-                                          handlerProperties: handlerProperties).source() else { return nil }
+                                          handlerProperties: handlerProperties,
+                                          structProperties: structProperties).source() else { return nil }
 
         let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -365,6 +377,29 @@ public struct SwiftPackageResolver {
     ///
     /// The memberwise initializer's labels are its stored property names, in
     /// declaration order — which is the order the leaves arrive in.
+    /// A struct that crosses as a record, as the shim generator takes it
+    /// (P1.3c): each leaf's path and Swift type, and the struct rebuilt.
+    static func recordStruct(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> SwiftAsyncShim.RecordStruct? {
+        guard api.crossesAsRecord(type), let leaves = api.leaves(of: type) else { return nil }
+        func paths(_ type: SwiftAPI.ValueType, _ prefix: String) -> [String] {
+            guard case .structure(let precise) = type, let structure = api.structures[precise] else { return [prefix] }
+            return structure.fields.flatMap { paths($0.type, prefix.isEmpty ? $0.name : prefix + "." + $0.name) }
+        }
+        var next = 0
+        guard let build = rebuild(type, in: api, prefix: "v", next: &next) else { return nil }
+        let swift = leaves.map { leaf -> String in
+            switch leaf {
+            case .int: return "Int"
+            case .cgFloat: return "CGFloat"
+            case .bool: return "Bool"
+            case .string: return "String"
+            default: return "Double"
+            }
+        }
+        return SwiftAsyncShim.RecordStruct(swiftName: spelling(type, in: api), leafPaths: paths(type, ""),
+                                           leafTypes: swift, build: build)
+    }
+
     static func rebuild(_ type: SwiftAPI.ValueType, in api: SwiftAPI, prefix: String, next: inout Int) -> String? {
         guard case .structure(let precise) = type else {
             defer { next += 1 }

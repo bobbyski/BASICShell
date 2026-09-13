@@ -687,6 +687,14 @@ public struct SwiftObjectModel: ObjectModel {
                 }
                 // Through the shim, not Swift's accessor (E2): the accessor
                 // hands back the enum in Swift's own layout.
+                if case .structure = property.type {
+                    // A record each way, as a payload enum's is (P1.3c).
+                    let getter = "basic_get_\(entry.klass.name)_\(property.name)"
+                    if seen.insert(getter).inserted { out += "declare ptr @\"\(getter)\"(ptr, i64)\n" }
+                    let setter = "basic_set_\(entry.klass.name)_\(property.name)"
+                    if property.isSettable, seen.insert(setter).inserted { out += "declare void @\"\(setter)\"(ptr, ptr)\n" }
+                    continue
+                }
                 if case .payloadEnumeration = property.type {
                     // A record each way (E4); the getter also takes the
                     // record's type index, for the same reason a result does.
@@ -759,6 +767,8 @@ public struct SwiftObjectModel: ObjectModel {
         // sees it: a direct call would return a value the thunk has no
         // signature for, and an object returned at +1 would leak.
         if method.discardsResult { return true }
+        // A struct result becomes a record in the shim (P1.3c).
+        if case .structure = method.returns { return true }
         if case .array = method.returns { return true }
         if case .enumeration = method.returns { return true }
         if case .payloadEnumeration = method.returns { return true }
@@ -776,6 +786,8 @@ public struct SwiftObjectModel: ObjectModel {
     /// the shim is compiled before any program, so it cannot know the index.
     static func returnsPayload(_ method: SwiftAPI.Function) -> Bool {
         if case .payloadEnumeration = method.returns { return true }
+        // A struct result is a record too, and needs its type index (P1.3c).
+        if case .structure = method.returns { return true }
         return false
     }
 
@@ -1077,6 +1089,11 @@ public struct SwiftObjectModel: ObjectModel {
             let name = (entry.api.enumerations[precise]?.name ?? "").uppercased()
             return module.types.first { $0.name == name }?.index ?? -1
         }
+        /// The runtime type index of a struct's TYPE record (P1.3c).
+        func structTypeIndex(_ precise: String) -> Int {
+            let name = (entry.api.structures[precise]?.name ?? "").uppercased()
+            return module.types.first { $0.name == name }?.index ?? -1
+        }
         /// A value for a call: Swift's form, or — when the call goes through
         /// a shim — the same except that a String stays the runtime's
         /// pointer, which the shim reads itself.
@@ -1201,6 +1218,16 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "  call void @\"\(setter)\"(ptr %o, ptr %fn, ptr %env)\n  ret void\n}\n"
                 continue
             }
+            if case .structure(let precise) = property.type {
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n"
+                out += "  %r = call ptr @\"basic_get_\(owner)_\(property.name)\"(ptr %o, i64 \(structTypeIndex(precise)))\n  ret ptr %r\n}\n"
+                if property.isSettable {
+                    out += "define void @\"\(name).set.\(index)\"(ptr %o, ptr %v) {\n"
+                    out += "  call void @\"basic_set_\(owner)_\(property.name)\"(ptr %o, ptr %v)\n  ret void\n}\n"
+                }
+                continue
+            }
             if case .payloadEnumeration(let precise) = property.type {
                 let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
                 out += "define ptr @\"\(name).get.\(index)\"(ptr %o) {\n"
@@ -1299,6 +1326,7 @@ public struct SwiftObjectModel: ObjectModel {
             if Self.needsShim(method) {
                 let shim = Self.shimSymbol(method, of: entry.klass.name)
                 if case .payloadEnumeration(let precise) = method.returns { arguments.append("i64 \(payloadTypeIndex(precise))") }
+                if case .structure(let precise) = method.returns { arguments.append("i64 \(structTypeIndex(precise))") }
                 let call = "call \(Self.shimAbiReturn(method.returns)) @\(shim)(ptr %me\(arguments.isEmpty ? "" : ", " + arguments.joined(separator: ", ")))"
                 if method.returns == .void {
                     body += "  \(call)\n"

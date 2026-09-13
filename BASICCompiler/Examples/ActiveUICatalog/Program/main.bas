@@ -36,6 +36,22 @@ PRINT "enum variable  : "; Side
 PRINT "appearance     : "; AUIApplication.appearance
 PRINT "logs uncaught  : "; AUIApplication.logsUncaughtExceptions
 
+' Structs as BASIC TYPE records. A view's padding is an AUIEdgeInsets: built
+' here, written into the label, and read back out of the framework. A label's
+' preferred size is a CGSize the framework works out and hands back.
+DIM Insets AS AUIEdgeInsets
+Insets.top = 8
+Insets.leading = 16
+Insets.bottom = 4
+Insets.trailing = 12
+Caption.padding = Insets
+DIM Back AS AUIEdgeInsets
+Back = Caption.padding
+PRINT "padding        : "; Back.top; " "; Back.leading; " "; Back.bottom; " "; Back.trailing
+DIM Fits AS CGSize
+Fits = Caption.preferredSize(400, 400)
+PRINT "label fits in  : "; Fits.width; " x "; Fits.height
+
 ' A button, and its title read back through the framework.
 DIM Go AS AUIButton
 Go = NEW AUIButton("Press me")
