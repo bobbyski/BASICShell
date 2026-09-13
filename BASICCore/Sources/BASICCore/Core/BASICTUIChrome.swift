@@ -30,7 +30,7 @@ extension BASICTUIRegistry {
 ///
 /// The desktop is *behind* the root window, so a root that paints its whole
 /// background hides it — and the theme's desktop color never appears no
-/// matter how carefully it is chosen. That is what made the gallery grey.
+/// matter how carefully it is chosen. That is what made the gallery gray.
 ///
 /// The gallery's own `GalleryShellWindow` paints the menu row and the status
 /// row and leaves everything between untouched, which is what lets the
@@ -611,17 +611,17 @@ extension BASICRuntime {
     /// `applyTheme` alone dresses the windows and leaves the desktop as it
     /// was, so the terminal's own background shows through around them.
     ///
-    /// ## Why the fallback is not grey
+    /// ## Why the fallback is not gray
     ///
     /// Most themes — Modern Turbo among them — define no *cell* background for
     /// the desktop at all. They describe it once, in the vector chrome, as a
     /// gradient. On a VectorTerminal that gradient is what you see; on a plain
     /// terminal the cell layer has nothing, resolves to `.standard`, and the
-    /// gallery's own fallback paints a neutral grey.
+    /// gallery's own fallback paints a neutral gray.
     ///
-    /// That grey is what a plain terminal showed instead of Turbo's blue. So
+    /// That gray is what a plain terminal showed instead of Turbo's blue. So
     /// the cell fill borrows the vector backdrop's top color when there is
-    /// one, and only falls back to grey when the theme describes no desktop by
+    /// one, and only falls back to gray when the theme describes no desktop by
     /// either route — which makes the two renderings agree.
     @MainActor
     static func applyTUITheme(_ theme: Theme, to app: App) {

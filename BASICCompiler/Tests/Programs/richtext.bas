@@ -1,7 +1,7 @@
 ' RichSwift from a compiled program: markdown, a panel, a table, a bar.
 '
 ' ANSI is turned off on every object so the comparison is the text, not the
-' terminal: a colour escape depends on where the output is going, and both
+' terminal: a color escape depends on where the output is going, and both
 ' engines are being asked the same question here.
 LET md = RichMarkdown()
 md.width(60)
