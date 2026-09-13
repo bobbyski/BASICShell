@@ -649,6 +649,9 @@ final class FunctionBuilder {
     func receiverEnum(_ name: VariableName) -> String? {
         if let declared = declaredEnumName(of: name) { return declared }
         if case .composite(let typeName) = variable(name).type, model.enums[typeName] != nil { return typeName }
+        // A boxed struct's value has members too, reached the way an enum's
+        // are (P1.3e stage 2): `C.isDark` on a `DIM C AS AUIColor`.
+        if case .composite(let typeName) = variable(name).type, model.enumMembers[typeName] != nil { return typeName }
         return nil
     }
 

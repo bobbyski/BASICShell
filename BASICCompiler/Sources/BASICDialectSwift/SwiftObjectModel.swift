@@ -648,12 +648,13 @@ public struct SwiftObjectModel: ObjectModel {
             } else {
                 out += "@\"\(entry.klass.symbol)N\" = external global %swift.type, align 8\n"
             }
-            for initializer in entry.klass.initializers where seen.insert(initializer.allocatingSymbol).inserted {
+            // A box is built by its shim, never by an allocating symbol.
+            for initializer in entry.klass.initializers where !entry.klass.isOpaque && seen.insert(initializer.allocatingSymbol).inserted {
                 let parameters = initializer.passed.map { Self.abiType($0.type) } + ["ptr swiftself"]
                 out += "declare swiftcc ptr @\"\(initializer.allocatingSymbol)\"(\(parameters.joined(separator: ", ")))\n"
             }
             for initializer in entry.klass.initializers
-            where Self.needsInitializerShim(initializer)
+            where (Self.needsInitializerShim(initializer) || entry.klass.isOpaque)
                 && seen.insert("newshim.\(entry.klass.name).\(Self.basicArity(initializer, in: entry.api))").inserted {
                 let parameters = initializer.passed.flatMap { parameter -> [String] in
                     if case .structure = parameter.type {
@@ -661,7 +662,9 @@ public struct SwiftObjectModel: ObjectModel {
                     }
                     return [Self.shimAbiType(parameter.type)]
                 }
-                out += "declare ptr @basic_new_\(entry.klass.name)_\(Self.basicArity(initializer, in: entry.api))(\(parameters.joined(separator: ", ")))\n"
+                // A box's NEW also takes its CLASS's type index, which the box carries.
+                let typeIndex = entry.klass.isOpaque ? ["i64"] : []
+                out += "declare ptr @basic_new_\(entry.klass.name)_\(Self.basicArity(initializer, in: entry.api))(\((parameters + typeIndex).joined(separator: ", ")))\n"
             }
             for method in entry.klass.methods where Self.needsShim(method) && seen.insert("shim." + method.symbol).inserted {
                 // The shim's C entry point, not the async symbol: an async
@@ -996,7 +999,10 @@ public struct SwiftObjectModel: ObjectModel {
                 var passed: [String] = []
                 var shimTypes: [String] = []
                 var offset = 0
-                if !isStatic {
+                if !isStatic, owner.isBox {
+                    passed.append("ptr %a0"); shimTypes.append("ptr")
+                    offset = 1
+                } else if !isStatic {
                     if owner.enumeration?.isPayload == true {
                         passed.append("ptr %a0"); shimTypes.append("ptr")
                     } else {
@@ -1022,6 +1028,11 @@ public struct SwiftObjectModel: ObjectModel {
                         // reads; an object or a record is a pointer anyway.
                         passed.append("ptr \(value)"); shimTypes.append("ptr")
                     }
+                }
+                if case .opaque(let precise, _) = member.returns {
+                    let boxName = SwiftAPI.basicName(api.structures[precise]?.name ?? "").uppercased()
+                    let index = module.types.first { $0.name == boxName }?.index ?? -1
+                    passed.append("i64 \(index)"); shimTypes.append("i64")
                 }
                 if case .payloadEnumeration(let precise) = member.returns {
                     let index = module.types.first { $0.name == (api.enumerations[precise]?.name ?? "").uppercased() }?.index ?? -1
@@ -1117,7 +1128,7 @@ public struct SwiftObjectModel: ObjectModel {
         }
         /// The runtime type index of a struct's TYPE record (P1.3c).
         func structTypeIndex(_ precise: String) -> Int {
-            let name = (entry.api.structures[precise]?.name ?? "").uppercased()
+            let name = SwiftAPI.basicName(entry.api.structures[precise]?.name ?? "").uppercased()
             return module.types.first { $0.name == name }?.index ?? -1
         }
         /// A value for a call: Swift's form, or — when the call goes through
@@ -1177,7 +1188,7 @@ public struct SwiftObjectModel: ObjectModel {
             var body = ""
             var arguments: [String] = []
             let (parameters, slots) = basicParameters(initializer.passed)
-            let viaShim = Self.needsInitializerShim(initializer)
+            let viaShim = Self.needsInitializerShim(initializer) || entry.klass.isOpaque
             for (index, parameter) in initializer.passed.enumerated() {
                 if case .structure = parameter.type {
                     // Each leaf goes across on its own; the shim rebuilds.
@@ -1188,7 +1199,8 @@ public struct SwiftObjectModel: ObjectModel {
             }
             let arity0 = Self.basicArity(initializer, in: entry.api)
             let result = temp()
-            if Self.needsInitializerShim(initializer) {
+            if entry.klass.isOpaque { arguments.append("i64 \(entry.type.index)") }
+            if viaShim {
                 // Through the shim, for the same reasons a method goes
                 // through one: a protocol argument is an existential rather
                 // than a pointer, and a struct arrives in pieces.

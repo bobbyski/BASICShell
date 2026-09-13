@@ -282,6 +282,14 @@ public struct SwiftAPI: Sendable {
         /// sharing one box between BASIC variables would make a change
         /// through one visible through another, and a struct is a value.
         public var isMutable: Bool = false
+        /// What a value of it can do, kept for when it is boxed (P1.3e stage 2):
+        /// read as members of a struct, which BASIC reaches once the struct is
+        /// a CLASS of its own.
+        public var initializers: [Function] = []
+        public var instanceMethods: [Function] = []
+        public var instanceProperties: [Property] = []
+        public var staticMethods: [Function] = []
+        public var staticProperties: [Property] = []
     }
 
     /// A class.
@@ -305,6 +313,12 @@ public struct SwiftAPI: Sendable {
         /// A box around an immutable struct rather than a class (P1.3e). It has
         /// no metadata of its own to link: every box is a `BASICOpaque`.
         public var isOpaque: Bool = false
+        /// A box's instance members (P1.3e stage 2). Kept apart from `methods`
+        /// and `properties`, which the class paths call by symbol with the
+        /// object as `self`: a box's members are the struct's, reached through
+        /// shims that unbox the value first, as an enum's members are (E5).
+        public var boxMethods: [Function] = []
+        public var boxProperties: [Property] = []
         public var initializers: [Function]
         public var methods: [Function]
         public var properties: [Property]
@@ -597,6 +611,11 @@ public struct SwiftAPI: Sendable {
                     // A member of an imported enum (E5).
                     if isStatic { api.enumerations[owner]!.staticMethods.append(function) }
                     else { api.enumerations[owner]!.instanceMethods.append(function) }
+                } else if let owner = memberOf[precise], api.structures[owner] != nil {
+                    // A struct's member, kept for when the struct is boxed.
+                    if isInit { api.structures[owner]!.initializers.append(function) }
+                    else if isStatic { api.structures[owner]!.staticMethods.append(function) }
+                    else { api.structures[owner]!.instanceMethods.append(function) }
                 } else if isStatic, !isInit, let owner = memberOf[precise], let index = classIndex[owner] {
                     // A class's static member: VB's `Shared`, called on the
                     // type. `AUIApplication.run(_:placement:)` is how an app
@@ -640,6 +659,18 @@ public struct SwiftAPI: Sendable {
                         type = handler
                     } else {
                         type = .unsupported("a closure property whose parameters or result are not numbers or booleans, for now")
+                    }
+                } else {
+                    // **Any compound declared type is refused**, not just the
+                    // wrappers already recognized. A tuple, an array, a generic,
+                    // an existential — read by its leading identifier, each is
+                    // the wrong type: `[(text: String, attributes: …)]` read as
+                    // a String, and the shim handed an array where a string
+                    // belonged. A plain or qualified name, optionally `?`, is
+                    // all a property's leading identifier can honestly be.
+                    let written = Self.declaredTypeText(declaration)
+                    if written.contains(where: { "([<&".contains($0) }) || written.hasPrefix("any ") || written.hasPrefix("some ") {
+                        type = .unsupported("a compound type (\(written)); a property of one does not cross yet")
                     }
                 }
                 // An optional scalar has no BASIC spelling for nil, exactly as
@@ -698,6 +729,12 @@ public struct SwiftAPI: Sendable {
                             Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: false))
                         continue
                     }
+                    if let owner = memberOf[precise], api.structures[owner] != nil, type.isSupported {
+                        // `AUIColor.accent`: kept for when the struct is boxed.
+                        api.structures[owner]!.staticProperties.append(
+                            Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: false))
+                        continue
+                    }
                     api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
                     continue
                 }
@@ -706,6 +743,15 @@ public struct SwiftAPI: Sendable {
                 if let owner = memberOf[precise], api.structures[owner] != nil {
                     api.structures[owner]?.properties.insert(name)
                     if !readOnly { api.structures[owner]?.isMutable = true }
+                    guard type.isSupported else {
+                        if case .unsupported(let s) = type { api.skipped.append(Skip(member: path, reason: "no BASIC spelling for \(s)")) }
+                        continue
+                    }
+                    // Kept for when the struct is boxed; read-only, as a box's
+                    // value never changes.
+                    api.structures[owner]!.instanceProperties.append(
+                        Property(name: name, symbol: Self.linkedSymbol(precise), type: type, isSettable: false))
+                    continue
                 }
                 guard let owner = memberOf[precise], let index = classIndex[owner] else {
                     api.skipped.append(Skip(member: path, reason: "a property of something that is not a class")); continue
@@ -802,7 +848,7 @@ public struct SwiftAPI: Sendable {
         // a class's static: numbers, strings, booleans, enums and objects.
         func crossesForEnum(_ type: ValueType) -> Bool {
             switch type {
-            case .double, .cgFloat, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration: return true
+            case .double, .cgFloat, .int, .bool, .string, .void, .object, .enumeration, .payloadEnumeration, .opaque: return true
             default: return false
             }
         }
@@ -962,13 +1008,79 @@ public struct SwiftAPI: Sendable {
                 note(function.returns)
             }
         }
+        // A box's own members name other boxes too — `blended(with: AUIColor)`
+        // — so the set grows until it stops (P1.3e stage 2).
+        var scanned = Set<String>()
+        while let precise = boxed.first(where: { !scanned.contains($0) }) {
+            scanned.insert(precise)
+            guard let structure = api.structures[precise] else { continue }
+            for function in structure.initializers + structure.instanceMethods + structure.staticMethods {
+                function.parameters.forEach { note(settle($0.type)) }
+                note(settle(function.returns))
+            }
+            for property in structure.instanceProperties + structure.staticProperties { note(settle(property.type)) }
+        }
+        /// A box member that crosses: settled, supported, and made only of what
+        /// a member shim carries.
+        func boxMember(_ function: Function, owner: String) -> Function? {
+            let settled = settle(function)
+            guard settled.isSupported, !settled.isAsync,
+                  crossesForEnum(settled.returns), settled.passed.allSatisfy({ crossesForEnum($0.type) }) else {
+                api.skipped.append(Skip(member: "\(owner).\(function.name)",
+                                        reason: "a member of a boxed struct crosses numbers, strings, booleans, enums, objects and boxes for now"))
+                return nil
+            }
+            return settled
+        }
+        func boxProperty(_ property: Property, owner: String) -> Property? {
+            var settled = property
+            settled.type = settle(property.type)
+            guard settled.type.isSupported, crossesForEnum(settled.type) else {
+                api.skipped.append(Skip(member: "\(owner).\(property.name)",
+                                        reason: "a member of a boxed struct crosses numbers, strings, booleans, enums, objects and boxes for now"))
+                return nil
+            }
+            return settled
+        }
         for precise in boxed.sorted() {
             guard let structure = api.structures[precise], api.class(precise: precise) == nil else { continue }
             var box = Class(name: Self.basicName(structure.name), symbol: "$s" + precise.dropFirst(2), precise: precise,
                             superclassPrecise: nil, isOpen: false, isFinal: true, isActor: false,
                             initializers: [], methods: [], properties: [])
             box.isOpaque = true
+            // A nested struct's Swift name has a dot, which no shim symbol can
+            // carry; its box is held and passed, but its members wait.
+            if !structure.name.contains(".") {
+                box.initializers = structure.initializers.compactMap { boxMember($0, owner: structure.name) }
+                box.boxMethods = structure.instanceMethods.compactMap { boxMember($0, owner: structure.name) }
+                box.boxProperties = structure.instanceProperties.compactMap { boxProperty($0, owner: structure.name) }
+                box.staticMethods = structure.staticMethods.compactMap { boxMember($0, owner: structure.name) }
+                box.staticProperties = structure.staticProperties.compactMap { boxProperty($0, owner: structure.name) }
+            }
             api.classes.append(box)
+        }
+        // Members of structs that did not become boxes — or whose box cannot
+        // reach them — are reported, as they were before a struct could have
+        // members at all. Skips are reasoned, never silent.
+        let boxedWithMembers = Set(boxed.filter { !(api.structures[$0]?.name.contains(".") ?? true) })
+        for precise in api.structures.keys.sorted() where !boxedWithMembers.contains(precise) {
+            guard let structure = api.structures[precise] else { continue }
+            let reason: String
+            if structure.isMutable {
+                reason = "a member of \(structure.name), a mutable struct; a box would share what a value copies"
+            } else if api.crossesAsRecord(.structure(precise: precise)) {
+                reason = "a member of \(structure.name), which crosses as a record; a record's members do not cross yet"
+            } else if boxed.contains(precise) {
+                reason = "a member of \(structure.name), a nested struct; a shim symbol cannot carry its dot yet"
+            } else {
+                reason = "a member of \(structure.name), a struct no imported member names"
+            }
+            for function in structure.initializers + structure.instanceMethods + structure.staticMethods {
+                api.skipped.append(Skip(member: "\(structure.name).\(function.name)", reason: reason))
+            }
+            for property in structure.instanceProperties + structure.staticProperties {
+                api.skipped.append(Skip(member: "\(structure.name).\(property.name)", reason: reason))
+            }
         }
         return api
     }
@@ -1016,7 +1128,7 @@ public struct SwiftAPI: Sendable {
                 }
             }
         }
-        for index in classes.indices {
+        for index in classes.indices where !classes[index].isOpaque {
             let klass = classes[index]
             classes[index].methods = klass.methods.filter { method in
                 guard has(method.symbol) else {

@@ -613,7 +613,9 @@ struct SwiftImportEndToEndTests {
     /// `Swatch` publishes none of what its initializer takes, so it cannot be a
     /// record; it is immutable, so a shared box is indistinguishable from a
     /// copy. It is made by one method, handed to another, stored in an
-    /// optional property, read back, and cleared with NULL.
+    /// optional property, read back, and cleared with NULL. And what the struct
+    /// itself can do (stage 2): made with NEW, an instance property read, a
+    /// method returning a new box, and a static.
     @Test func immutableStructsCrossInABox() throws {
         _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
                          "basicc must be built at \(Self.compiler)")
@@ -633,6 +635,8 @@ struct SwiftImportEndToEndTests {
             let code: Int
             public init(code: Int) { self.code = code }
             public var isWarm: Bool { code > 500 }
+            public static var white: Swatch { Swatch(code: 255) }
+            public func darker(by amount: Int) -> Swatch { Swatch(code: code - amount) }
         }
         public final class Palette {
             public var favorite: Swatch?
@@ -666,6 +670,15 @@ struct SwiftImportEndToEndTests {
         PRINT P.describe(Again)
         P.favorite = NULL
         PRINT P.describeFavorite()
+        DIM Hot AS Swatch
+        Hot = NEW Swatch(900)
+        PRINT Hot.isWarm
+        DIM Cooler AS Swatch
+        Cooler = Hot.darker(600)
+        PRINT P.describe(Cooler)
+        DIM W AS Swatch
+        W = Swatch.white
+        PRINT P.describe(W)
         """.write(to: source, atomically: true, encoding: .utf8)
 
         let binary = root.appendingPathComponent("run-program").path
@@ -673,7 +686,7 @@ struct SwiftImportEndToEndTests {
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
         let run = try ProcessRunner.run(binary, [])
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
-        #expect(run.stdout == "no favorite\nswatch 700 warm true\nswatch 700 warm true\nswatch 700 warm true\nno favorite\n",
+        #expect(run.stdout == "no favorite\nswatch 700 warm true\nswatch 700 warm true\nswatch 700 warm true\nno favorite\nTRUE\nswatch 300 warm false\nswatch 255 warm false\n",
                 "got:\n\(run.stdout)")
     }
 

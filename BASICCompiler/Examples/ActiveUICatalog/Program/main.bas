@@ -57,6 +57,24 @@ DIM Go AS AUIButton
 Go = NEW AUIButton("Press me")
 PRINT "button title   : "; Go.title
 
+' A boxed struct, made and used from BASIC. AUIColor wraps a platform color,
+' so BASIC holds it in a box and reaches what it can do the way it reaches an
+' enum's members: C.isDark, C.opacity(0.25), AUIColor.primary.
+DIM Red AS AUIColor
+Red = NEW AUIColor(1, 0, 0, 1)
+PRINT "red is dark    : "; Red.isDark
+PRINT "red as CSS     : "; Red.cssText
+DIM Faint AS AUIColor
+Faint = Red.opacity(0.25)
+PRINT "faint as CSS   : "; Faint.cssText
+Caption.textColor = Red
+DIM Shown AS AUIColor
+Shown = Caption.textColor
+PRINT "label color    : "; Shown.cssText
+DIM Primary AS AUIColor
+Primary = AUIColor.primary
+PRINT "primary is dark: "; Primary.isDark
+
 ' A stack, ActiveUI's layout container, holding the label and the button.
 ' Its spacing is a CGFloat — which kept the stack from being constructed at
 ' all until the compiler spelled a CGFloat's symbol the way the binary does.

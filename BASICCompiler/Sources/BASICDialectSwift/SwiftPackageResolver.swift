@@ -221,7 +221,8 @@ public struct SwiftPackageResolver {
         for klass in api.classes {
             for initializer in klass.initializers {
                 let passed = initializer.passed
-                guard SwiftObjectModel.needsInitializerShim(initializer) else { continue }
+                // A box's NEW always goes through its shim, which boxes the value.
+                guard SwiftObjectModel.needsInitializerShim(initializer) || klass.isOpaque else { continue }
                 let arity = SwiftObjectModel.basicArity(initializer, in: api)
                 guard emittedNew.insert("\(klass.name).\(arity)").inserted else { continue }
                 var shim = SwiftAsyncShim.Method(
@@ -232,6 +233,7 @@ public struct SwiftPackageResolver {
                 )
                 shim.isAsync = false
                 shim.isInitializer = true
+                if klass.isOpaque { shim.opaqueResult = api.structures[klass.precise]?.name }
                 shim.basicArity = passed.reduce(0) { total, parameter in
                     if case .structure = parameter.type { return total + (api.leaves(of: parameter.type)?.count ?? 1) }
                     return total + 1
@@ -288,6 +290,17 @@ public struct SwiftPackageResolver {
                     shim.receiver = .type(owner.swiftName)
                 } else if let enumeration = owner.enumeration {
                     shim.receiver = enumeration.isPayload ? .payloadEnum(Self.payloadEnum(enumeration, in: api)) : .plainEnum(Self.plainEnum(enumeration))
+                } else if owner.isBox {
+                    shim.receiver = .opaque(owner.swiftName)
+                }
+                // Boxes in and out of a member (P1.3e stage 2).
+                if case .opaque(let precise, let isOptional) = member.returns {
+                    shim.opaqueResult = api.structures[precise].map { $0.name + (isOptional ? "?" : "") }
+                }
+                for (index, parameter) in passed.enumerated() {
+                    if case .opaque(let precise, let isOptional) = parameter.type {
+                        shim.opaqueParameters[index] = api.structures[precise].map { $0.name + (isOptional ? "?" : "") }
+                    }
                 }
                 shim.stringParameters = Set(passed.indices.filter { passed[$0].type == .string })
                 shim.stringResult = member.returns == .string

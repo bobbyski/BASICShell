@@ -119,7 +119,8 @@ public struct SwiftAsyncShim {
         /// What the member is called on (E5): an object, as for every class
         /// member; an enum value, arriving as its ordinal or its record; or,
         /// for a static, the type itself, by its Swift name.
-        public enum Receiver: Sendable { case object, plainEnum(PlainEnum), payloadEnum(PayloadEnum), type(String) }
+        /// `opaque`: a box, whose value is the struct named (P1.3e).
+        public enum Receiver: Sendable { case object, plainEnum(PlainEnum), payloadEnum(PayloadEnum), type(String), opaque(String) }
         public var receiver: Receiver = .object
         /// Whether the member is a property, read without parentheses.
         public var isProperty = false
@@ -547,6 +548,7 @@ public struct SwiftAsyncShim {
             case .plainEnum: parameters = ["_ me: Int"]
             case .payloadEnum: parameters = ["_ me: UnsafeMutableRawPointer?"]
             case .type: parameters = []
+            case .opaque: parameters = ["_ me: UnsafeMutableRawPointer?"]
             }
             var callArguments: [String] = []
             for (index, type) in method.parameterTypes.enumerated() {
@@ -677,6 +679,7 @@ public struct SwiftAsyncShim {
                 case .plainEnum(let type): lines.append("    let object = basicEnumIn_\(type.stem)(me)")
                 case .payloadEnum(let type): lines.append("    let object = basicPayloadIn_\(type.stem)(me)")
                 case .type: break
+                case .opaque(let swiftName): lines.append("    let object = basicOpaqueValue(me) as! \(swiftName)")
                 }
             }
             for (index, className) in method.objectParameters.sorted(by: { $0.key < $1.key }) {
@@ -760,6 +763,12 @@ public struct SwiftAsyncShim {
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
                 lines.append("    }")
+            } else if method.isInitializer, method.opaqueResult != nil {
+                // A boxed struct's NEW (P1.3e stage 2): the value is made and
+                // boxed inside the isolated closure, and carried out as a bit
+                // pattern — the struct need not be Sendable.
+                lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(\(method.className)(\(labeled)), ti)) }")
+                lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
             } else if method.isInitializer {
                 // Retained: the object is new and BASIC holds the only
                 // reference. An imported object is the framework's to manage

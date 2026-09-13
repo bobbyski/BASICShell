@@ -99,7 +99,9 @@ public struct SwiftInterfaceUnit {
             let type = SwiftAPI.ValueType.structure(precise: precise)
             guard let structure = api.structures[precise], let names = Self.leafNames(of: type, in: api),
                   let leaves = api.leaves(of: type) else { continue }
-            lines.append("TYPE \(structure.name)")
+            // A nested struct's BASIC name has an underscore where Swift has a
+            // dot — `AUIDrawnBezel_State` — as a nested enum's does.
+            lines.append("TYPE \(SwiftAPI.basicName(structure.name))")
             for (name, leaf) in zip(names, leaves) { lines.append("  \(name) AS \(Self.basicType(leaf, in: api))") }
             lines.append("END TYPE")
         }
@@ -233,6 +235,8 @@ public struct SwiftInterfaceUnit {
         public let stem: String
         /// The enum, when the owner is one: its instance members take a value.
         public let enumeration: SwiftAPI.Enumeration?
+        /// Whether the owner is a box, whose instance members unbox first.
+        public var isBox: Bool = false
         public let members: [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)]
     }
 
@@ -253,12 +257,27 @@ public struct SwiftInterfaceUnit {
                         enumeration: enumeration, members: firstOfEachName(members(of: enumeration)))
         }
         let classes = api.classes.sorted(by: { $0.name < $1.name }).compactMap { klass -> MemberOwner? in
-            let shared = firstOfEachName(staticMembers(of: klass))
+            // A box's instance members join its statics: `C.isDark`,
+            // `C.opacity(0.5)` and `AUIColor.accent` all reach free functions,
+            // as an enum's members do (P1.3e stage 2).
+            let instance = klass.isOpaque ? boxInstanceMembers(of: klass) : []
+            let shared = firstOfEachName(instance + staticMembers(of: klass))
             guard !shared.isEmpty else { return nil }
-            return MemberOwner(name: klass.name, swiftName: klass.name, stem: "\(klass.name)_shared",
-                               enumeration: nil, members: shared)
+            let swiftName = klass.isOpaque ? (api.structures[klass.precise]?.name ?? klass.name) : klass.name
+            var owner = MemberOwner(name: klass.name, swiftName: swiftName, stem: "\(klass.name)_shared",
+                                    enumeration: nil, members: shared)
+            owner.isBox = klass.isOpaque
+            return owner
         }
         return enums + classes
+    }
+
+    /// A box's instance members as functions, properties first (P1.3e).
+    public static func boxInstanceMembers(of klass: SwiftAPI.Class) -> [(SwiftAPI.Function, isStatic: Bool, isProperty: Bool)] {
+        klass.boxProperties.map {
+            (SwiftAPI.Function(name: $0.name, symbol: $0.symbol, parameters: [], returns: $0.type,
+                               isInitializer: false, isOverridable: false), false, true)
+        } + klass.boxMethods.map { ($0, false, false) }
     }
 
     /// A class's static members as functions, properties first.
@@ -451,7 +470,7 @@ public struct SwiftInterfaceUnit {
         // Flattened at the call, so it never names a BASIC type of its own.
         // A struct value is the TYPE record the unit declares for it (P1.3c);
         // as a parameter it is flattened before this is asked.
-        case .structure(let precise): return api.structures[precise]?.name ?? "DOUBLE"
+        case .structure(let precise): return api.structures[precise].map { SwiftAPI.basicName($0.name) } ?? "DOUBLE"
         // An INTERFACE, declared by the unit; any conforming imported class
         // may be passed where one is wanted.
         case .protocolType(let precise): return api.protocols[precise] ?? "VARIANT"
@@ -491,7 +510,10 @@ public struct SwiftInterfaceUnit {
     /// and a record has no literal to stand in for it.
     static func placeholderReturn(_ type: SwiftAPI.ValueType, in api: SwiftAPI, indent: String) -> [String] {
         if case .structure(let precise) = type, let structure = api.structures[precise] {
-            return ["\(indent)DIM BASICPlaceholder AS \(structure.name)", "\(indent)RETURN BASICPlaceholder"]
+            // Named for its type: basicc keeps one type per variable name, and
+            // a CGSize placeholder and a CGRect one would otherwise collide.
+            let local = "BASICPlaceholder_\(SwiftAPI.basicName(structure.name))"
+            return ["\(indent)DIM \(local) AS \(SwiftAPI.basicName(structure.name))", "\(indent)RETURN \(local)"]
         }
         return ["\(indent)RETURN \(placeholder(type, in: api))"]
     }
