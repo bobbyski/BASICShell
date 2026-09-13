@@ -522,6 +522,74 @@ struct SwiftImportEndToEndTests {
         #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nstep 2 rose TRUE\nscaled 6\nquiet\nlabel peak ( 4)\n2.0 dB!\n", "got:\n\(run.stdout)")
     }
 
+    /// Core Graphics geometry as arguments (P1.3b): a `CGPoint`, `CGSize` or
+    /// `CGRect` crosses as its numbers, and the shim rebuilds the struct.
+    ///
+    /// The answers are computed from every field, in positions a transposed
+    /// field would get wrong: a rect's origin and size, a point's x and y. A
+    /// defaulted geometry parameter keeps Swift's default rather than becoming
+    /// two more arguments, so `NEW Canvas(1)` still means what it did.
+    @Test func coreGraphicsGeometryCrossesAsNumbers() throws {
+        _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
+                         "basicc must be built at \(Self.compiler)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("geometry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Plotting")
+        let sources = package.appendingPathComponent("Sources/Plotting")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Plotting", products: [.library(name: "Plotting", targets: ["Plotting"])], targets: [.target(name: "Plotting")])
+        """.write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try """
+        import CoreGraphics
+        public final class Canvas {
+            public var scale: Double
+            public let size: CGSize
+            public init(scale: Double, size: CGSize = CGSize(width: 640, height: 480)) {
+                self.scale = scale
+                self.size = size
+            }
+            public func describe(_ rect: CGRect) -> String {
+                "origin \\(Int(rect.origin.x)),\\(Int(rect.origin.y)) size \\(Int(rect.size.width))x\\(Int(rect.size.height))"
+            }
+            public func contains(_ point: CGPoint, in rect: CGRect) -> Bool { rect.contains(point) }
+            public func distance(from a: CGPoint, to b: CGPoint) -> Double {
+                Double(hypot(b.x - a.x, b.y - a.y)) * scale
+            }
+            public func widthOfDefault() -> Double { Double(size.width) }
+        }
+        """.write(to: sources.appendingPathComponent("Plotting.swift"), atomically: true, encoding: .utf8)
+
+        let program = root.appendingPathComponent("Program")
+        try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Program", dependencies: [.package(path: "../Plotting")], targets: [])
+        """.write(to: program.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let source = program.appendingPathComponent("main.bas")
+        try """
+        IMPORT "Plotting"
+        DIM C AS Canvas
+        C = NEW Canvas(2)
+        PRINT C.describe(10, 20, 300, 400)
+        PRINT C.contains(15, 25, 10, 20, 300, 400)
+        PRINT C.contains(5, 25, 10, 20, 300, 400)
+        PRINT C.distance(0, 0, 3, 4)
+        PRINT C.widthOfDefault()
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let binary = root.appendingPathComponent("run-program").path
+        let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
+        #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
+        let run = try ProcessRunner.run(binary, [])
+        #expect(run.exitCode == 0, "run failed: \(run.stderr)")
+        #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n", "got:\n\(run.stdout)")
+    }
+
     /// The compiler under test, built into this package's scratch path.
     static var compiler: String {
         let root = URL(fileURLWithPath: #filePath)

@@ -79,6 +79,12 @@ public struct SwiftAPI: Sendable {
             return true
         }
 
+        /// `CGPoint`, `CGSize` or `CGRect`.
+        var isCoreGraphicsGeometry: Bool {
+            guard case .structure(let precise) = self else { return false }
+            return SwiftAPI.coreGraphicsStructures.contains { $0.precise == precise }
+        }
+
         /// Either kind of imported enum.
         var isEnumeration: Bool {
             switch self {
@@ -157,8 +163,17 @@ public struct SwiftAPI: Sendable {
         }
 
         /// The parameters BASIC actually passes: the ones it can spell.
+        ///
+        /// **Except a defaulted Core Graphics geometry parameter**, which stays
+        /// with Swift's default, as it did before BASIC could spell one. Making
+        /// a type spellable must not change the arity of a call that relied on
+        /// the default: `AUIWindow(title:rootView:placement:contentSize:)`
+        /// defaults `contentSize`, and letting a CGSize cross turned
+        /// `NEW AUIWindow(title, root, placement)` into a five-argument call
+        /// that no existing program makes. BASIC has no optional arguments
+        /// yet; when it does, these can become them.
         public var passed: [Parameter] {
-            parameters.filter { $0.type.isSupported }
+            parameters.filter { $0.type.isSupported && !($0.hasDefault && $0.type.isCoreGraphicsGeometry) }
         }
     }
 
@@ -365,6 +380,13 @@ public struct SwiftAPI: Sendable {
         else { throw ReadError(path: path, problem: "missing module, symbols or relationships") }
 
         var api = SwiftAPI(module: module, classes: [], functions: [], skipped: [])
+        // Core Graphics' geometry, which no framework's graph describes: C
+        // structs, identified by Clang (`c:@S@CGRect`), from another module.
+        // Seeded with the fields their initializers take, so R4.4 flattens a
+        // `CGRect` argument into four numbers and the shim rebuilds it — the
+        // shape of every drawing call (`arc(center: CGPoint, ...)`) and every
+        // layout hook (`layoutChildren(in: CGRect)`).
+        for structure in Self.coreGraphicsStructures { api.structures[structure.precise] = structure }
         var memberOf: [String: String] = [:]
         var inherits: [String: String] = [:]
         for relationship in relationships {
@@ -1117,6 +1139,16 @@ public struct SwiftAPI: Sendable {
         return symbol
     }
 
+    /// `CGPoint`, `CGSize` and `CGRect`, as their memberwise initializers take
+    /// them. A rect is built from a point and a size, which is the order and
+    /// the labels `CGRect(origin:size:)` has.
+    static let coreGraphicsStructures: [Structure] = [
+        Structure(name: "CGPoint", precise: "c:@S@CGPoint", fields: [("x", .cgFloat), ("y", .cgFloat)]),
+        Structure(name: "CGSize", precise: "c:@S@CGSize", fields: [("width", .cgFloat), ("height", .cgFloat)]),
+        Structure(name: "CGRect", precise: "c:@S@CGRect",
+                  fields: [("origin", .structure(precise: "c:@S@CGPoint")), ("size", .structure(precise: "c:@S@CGSize"))]),
+    ]
+
     /// Types the SDK moved between modules, as the graph spells them and as
     /// their mangling does.
     static let originallyDefinedIn: [(String, String)] = [
@@ -1346,6 +1378,7 @@ public struct SwiftAPI: Sendable {
         switch precise {
         case "s:Sd": return .double
         case "s:14CoreFoundation7CGFloatV", "s:12CoreGraphics7CGFloatV": return .cgFloat
+        case let precise? where coreGraphicsStructures.contains(where: { $0.precise == precise }): return .structure(precise: precise)
         case "s:Si": return .int
         case "s:Sb": return .bool
         case "s:SS": return .string

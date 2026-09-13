@@ -53,6 +53,17 @@ PRINT "stack spacing  : "; Column.spacing
 Column.spacing = 20
 PRINT "spacing now    : "; Column.spacing
 
+' A path, built the way the Swift catalog's Drawing page builds one. Every
+' point is a CGPoint that crosses as two numbers and is rebuilt in the shim.
+DIM Outline AS AUIBezierPath
+Outline = NEW AUIBezierPath()
+Outline.move(10, 10)
+Outline.line(90, 10)
+Outline.arc(50, 50, 40, 0, 3.14159, TRUE)
+Outline.rect(0, 0, 100, 100)
+Outline.close()
+PRINT "path built     : move, line, arc, rect, close"
+
 ' A window, built around the stack. Nothing is shown: making the window is
 ' the test, and a catalog page that opens a window belongs behind --run.
 DIM Shell AS AUIWindow
