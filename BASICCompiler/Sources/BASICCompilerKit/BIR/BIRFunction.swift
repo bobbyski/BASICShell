@@ -256,6 +256,11 @@ public struct BIRBlock: Sendable {
     public var instructions: [BIRInstruction]
     /// How the block ends.
     public var terminator: BIRTerminator
+    /// Where the terminator came from, when a statement wrote it — `RETURN`,
+    /// `GOTO`, `NEXT` — so a debugger has a line to stop on for a statement
+    /// that lowers to nothing but a branch. Nil for a block the builder
+    /// ended on its own.
+    public var terminatorLocation: BIRLocation?
 
     /// Creates an empty, unterminated block.
     public init(id: BIRBlockID, label: String) {
@@ -336,6 +341,7 @@ public struct BIRFunction: Sendable {
             var copy = BIRBlock(id: index, label: block.label)
             copy.instructions = block.instructions
             copy.terminator = Self.renumber(block.terminator, renumbered)
+            copy.terminatorLocation = block.terminatorLocation
             return copy
         }
         statementResumeBlocks = statementResumeBlocks.map { renumbered[$0]! }
@@ -441,6 +447,10 @@ public struct BIRCompositeType: Sendable {
 public struct BIRModule: Sendable {
     /// The module name, usually the source file's base name.
     public let name: String
+    /// The entry file as the loader named it — the one that is not IMPORTed —
+    /// or nil for a program compiled from text. Debug information describes
+    /// the program as this file.
+    public var sourceFile: String?
     /// Program-wide variables.
     public var globals: [BIRVariable]
     /// The program body.

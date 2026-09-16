@@ -9,9 +9,22 @@ struct LLVMText {
     private var temporaries = 0
     private var labels = 0
 
+    /// The `!DILocation` every instruction emitted from now on is attached
+    /// to, or nil in a function that has no debug information.
+    ///
+    /// Set per BIR instruction rather than passed to `emit`, because one BIR
+    /// instruction becomes many LLVM ones and all of them came from the same
+    /// BASIC line. It must be set throughout a function that has a
+    /// subprogram: LLVM rejects a call without a location in such a function.
+    var debugLocation: String?
+
     /// Appends one instruction, indented.
     mutating func emit(_ line: String) {
-        lines.append("  " + line)
+        if let debugLocation {
+            lines.append("  " + line + ", !dbg " + debugLocation)
+        } else {
+            lines.append("  " + line)
+        }
     }
 
     /// Appends a block label.

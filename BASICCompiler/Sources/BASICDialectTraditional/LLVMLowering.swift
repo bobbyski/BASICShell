@@ -34,15 +34,22 @@ struct LLVMLowering {
 
     /// The whole module as `.ll` text.
     func render() -> String {
+        // DWARF (D10): one builder for the module, handed to every function
+        // that comes from BASIC source. The trampolines and setup functions
+        // below are the compiler's own and get none, which is what lets a
+        // backtrace go straight from a handler to the runtime that called it.
+        let debug = options.emitDebugInfo
+            ? DebugInfo(primarySource: module.sourceFile, moduleName: module.name, optimized: options.optimizationLevel > 0)
+            : nil
         var functions: [String] = []
         if !options.omitsEntryPoint {
-            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel)
+            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel, debug: debug)
             functions.append(mainEmitter.render())
         }
         // An imported class's members have no body here: the framework has
         // them, and the object model emits a thunk onto its symbol.
         for function in module.functions where !function.isExternal {
-            var emitter = FunctionEmitter(function: function, module: module, constants: constants, isMain: false, objectModel: objectModel)
+            var emitter = FunctionEmitter(function: function, module: module, constants: constants, isMain: false, objectModel: objectModel, debug: debug)
             functions.append(emitter.render())
         }
 
@@ -53,7 +60,8 @@ struct LLVMLowering {
         // IR byte for byte what it was, which the seam is measured against.
         if !objectModel.declarations.isEmpty { text += objectModel.declarations + "\n" }
         for variable in module.globals {
-            text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\n"
+            let attachment = debug?.globalVariable(variable, module: module).map { ", !dbg \($0)" } ?? ""
+            text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\(attachment)\n"
         }
         text += "\n" + renderDataTables() + "\n"
         if options.omitsEntryPoint {
@@ -83,6 +91,9 @@ struct LLVMLowering {
         text += functions.joined(separator: "\n\n")
         let definitions = objectModel.definitions(for: module)
         if !definitions.isEmpty { text += "\n\n" + definitions }
+        if let debug {
+            text += "\n\ndeclare void @llvm.dbg.declare(metadata, metadata, metadata)\n\n" + debug.render() + "\n"
+        }
         return text
     }
 
@@ -688,13 +699,18 @@ struct FunctionEmitter {
     private var usesErrorHandling: Bool { isMain && !function.statementResumeBlocks.isEmpty }
     /// The largest number of indexes any DIM or element access uses.
     private var scratchRank = 1
+    /// The module's debug information, when the build asked for it.
+    private let debug: DebugInfo?
+    /// This function's subprogram, once `render` has described it.
+    private var debugScope: DebugInfo.Scope?
 
-    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel()) {
+    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel(), debug: DebugInfo? = nil) {
         self.function = function
         self.module = module
         self.constants = constants
         self.isMain = isMain
         self.objectModel = objectModel
+        self.debug = debug
     }
 
     /// The static class of a field's base, when that class is a Swift
@@ -742,6 +758,11 @@ struct FunctionEmitter {
             if case .returnFromGosub = block.terminator { usesGosub = true }
         }
         scratchRank = max(1, (function.locals + module.globals).compactMap(\.rank).max() ?? 1)
+        if let debug {
+            let scope = debug.scope(for: function, isMain: isMain, linkageName: "F.\(function.name)")
+            debugScope = scope
+            out.debugLocation = scope.entryLocation
+        }
         lowerBody()
 
         let signature: String
@@ -753,7 +774,8 @@ struct FunctionEmitter {
                 .joined(separator: ", ")
             signature = "define \(Self.llvmType(function.returnType)) @\"F.\(function.name)\"(\(parameters))"
         }
-        return signature + " {\n" + out.lines.joined(separator: "\n") + "\n}"
+        let attachment = debugScope.map { " !dbg \($0.subprogram)" } ?? ""
+        return signature + attachment + " {\n" + out.lines.joined(separator: "\n") + "\n}"
     }
 
     // MARK: - Function
@@ -765,6 +787,7 @@ struct FunctionEmitter {
         for local in function.locals {
             out.emit("%\"L.\(local.name)\" = alloca \(Self.llvmType(of: local))")
             out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
+            declareForDebugger(local)
         }
         for (index, parameter) in function.parameters.enumerated() {
             var value = "%p\(index)"
@@ -820,12 +843,25 @@ struct FunctionEmitter {
         for block in function.blocks {
             out.label("b.\(block.label)")
             for instruction in block.instructions {
+                // Every LLVM instruction this one becomes belongs to its line.
+                // A line-less instruction keeps the location before it.
+                if let debug, let debugScope, let location = debug.location(instruction.location, in: debugScope) {
+                    out.debugLocation = location
+                }
                 lower(instruction.operation)
                 releaseOwned()
+            }
+            if let debug, let debugScope, let terminatorLocation = block.terminatorLocation,
+               let location = debug.location(terminatorLocation, in: debugScope) {
+                out.debugLocation = location
             }
             lower(block.terminator)
             releaseOwned()
         }
+        // The dispatch blocks below are the compiler's, reached from anywhere
+        // in the body; attributing them to whichever line lowered last would
+        // be a guess, so they belong to the function's first line.
+        if let debugScope { out.debugLocation = debugScope.entryLocation }
 
         if usesErrorHandling {
             out.label("error.dispatch")
@@ -858,6 +894,16 @@ struct FunctionEmitter {
             out.label("gosub.bad")
             out.emit("unreachable")
         }
+    }
+
+    /// Tells the debugger which alloca holds a variable, so `frame variable`
+    /// finds it for the whole function. Parameters are among the locals, and
+    /// say which argument they are.
+    private mutating func declareForDebugger(_ local: BIRVariable) {
+        guard let debug, let debugScope else { return }
+        let argument = function.parameters.firstIndex { $0.name == local.name }.map { $0 + 1 }
+        guard let variable = debug.localVariable(local, argument: argument, in: debugScope, module: module) else { return }
+        out.emit("call void @llvm.dbg.declare(metadata ptr %\"L.\(local.name)\", metadata \(variable), metadata !DIExpression())")
     }
 
     // MARK: - Instructions

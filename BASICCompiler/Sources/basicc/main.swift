@@ -39,6 +39,7 @@ func printUsage() {
       --emit-llvm          print the LLVM IR instead of building
       --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
       -O, -O0..-O3         optimization level for the generated code (default -O0)
+      -g, -g0              DWARF for lldb: BASIC lines, functions, variables (default -g)
       --json-diagnostics   report errors as a JSON array (for IDEs)
       --bundle             also write <name>.app, a macOS launcher for the program
       --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
@@ -60,6 +61,7 @@ struct Invocation {
     var jsonDiagnostics = false
     var emitAssembly = false
     var optimizationLevel = 0
+    var emitDebugInfo = true
     var kind: String?
     var bundle = false
 
@@ -82,6 +84,11 @@ struct Invocation {
             case "--emit-asm": emitAssembly = true
             case "-O": optimizationLevel = 2
             case "-O0", "-O1", "-O2", "-O3": optimizationLevel = Int(String(argument.dropFirst(2)))!
+            // DWARF is on by default (D10): a program a person is still
+            // writing is one they will want to stop in. `-g0` is for the
+            // build that ships, as it is for clang.
+            case "-g": emitDebugInfo = true
+            case "-g0": emitDebugInfo = false
             case "--json-diagnostics": jsonDiagnostics = true
             case "--bundle": bundle = true
             case "--kind":
@@ -133,7 +140,7 @@ func compilation(for invocation: Invocation) -> Compilation {
         let dialect = try resolveDialect(invocation)
         var compilation = Compilation(
             dialect: dialect,
-            options: CompileOptions(optimizationLevel: invocation.optimizationLevel)
+            options: CompileOptions(optimizationLevel: invocation.optimizationLevel, emitDebugInfo: invocation.emitDebugInfo)
         )
         // Only the Swift dialect can import a Swift framework. Reading the
         // source is where that is discovered, so reading is where it is

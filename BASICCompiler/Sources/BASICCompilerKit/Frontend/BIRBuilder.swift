@@ -56,6 +56,7 @@ public struct BIRBuilder {
         analyzer.model.enumMembers = enumMembers
         let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
+        module.sourceFile = lines.first { !$0.isImported }?.fileName
         module.globals = model.globalVariables
         module.data = Self.collectData(lines)
         module.types = model.typeOrder.compactMap { name -> BIRCompositeType? in
@@ -718,6 +719,7 @@ final class FunctionBuilder {
     func terminate(_ terminator: BIRTerminator) {
         if case .unterminated = function.blocks[current].terminator {
             function.blocks[current].terminator = terminator
+            function.blocks[current].terminatorLocation = location
         }
         current = newBlock("after")
     }
