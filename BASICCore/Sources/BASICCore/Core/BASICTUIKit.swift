@@ -817,6 +817,14 @@ extension BASICRuntime {
                 guard let value = arguments.first?.string?.description else {
                     throw BASICError.runtime("\(typeName).\(method) expects a string")
                 }
+                if let window = registry.floatingWindows[id] {
+                    // A window's title is the one place a document program
+                    // has to say which file is open and whether it has
+                    // unsaved edits, so it has to be writable after the
+                    // window exists — `frame` and `toolbar` already are.
+                    window.title = value
+                    return .empty
+                }
                 if let label = try? view() as? Label {
                     label.text = value
                 } else if let button = try? view() as? Button {

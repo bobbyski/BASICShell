@@ -41,6 +41,14 @@ final class BASICTUIShellWindow: Window {
     /// first moment there is an application to stop.
     var onQuit: () -> Void = {}
 
+    /// A BASIC function to run instead of stopping, named by `onquit`.
+    ///
+    /// Without this, Esc stops the application outright and a program that
+    /// has unsaved work cannot ask about it — the File menu's Quit would put
+    /// up the dialog and Esc would walk straight past it. A program that
+    /// names a handler owns the decision and calls `stop` itself.
+    var quitHandler: String?
+
     /// While a dropdown is open, Esc belongs to the menu rather than to us.
     /// Set when a menu bar is added to this window.
     weak var menuBar: MenuBar?
@@ -431,6 +439,15 @@ extension BASICRuntime {
                     matrix.select([index])
                     return .empty
                 }
+                if let list = registry.views[id] as? ListView {
+                    // Without `notify`, so selecting a row in code does not
+                    // call the program's own onselect handler. A list is
+                    // usually reselected right after its rows were replaced,
+                    // and a handler that runs then is a handler running
+                    // halfway through a refresh.
+                    list.select(index)
+                    return .empty
+                }
                 throw BASICError.runtime("\(typeName) has nothing to select")
 
             case "ADDROW":
@@ -578,6 +595,19 @@ extension BASICRuntime {
                     + ", clipping \(plane.supportsClipping ? "yes" : "no")"
                     + ", under-text raster \(plane.supportsUnderTextRaster ? "yes" : "no — riding the overlay")"
                 ))
+
+            case "ONQUIT":
+                guard let shell = registry.windows[id] as? BASICTUIShellWindow else {
+                    throw BASICError.runtime("\(typeName) is not a shell")
+                }
+                guard let handler = text(0) else {
+                    throw BASICError.runtime("\(typeName).onquit expects a handler name")
+                }
+                // The handler replaces stopping rather than running before it:
+                // a program asking "save first?" has to be able to answer no,
+                // and an application already on its way down cannot.
+                shell.quitHandler = handler
+                return .empty
 
             case "TOGGLESLIDEOUT":
                 guard let window = registry.floatingWindows[id] else {

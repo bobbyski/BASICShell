@@ -176,7 +176,19 @@ final class BASICTUIRuntimeBridge: @unchecked Sendable {
 
                 // Esc quits a shell window, which needs the application it is
                 // quitting — so this is the earliest it can be wired.
-                (window as? BASICTUIShellWindow)?.onQuit = { [weak app] in app?.stop() }
+                if let shell = window as? BASICTUIShellWindow {
+                    // Read at the moment Esc is pressed, not now: `onquit` may
+                    // be called anywhere before `run`, and a program that names
+                    // its handler after the shell was built would otherwise be
+                    // quietly ignored.
+                    shell.onQuit = { [weak app, weak shell] in
+                        if let handler = shell?.quitHandler {
+                            BASICTUIRuntimeBridge.shared.invoke(handlerNamed: handler)
+                        } else {
+                            app?.stop()
+                        }
+                    }
+                }
 
                 // Everything the program said to its application before there
                 // was one to say it to.
