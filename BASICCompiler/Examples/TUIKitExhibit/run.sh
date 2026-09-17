@@ -6,11 +6,8 @@
 set -e
 cd "$(dirname "$0")/Program"
 
-BASICC=${BASICC:-basicc}
 PKG=$(cd ../../.. && pwd)
-: "${BASICC_RT_LIB:=$PKG/.build-claude/release/libBASICRTHost.a}"
-[ -f "$BASICC_RT_LIB" ] || BASICC_RT_LIB="$PKG/.build/release/libBASICRTHost.a"
-export BASICC_RT_LIB
+. ../../find-basicc.sh
 
 echo "==> compiling (Package.swift selects the Swift dialect)"
 "$BASICC" build main.bas -o Build/tuikit-exhibit

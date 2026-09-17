@@ -7,8 +7,9 @@
 set -e
 cd "$(dirname "$0")"
 
-BASICC=${BASICC:-basicc}
 PACKAGE=$(cd ../.. && pwd)
+PKG=$PACKAGE
+. ../find-basicc.sh
 BUILD=Build
 SWIFTC=$(xcrun --find swiftc)
 SDK=$(xcrun --show-sdk-path)

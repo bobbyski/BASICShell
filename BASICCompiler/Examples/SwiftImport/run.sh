@@ -6,12 +6,9 @@
 set -e
 cd "$(dirname "$0")/Program"
 
-BASICC=${BASICC:-basicc}
 # Program/ -> SwiftImport/ -> Examples/ -> the BASICCompiler package.
 PKG=$(cd ../../.. && pwd)
-: "${BASICC_RT_LIB:=$PKG/.build-claude/release/libBASICRTHost.a}"
-[ -f "$BASICC_RT_LIB" ] || BASICC_RT_LIB="$PKG/.build/release/libBASICRTHost.a"
-export BASICC_RT_LIB
+. ../../find-basicc.sh
 
 echo "==> what the framework gives the program"
 "$BASICC" import-report main.bas | sed 's/^/    /'

@@ -13,12 +13,9 @@
 set -e
 cd "$(dirname "$0")/Program"
 
-BASICC=${BASICC:-basicc}
 # Program/ -> ActiveUICatalog/ -> Examples/ -> the BASICCompiler package.
 PKG=$(cd ../../.. && pwd)
-: "${BASICC_RT_LIB:=$PKG/.build-claude/release/libBASICRTHost.a}"
-[ -f "$BASICC_RT_LIB" ] || BASICC_RT_LIB="$PKG/.build/release/libBASICRTHost.a"
-export BASICC_RT_LIB
+. ../../find-basicc.sh
 
 case "${1:-}" in
     --report) exec "$BASICC" import-report main.bas ;;
