@@ -1614,6 +1614,14 @@ final class FunctionBuilder {
     }
 
     private func lowerExpressionStatement(_ expression: Expression) throws {
+        // `AUIApplication.run(root, placement)` on a line of its own: a shared
+        // member called for its effect. Expressions were already rewritten to
+        // the importer's free function (E5); a statement was not, so the call
+        // reached the method-call path and was read as a method on a variable
+        // called AUIAPPLICATION — "number has no method run".
+        if let call = model.enumMemberCall(expression, enumOf: { receiverEnum($0) }) {
+            return try lowerExpressionStatement(call)
+        }
         switch expression {
         case .callOrArray(let name, let arguments), .functionCall(let name, let arguments):
             if let userFunction = model.functions[name.normalized] {

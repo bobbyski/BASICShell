@@ -607,6 +607,55 @@ struct SwiftImportEndToEndTests {
         #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n1 2 3 4\n10 2 3 40\n300 150\n", "got:\n\(run.stdout)")
     }
 
+    /// A shared method called on a line of its own — `Logbook.tick(2)`, the
+    /// shape of `AUIApplication.run(root, placement)`. Inside an expression it
+    /// was always rewritten to the importer's function; as a statement it was
+    /// read as a method on a variable named LOGBOOK and refused.
+    @Test func sharedMethodsCanBeCalledAsStatements() throws {
+        _ = try #require(FileManager.default.fileExists(atPath: Self.compiler) ? true : nil,
+                         "basicc must be built at \(Self.compiler)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shared-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Logs")
+        let sources = package.appendingPathComponent("Sources/Logs")
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Logs", products: [.library(name: "Logs", targets: ["Logs"])], targets: [.target(name: "Logs")])
+        """.write(to: package.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try """
+        public final class Logbook {
+            nonisolated(unsafe) static var total = 0
+            public init() {}
+            public static func tick(_ amount: Int) { total += amount }
+            public static var count: Int { total }
+        }
+        """.write(to: sources.appendingPathComponent("Logs.swift"), atomically: true, encoding: .utf8)
+
+        let program = root.appendingPathComponent("Program")
+        try FileManager.default.createDirectory(at: program, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Program", dependencies: [.package(path: "../Logs")], targets: [])
+        """.write(to: program.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let source = program.appendingPathComponent("main.bas")
+        try """
+        IMPORT "Logs"
+        Logbook.tick(2)
+        Logbook.tick(3)
+        PRINT Logbook.count
+        """.write(to: source, atomically: true, encoding: .utf8)
+
+        let binary = root.appendingPathComponent("run-program").path
+        let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
+        #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
+        let run = try ProcessRunner.run(binary, [])
+        #expect(run.stdout == " 5 \n" || run.stdout == "5\n", "got:\n\(run.stdout)")
+    }
+
     /// Boxed structs (P1.3e): an immutable struct that is not a record crosses
     /// in a box BASIC holds by reference, in every position.
     ///

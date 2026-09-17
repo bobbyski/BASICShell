@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds the ActiveUI catalog written in BASIC, and runs it.
 #
-#   ./run.sh              build and run
+#   ./run.sh              build, print the API tour, and open the catalog window
 #   ./run.sh --report     what ActiveUI gives a BASIC program, and what it does not
 #   ./run.sh --probe      the coverage gate: every shim compiled, every thunk emitted
 #
@@ -29,5 +29,5 @@ echo "==> compiling (Package.swift selects the Swift dialect)"
 "$BASICC" build main.bas -o Build/catalog
 
 echo
-echo "==> running"
+echo "==> running (the window stays up until you close it or press Cmd-Q)"
 ./Build/catalog

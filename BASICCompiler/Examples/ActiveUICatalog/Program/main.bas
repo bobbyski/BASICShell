@@ -4,7 +4,7 @@
 ' own symbol graph. There is no binding layer here: no shims written by hand,
 ' no generated wrapper to keep in step. IMPORT and call.
 '
-'   ./run.sh              build and run
+'   ./run.sh              build, print the tour, and open the window
 '   ./run.sh --report     what imported, and what did not
 '   ./run.sh --probe      every shim compiled, every thunk emitted
 '
@@ -98,8 +98,13 @@ Outline.rect(0, 0, 100, 100)
 Outline.close()
 PRINT "path built     : move, line, arc, rect, close"
 
-' A window, built around the stack. Nothing is shown: making the window is
-' the test, and a catalog page that opens a window belongs behind --run.
-DIM Shell AS AUIWindow
-Shell = NEW AUIWindow("Catalog", Column, AUIRootPlacement.centered)
-PRINT "window title   : "; Shell.title
+' The window. AUIApplication.run is the same call the Swift catalog ends
+' with: it starts the platform application - AppKit on macOS - puts the
+' root view in a real window, and keeps the main thread until the app quits,
+' so nothing after it runs. Everything PRINTed above is already on the
+' terminal by then; the window is the catalog.
+'
+' Set AUI_BACKGROUND=1 to open it without taking the keyboard focus, which
+' is what an automated run wants.
+PRINT "opening window : close it or press Cmd-Q to quit"
+AUIApplication.run(Column, AUIRootPlacement.centered)
