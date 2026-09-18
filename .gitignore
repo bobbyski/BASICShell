@@ -44,3 +44,10 @@ BASICCompiler/Examples/TUIKitExhibit/Program/Build/
 BASICCompiler/Examples/SwiftResilient/Program/Build/
 # The ActiveUI catalog's build products
 BASICCompiler/Examples/ActiveUICatalog/Program/Build/
+
+# BASICCore through Xcode (project.yml): the project is generated from the
+# spec, so the spec is committed and the project is not; builds land in
+# Build/ and .xcode-derived/ beside it.
+BASICCore/BASICCore.xcodeproj/
+BASICCore/.xcode-derived/
+BASICCore/Build/

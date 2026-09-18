@@ -1,0 +1,58 @@
+# BASICCore, built and tested through Xcode.
+#
+# Bobby's rule (2026-09-18): Swift in this tree builds with XcodeGen and
+# xcodebuild, never `swift build`/`swift test`. The reason is resources:
+# SwiftPM's generated Bundle.module finds a bundle only beside the
+# executable or at the absolute path it was built at, so anything built
+# that way works on the build Mac and crashes everywhere else. Xcode's
+# accessor looks in Contents/Resources first. BASICLintTests carries
+# Fixtures, so this package is exactly the case the rule is about.
+#
+# The package stays the source of truth for targets and dependencies:
+# this spec references it and names its test targets, rather than
+# restating every target as a native one that would drift from
+# Package.swift.
+#
+#   xcodegen generate
+#   xcodebuild -project BASICCore.xcodeproj -scheme BASICCore test
+name: BASICCore
+options:
+  bundleIdPrefix: com.aibasic
+  deploymentTarget:
+    macOS: "16.0"
+packages:
+  BASICCore:
+    path: .
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "16.0"
+targets:
+  # Builds every product the package ships; see XcodeSupport/main.swift.
+  BASICCoreProducts:
+    type: tool
+    platform: macOS
+    sources:
+      - path: XcodeSupport
+    dependencies:
+      - package: BASICCore
+        product: BASICCore
+      - package: BASICCore
+        product: BASICSyntax
+      - package: BASICCore
+        product: BASICLint
+      - package: BASICCore
+        product: BASICLintCodeWatch
+    settings:
+      base:
+        CODE_SIGN_STYLE: Automatic
+schemes:
+  BASICCore:
+    build:
+      targets:
+        BASICCoreProducts: all
+    test:
+      config: Debug
+      targets:
+        - package: BASICCore/BASICCoreTests
+        - package: BASICCore/BASICLintTests
