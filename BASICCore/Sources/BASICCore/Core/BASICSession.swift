@@ -447,6 +447,15 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 return false
             }
 
+            // `HELP Square`: the program's own documentation, before any
+            // manual topic. A host with a manual (the shell) asks first
+            // through `documentation(for:)`; this is every other host.
+            if trimmed.uppercased().hasPrefix("HELP "),
+               let text = documentation(for: String(trimmed.dropFirst(5))) {
+                host.printLine(text)
+                return true
+            }
+
             switch trimmed.uppercased() {
             case "NEW":
                 stopAllTimers()
@@ -489,6 +498,16 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
 
         return true
+    }
+
+    /// The documentation for a declaration in the loaded program, rendered
+    /// for the terminal, or nil when the program declares nothing by that
+    /// name. `Square` finds a function, `Point.X` a member.
+    public func documentation(for name: String, width: Int = 80, colored: Bool = true) -> String? {
+        let query = name.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty,
+              let symbol = BASICDocumentation.symbol(named: query, in: program.documentedSymbols) else { return nil }
+        return BASICDocumentationRenderer.render(symbol, width: width, colored: colored)
     }
 
     private func printOpenFiles() {

@@ -293,6 +293,9 @@ extension BASICRuntime {
         case .label: return "\u{001B}[38;5;80m"
         case .string: return "\u{001B}[38;5;215m"
         case .comment: return "\u{001B}[38;5;71m"
+        // Italic and a softer green: still a comment, visibly the kind that
+        // is read by tools. Xcode draws the same distinction.
+        case .documentation: return "\u{001B}[3;38;5;108m"
         case .number: return "\u{001B}[38;5;141m"
         }
     }

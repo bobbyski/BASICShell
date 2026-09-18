@@ -50,7 +50,9 @@ extension BASICSyntaxToken {
         case .label: return .attributeName
         case .string: return .string
         case .number: return .number
-        case .comment: return .comment
+        // TUIKit has one comment kind, so documentation paints as a comment
+        // here; RichSyntax and the IDEs, which have more colors, set it apart.
+        case .comment, .documentation: return .comment
         }
     }
 }

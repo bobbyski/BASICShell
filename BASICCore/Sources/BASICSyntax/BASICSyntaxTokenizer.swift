@@ -38,6 +38,10 @@ public enum BASICSyntaxToken: Hashable, Sendable, CaseIterable {
     case number
     /// `REM`, `'`, `//`, or a `#` line.
     case comment
+    /// A `///` line: documentation for the declaration below it (see
+    /// ``BASICDocumentation``). Its own token, so an editor can set it apart
+    /// from an ordinary comment the way Xcode does.
+    case documentation
 }
 
 /// One colored run: a character offset, a length, and what it is.
@@ -79,6 +83,13 @@ public enum BASICSyntaxTokenizer {
         }
 
         let firstNonBlank = characters.prefix { $0.isWhitespace }.count
+
+        // A documentation comment is a whole line, as in Swift; `///` after
+        // code on the same line is an ordinary trailing comment.
+        if BASICDocumentation.commentText(line) != nil {
+            emit(.documentation, at: firstNonBlank, length: characters.count - firstNonBlank)
+            return spans
+        }
 
         // `#!/usr/bin/env basicshell` and `# a note`. A shebang is the first
         // line of every runnable script in SHELL.md, and without this the

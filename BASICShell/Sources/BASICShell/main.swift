@@ -4045,6 +4045,15 @@ func isHelpCommand(_ input: String) -> Bool {
 func runHelpCommand(_ input: String) -> Bool {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let rest = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+    // A name the program declares wins over a manual topic: `HELP Square`
+    // is asking about the Square someone wrote, and its `///` comment is the
+    // answer. The manual is the fallback, as it is for any other word.
+    var size = winsize()
+    let width = ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0 ? Int(size.ws_col) : 80
+    if !rest.isEmpty, let text = session.documentation(for: rest, width: width, colored: isatty(STDOUT_FILENO) != 0) {
+        host.printLine(text)
+        return true
+    }
     return host.lendingMouseToTUI {
         BASICShellHelp.browse(topic: rest.isEmpty ? nil : rest, onReady: { host.enableMouseForRunningTUI() })
     }

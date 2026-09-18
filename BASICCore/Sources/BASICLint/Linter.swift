@@ -38,6 +38,11 @@ public enum RuleCatalog {
         NestedBlockDepthRule(),
         LargeTypeRule(),
         TooManyFieldsRule(),
+        // Documentation comments, checked against their declarations.
+        DetachedDocCommentRule(),
+        UnknownDocParameterRule(),
+        MissingDocParameterRule(),
+        ReturnsWithoutValueRule(),
     ]
 
     /// A rule by id.
@@ -169,8 +174,9 @@ public extension RuleCatalog {
             "correctness": "Correctness — probably a bug",
             "style": "Style and structure",
             "complexity": "Complexity",
+            "doc": "Documentation comments",
         ]
-        for prefix in ["correctness", "style", "complexity"] {
+        for prefix in ["correctness", "style", "complexity", "doc"] {
             guard let rules = byPrefix[prefix] else { continue }
             text += "## \(titles[prefix] ?? prefix)\n\n"
             for rule in rules {
