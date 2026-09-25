@@ -63,11 +63,24 @@ public struct SourceLoader {
     }
 
     private func loadLines(path: String, isImported: Bool) throws -> [ProgramLine] {
-        let source: String
+        var source: String
         do {
             source = try String(contentsOfFile: path, encoding: .utf8)
         } catch {
             throw CompileError("cannot read \(path): \(error.localizedDescription)", at: nil)
+        }
+        // A `.sql` file is a schema, not a program: its tables become classes
+        // (D6). The generator is `BASICSyntax`'s, so this and the interpreter's
+        // loader read the same one and a program means the same thing to both.
+        if (path as NSString).pathExtension.lowercased() == "sql" {
+            do {
+                guard let generated = try BASICSQLSchemaImport.basicSource(fromSQL: source, fileName: path) else {
+                    throw CompileError("IMPORT \(path) declares no table, so there is no CLASS to generate", at: nil)
+                }
+                source = generated
+            } catch let failure as BASICSQLSchemaImport.Failure {
+                throw CompileError("IMPORT \(path): \(failure.message)", at: nil)
+            }
         }
         return ProgramLine.parse(source, fileName: path, isImported: isImported)
     }

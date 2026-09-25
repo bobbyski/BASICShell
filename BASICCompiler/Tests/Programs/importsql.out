@@ -1,0 +1,25 @@
+' customers -> customers  (tier: explicit, version 0)
+class customers
+    public CustomerId as integer database name "customer_id" key
+    public FullName as string database name "Full Name"
+    public EmailAddress as string database name "email_address" unique
+    public BalanceCents as integer database name "balance_cents"
+    public IsVip as boolean database name "is_vip"
+    public DiscountRate as double database name "discount_rate"
+    public LifetimeValue as string database name "lifetime_value"
+    public SignedUpOn as string database name "signed_up_on"
+    public Notes as string database name "notes"
+end class
+' orders -> orders  (tier: explicit, version 0)
+class orders
+    public OrderId as integer database name "order_id" key
+    public CustomerId as integer database name "customer_id" unique
+    public PlacedAt as string database name "placed_at" index
+    public Total as string database name "total"
+end class
+-- and the round trip: the generated classes make their own tables --
+customers: 1 change(s)
+orders:    1 change(s)
+saved as #1
+loaded Ada Lovelace, vip TRUE
+column 2 is still called: Full Name

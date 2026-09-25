@@ -500,7 +500,7 @@ public final class BASICInterpreter {
                     importedPaths.insert(resolvedPath)
                     activeImportStack.append(resolvedPath)
                     do {
-                        let imported = BASICProgram.importedLines(from: try fileHost.loadTextFile(path: resolvedPath), fileName: resolvedPath)
+                        let imported = BASICProgram.importedLines(from: try Self.importedSource(at: resolvedPath, using: fileHost), fileName: resolvedPath)
                         expanded += try expandedProgramLines(
                             from: imported,
                             importedPaths: &importedPaths,
@@ -517,6 +517,28 @@ public final class BASICInterpreter {
             }
         }
         return expanded
+    }
+
+    /// The BASIC source an import names.
+    ///
+    /// A `.sql` file is a schema, not a program: its tables become classes
+    /// (D6), and what is imported is the generated source. The other direction
+    /// is `EnsureSchema`, so a program can start from either side.
+    ///
+    /// Done here, where `IMPORT` is already resolved, rather than in the
+    /// runtime — which is why it costs the compiler one matching hook and no
+    /// new runtime surface at all.
+    static func importedSource(at path: String, using fileHost: BASICFileHost) throws -> String {
+        let text = try fileHost.loadTextFile(path: path)
+        guard (path as NSString).pathExtension.lowercased() == "sql" else { return text }
+        do {
+            guard let generated = try BASICSQLSchemaImport.basicSource(fromSQL: text, fileName: path) else {
+                throw BASICError.runtime("IMPORT \(path) declares no table, so there is no CLASS to generate")
+            }
+            return generated
+        } catch let failure as BASICSQLSchemaImport.Failure {
+            throw BASICError.runtime("IMPORT \(path): \(failure.message)")
+        }
     }
 
     private static func validateImportCycle(for path: String, activeImportStack: [String]) throws {
