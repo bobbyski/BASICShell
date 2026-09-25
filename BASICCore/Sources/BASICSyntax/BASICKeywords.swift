@@ -49,7 +49,10 @@ public enum BASICKeywords {
     /// compiler all read one list — a builtin added here is highlighted and
     /// completed without anyone touching a second list.
     public static let intrinsicFunctionNames: Set<String> = [
-        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$", "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
+        "ABS", "ACS", "ASC", "ASN", "ASYNCVALUE", "ATN", "BINARY$",
+        // DB19's conversions, spelled as VB spells the two it already had.
+        "CDATE", "CDATETIME", "CDEC", "CTIME",
+        "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
@@ -123,6 +126,9 @@ public enum BASICKeywords {
         "BOOLEAN", "CLASS", "DICTIONARY", "DOUBLE", "FALSE", "FILE", "INTEGER",
         "INTERFACE", "JSON", "RECORD", "SINGLE", "STRING", "TASK", "TRUE",
         "VARIANT", "VOID",
+        // DB19. `DATE$` and `TIME$` keep the classic string functions -- the
+        // `$` suffix is what has always told the two apart.
+        "DATE", "DATETIME", "DECIMAL", "TIME",
     ]
 
     /// The host-backed classes — the "pseudo classes" a program constructs with

@@ -258,6 +258,17 @@ enum BASICObjectMapper {
         case .scalar(.boolean):
             // DB24: written as the narrowest integer the dialect has.
             return (.boolean, nil)
+        // DB19. These have had a column type since D1 — the provider boundary
+        // carried them before the language did — so the mapper needed only the
+        // language side to exist.
+        case .scalar(.date):
+            return (.date, nil)
+        case .scalar(.time):
+            return (.time, nil)
+        case .scalar(.datetime):
+            return (.timestamp, nil)
+        case .scalar(.decimal):
+            return (.decimal(precision: BASICDecimal.significantDigits, scale: 6), nil)
         // The parser writes an unresolved type name as `.record`, because at
         // parse time it cannot know whether Status is an ENUM, a RECORD or a
         // CLASS. So the mapper resolves it the way the runtime does, rather

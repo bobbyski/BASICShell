@@ -89,6 +89,16 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
     case closure(BASICCapturedClosure)
     case array(BASICArray)
     case dictionary(BASICDictionary)
+    /// A calendar date (DB19). The same representation the provider boundary
+    /// already used, so a value crossing into a database converts rather than
+    /// being re-modelled.
+    case date(BASICDataDate)
+    /// A wall-clock time.
+    case time(BASICDataTime)
+    /// Date and time together.
+    case datetime(BASICDataTimestamp)
+    /// An exact decimal — never a `Double`, which is the entire point.
+    case decimal(Decimal)
 
     static func == (lhs: BASICValue, rhs: BASICValue) -> Bool {
         switch (lhs, rhs) {
@@ -99,6 +109,14 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
         case (.string(let left), .string(let right)):
             return left == right
         case (.boolean(let left), .boolean(let right)):
+            return left == right
+        case (.date(let left), .date(let right)):
+            return left == right
+        case (.time(let left), .time(let right)):
+            return left == right
+        case (.datetime(let left), .datetime(let right)):
+            return left == right
+        case (.decimal(let left), .decimal(let right)):
             return left == right
         case (.record(let leftName, let leftFields), .record(let rightName, let rightFields)):
             return leftName == rightName && leftFields == rightFields
@@ -121,6 +139,16 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
 
     var description: String {
         switch self {
+        // DB19: printed as written, which is also how they are stored and how
+        // `CDATE` reads them back -- one spelling for all three jobs.
+        case .date(let value):
+            return value.description
+        case .time(let value):
+            return value.description
+        case .datetime(let value):
+            return value.description
+        case .decimal(let value):
+            return BASICDecimal.text(value)
         case .empty:
             return ""
         case .null:
@@ -158,6 +186,10 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
         case .record, .object, .systemObject, .task, .closure, .array, .dictionary: return true
+        // A date or a time is a value, never a condition -- and an exact zero
+        // is false for the same reason a numeric zero is.
+        case .date, .time, .datetime: return true
+        case .decimal(let value): return value != 0
         }
     }
 
@@ -192,6 +224,14 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
 
     var debugTypeName: String {
         switch self {
+        case .date:
+            return "DATE"
+        case .time:
+            return "TIME"
+        case .datetime:
+            return "DATETIME"
+        case .decimal:
+            return "DECIMAL"
         case .empty:
             return "EMPTY"
         case .null:

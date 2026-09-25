@@ -20,6 +20,22 @@ public enum BASICScalarType: String, Equatable, Sendable {
     case boolean = "BOOLEAN"
     case variant = "VARIANT"
     case task = "TASK"
+    /// A calendar date, no time and no zone (DB19).
+    case date = "DATE"
+    /// A wall-clock time, no date and no zone.
+    case time = "TIME"
+    /// Both together — VB's `DateTime`, and SQL's `TIMESTAMP`.
+    case datetime = "DATETIME"
+    /// An exact decimal, 28 significant digits, like VB's `Decimal`.
+    ///
+    /// Not a `DOUBLE` with a different name: money in binary floating point is
+    /// a correctness bug rather than a fidelity loss, which is why every
+    /// business database has this type and why the language now does.
+    case decimal = "DECIMAL"
+
+    /// The four DB19 types, which arrived together and share every rule that
+    /// separates them from `DOUBLE`: exactness, and a literal of their own.
+    public static let temporalAndExact: Set<BASICScalarType> = [.date, .time, .datetime, .decimal]
 }
 
 public enum BASICType: Equatable, Sendable {

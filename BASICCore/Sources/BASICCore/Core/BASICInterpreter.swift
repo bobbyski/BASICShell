@@ -2567,6 +2567,36 @@ public final class BASICInterpreter {
             return .string(BASICString(String(value, radix: 2)))
         case "CINT":
             return .number(try singleNumericArgument(name: name.name, arguments: arguments).rounded())
+        // DB19's conversions. VB has `CDate` and `CDec` already, so these are
+        // the words a VB programmer would have guessed, and they read the same
+        // text the literals do -- one reader, so what assigns is what converts.
+        case "CDATE":
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let date = BASICTemporal.date(from: try evaluate(arguments[0])) else {
+                throw BASICError.runtime("CDATE wants a date, or text like \"2026-09-25\"")
+            }
+            return .date(date)
+        case "CTIME":
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let time = BASICTemporal.time(from: try evaluate(arguments[0])) else {
+                throw BASICError.runtime("CTIME wants a time, or text like \"14:30:00\"")
+            }
+            return .time(time)
+        case "CDATETIME":
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let stamp = BASICTemporal.timestamp(from: try evaluate(arguments[0])) else {
+                throw BASICError.runtime("CDATETIME wants a datetime, or text like \"2026-09-25 14:30:00\"")
+            }
+            return .datetime(stamp)
+        case "CDEC":
+            try requireArgumentCount(name.name, arguments, 1)
+            guard let value = BASICTemporal.decimal(from: try evaluate(arguments[0])) else {
+                // Named rather than approximated: a fractional DOUBLE is
+                // precisely the value whose exactness cannot be recovered, so
+                // `CDEC(0.1)` says so instead of handing back 0.1000000000000000055.
+                throw BASICError.runtime("CDEC wants a whole number or text; a fractional DOUBLE has already lost the exactness DECIMAL is for")
+            }
+            return .decimal(value)
         case "COS":
             return .number(cos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "COT":
@@ -5611,6 +5641,18 @@ public final class BASICInterpreter {
         switch expression {
         case .number(let value):
             return .number(value)
+        case .decimal(let text):
+            // Read from the text, never through a Double: `0.1` as a Double is
+            // not one tenth, and that loss is what DECIMAL exists to prevent.
+            guard let decimal = BASICDecimal.value(from: text) else {
+                throw BASICError.runtime("\(text) is not a DECIMAL")
+            }
+            return .decimal(decimal)
+        case .temporal(let text):
+            guard let value = BASICTemporal.literal(text) else {
+                throw BASICError.runtime("#\(text)# is not a DATE, TIME or DATETIME")
+            }
+            return value
         case .string(let value):
             if runtime.stringSubstitutionEnabled {
                 return .string(BASICString(try interpolatedString(value)))
@@ -6012,7 +6054,7 @@ public final class BASICInterpreter {
 
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .string, .interpolatedString, .boolean, .null:
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null:
                 return
             case .closure:
                 return
@@ -6504,6 +6546,13 @@ public final class BASICInterpreter {
         let left = try evaluate(leftExpression)
         let right = try evaluate(rightExpression)
 
+        // DB19: arithmetic and comparison on an exact decimal stay exact, and
+        // a date compares as a date. Handled before the numeric path, because
+        // the numeric path is where the exactness would be lost.
+        if let answer = try BASICExactArithmetic.apply(operation, left, right) {
+            return answer
+        }
+
         switch operation {
         case .add:
             if let leftString = left.string, let rightString = right.string {
@@ -6556,7 +6605,9 @@ public final class BASICInterpreter {
         var value = try evaluate(cursor)
         for expression in terms.reversed() {
             let right = try evaluate(expression)
-            if let leftString = value.string, let rightString = right.string {
+            if let exact = try BASICExactArithmetic.apply(.add, value, right) {
+                value = exact
+            } else if let leftString = value.string, let rightString = right.string {
                 value = .string(leftString.concatenating(rightString))
             } else {
                 value = .number(try numeric(value) + numeric(right))

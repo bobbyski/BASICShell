@@ -917,7 +917,7 @@ struct SemanticAnalyzer {
         }
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction: return
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction: return
             case .variable(let name): append(name)
             case .variableReference(let reference):
                 append(reference.base); reference.indexes.forEach(visit); reference.fieldIndexes.flatMap { $0 }.forEach(visit)

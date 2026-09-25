@@ -1521,6 +1521,12 @@ public struct Parser {
         case "DOUBLE": type = .scalar(.double)
         case "STRING": type = .scalar(.string)
         case "BOOLEAN": type = .scalar(.boolean)
+        // DB19. `DATE$` and `TIME$` keep the classic string functions; the `$`
+        // suffix is what has always separated them, so nothing is renamed.
+        case "DATE": type = .scalar(.date)
+        case "TIME": type = .scalar(.time)
+        case "DATETIME": type = .scalar(.datetime)
+        case "DECIMAL": type = .scalar(.decimal)
         case "VARIANT": type = .scalar(.variant)
         case "TASK": type = .scalar(.task)
         case "DICTIONARY": type = .dictionary
@@ -1651,6 +1657,8 @@ public struct Parser {
     private mutating func parsePrimary() throws -> Expression {
         switch advance() {
         case .number(let value): return .number(value)
+        case .decimal(let text): return .decimal(text)
+        case .temporal(let text): return .temporal(text)
         case .string(let value): return .string(value)
         case .interpolatedString(let value): return .interpolatedString(value)
         case .identifier(let name):

@@ -309,6 +309,10 @@ public indirect enum ConditionalAction: Equatable {
 
 public indirect enum Expression: Equatable {
     case number(Double)
+    /// An exact decimal literal, as written (DB19).
+    case decimal(String)
+    /// A `DATE`, `TIME` or `DATETIME` literal, as written between `#`s.
+    case temporal(String)
     case string(String)
     case interpolatedString(String)
     case boolean(Bool)
@@ -355,6 +359,11 @@ public enum BinaryOperation: Equatable {
 
 public enum Token: Equatable {
     case number(Double)
+    /// `123.45D` — an exact decimal, kept as text so no `Double` ever sees it.
+    case decimal(String)
+    /// `#2026-09-25#`, `#14:30:00#`, `#2026-09-25 14:30:00#` — VB's delimiter,
+    /// with the shape deciding which of the three it is.
+    case temporal(String)
     case string(String)
     case interpolatedString(String)
     case identifier(String)

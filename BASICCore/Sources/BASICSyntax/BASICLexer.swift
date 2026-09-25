@@ -45,6 +45,16 @@ public struct Lexer {
         if character.isLetter {
             return scanIdentifier()
         }
+        // `#2026-09-25#` and friends (DB19). The language has used `#` for file
+        // numbers since the 1970s, so this only claims the character when what
+        // follows really is a date, a time or both, closed by another `#` --
+        // `PRINT #1: PRINT #2` has letters in between and stays two file
+        // numbers. Checked by *parsing* the candidate rather than by pattern,
+        // so the lexer and the evaluator can never disagree about what one is.
+        if character == "#", let literal = temporalLiteralAhead() {
+            for _ in 0..<(literal.count + 2) { advance() }
+            return emit(.temporal(literal), column: column)
+        }
 
         advance()
         let token: Token
@@ -76,6 +86,28 @@ public struct Lexer {
         return emit(token, column: column)
     }
 
+    /// The body of a `#…#` literal starting here, or nil.
+    ///
+    /// Bounded, because an unclosed `#` must not make the lexer walk the rest of
+    /// the line looking for one: a date is at most `yyyy-MM-dd HH:mm:ss.fffffffff`.
+    private func temporalLiteralAhead() -> String? {
+        var cursor = source.index(after: index)
+        var body = ""
+        while cursor < source.endIndex, body.count <= 32 {
+            let character = source[cursor]
+            if character == "#" {
+                return BASICTemporalLiteral.isLiteral(body) ? body : nil
+            }
+            guard character.isNumber || character == "-" || character == ":"
+                    || character == "." || character == " " || character == "T" else {
+                return nil
+            }
+            body.append(character)
+            cursor = source.index(after: cursor)
+        }
+        return nil
+    }
+
     private mutating func scanNumber() throws -> LexedToken {
         let start = index
         let column = self.column
@@ -91,6 +123,17 @@ public struct Lexer {
             advance()
         }
         let text = String(source[start..<index])
+        // `123.45D` is an exact decimal (DB19). Only when nothing identifier-ish
+        // follows, so `123Dog` stays the error it always was -- and a bare
+        // `123.45` stays a DOUBLE, which is what every existing program means.
+        if index < source.endIndex, source[index] == "D" || source[index] == "d" {
+            let afterSuffix = source.index(after: index)
+            let next = afterSuffix < source.endIndex ? source[afterSuffix] : " "
+            if !next.isLetter && !next.isNumber && next != "_" {
+                advance()
+                return emit(.decimal(text), column: column)
+            }
+        }
         guard let value = Double(text) else {
             throw BASICError.contextualSyntax(message: "Invalid number \(text)", source: source, column: column)
         }

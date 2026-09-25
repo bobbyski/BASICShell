@@ -125,6 +125,10 @@ final class BASICRuntime {
 
     private func environmentCString(from value: BASICValue) throws -> String {
         switch value {
+        // DB19: as printed, which for these is ISO-8601 and a plain decimal --
+        // the one spelling that reads back.
+        case .date, .time, .datetime, .decimal:
+            return value.description
         case .empty, .null:
             return ""
         case .string(let string):
@@ -1031,6 +1035,11 @@ final class BASICRuntime {
 
     private func jsonObject(for value: BASICValue, declaredType: BASICType) throws -> Any {
         switch value {
+        // A date crosses JSON as ISO-8601 text and a decimal as its digits,
+        // because JSON has no type for either and a number would lose the
+        // exactness this type exists for.
+        case .date, .time, .datetime, .decimal:
+            return value.description
         case .empty, .null:
             return NSNull()
         case .number(let number):
@@ -1173,6 +1182,10 @@ final class BASICRuntime {
             case .empty, .null: return .scalar(.variant)
             case .string: return .scalar(.string)
             case .boolean: return .scalar(.boolean)
+            case .date: return .scalar(.date)
+            case .time: return .scalar(.time)
+            case .datetime: return .scalar(.datetime)
+            case .decimal: return .scalar(.decimal)
             case .number(let number) where number.rounded() != number:
                 return .scalar(.double)
             case .number:
@@ -1333,6 +1346,29 @@ final class BASICRuntime {
                 throw BASICError.type(message: "Cannot assign non-string value to \(variable.name)")
             }
             return .string(string)
+        // DB19. Text converts, because that is how these arrive from a file, a
+        // database or an INPUT; anything else is refused by name rather than
+        // being approximated through a Double.
+        case .date:
+            guard let date = BASICTemporal.date(from: value) else {
+                throw BASICError.type(message: "Cannot assign non-date value to \(variable.name)")
+            }
+            return .date(date)
+        case .time:
+            guard let time = BASICTemporal.time(from: value) else {
+                throw BASICError.type(message: "Cannot assign non-time value to \(variable.name)")
+            }
+            return .time(time)
+        case .datetime:
+            guard let stamp = BASICTemporal.timestamp(from: value) else {
+                throw BASICError.type(message: "Cannot assign non-datetime value to \(variable.name)")
+            }
+            return .datetime(stamp)
+        case .decimal:
+            guard let decimal = BASICTemporal.decimal(from: value) else {
+                throw BASICError.type(message: "Cannot assign non-decimal value to \(variable.name)")
+            }
+            return .decimal(decimal)
         case .double:
             guard let number = value.number else {
                 throw BASICError.type(message: "Cannot assign non-numeric value to \(variable.name)")
