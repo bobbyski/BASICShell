@@ -89,8 +89,10 @@ public struct Compilation: Sendable {
         // The full runtime archive when there is one; else the core compiled
         // from source with the host half stubbed.
         let runtimeObject: String
+        var linkArguments = runtime.linkArguments
         if let archive = try runtime.archive() {
             runtimeObject = archive
+            linkArguments += RuntimeLibrary.dynamicLinkArguments(besideArchive: archive)
         } else if let reason = runtime.requiresArchiveBecause {
             throw CompileError([Diagnostic(
                 severity: .error,
@@ -102,7 +104,7 @@ public struct Compilation: Sendable {
             runtimeObject = try cachedRuntimeObject(runtime)
         }
         try toolchain.link(objects: [objectPath, runtimeObject] + compilation.extraObjects + lowered.extraObjects,
-                           output: output, extraArguments: runtime.linkArguments)
+                           output: output, extraArguments: linkArguments)
     }
 
     /// Compiles a source file to assembly text at `output`, for the SwiftPM

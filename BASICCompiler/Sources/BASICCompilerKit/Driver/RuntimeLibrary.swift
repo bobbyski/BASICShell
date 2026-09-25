@@ -116,6 +116,38 @@ public struct RuntimeLibrary: Sendable {
         return FileManager.default.fileExists(atPath: archive) ? archive : nil
     }
 
+    /// The link arguments the dynamic libraries beside `archive` need.
+    ///
+    /// A static archive carries the objects of every *static* product it
+    /// depends on, and none of a dynamic one. TUIKit is dynamic on purpose —
+    /// an automatic (static) library would have SwiftPM link its objects
+    /// straight into each executable and emit no `libTUIKit` for anything
+    /// outside its own package to link — so `libBASICRTHost.a` references
+    /// symbols it does not contain, and a program linking it fails with
+    /// "undefined symbol: TUIKit…" whether or not the program mentions a TUI.
+    ///
+    /// They sit in the SwiftPM build directory the archive itself came from,
+    /// which is where this looks. The list is read rather than written down,
+    /// so a new dynamic dependency needs no change here — and `-rpath` is the
+    /// same directory, because a program built in a tree is run from it.
+    ///
+    /// Known wart, and not this file's to fix: RichSwift and VectorTerminalSDK
+    /// are *static* products, so they are absorbed into `libTUIKit.dylib` and
+    /// into `libBASICRTHost.a` both, and the Objective-C runtime says so on
+    /// stderr ("implemented in both"). Linking order does not help — the
+    /// archive's own objects reference those classes directly. The fix is in
+    /// how those two frameworks are published, not here.
+    public static func dynamicLinkArguments(besideArchive archive: String) -> [String] {
+        let directory = (archive as NSString).deletingLastPathComponent
+        let libraries = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
+            .filter { $0.hasPrefix("lib") && $0.hasSuffix(".dylib") }
+            .map { String($0.dropFirst(3).dropLast(6)) }
+            .sorted()
+        guard !libraries.isEmpty else { return [] }
+        return ["-L\(directory)"] + libraries.map { "-l\($0)" }
+            + ["-Xlinker", "-rpath", "-Xlinker", directory]
+    }
+
     /// Runs `body` holding an exclusive lock on `path`, so concurrent
     /// compilers rebuild the runtime once between them rather than each
     /// starting a build of their own.
