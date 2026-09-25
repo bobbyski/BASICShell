@@ -255,6 +255,13 @@ enum RTTypes {
 
     nonisolated(unsafe) static var registry: [RTCompositeType?] = []
 
+    /// The type index of a declared name, case-insensitively as BASIC reads
+    /// it — the reverse of ``type(_:)``, for a bridge that has a name.
+    package static func index(ofType name: String) -> Int? {
+        let wanted = name.uppercased()
+        return registry.firstIndex { $0?.name.uppercased() == wanted }
+    }
+
     static func type(_ index: Int) -> RTCompositeType {
         guard index >= 0, index < registry.count, let type = registry[index] else {
             basic_rt_fail("Unknown TYPE or CLASS #\(index)")

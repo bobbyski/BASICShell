@@ -47,6 +47,15 @@ struct BASICTableMapping: Equatable, Sendable {
     let tier: BASICMappingTier
     /// The declared schema version. A class with no `version` is version 0 (DB5).
     let version: Int
+    /// Every field the class has that is *not* stored, at its default.
+    ///
+    /// An object that comes back from `Load` has to be a whole instance of its
+    /// class, not just the part that was in the table: a program that reads
+    /// `customer.Scratch` after loading is reading a field of its own class,
+    /// and finding it missing is not an answer. The compiled engine fills a
+    /// typed slot with its default whether it is told to or not, so this is
+    /// also what keeps the two engines agreeing (D12).
+    let unstoredFields: [String: BASICValue]
 
     /// The primary-key column, when there is one.
     var keyColumn: BASICColumnMapping? { columns.first(where: \.isKey) }
@@ -151,7 +160,13 @@ enum BASICObjectMapper {
                 fieldName: field.displayName,
                 normalizedFieldName: field.normalizedName,
                 columnName: entry.columnName,
-                basicType: field.type,
+                // The resolved type, not the declared spelling. The
+                // interpreter's parser writes an unresolved name as
+                // `.record(name)` and the compiler's front end knows it is an
+                // ENUM, so the same class would otherwise map to two mappings
+                // that differ in this one label — which is exactly the
+                // difference a D12 parity test should not have to forgive.
+                basicType: enumName.map(BASICType.enumType) ?? field.type,
                 columnType: columnType,
                 isKey: isKey,
                 isGenerated: isGenerated,
@@ -174,14 +189,40 @@ enum BASICObjectMapper {
             }
         }
 
+        let stored = Set(columns.map(\.normalizedFieldName))
+        let unstored = definition.fields.filter { !stored.contains($0.normalizedName) }
         return BASICTableMapping(
             className: definition.displayName,
             tableName: table,
             columns: columns,
             schema: BASICTableSchema(name: table, columns: schemaColumns, indexes: indexes),
             tier: tier,
-            version: version(of: definition)
+            version: version(of: definition),
+            unstoredFields: Dictionary(uniqueKeysWithValues: unstored.map {
+                ($0.normalizedName, defaultValue(of: $0))
+            })
         )
+    }
+
+    /// A field's value when nothing has been stored in it.
+    ///
+    /// Scalars get the value their type starts at, which is what the
+    /// interpreter and a compiled slot both start them at. Anything else gets
+    /// `EMPTY` — never set, said out loud — because a field the ORM refused to
+    /// store is precisely one this has no shape for.
+    private static func defaultValue(of field: BASICClassField) -> BASICValue {
+        guard field.arrayDimensions.isEmpty else { return .empty }
+        if let declared = field.defaultValue { return declared }
+        switch field.type {
+        case .scalar(.string): return .string(BASICString(""))
+        case .scalar(.boolean): return .boolean(false)
+        case .scalar(.integer), .scalar(.double): return .number(0)
+        // A payload-free ENUM is its number, and zero usually names its first
+        // member — VB's rule, and the interpreter's.
+        case .enumType: return .number(0)
+        case .dictionary: return .dictionary(BASICDictionary())
+        default: return .empty
+        }
     }
 
     /// A class with no `version` metadata is version 0 (DB5).
@@ -277,7 +318,9 @@ extension BASICTableMapping {
         from row: [String: BASICDataValue],
         enumeration: (String) -> BASICEnumDefinition? = { _ in nil }
     ) throws -> [String: BASICValue] {
-        var fields: [String: BASICValue] = [:]
+        // Seeded with the fields the table does not hold, so what comes back
+        // is a whole instance of the class rather than the stored part of one.
+        var fields = unstoredFields
         for column in columns {
             let stored = row[column.columnName] ?? .null
             fields[column.normalizedFieldName] = try Self.basicValue(stored, for: column, enumeration: enumeration)

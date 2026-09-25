@@ -1,0 +1,20 @@
+changes to make the schema: 1
+and none the second time:   0
+saved Ada as #1
+saved Grace as #2
+loaded Ada Lovelace, balance 250, vip TRUE
+state came back as Shipped
+a field with no DATABASE marker stays empty: []
+customers: 2
+
+-- the same rows, as rows --
+columns: 3
+Grace Hopper has 900 and is Pending
+Ada Lovelace has 250 and is Shipped
+
+-- a value that looks like SQL is a value --
+still here: 3
+
+-- deleting by key --
+rows deleted: 1
+customers: 2

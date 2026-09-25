@@ -325,7 +325,7 @@ final class BASICDataStore: @unchecked Sendable {
                 for column in mapping.columns {
                     row[column.columnName] = document.scalar(column.columnName) ?? .null
                 }
-                return .object(mapping.className.uppercased(), try mapping.fields(from: row, enumeration: enumeration))
+                return .object(mapping.className, try mapping.fields(from: row, enumeration: enumeration))
             }
 
         case .sql(let provider):
@@ -342,7 +342,7 @@ final class BASICDataStore: @unchecked Sendable {
 
             let rows = try await provider.query(sql, clause.parameters).toArray()
             return try rows.map { row in
-                .object(mapping.className.uppercased(), try mapping.fields(from: row, enumeration: enumeration))
+                .object(mapping.className, try mapping.fields(from: row, enumeration: enumeration))
             }
         }
     }

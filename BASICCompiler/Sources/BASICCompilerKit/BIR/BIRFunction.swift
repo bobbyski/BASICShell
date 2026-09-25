@@ -479,6 +479,13 @@ public struct BIRModule: Sendable {
     /// Carried to the runtime in the type's descriptor, so a value inside a
     /// VARIANT prints as it would be written — as the interpreter prints it.
     public var enumDescriptors: [String: String] = [:]
+    /// What the ORM needs to know about the program's classes and ENUMs, as
+    /// JSON, or nil when the program declares no class (D12).
+    ///
+    /// Not derived from ``types``: a compiled field keeps no visibility and an
+    /// ENUM-typed one is a plain number, and the ORM needs both. This is the
+    /// declaration talking, the same way ``enumDescriptors`` is.
+    public var databaseSchema: String?
 
     /// Creates an empty module.
     public init(name: String) {

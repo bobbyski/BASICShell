@@ -75,6 +75,9 @@ struct LLVMLowering {
             for type in module.types {
                 setup.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
             }
+            if let schema = module.databaseSchema {
+                setup.emit("call void @basic_rt_db_schema(ptr \(constants.constant(schema)))")
+            }
             setup.emit("ret void")
             setup.raw("}")
             functions.append(setup.lines.joined(separator: "\n"))
@@ -429,6 +432,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_array_load_composite(ptr, i64)
     declare void @basic_rt_array_store_composite(ptr, i64, ptr)
     declare void @basic_rt_type_register(i64, ptr)
+    declare void @basic_rt_db_schema(ptr)
     declare i1 @basic_rt_composite_get_boolean(ptr, i64)
     declare void @basic_rt_composite_set_boolean(ptr, i64, i1)
     declare ptr @basic_rt_composite_get_array(ptr, i64)
@@ -816,6 +820,12 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_start()")
             for type in module.types {
                 out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
+            }
+            // The ORM's view of those types (D12). Registering it only stores
+            // the string: nothing is parsed, and the host is not called, until
+            // the program opens a database.
+            if let schema = module.databaseSchema {
+                out.emit("call void @basic_rt_db_schema(ptr \(constants.constant(schema)))")
             }
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
             if module.functions.contains(where: \.isAsync) {

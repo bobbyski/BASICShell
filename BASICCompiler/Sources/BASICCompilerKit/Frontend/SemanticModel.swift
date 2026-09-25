@@ -154,6 +154,40 @@ public final class SemanticModel {
         "SECONDSTIMER": [
             "START": (0, .void), "STOP": (0, .void), "CANCEL": (0, .void),
         ],
+        // The database (D3). Behind these is BASICCore's own data layer, across
+        // the same host seam the TUI and Rich classes use — so the providers,
+        // the predicate lowering and the ORM are one implementation, and the
+        // two engines cannot write schemas that differ.
+        "SQLDATABASE": [
+            "EXECUTE": (nil, .number), "QUERY": (nil, .system("RECORDSET")),
+            "BEGIN": (0, .void), "COMMIT": (0, .void), "ROLLBACK": (0, .void),
+            "CLOSE": (0, .void),
+        ],
+        "DOCUMENTDATABASE": [
+            "CLOSE": (0, .void), "COUNT": (1, .number),
+            "COLLECTIONS": (0, .string), "COLLECTIONS$": (0, .string),
+        ],
+        // A Recordset is produced, never constructed: it comes from
+        // `SqlDatabase.Query`. It is named here so its methods type; naming it
+        // as a constructor is refused at run time, as the interpreter refuses it.
+        "RECORDSET": [
+            "READ": (0, .boolean),
+            "TEXT": (1, .string), "TEXT$": (1, .string),
+            "NUMBER": (1, .number), "BOOLEAN": (1, .boolean), "ISNULL": (1, .boolean),
+            "COLUMNCOUNT": (0, .number), "COLUMNNAME": (1, .string), "COLUMNNAME$": (1, .string),
+            "CLOSE": (0, .void),
+        ],
+        "DATASTORE": [
+            "REGISTER": (1, .string), "ENSURESCHEMA": (1, .number),
+            "DESCRIBE": (1, .string), "DESCRIBE$": (1, .string),
+            // Save and Load answer with an object, whose class is the caller's
+            // to know: a VARIANT holds it, and the assignment coerces — the
+            // same shape `FromJsonString` already has.
+            "SAVE": (1, .variant), "LOAD": (2, .variant),
+            "DELETE": (2, .number), "COUNT": (1, .number),
+            "BEGIN": (0, .void), "COMMIT": (0, .void), "ROLLBACK": (0, .void),
+            "SUPPORTSTRANSACTIONS": (0, .boolean),
+        ],
     ]
 
     /// The RichSwift pseudo classes, spelled as the interpreter stores

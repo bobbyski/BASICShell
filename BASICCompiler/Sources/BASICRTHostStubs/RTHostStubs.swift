@@ -73,3 +73,22 @@ public func basic_rt_host_rich_new(_ typeName: UnsafePointer<CChar>) -> UnsafeMu
 public func basic_rt_host_rich_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
     rtStubFail("Rich text is not supported by this host")
 }
+
+// The database: BASICCore's providers and ORM, reached through the host half.
+// A program built without it can still be *compiled* with a database in it —
+// the refusal is at run time, by name, the way an unavailable provider is
+// (DB17) — so a build for a target that has no host does not fail on a class
+// the program only names.
+
+@_cdecl("basic_rt_host_db_schema")
+public func basic_rt_host_db_schema(_ json: UnsafePointer<CChar>) {}
+
+@_cdecl("basic_rt_host_db_new")
+public func basic_rt_host_db_new(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("Databases are not supported by this host")
+}
+
+@_cdecl("basic_rt_host_db_call")
+public func basic_rt_host_db_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("Databases are not supported by this host")
+}

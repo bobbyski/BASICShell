@@ -65,13 +65,15 @@ public struct BIRBuilder {
             return BIRCompositeType(
                 name: name, displayName: type.displayName, index: type.index,
                 fields: model.allFields(of: name).map {
-                    BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger, metadata: $0.metadata)
+                    BIRField(name: $0.name, displayName: $0.displayName, type: $0.type, dimensions: $0.dimensions, jsonName: $0.jsonName, defaultValue: $0.defaultValue, isInteger: $0.isInteger, metadata: $0.metadata, database: $0.database)
                 },
                 isClass: type.kind == .classType,
                 base: type.base.flatMap { model.types[$0]?.index },
                 externalModule: externalClasses[name]
             )
         }
+
+        module.databaseSchema = DatabaseSchemaDescriptor.json(for: model)
 
         let closures = ClosureContext(firstTypeIndex: module.types.count)
         let main = FunctionBuilder(lines: lines, model: model, function: nil, owner: analyzer.owner, closures: closures)

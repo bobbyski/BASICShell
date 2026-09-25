@@ -170,6 +170,8 @@ enum RTSystem {
             }
             defer { basic_rt_value_release(result) }
             return rtValue(result)
+        case let handle as RTDataHandle:
+            return RTDatabase.call(handle, method: method, arguments: arguments)
         case let timer as RTTimer:
             return callTimer(timer, method: method, arguments: arguments)
         case is RTVectorTerminal:
@@ -457,6 +459,11 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     case "SECONDSTIMER":
         guard values.count == 1 else { basic_rt_fail("SecondsTimer expects 1 argument") }
         return basic_rt_timer_new(RTSystem.timerNumber(values[0], "SecondsTimer interval"))
+    case "SQLDATABASE", "DOCUMENTDATABASE", "DATASTORE", "RECORDSET":
+        // The database lives in BASICCore, where the interpreter reads it, and
+        // is reached across the host seam: one ORM, so the two engines cannot
+        // write schemas that differ (D12).
+        return rtOwned(RTDatabase.new(String(cString: typeName), values))
     default:
         // TUIKit's and RichSwift's pseudo classes live in the host half,
         // over the binding BASICCore already settled.

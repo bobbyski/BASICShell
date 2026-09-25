@@ -110,9 +110,13 @@ struct BASICDataStoreTests {
         #expect(fields["BALANCE"] == .number(250))
         #expect(fields["VIP"] == .boolean(true), "written as an integer, read back as a boolean")
         #expect(fields["STATE"] == .number(1), "stored as the case name Shipped, read back as its number")
-        // A field with no marker was never persisted, so the row carries no
-        // entry for it at all -- not an empty one.
-        #expect(fields["SCRATCH"] == nil)
+        // A field with no marker was never persisted, and comes back at its
+        // default: what `Load` answers with is a whole instance of the class,
+        // not the part of one that happened to be in the table. A program
+        // reading `customer.Scratch` is reading a field of its own class, and
+        // the compiled engine fills a typed slot whether it is told to or not
+        // — so the two engines only agree if this one does too (D12).
+        #expect(fields["SCRATCH"] == .string(BASICString("")))
     }
 
     @Test("Save twice updates rather than duplicating", arguments: Backend.allCases)

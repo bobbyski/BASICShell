@@ -39,6 +39,42 @@ package final class RTComposite {
     func assign(from other: RTComposite) {
         fields = other.fields.map { $0.copied() }
     }
+
+    // MARK: - By name, for the host half
+
+    /// The type's name as declared — what the ORM maps to a table.
+    package var typeDisplayName: String { RTTypes.type(typeIndex).name }
+
+    /// The fields keyed by their normalized names, the way the interpreter's
+    /// `BASICValue.object` keys them. Slots are the compiler's business; a
+    /// bridge that has to name a field gets the interpreter's shape.
+    package var namedFields: [String: RTValue] {
+        let type = RTTypes.type(typeIndex)
+        var named: [String: RTValue] = [:]
+        for (index, info) in type.fields.enumerated() where fields.indices.contains(index) {
+            named[info.name] = fields[index].copied()
+        }
+        return named
+    }
+
+    /// An instance of the named type carrying these fields, or nil when the
+    /// program declares no such type.
+    ///
+    /// A field the caller does not mention keeps its default, and so does one
+    /// whose value is `EMPTY` — a compiled slot is typed, and `EMPTY` reads as
+    /// 0, "" or FALSE for exactly those types, which is what a null column
+    /// means when the interpreter hands it back.
+    package static func named(_ typeName: String, fields values: [String: RTValue]) -> RTComposite? {
+        guard let index = RTTypes.index(ofType: typeName) else { return nil }
+        let composite = RTComposite(typeIndex: index)
+        let type = RTTypes.type(index)
+        for (slot, info) in type.fields.enumerated() {
+            guard let value = values[info.name] else { continue }
+            if case .empty = value { continue }
+            composite.fields[slot] = RTReflect.coerceReflected(value.copied(), to: info)
+        }
+        return composite
+    }
 }
 
 @inline(__always)
