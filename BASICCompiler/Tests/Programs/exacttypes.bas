@@ -65,4 +65,5 @@ OPEN "exacttypes-check.txt" FOR INPUT AS #1
 LINE INPUT #1, L$
 CLOSE #1
 PRINT L$
+File.Rm "exacttypes-check.txt"
 
