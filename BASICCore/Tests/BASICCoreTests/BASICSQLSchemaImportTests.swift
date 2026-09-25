@@ -40,15 +40,15 @@ struct BASICSQLSchemaImportTests {
         for text in ["BOOLEAN", "BOOL", "BIT", "TINYINT(1)"] {
             #expect(kind(text) == .boolean, "\(text)")
         }
-        // DB19: exactness is the point of DECIMAL, so it is never quietly a
-        // double. Carried as text, named, until D0.7 gives the language a type.
-        #expect(kind("DECIMAL(12,2)") == .textFor("DECIMAL"))
-        #expect(kind("NUMERIC(10, 2)") == .textFor("DECIMAL"))
-        #expect(kind("MONEY") == .textFor("DECIMAL"))
-        #expect(kind("TIMESTAMP WITH TIME ZONE") == .textFor("DATETIME"))
-        #expect(kind("DATETIME") == .textFor("DATETIME"))
-        #expect(kind("DATE") == .textFor("DATE"))
-        #expect(kind("TIME") == .textFor("TIME"))
+        // DB19: the language has these since D0.7, so a column that is one is
+        // generated as one rather than as text that happens to hold digits.
+        #expect(kind("DECIMAL(12,2)") == .decimal)
+        #expect(kind("NUMERIC(10, 2)") == .decimal)
+        #expect(kind("MONEY") == .decimal)
+        #expect(kind("TIMESTAMP WITH TIME ZONE") == .datetime)
+        #expect(kind("DATETIME") == .datetime)
+        #expect(kind("DATE") == .date)
+        #expect(kind("TIME") == .time)
         #expect(kind("BLOB") == .textFor("BINARY"))
         #expect(kind("VARBINARY(64)") == .textFor("BINARY"))
     }

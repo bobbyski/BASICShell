@@ -84,6 +84,9 @@ enum DatabaseSchemaDescriptor {
             return ["k": "enum", "n": display]
         }
         switch field.type {
+        // DB19's four, which the ORM has had column types for since D1 -- the
+        // provider boundary carried them before the language did.
+        case .exact(let kind): return ["k": kind.rawValue.lowercased()]
         case .number: return ["k": field.isInteger ? "integer" : "number"]
         case .string: return ["k": "string"]
         case .boolean: return ["k": "boolean"]

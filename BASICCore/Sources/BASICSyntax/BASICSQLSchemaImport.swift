@@ -25,8 +25,14 @@ public enum BASICSQLSchemaImport {
         case double
         case string
         case boolean
-        /// A type this importer understands but the language has no type for
-        /// yet (D0.7's `DATE`, `TIME`, `DATETIME`, `DECIMAL`, and binary).
+        /// D0.7 gave the language these, so a column that is one is generated
+        /// as one: `DECIMAL(12,2)` is a `DECIMAL`, not text that happens to
+        /// hold digits.
+        case date
+        case time
+        case datetime
+        case decimal
+        /// A type the language still has no word for -- binary, today.
         /// Carried as text, with what it was said out loud in a comment.
         case textFor(String)
 
@@ -37,6 +43,10 @@ public enum BASICSQLSchemaImport {
             case .double: return "double"
             case .string, .textFor: return "string"
             case .boolean: return "boolean"
+            case .date: return "date"
+            case .time: return "time"
+            case .datetime: return "datetime"
+            case .decimal: return "decimal"
             }
         }
     }
@@ -242,14 +252,14 @@ public enum BASICSQLSchemaImport {
         if text.contains("TINYINT(1)") { return .boolean }
         if text.contains("INT") || text.contains("SERIAL") { return .integer }
         if text.contains("DOUBLE") || text.contains("REAL") || text.contains("FLOAT") { return .double }
-        // DB19: exactness is the point of DECIMAL, so it is not quietly a
-        // double. Carried as text until D0.7 gives the language the type.
+        // DB19: exactness is the point of DECIMAL, so it is never quietly a
+        // double -- and since D0.7 the language has the type to say so.
         if text.contains("DECIMAL") || text.contains("NUMERIC") || text.contains("MONEY") {
-            return .textFor("DECIMAL")
+            return .decimal
         }
-        if text.contains("TIMESTAMP") || text.contains("DATETIME") { return .textFor("DATETIME") }
-        if text.contains("DATE") { return .textFor("DATE") }
-        if text.contains("TIME") { return .textFor("TIME") }
+        if text.contains("TIMESTAMP") || text.contains("DATETIME") { return .datetime }
+        if text.contains("DATE") { return .date }
+        if text.contains("TIME") { return .time }
         if text.contains("BLOB") || text.contains("BINARY") || text.contains("BYTEA") {
             return .textFor("BINARY")
         }

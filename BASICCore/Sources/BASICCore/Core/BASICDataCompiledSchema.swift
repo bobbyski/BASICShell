@@ -159,6 +159,11 @@ struct BASICDataCompiledSchema {
         case "string": return .scalar(.string)
         case "boolean": return .scalar(.boolean)
         case "dictionary": return .dictionary
+        // DB19's four (D0.7).
+        case "date": return .scalar(.date)
+        case "time": return .scalar(.time)
+        case "datetime": return .scalar(.datetime)
+        case "decimal": return .scalar(.decimal)
         case "enum": return .enumType((object["n"] as? String) ?? "")
         case "class": return .classType((object["n"] as? String) ?? "")
         case "record": return .record((object["n"] as? String) ?? "")

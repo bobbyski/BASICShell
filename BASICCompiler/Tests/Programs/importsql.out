@@ -6,16 +6,16 @@ class customers
     public BalanceCents as integer database name "balance_cents"
     public IsVip as boolean database name "is_vip"
     public DiscountRate as double database name "discount_rate"
-    public LifetimeValue as string database name "lifetime_value"
-    public SignedUpOn as string database name "signed_up_on"
+    public LifetimeValue as decimal database name "lifetime_value"
+    public SignedUpOn as date database name "signed_up_on"
     public Notes as string database name "notes"
 end class
 ' orders -> orders  (tier: explicit, version 0)
 class orders
     public OrderId as integer database name "order_id" key
     public CustomerId as integer database name "customer_id" unique
-    public PlacedAt as string database name "placed_at" index
-    public Total as string database name "total"
+    public PlacedAt as datetime database name "placed_at" index
+    public Total as decimal database name "total"
 end class
 ' OrderItems -> order items  (tier: explicit, version 0)
 class OrderItems
