@@ -1,3 +1,4 @@
+import BASICSyntax
 import Foundation
 
 // BIR — the compiler's intermediate representation.
@@ -41,11 +42,19 @@ public enum BIRType: Sendable, Hashable {
     indirect case array(BIRType, rank: Int)
     /// A host-implemented class (`File`, …): a reference, held boxed.
     case system(String)
+    /// One of DB19's four: `DATE`, `TIME`, `DATETIME`, `DECIMAL`.
+    ///
+    /// One case rather than four, because they behave identically *here* — all
+    /// four are held boxed, coerced by kind, and combined through the runtime
+    /// rather than by an LLVM instruction. What differs between them is the
+    /// runtime's rules, which is where the difference belongs.
+    case exact(BASICScalarType)
 
     /// The type as diagnostics spell it.
     public var name: String {
         switch self {
         case .number: return "number"
+        case .exact(let scalar): return scalar.rawValue.lowercased()
         case .string: return "string"
         case .boolean: return "boolean"
         case .void: return "void"

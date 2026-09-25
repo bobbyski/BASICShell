@@ -679,6 +679,14 @@ struct SemanticAnalyzer {
         }
         switch expression {
         case .number: return .number
+        case .decimal: return .exact(.decimal)
+        // Which of the three a `#…#` is depends on its shape, and the syntax
+        // module is the one reader of that shape -- so the answer here is the
+        // answer the interpreter gets.
+        case .temporal(let text):
+            if BASICTemporalLiteral.timestamp(text) != nil, text.contains(" ") || text.contains("T") { return .exact(.datetime) }
+            if BASICTemporalLiteral.date(text) != nil { return .exact(.date) }
+            return .exact(.time)
         case .string, .interpolatedString: return .string
         case .boolean: return .boolean
         case .variable(let name):
@@ -731,6 +739,18 @@ struct SemanticAnalyzer {
             if case .callOrArray(let name, _) = inner, let userFunction = model.functions[name.normalized], userFunction.isAsync { return userFunction.returnType }
             if case .functionCall(let name, _) = inner, let userFunction = model.functions[name.normalized], userFunction.isAsync { return userFunction.returnType }
             return try typeOf(inner, in: function)
+        case .binary(let left, let operation, let right)
+        where Self.isExact(try? typeOf(left, in: function)) || Self.isExact(try? typeOf(right, in: function)):
+            // DB19: the kind survives arithmetic and a comparison answers a
+            // number, which is what BIRBuilder lowers -- and the two have to
+            // agree, or a variable is "used as both decimal and number".
+            switch operation {
+            case .add, .subtract, .multiply, .divide:
+                let leftType = try? typeOf(left, in: function)
+                return Self.isExact(leftType) ? (leftType ?? .number) : ((try? typeOf(right, in: function)) ?? .number)
+            default:
+                return .number
+            }
         case .binary(let left, let operation, let right):
             switch operation {
             case .add:
@@ -822,6 +842,12 @@ struct SemanticAnalyzer {
     ]
 
     /// A built-in event field's BIR type.
+    /// Whether a type is one of DB19's four.
+    static func isExact(_ type: BIRType?) -> Bool {
+        if case .exact = type { return true }
+        return false
+    }
+
     static func builtInFieldType(_ type: BASICType) -> BIRType {
         switch type {
         case .scalar(.string): return .string
@@ -858,6 +884,12 @@ struct SemanticAnalyzer {
         case .scalar(.string): return .string
         case .scalar(.boolean): return .boolean
         case .scalar(.variant), .scalar(.task): return .variant
+        // DB19's four: held boxed, with the runtime applying the rules the
+        // interpreter applies.
+        case .scalar(.date): return .exact(.date)
+        case .scalar(.time): return .exact(.time)
+        case .scalar(.datetime): return .exact(.datetime)
+        case .scalar(.decimal): return .exact(.decimal)
         case .dictionary: return .dictionary
         case .void: return .void
         case .enumType(let typeName):

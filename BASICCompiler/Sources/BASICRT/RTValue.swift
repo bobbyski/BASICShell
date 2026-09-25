@@ -30,6 +30,14 @@ package indirect enum RTValue {
     case system(RTSystemObject)
     /// An async task handle, shared by reference.
     case task(RTTask)
+    // DB19's four. The calendar kinds carry their *canonical padded* text --
+    // `14:30:00.000000000` -- so comparison is lexicographic and exact, which
+    // is what the interpreter gets by comparing components. PRINT trims it.
+    case date(String)
+    case time(String)
+    case datetime(String)
+    /// Never a Double, which is the entire point of the type.
+    case decimal(Decimal)
 
     /// A deep copy, so the result shares nothing with `self`.
     func copied() -> RTValue {
@@ -44,6 +52,10 @@ package indirect enum RTValue {
     /// The interpreter's `description`: what PRINT shows.
     package var description: String {
         switch self {
+        // DB19: as written, with the fraction trimmed -- the same text the
+        // literal was, and the same text the interpreter prints.
+        case .date, .time, .datetime, .decimal:
+            return RTExact.text(self) ?? ""
         case .empty: return ""
         case .null: return "NULL"
         case .number(let value): return rtNumberText(value)
@@ -66,6 +78,10 @@ package indirect enum RTValue {
     /// The interpreter's `truthy`.
     package var truthy: Bool {
         switch self {
+        // A date is a value, never a condition; an exact zero is false for the
+        // reason a numeric zero is.
+        case .date, .time, .datetime: return true
+        case .decimal(let value): return value != 0
         case .empty, .null: return false
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
@@ -114,6 +130,10 @@ package indirect enum RTValue {
     /// The type name the debugger and `REFLECT` show.
     var typeName: String {
         switch self {
+        case .date: return "DATE"
+        case .time: return "TIME"
+        case .datetime: return "DATETIME"
+        case .decimal: return "DECIMAL"
         case .empty: return "EMPTY"
         case .null: return "NULL"
         case .number: return "DOUBLE"
@@ -500,6 +520,10 @@ enum RTJSON {
 
     private static func jsonObject(for value: RTValue) throws(RTFailure) -> Any {
         switch value {
+        // JSON has no type for either, and a number would lose the exactness
+        // DECIMAL is for -- so both cross as text, as the interpreter sends them.
+        case .date, .time, .datetime, .decimal:
+            return value.description
         case .empty, .null: return NSNull()
         case .number(let number): return number
         case .string(let string): return string.rawString

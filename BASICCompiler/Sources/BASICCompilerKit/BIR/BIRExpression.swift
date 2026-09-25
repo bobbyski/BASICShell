@@ -1,3 +1,4 @@
+import BASICSyntax
 import Foundation
 
 /// Arithmetic on numbers.
@@ -19,6 +20,17 @@ public enum BIRLogical: String, Sendable {
 public indirect enum BIRExpression: Sendable {
     /// A numeric constant.
     case number(Double)
+    /// `#2026-09-25#` or `123.45D`: the text, read by the runtime (DB19).
+    ///
+    /// Kept as text all the way down. A `DECIMAL` that went through a `Double`
+    /// on the way to the constant pool would have lost the exactness it exists
+    /// for before the program ever ran.
+    case exactLiteral(BASICScalarType, String)
+    /// One of DB19's four, coerced to `kind` — an assignment, or a `CDATE`.
+    case exactCoerce(BIRExpression, BASICScalarType, name: String?)
+    /// An operation where either side is one of DB19's four. `returns` is the
+    /// kind for arithmetic and `.boolean` for a comparison.
+    case exactBinary(String, BIRExpression, BIRExpression, returns: BIRType)
     /// A string constant.
     case string(String)
     /// A boolean constant.
@@ -125,6 +137,10 @@ public indirect enum BIRExpression: Sendable {
         switch self {
         case .number, .negate, .arithmetic, .compare, .logical, .logicalNot:
             return .number
+        case .exactLiteral(let kind, _), .exactCoerce(_, let kind, _):
+            return .exact(kind)
+        case .exactBinary(_, _, _, let returns):
+            return returns
         case .string, .concat, .enumText:
             return .string
         case .boolean:
@@ -183,12 +199,13 @@ public indirect enum BIRExpression: Sendable {
         switch self {
         case .call, .callClosure, .callMethod, .hostCall, .systemNew, .systemCall, .asyncLaunch, .fileService, .construct, .constructWith:
             return true
-        case .number, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
+        case .number, .exactLiteral, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
             return false
-        case .negate(let a), .logicalNot(let a), .text(let a), .enumText(let a, _), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _):
+        case .negate(let a), .logicalNot(let a), .text(let a), .enumText(let a, _), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _), .exactCoerce(let a, _, _):
             return a.mayRunCode
         case .arithmetic(_, let a, let b), .concat(let a, let b), .compare(_, let a, let b), .logical(_, let a, let b),
-             .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b):
+             .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b),
+             .exactBinary(_, let a, let b, _):
             return a.mayRunCode || b.mayRunCode
         case .intrinsic(_, let list), .element(_, let list), .makeClosure(_, _, let list, _):
             return list.contains(where: \.mayRunCode)

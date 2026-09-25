@@ -12,6 +12,12 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case int = "INT"
     case fix = "FIX"
     case cint = "CINT"
+    // DB19's conversions. Each takes a VARIANT because what converts is a
+    // value of any kind -- text, most often, since that is how a date arrives.
+    case cdate = "CDATE"
+    case ctime = "CTIME"
+    case cdatetime = "CDATETIME"
+    case cdec = "CDEC"
     case sqr = "SQR"
     case sin = "SIN"
     case cos = "COS"
@@ -58,6 +64,10 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
             return .boolean
         case .str, .chr, .left, .right, .mid, .space, .stringRepeat, .date, .time, .inputChars:
             return .string
+        case .cdate: return .exact(.date)
+        case .ctime: return .exact(.time)
+        case .cdatetime: return .exact(.datetime)
+        case .cdec: return .exact(.decimal)
         }
     }
 
@@ -69,6 +79,8 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
             return [.number]
         case .rnd, .err, .erl, .date, .time:
             return []
+        case .cdate, .ctime, .cdatetime, .cdec:
+            return [.variant]
         case .len, .asc, .val, .fileExists:
             return [.string]
         case .left, .right:

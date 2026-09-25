@@ -2863,6 +2863,18 @@ public final class BASICInterpreter {
         case "SQR":
             return .number(sqrt(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "STR$":
+            // DB19: one of the four gives its own text -- the same text PRINT
+            // shows, and the same text that reads back as a literal. VB's
+            // `CStr` does this too, so nothing new has to be learned.
+            if arguments.count == 1 {
+                let value = try evaluate(arguments[0])
+                switch value {
+                case .date, .time, .datetime, .decimal:
+                    return .string(BASICString(value.description))
+                default:
+                    break
+                }
+            }
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             let rendered = BASICValue.number(value).description
             return .string(BASICString(value >= 0 ? " " + rendered : rendered))

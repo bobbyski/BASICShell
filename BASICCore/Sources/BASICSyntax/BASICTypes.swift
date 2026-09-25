@@ -13,7 +13,7 @@ public enum BASICLegacyFileMode: String, Equatable, Sendable {
     case random = "RANDOM"
 }
 
-public enum BASICScalarType: String, Equatable, Sendable {
+public enum BASICScalarType: String, Equatable, Hashable, Sendable {
     case integer = "INTEGER"
     case double = "DOUBLE"
     case string = "STRING"

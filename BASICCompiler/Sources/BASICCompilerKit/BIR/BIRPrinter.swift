@@ -236,6 +236,12 @@ public struct BIRPrinter {
         switch expression {
         case .number(let value):
             return value.rounded() == value && abs(value) < 1e15 ? String(Int(value)) : String(value)
+        case .exactLiteral(let kind, let text):
+            return kind == .decimal ? text + "D" : "#" + text + "#"
+        case .exactCoerce(let value, let kind, _):
+            return "\(kind.rawValue.lowercased())(" + render(value) + ")"
+        case .exactBinary(let op, let lhs, let rhs, _):
+            return "(" + render(lhs) + " " + op + " " + render(rhs) + ")"
         case .string(let value):
             return "\"" + value.replacingOccurrences(of: "\"", with: "\\\"") + "\""
         case .boolean(let value):

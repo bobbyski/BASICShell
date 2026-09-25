@@ -1,5 +1,19 @@
 import BASICCompilerKit
+import BASICSyntax
 import Foundation
+
+/// The runtime's number for one of DB19's four (`RTExactKind`).
+///
+/// At file scope because both the module emitter and the function emitter need
+/// it, and it is the one place the two sides of that ABI agree on an ordering.
+func basicExactKind(_ scalar: BASICScalarType) -> Int {
+    switch scalar {
+    case .date: return 0
+    case .time: return 1
+    case .datetime: return 2
+    default: return 3
+    }
+}
 
 /// Lowers a ``BIRModule`` to textual LLVM IR for the traditional dialect.
 ///
@@ -116,6 +130,11 @@ struct LLVMLowering {
                 let value = out.temp()
                 switch parameter.type {
                 case .number, .void: out.emit("\(value) = call double @basic_rt_value_number(ptr %payload, ptr null)")
+                // DB19's four are held boxed, so a handler parameter takes the
+                // box itself and the coercion says which kind it must be.
+                case .exact(let kind):
+                    out.emit("\(value) = call ptr @basic_rt_exact_coerce(ptr %payload, i64 \(basicExactKind(kind)), ptr \(constants.constant(parameter.name)))")
+                    owned.append((value, "basic_rt_value_release"))
                 case .boolean: out.emit("\(value) = call i1 @basic_rt_value_boolean(ptr %payload, ptr null)")
                 case .string: out.emit("\(value) = call ptr @basic_rt_value_string(ptr %payload, ptr null)"); owned.append((value, "basic_rt_string_release"))
                 case .composite(let name): out.emit("\(value) = call ptr @\(objectModel.symbols.unbox)(ptr %payload, i64 \(module.typeIndex(of: name) ?? -1), ptr null)"); owned.append((value, objectModel.symbols.release))
@@ -162,7 +181,7 @@ struct LLVMLowering {
             case .composite: out.emit("\(result) = call ptr @\(objectModel.symbols.box)(ptr \(value))")
             case .dictionary: out.emit("\(result) = call ptr @basic_rt_value_from_dictionary(ptr \(value))")
             case .closure: out.emit("\(result) = call ptr @basic_rt_value_from_closure(ptr \(value))")
-            case .variant, .system: out.emit("\(result) = call ptr @basic_rt_value_copy(ptr \(value))")
+            case .variant, .system, .exact: out.emit("\(result) = call ptr @basic_rt_value_copy(ptr \(value))")
             case .void, .array: out.emit("\(result) = call ptr @basic_rt_value_empty()")
             }
             return result
@@ -179,6 +198,12 @@ struct LLVMLowering {
                 return
             }
             switch type {
+            // DB19: the slot holds the box, so the coercion is what restores it
+            // -- and it says so by name if the box holds something else.
+            case .exact(let kind):
+                let value = temp()
+                out.emit("\(value) = call ptr @basic_rt_exact_coerce(ptr \(boxValue), i64 \(basicExactKind(kind)), ptr null)")
+                out.emit("store ptr \(value), ptr \(slot)")
             case .number, .void:
                 let value = temp()
                 out.emit("\(value) = call double @basic_rt_value_number(ptr \(boxValue), ptr null)")
@@ -273,6 +298,7 @@ struct LLVMLowering {
                 case .composite(let name): out.emit("\(value) = call ptr @\(objectModel.symbols.unbox)(ptr \(boxed), i64 \(module.typeIndex(of: name) ?? -1), ptr null)"); owned.append((value, objectModel.symbols.release))
                 case .dictionary: out.emit("\(value) = call ptr @basic_rt_value_dictionary(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_dictionary_release"))
                 case .closure: out.emit("\(value) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_closure_release"))
+                case .exact(let kind): out.emit("\(value) = call ptr @basic_rt_exact_coerce(ptr \(boxed), i64 \(basicExactKind(kind)), ptr null)"); owned.append((value, "basic_rt_value_release"))
                 case .variant, .system, .array: out.emit("\(value) = call ptr @basic_rt_value_copy(ptr \(boxed))"); owned.append((value, "basic_rt_value_release"))
                 }
                 arguments.append("\(FunctionEmitter.llvmType(of: parameter)) \(value)")
@@ -346,6 +372,9 @@ struct LLVMLowering {
             case .dictionary: return ["k": "dictionary"]
             case .closure: return ["k": "closure"]
             case .system: return ["k": "variant"]
+            // DB19: a field of one of these reflects as a VARIANT, because the
+            // runtime holds it boxed and the value itself says which kind.
+            case .exact: return ["k": "variant"]
             case .composite(let name): return ["k": "composite", "i": module.typeIndex(of: name) ?? -1]
             case .array(let element, _):
                 return ["k": "array", "elem": typeObject(element, dimensions: [], isInteger: isInteger), "dims": dimensions.map { $0.map { $0 as Any } ?? NSNull() }]
@@ -433,6 +462,10 @@ struct LLVMLowering {
     declare void @basic_rt_array_store_composite(ptr, i64, ptr)
     declare void @basic_rt_type_register(i64, ptr)
     declare void @basic_rt_db_schema(ptr)
+    declare ptr @basic_rt_exact_literal(i64, ptr)
+    declare ptr @basic_rt_exact_coerce(ptr, i64, ptr)
+    declare ptr @basic_rt_exact_convert(ptr, i64)
+    declare ptr @basic_rt_exact_binary(ptr, ptr, ptr)
     declare i1 @basic_rt_composite_get_boolean(ptr, i64)
     declare void @basic_rt_composite_set_boolean(ptr, i64, i1)
     declare ptr @basic_rt_composite_get_array(ptr, i64)
@@ -966,7 +999,7 @@ struct FunctionEmitter {
             case .boolean: out.emit("call void @basic_rt_composite_set_boolean(ptr \(target), i64 \(index), i1 \(result))")
             case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
             case .composite, .void, .closure: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
-            case .variant, .dictionary, .system: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
+            case .variant, .dictionary, .system, .exact: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             case .array: out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             }
 
@@ -1210,6 +1243,8 @@ struct FunctionEmitter {
                 switch value.type {
                 case .string: out.emit("\(piece) = call ptr @basic_rt_write_quote(ptr \(result))")
                 case .number: out.emit("\(piece) = call ptr @basic_rt_number_text(double \(result))")
+                // As printed: ISO-8601, or the decimal's digits.
+                case .exact: out.emit("\(piece) = call ptr @basic_rt_value_text(ptr \(result))")
                 case .boolean:
                     let text = out.temp()
                     out.emit("\(text) = select i1 \(result), ptr \(constants.constant("TRUE")), ptr \(constants.constant("FALSE"))")
@@ -1291,6 +1326,9 @@ struct FunctionEmitter {
                     case .number: out.emit("call void @basic_rt_print_number(double \(result))")
                     case .string: out.emit("call void @basic_rt_print_text(ptr \(result))")
                     case .boolean: out.emit("call void @basic_rt_print_boolean(i1 \(result))")
+                    // DB19: the boxed value prints itself, which is how it comes
+                    // out identical to the interpreter's.
+                    case .exact: out.emit("call void @basic_rt_print_value(ptr \(result))")
                     case .composite: out.emit("call void @\(objects.print)(ptr \(result))")
                     case .variant, .system: out.emit("call void @basic_rt_print_value(ptr \(result))")
                     case .dictionary: out.emit("call void @basic_rt_print_dictionary(ptr \(result))")
@@ -1319,6 +1357,18 @@ struct FunctionEmitter {
             // The interpreter names the variable as the program wrote it.
             let name = constants.constant(displayName)
             switch variable.type {
+            // DB19: read as text, then coerced -- which is exactly how the
+            // interpreter reads one from an INPUT, and why text converts at all.
+            case .exact(let kind):
+                let text = out.temp()
+                out.emit("\(text) = call ptr @basic_rt_input_string(ptr \(promptValue), ptr \(name))")
+                let boxed = out.temp()
+                out.emit("\(boxed) = call ptr @basic_rt_value_from_string(ptr \(text))")
+                out.emit("call void @basic_rt_string_release(ptr \(text))")
+                let coerced = out.temp()
+                out.emit("\(coerced) = call ptr @basic_rt_exact_coerce(ptr \(boxed), i64 \(basicExactKind(kind)), ptr \(name))")
+                out.emit("call void @basic_rt_value_release(ptr \(boxed))")
+                out.emit("store ptr \(coerced), ptr \(slotName(variable))")
             case .number:
                 let result = out.temp()
                 out.emit("\(result) = call double @basic_rt_input_number(ptr \(promptValue), ptr \(name))")
@@ -1383,6 +1433,12 @@ struct FunctionEmitter {
                 switch value.type {
                 case .number: out.emit("call void @basic_rt_using_number(double \(result))")
                 case .string: out.emit("call void @basic_rt_using_string(ptr \(result))")
+                // PRINT USING formats text; a DB19 value gives its own.
+                case .exact:
+                    let text = out.temp()
+                    out.emit("\(text) = call ptr @basic_rt_value_text(ptr \(result))")
+                    owned.append(text)
+                    out.emit("call void @basic_rt_using_string(ptr \(text))")
                 case .composite:
                     let text = out.temp()
                     out.emit("\(text) = call ptr @\(objects.text)(ptr \(result))")
@@ -1420,8 +1476,18 @@ struct FunctionEmitter {
     }
 
     /// Types whose values are runtime objects with ownership.
+    /// Whether this is one of DB19's four.
+    static func isExact(_ type: BIRType) -> Bool {
+        if case .exact = type { return true }
+        return false
+    }
+
     static func isManaged(_ type: BIRType) -> Bool {
-        type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary || type.isSystem
+        // DB19's four are boxes, so they are reference-counted exactly as a
+        // VARIANT is. Leaving them out here stored the box without owning it,
+        // and the temporary was released before the next statement ran.
+        if case .exact = type { return true }
+        return type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary || type.isSystem
     }
 
     /// The runtime call that drops one reference of a managed value.
@@ -1433,7 +1499,7 @@ struct FunctionEmitter {
         switch type {
         case .string: return "basic_rt_string_release"
         case .closure: return "basic_rt_closure_release"
-        case .variant, .system: return "basic_rt_value_release"
+        case .variant, .system, .exact: return "basic_rt_value_release"
         case .dictionary: return "basic_rt_dictionary_release"
         default: return objects.release
         }
@@ -1470,6 +1536,7 @@ struct FunctionEmitter {
         case .array: out.emit("\(box) = call ptr @basic_rt_value_from_array(ptr \(value))")
         case .dictionary: out.emit("\(box) = call ptr @basic_rt_value_from_dictionary(ptr \(value))")
         case .closure: out.emit("\(box) = call ptr @basic_rt_value_from_closure(ptr \(value))")
+        case .exact: out.emit("\(box) = call ptr @basic_rt_value_copy(ptr \(value))")
         case .void, .variant, .system: out.emit("\(box) = call ptr @basic_rt_value_empty()")
         }
         own(box, as: .variant)
@@ -1498,7 +1565,7 @@ struct FunctionEmitter {
         case .string: out.emit("call void @basic_rt_array_store_string(ptr \(array), i64 \(offset), ptr \(result))")
         case .composite: out.emit("call void @basic_rt_array_store_composite(ptr \(array), i64 \(offset), ptr \(result))")
         case .boolean: out.emit("call void @basic_rt_array_store_boolean(ptr \(array), i64 \(offset), i1 \(result))")
-        case .variant, .dictionary, .array, .closure, .system:
+        case .variant, .dictionary, .array, .closure, .system, .exact:
             out.emit("call void @basic_rt_array_store_value(ptr \(array), i64 \(offset), ptr \(boxedPointer(result, value.type)), ptr \(constants.constant(name)))")
         case .number, .void: out.emit("call void @basic_rt_array_store_number(ptr \(array), i64 \(offset), double \(Self.asNumber(result, value.type, &out)))")
         }
@@ -1592,7 +1659,7 @@ struct FunctionEmitter {
             out.emit("call void @basic_rt_string_retain(ptr \(value))")
         } else if type.isClosure {
             out.emit("call void @basic_rt_closure_retain(ptr \(value))")
-        } else if type == .variant || type.isSystem {
+        } else if type == .variant || type.isSystem || Self.isExact(type) {
             let copy = out.temp()
             out.emit("\(copy) = call ptr @basic_rt_value_copy(ptr \(value))")
             stored = copy
@@ -1994,6 +2061,11 @@ struct FunctionEmitter {
                 }
             }
             switch type {
+            // Stored in the slot as a box, like a VARIANT field.
+            case .exact:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_value(ptr \(parent), i64 \(index))")
+                owned.append(result)
+                return (result, true)
             case .number:
                 out.emit("\(result) = call double @basic_rt_composite_get_number(ptr \(parent), i64 \(index))")
                 return (result, false)
@@ -2030,6 +2102,10 @@ struct FunctionEmitter {
             let nameArgument = name.map { constants.constant($0) } ?? "null"
             let result = out.temp()
             switch type {
+            case .exact(let kind):
+                out.emit("\(result) = call ptr @basic_rt_exact_coerce(ptr \(box), i64 \(basicExactKind(kind)), ptr \(nameArgument))")
+                owned.append(result)
+                return (result, true)
             case .number, .void:
                 out.emit("\(result) = call double @basic_rt_value_number(ptr \(box), ptr \(nameArgument))")
                 return (result, false)
@@ -2075,6 +2151,29 @@ struct FunctionEmitter {
             out.emit("\(result) = call ptr @basic_rt_value_field(ptr \(box), ptr \(constants.constant(field)), ptr \(constants.constant(name)))")
             own(result, as: .variant)
             return (result, true)
+        case .exactLiteral(let kind, let text):
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_exact_literal(i64 \(basicExactKind(kind)), ptr \(constants.constant(text)))")
+            own(result, as: .variant)
+            return (result, true)
+        case .exactCoerce(let value, let kind, let name):
+            let boxed = boxedPointer(lowerValue(value).0, value.type)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_exact_coerce(ptr \(boxed), i64 \(basicExactKind(kind)), ptr \(constants.constant(name ?? "")))")
+            own(result, as: .variant)
+            return (result, true)
+        case .exactBinary(let op, let left, let right, let returns):
+            let l = boxedPointer(lowerValue(left).0, left.type)
+            let r = boxedPointer(lowerValue(right).0, right.type)
+            let boxedResult = out.temp()
+            out.emit("\(boxedResult) = call ptr @basic_rt_exact_binary(ptr \(constants.constant(op)), ptr \(l), ptr \(r))")
+            own(boxedResult, as: .variant)
+            // A comparison answers a number, as every comparison in the
+            // language does; arithmetic answers one of the four, still boxed.
+            guard returns == .boolean || returns == .number else { return (boxedResult, true) }
+            let number = out.temp()
+            out.emit("\(number) = call double @basic_rt_value_number(ptr \(boxedResult), ptr null)")
+            return (number, false)
         case .valueAdd(let left, let right):
             let l = lowerValue(left).0
             let r = lowerValue(right).0
@@ -2286,6 +2385,12 @@ struct FunctionEmitter {
             switch inner.type {
             case .string:
                 return (value, isOwned)
+            // DB19: the box prints itself, so STR$ of one is what PRINT shows.
+            case .exact:
+                let result = out.temp()
+                out.emit("\(result) = call ptr @basic_rt_value_text(ptr \(value))")
+                owned.append(result)
+                return (result, true)
             case .number:
                 let result = out.temp()
                 out.emit("\(result) = call ptr @basic_rt_number_text(double \(value))")
@@ -2453,6 +2558,15 @@ struct FunctionEmitter {
         let r = lowerValue(right).0
         let flag = out.temp()
         switch left.type {
+        // DB19 comparisons never reach here -- `lowerBinary` routes them to the
+        // runtime, which knows that two different kinds have no order -- but a
+        // comparison the front end folded differently would, so it is written.
+        case .exact:
+            let boxedFlag = out.temp()
+            let symbol = ["equal": "=", "notEqual": "<>", "less": "<", "lessEqual": "<=", "greater": ">", "greaterEqual": ">="][op.rawValue]!
+            out.emit("\(boxedFlag) = call ptr @basic_rt_exact_binary(ptr \(constants.constant(symbol)), ptr \(l), ptr \(r))")
+            out.emit("\(flag) = call i1 @basic_rt_value_boolean(ptr \(boxedFlag), ptr null)")
+            out.emit("call void @basic_rt_value_release(ptr \(boxedFlag))")
         case .number:
             // `une` for not-equal so NaN <> NaN is true, as Swift's != is.
             let predicate = ["equal": "oeq", "notEqual": "une", "less": "olt", "lessEqual": "ole", "greater": "ogt", "greaterEqual": "oge"][op.rawValue]!
@@ -2496,6 +2610,12 @@ struct FunctionEmitter {
         switch expression.type {
         case .boolean:
             return value
+        // A date is a value, never a condition; an exact zero is false. The
+        // runtime's own `truthy` decides, so both engines agree.
+        case .exact:
+            let flag = out.temp()
+            out.emit("\(flag) = call i1 @basic_rt_value_truthy(ptr \(value))")
+            return flag
         case .number:
             let flag = out.temp()
             out.emit("\(flag) = fcmp une double \(value), 0.0")
@@ -2524,6 +2644,12 @@ struct FunctionEmitter {
         case .int: return number("call double @llvm.floor.f64(double \(a))")
         case .fix: return number("call double @llvm.trunc.f64(double \(a))")
         case .cint: return number("call double @llvm.round.f64(double \(a))")
+        case .cdate, .ctime, .cdatetime, .cdec:
+            let kind: BASICScalarType = intrinsic == .cdate ? .date : intrinsic == .ctime ? .time : intrinsic == .cdatetime ? .datetime : .decimal
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_exact_convert(ptr \(a), i64 \(basicExactKind(kind)))")
+            own(result, as: .variant)
+            return (result, true)
         case .sqr: return number("call double @llvm.sqrt.f64(double \(a))")
         case .sin: return number("call double @llvm.sin.f64(double \(a))")
         case .cos: return number("call double @llvm.cos.f64(double \(a))")
@@ -2584,6 +2710,9 @@ struct FunctionEmitter {
     static func llvmType(_ type: BIRType) -> String {
         switch type {
         case .number: return "double"
+        // Held boxed, like a VARIANT: four kinds with one representation, and
+        // the runtime knows which from the value itself.
+        case .exact: return "ptr"
         case .string, .composite, .closure, .variant, .dictionary, .array, .system: return "ptr"
         case .boolean: return "i1"
         case .void: return "void"
@@ -2593,7 +2722,7 @@ struct FunctionEmitter {
     static func zero(_ type: BIRType) -> String {
         switch type {
         case .number: return "0.0"
-        case .string, .composite, .closure, .variant, .dictionary, .array, .system: return "null"
+        case .string, .composite, .closure, .variant, .dictionary, .array, .system, .exact: return "null"
         case .boolean: return "false"
         case .void: return ""
         }

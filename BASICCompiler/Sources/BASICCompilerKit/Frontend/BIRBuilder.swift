@@ -1273,10 +1273,16 @@ final class FunctionBuilder {
         let lowered = try lowerExpression(expression)
         if lowered.type == type { return lowered }
         if type == .variant || lowered.type == .variant { return convert(lowered, to: type, name: name) }
+        // DB19: assignable *and* needing conversion. `isAssignable` says text
+        // may become a DATE -- it is how one arrives from a file -- and letting
+        // it through unconverted would put a string pointer in a slot that
+        // holds a box, which is a crash rather than a type error.
+        if case .exact = type { return convert(lowered, to: type, name: name) }
         if model.isAssignable(lowered.type, to: type) { return lowered }
         let message: String
         switch type {
         case .number: message = "Cannot assign non-numeric value to \(name)"
+        case .exact(let kind): message = "Cannot assign non-\(kind.rawValue.lowercased()) value to \(name)"
         case .string: message = "Cannot assign non-string value to \(name)"
         case .boolean: message = "Boolean \(name) must be FALSE, TRUE, 0, or 1"
         case .composite(let typeName): message = "Cannot assign non-\(model.types[typeName]?.displayName ?? typeName) value to \(name)"
@@ -1299,6 +1305,10 @@ final class FunctionBuilder {
     /// type error; nil makes it the expression's runtime error.
     private func convert(_ value: BIRExpression, to type: BIRType, name: String?) -> BIRExpression {
         if value.type == type { return value }
+        // DB19: text becomes a DATE the way it does in the interpreter, and
+        // anything that cannot is named at run time rather than at compile time
+        // -- which is where ON ERROR can see it.
+        if case .exact(let kind) = type { return .exactCoerce(value, kind, name: name) }
         if type == .variant { return .box(value) }
         if value.type == .variant { return .unbox(value, type, name: name) }
         return value
@@ -1334,6 +1344,16 @@ final class FunctionBuilder {
     private func defaultValue(for type: BIRType) -> BIRExpression {
         switch type {
         case .number, .void: return .number(0)
+        // DB19: a declared DATE starts at the epoch and a DECIMAL at zero --
+        // the interpreter's defaults, written as literals so no runtime call
+        // is needed before the program begins.
+        case .exact(let kind):
+            switch kind {
+            case .date: return .exactLiteral(.date, "0001-01-01")
+            case .time: return .exactLiteral(.time, "00:00:00")
+            case .datetime: return .exactLiteral(.datetime, "0001-01-01 00:00:00")
+            default: return .exactLiteral(.decimal, "0")
+            }
         case .string: return .string("")
         case .boolean: return .boolean(false)
         case .composite(let name): return .construct(name)
@@ -1910,6 +1930,18 @@ final class FunctionBuilder {
         }
         switch expression {
         case .number(let value): return .number(value)
+        case .decimal(let text): return .exactLiteral(.decimal, text)
+        case .temporal(let text):
+            // Kept as text down to the runtime, which reads it the way the
+            // interpreter's evaluator does -- one reader, so one answer.
+            if BASICTemporalLiteral.timestamp(text) != nil, text.contains(" ") || text.contains("T") {
+                return .exactLiteral(.datetime, text)
+            }
+            if BASICTemporalLiteral.date(text) != nil { return .exactLiteral(.date, text) }
+            guard BASICTemporalLiteral.time(text) != nil else {
+                throw CompileError("#\(text)# is not a DATE, TIME or DATETIME", at: location)
+            }
+            return .exactLiteral(.time, text)
         case .string(let value):
             return substitutesStrings ? try lowerInterpolated(value) : .string(value)
         case .interpolatedString(let value):
@@ -2040,9 +2072,42 @@ final class FunctionBuilder {
         return pieces.dropFirst().reduce(pieces[0]) { .concat($0, $1) }
     }
 
+    /// The operation when either side is one of DB19's four, or nil.
+    ///
+    /// Arithmetic answers the same kind, still boxed; a comparison answers a
+    /// number, as every comparison in the language does.
+    private static func exactBinary(_ operation: BinaryOperation, _ l: BIRExpression, _ r: BIRExpression) -> BIRExpression? {
+        let kinds = [l.type, r.type].compactMap { type -> BASICScalarType? in
+            if case .exact(let kind) = type { return kind }
+            return nil
+        }
+        guard let kind = kinds.first else { return nil }
+        let symbol: String
+        let returns: BIRType
+        switch operation {
+        case .add: symbol = "+"; returns = .exact(kind)
+        case .subtract: symbol = "-"; returns = .exact(kind)
+        case .multiply: symbol = "*"; returns = .exact(kind)
+        case .divide: symbol = "/"; returns = .exact(kind)
+        case .equal: symbol = "="; returns = .number
+        case .notEqual: symbol = "<>"; returns = .number
+        case .less: symbol = "<"; returns = .number
+        case .lessEqual: symbol = "<="; returns = .number
+        case .greater: symbol = ">"; returns = .number
+        case .greaterEqual: symbol = ">="; returns = .number
+        // AND/OR and friends read truthiness, which these have already.
+        case .and, .or, .xor, .eqv, .imp: return nil
+        }
+        return .exactBinary(symbol, l, r, returns: returns)
+    }
+
     private func lowerBinary(_ left: Expression, _ operation: BinaryOperation, _ right: Expression) throws -> BIRExpression {
         var l = try lowerExpression(left)
         var r = try lowerExpression(right)
+        // DB19: consulted before anything numeric, because the numeric path is
+        // where a DECIMAL's exactness would be lost -- the same order the
+        // interpreter's evaluator uses.
+        if let exact = Self.exactBinary(operation, l, r) { return exact }
         // With a VARIANT on either side the kind is only known at runtime;
         // the runtime then applies the interpreter's rules.
         let dynamic = l.type == .variant || r.type == .variant
@@ -2412,6 +2477,18 @@ final class FunctionBuilder {
         }
         for (index, expected) in intrinsic.parameterTypes.enumerated() where index < lowered.count && lowered[index].type == .variant {
             lowered[index] = .unbox(lowered[index], expected, name: nil)
+        }
+        // DB19: STR$ of one of the four gives its own text -- the same text
+        // PRINT shows, which is what the interpreter answers -- so it is the
+        // rendering, not a number conversion.
+        if intrinsic == .str, lowered.count == 1, case .exact = lowered[0].type {
+            return .text(lowered[0])
+        }
+        // A builtin that takes a VARIANT takes anything: `CDATE` converts text,
+        // and text is how a date arrives from a file or a database.
+        for (index, expected) in intrinsic.parameterTypes.enumerated()
+        where index < lowered.count && expected == .variant && lowered[index].type != .variant {
+            lowered[index] = .box(lowered[index])
         }
         for (argument, expected) in zip(lowered, intrinsic.parameterTypes) where argument.type != expected {
             throw CompileError(

@@ -638,6 +638,14 @@ public final class SemanticModel {
         // Anything boxes into a VARIANT; a VARIANT unboxes into anything,
         // checked at runtime with the interpreter's messages.
         if source == .variant || target == .variant { return true }
+        // DB19: text becomes a DATE or a DECIMAL, because that is how one
+        // arrives from a file, a database or an INPUT -- and a whole number
+        // becomes a DECIMAL, being exact either way. Checked at run time with
+        // the interpreter's message, exactly as a VARIANT is.
+        if case .exact = target { return source == .string || source == .number || source == .boolean }
+        // And one of the four reads as text wherever text is wanted, the way
+        // `STR$` of one gives what PRINT shows.
+        if case .exact = source { return target == .string }
         if case .system(let from) = source, case .system(let to) = target { return from == to }
         if let from = signature(of: source), let to = signature(of: target) {
             return from.parameterTypes == to.parameterTypes && from.returnType == to.returnType
