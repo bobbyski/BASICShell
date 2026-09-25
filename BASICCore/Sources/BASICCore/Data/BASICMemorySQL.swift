@@ -135,7 +135,7 @@ struct MemorySQLParser {
 
     private static func tokenize(_ sql: String) throws -> [Token] {
         var tokens: [Token] = []
-        var characters = Array(sql)
+        let characters = Array(sql)
         var index = 0
         while index < characters.count {
             let character = characters[index]

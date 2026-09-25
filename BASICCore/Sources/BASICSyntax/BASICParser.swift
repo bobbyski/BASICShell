@@ -783,9 +783,10 @@ public struct Parser {
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
         let json = try parseJSONFieldOptions(defaultName: name)
+        let database = try parseDatabaseFieldOptions(defaultName: name)
         let metadata = try parseOptionalFieldMetadata()
         let defaultValue = try parseOptionalFieldDefault()
-        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength, arrayDimensions: arrayDimensions, json: json, metadata: metadata, defaultValue: defaultValue)
+        return .typeField(name: name, type: typeSpec.type, fixedLength: typeSpec.fixedLength, arrayDimensions: arrayDimensions, json: json, database: database, metadata: metadata, defaultValue: defaultValue)
     }
 
     private mutating func parseModifiedMember() throws -> Statement {
@@ -816,9 +817,10 @@ public struct Parser {
         guard matchIdentifier("AS") else { throw syntax("Expected AS") }
         let typeSpec = try parseTypeSpec(allowVoid: false)
         let json = try parseJSONFieldOptions(defaultName: name)
+        let database = try parseDatabaseFieldOptions(defaultName: name)
         let metadata = try parseOptionalFieldMetadata()
         let defaultValue = try parseOptionalFieldDefault()
-        return .classField(name: name, type: typeSpec.type, visibility: visibility, arrayDimensions: arrayDimensions, json: json, metadata: metadata, defaultValue: defaultValue)
+        return .classField(name: name, type: typeSpec.type, visibility: visibility, arrayDimensions: arrayDimensions, json: json, database: database, metadata: metadata, defaultValue: defaultValue)
     }
 
     private mutating func parseOptionalArrayDimensions() throws -> [Int?] {
@@ -853,6 +855,37 @@ public struct Parser {
             return BASICJSONFieldOptions(name: name)
         }
         return BASICJSONFieldOptions(name: defaultName)
+    }
+
+    /// `parseJSONFieldOptions` with one word changed, plus the modifier loop.
+    ///
+    /// The modifiers cost no reserved words: like `JSON`'s, they are matched
+    /// with `matchIdentifier`, which is contextual -- it reads an identifier by
+    /// text only where one is expected. So a program keeps its variable called
+    /// `index`, and `DATABASE` means something only after a field's type.
+    private mutating func parseDatabaseFieldOptions(defaultName: String) throws -> BASICDatabaseFieldOptions? {
+        guard matchIdentifier("DATABASE") else { return nil }
+        if matchIdentifier("EXCLUDE") {
+            return nil
+        }
+        var name = defaultName
+        if matchIdentifier("NAME") {
+            guard case .string(let given) = advance() else {
+                throw syntax("Expected DATABASE field name string")
+            }
+            name = given
+        }
+        var isKey = false
+        var isIndexed = false
+        var isUnique = false
+        var sawModifier = true
+        while sawModifier {
+            if matchIdentifier("KEY") { isKey = true }
+            else if matchIdentifier("UNIQUE") { isUnique = true }
+            else if matchIdentifier("INDEX") { isIndexed = true }
+            else { sawModifier = false }
+        }
+        return BASICDatabaseFieldOptions(name: name, isKey: isKey, isIndexed: isIndexed, isUnique: isUnique)
     }
 
     private mutating func parseOptionalFieldMetadata() throws -> BASICLiteralMetadata {

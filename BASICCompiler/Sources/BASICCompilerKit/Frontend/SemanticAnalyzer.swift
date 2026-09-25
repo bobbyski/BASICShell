@@ -123,7 +123,7 @@ struct SemanticAnalyzer {
                 note(declaredType)
             case .assignment(_, _, let declared, _):
                 note(declared)
-            case .typeField(_, let fieldType, _, _, _, _, _):
+            case .typeField(_, let fieldType, _, _, _, _, _, _):
                 note(fieldType)
             default: break
             }
@@ -143,10 +143,10 @@ struct SemanticAnalyzer {
                 case .endType, .endClass, .endInterface:
                     index = lines.count
                     continue
-                case .typeField(let fieldName, let fieldType, _, let dimensions, let json, let metadata, let defaultValue),
-                     .classField(let fieldName, let fieldType, _, let dimensions, let json, let metadata, let defaultValue):
+                case .typeField(let fieldName, let fieldType, _, let dimensions, let json, let database, let metadata, let defaultValue),
+                     .classField(let fieldName, let fieldType, _, let dimensions, let json, let database, let metadata, let defaultValue):
                     var visibility = BASICMemberVisibility.public
-                    if case .classField(_, _, let declared, _, _, _, _) = line.statement { visibility = declared }
+                    if case .classField(_, _, let declared, _, _, _, _, _) = line.statement { visibility = declared }
                     var resolved = try map(fieldType, for: fieldName, at: line)
                     if !dimensions.isEmpty { resolved = .array(resolved, rank: dimensions.count) }
                     func literal(_ value: BASICLiteral) -> BIRDefault {
@@ -166,6 +166,7 @@ struct SemanticAnalyzer {
                             jsonName: json?.name, defaultValue: defaultLiteral,
                             enumName: self.enumName(of: fieldType),
                             isInteger: fieldType == .scalar(.integer),
+                            database: database,
                             metadata: metadata.mapValues(literal)
                         ))
                     }

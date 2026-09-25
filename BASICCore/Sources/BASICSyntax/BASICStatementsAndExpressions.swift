@@ -42,7 +42,7 @@ public indirect enum Statement: Equatable {
     /// line of the parser stays context-free.
     case enumDeclaration(name: String, cases: [EnumCase])
     case typeDeclaration(name: String)
-    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
+    case typeField(name: String, type: BASICType, fixedLength: Int?, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, database: BASICDatabaseFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endType
     case interfaceDeclaration(name: String)
     case interfaceFunctionSignature(name: VariableName, parameters: [FunctionParameter], returnType: BASICType)
@@ -51,7 +51,7 @@ public indirect enum Statement: Equatable {
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
-    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
+    case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, database: BASICDatabaseFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endClass
     case functionDeclaration(
         name: VariableName,

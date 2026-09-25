@@ -1,4 +1,5 @@
 import Foundation
+import BASICSyntax
 
 /// A basic block's identity within its function.
 public typealias BIRBlockID = Int
@@ -387,8 +388,15 @@ public struct BIRField: Sendable {
     public let isInteger: Bool
     /// The field's `meta { … }` entries.
     public let metadata: [String: BIRDefault]
+    /// What `DATABASE` said about the field, when it said anything.
+    ///
+    /// Carried through BIR for the same reason `jsonName` is: a compiled
+    /// program's ORM has to map the same class to the same table as the
+    /// interpreter's, and an annotation dropped here would be a schema that
+    /// silently differs between the two engines (D12).
+    public let database: BASICDatabaseFieldOptions?
 
-    public init(name: String, displayName: String? = nil, type: BIRType, dimensions: [Int?] = [], jsonName: String? = nil, defaultValue: BIRDefault? = nil, isInteger: Bool = false, metadata: [String: BIRDefault] = [:]) {
+    public init(name: String, displayName: String? = nil, type: BIRType, dimensions: [Int?] = [], jsonName: String? = nil, defaultValue: BIRDefault? = nil, isInteger: Bool = false, metadata: [String: BIRDefault] = [:], database: BASICDatabaseFieldOptions? = nil) {
         self.name = name
         self.displayName = displayName ?? name
         self.type = type
@@ -397,6 +405,7 @@ public struct BIRField: Sendable {
         self.defaultValue = defaultValue
         self.isInteger = isInteger
         self.metadata = metadata
+        self.database = database
     }
 }
 

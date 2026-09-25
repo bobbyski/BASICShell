@@ -2952,6 +2952,7 @@ final class BASICRuntime {
                     visibility: .public,
                     declaringClassName: recordDefinition.normalizedName,
                     json: $0.json,
+                    database: $0.database,
                     metadata: $0.metadata,
                     defaultValue: $0.defaultValue
                 )
@@ -3180,6 +3181,7 @@ final class BASICRuntime {
             visibility: .public,
             declaringClassName: declaringClassName,
             json: nil,
+            database: nil,
             metadata: [:],
             defaultValue: nil
         )

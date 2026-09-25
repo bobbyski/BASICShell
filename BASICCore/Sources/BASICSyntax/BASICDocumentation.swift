@@ -407,7 +407,7 @@ public enum BASICDocumentation {
             case .functionTypeDeclaration(let name, let parameters, let returnType, _):
                 add(.functionType, name,
                     parameters: parameters.map(\.variable.name), returnsValue: returnType != .void)
-            case .classField(let name, _, _, _, _, _, _), .typeField(let name, _, _, _, _, _, _):
+            case .classField(let name, _, _, _, _, _, _, _), .typeField(let name, _, _, _, _, _, _, _):
                 add(.field, name)
             case .assignment(.global, let name, _, _), .dim(_, let name, _, _):
                 add(.variable, name.name, topLevel: true)

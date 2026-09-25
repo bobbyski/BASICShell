@@ -382,6 +382,7 @@ struct BASICRecordField: Equatable, BASICFieldDefinition {
     let fixedLength: Int?
     let arrayDimensions: [Int?]
     let json: BASICJSONFieldOptions?
+    let database: BASICDatabaseFieldOptions?
     let metadata: BASICMetadata
     let defaultValue: BASICValue?
 }
@@ -479,6 +480,7 @@ struct BASICClassField: Equatable, BASICFieldDefinition {
     let visibility: BASICMemberVisibility
     let declaringClassName: String
     let json: BASICJSONFieldOptions?
+    let database: BASICDatabaseFieldOptions?
     let metadata: BASICMetadata
     let defaultValue: BASICValue?
 }

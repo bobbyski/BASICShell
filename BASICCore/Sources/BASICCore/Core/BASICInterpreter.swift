@@ -283,7 +283,7 @@ public final class BASICInterpreter {
                 if classMatches && (message.contains("method \(name.name)") || message.contains("Function \(name.name)")) {
                     return (line.fileName, line.sourceLineNumber)
                 }
-            case .classField(let name, _, _, _, _, _, _), .typeField(let name, _, _, _, _, _, _):
+            case .classField(let name, _, _, _, _, _, _, _), .typeField(let name, _, _, _, _, _, _, _):
                 if message.contains("field \(name)") || message.contains(" \(name) ") {
                     return (line.fileName, line.sourceLineNumber)
                 }
@@ -2000,7 +2000,7 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .typeField(let fieldName, let type, let fixedLength, let arrayDimensions, let json, let metadata, let defaultValue):
+                case .typeField(let fieldName, let type, let fixedLength, let arrayDimensions, let json, let database, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("TYPE \(name) field \(fieldName) is already defined")
@@ -2013,6 +2013,7 @@ public final class BASICInterpreter {
                             fixedLength: fixedLength,
                             arrayDimensions: arrayDimensions,
                             json: json,
+                            database: database,
                             metadata: metadata.mapValues(BASICValue.init),
                             defaultValue: defaultValue.map(BASICValue.init)
                         )
@@ -2156,18 +2157,18 @@ public final class BASICInterpreter {
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
-                case .classField(let fieldName, let type, let visibility, let arrayDimensions, let json, let metadata, let defaultValue):
+                case .classField(let fieldName, let type, let visibility, let arrayDimensions, let json, let database, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
-                case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let metadata, let defaultValue):
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: visibility, declaringClassName: normalized, json: json, database: database, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
+                case .typeField(let fieldName, let type, _, let arrayDimensions, let json, let database, let metadata, let defaultValue):
                     let normalizedField = fieldName.uppercased()
                     guard !fields.contains(where: { $0.normalizedName == normalizedField }) else {
                         throw BASICError.runtime("CLASS \(name) field \(fieldName) is already defined")
                     }
-                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
+                    fields.append(BASICClassField(displayName: fieldName, normalizedName: normalizedField, type: type, arrayDimensions: arrayDimensions, visibility: .public, declaringClassName: normalized, json: json, database: database, metadata: metadata.mapValues(BASICValue.init), defaultValue: defaultValue.map(BASICValue.init)))
                 case .implementsDeclaration(let interfaceName):
                     interfaces.append(interfaceName)
                 case .inheritsDeclaration(let baseClassName):

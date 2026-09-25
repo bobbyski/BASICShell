@@ -64,6 +64,8 @@ public final class SemanticModel {
         public var enumName: String?
         /// Whether a numeric field was declared INTEGER.
         public let isInteger: Bool
+        /// What `DATABASE` said about the field, when it said anything (D12).
+        public var database: BASICDatabaseFieldOptions?
         /// The field's `meta { … }` entries.
         public let metadata: [String: BIRDefault]
     }

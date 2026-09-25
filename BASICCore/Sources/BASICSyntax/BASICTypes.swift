@@ -56,6 +56,40 @@ public struct BASICJSONFieldOptions: Equatable {
     }
 }
 
+/// What `DATABASE` says about a field.
+///
+/// Persistence is opt in (DB2), spelled exactly parallel to `JSON`:
+///
+/// ```
+/// DATABASE [ EXCLUDE | [NAME "column"] [KEY] [INDEX] [UNIQUE] ]
+/// ```
+///
+/// A field with no marker is not persisted, so adding a public field cannot
+/// silently change a table. Absent options mean exactly that; `EXCLUDE` says
+/// the same thing out loud, for a reader.
+public struct BASICDatabaseFieldOptions: Equatable, Sendable {
+    /// The column or document field name.
+    public let name: String
+    /// Whether this is the primary key (DB4).
+    public let isKey: Bool
+    /// Whether the column is indexed (DB9).
+    public let isIndexed: Bool
+    /// Whether the index rejects duplicates.
+    public let isUnique: Bool
+
+    /// Creates a value from its parts.
+    ///
+    /// Two implications are applied here rather than at every reader, so the
+    /// modifiers do not have to be written together: `KEY` implies a unique
+    /// index, and `UNIQUE` implies `INDEX`.
+    public init(name: String, isKey: Bool = false, isIndexed: Bool = false, isUnique: Bool = false) {
+        self.name = name
+        self.isKey = isKey
+        self.isUnique = isUnique || isKey
+        self.isIndexed = isIndexed || isUnique || isKey
+    }
+}
+
 public struct BASICExplicitInterfaceImplementation: Equatable {
     public let interfaceName: String
     public let normalizedInterfaceName: String
