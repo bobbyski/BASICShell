@@ -83,6 +83,12 @@ public func basic_rt_host_rich_call(_ typeName: UnsafePointer<CChar>, _ id: Int,
 @_cdecl("basic_rt_host_db_schema")
 public func basic_rt_host_db_schema(_ json: UnsafePointer<CChar>) {}
 
+/// No database family here, so a name gets the honest answer -- "Unknown CLASS"
+/// from the runtime -- rather than a database error about a class that was never
+/// a database.
+@_cdecl("basic_rt_host_db_handles")
+public func basic_rt_host_db_handles(_ typeName: UnsafePointer<CChar>) -> Bool { false }
+
 @_cdecl("basic_rt_host_db_new")
 public func basic_rt_host_db_new(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
     rtStubFail("Databases are not supported by this host")

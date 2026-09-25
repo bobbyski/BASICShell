@@ -5,6 +5,7 @@
 //  The database, reached from a compiled program.
 //
 
+import BASICSyntax
 import Foundation
 
 /// The database pseudo classes as a compiled program sees them.
@@ -115,10 +116,14 @@ public enum BASICCompiledData {
                     invokeMigration: invoke.map { call in { name in try call(name) } }
                 )
                 return bridgeValue(store)
-            case "RECORDSET":
-                throw BASICError.runtime("A Recordset comes from SqlDatabase.Query, not from NEW")
             default:
-                throw BASICError.runtime("Unknown CLASS \(typeName)")
+                // The roster's own words for a produced class and for a name
+                // that is not one of these at all (D0.5), so the compiled
+                // engine says what the interpreter says.
+                guard let pseudoClass = BASICDatabaseClasses.named(typeName) else {
+                    throw BASICError.runtime("Unknown CLASS \(typeName)")
+                }
+                throw BASICError.runtime(pseudoClass.constructorDescription)
             }
         }
     }

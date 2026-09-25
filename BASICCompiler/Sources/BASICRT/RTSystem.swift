@@ -459,15 +459,18 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     case "SECONDSTIMER":
         guard values.count == 1 else { basic_rt_fail("SecondsTimer expects 1 argument") }
         return basic_rt_timer_new(RTSystem.timerNumber(values[0], "SecondsTimer interval"))
-    case "SQLDATABASE", "DOCUMENTDATABASE", "DATASTORE", "RECORDSET":
-        // The database lives in BASICCore, where the interpreter reads it, and
-        // is reached across the host seam: one ORM, so the two engines cannot
-        // write schemas that differ (D12).
-        return rtOwned(RTDatabase.new(String(cString: typeName), values))
+
     default:
         // TUIKit's and RichSwift's pseudo classes live in the host half,
         // over the binding BASICCore already settled.
         let name = String(cString: typeName)
+        // The database's do too, and which names those are is the host's to say
+        // (D0.5) — one registration point, in BASICCore, where the interpreter
+        // reads the same one. So the two engines cannot write schemas that
+        // differ, and neither can forget a name the other has (D12).
+        if RTDatabase.handles(name) {
+            return rtOwned(RTDatabase.new(name, values))
+        }
         if name.uppercased().hasPrefix("RICH") {
             guard values.isEmpty else { basic_rt_fail("\(name) takes no arguments") }
             let handle = name.withCString { rtHostRichNew($0) }

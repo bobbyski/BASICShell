@@ -17,6 +17,7 @@ import Foundation
 @_silgen_name("basic_rt_host_db_new") func rtHostDBNew(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
 @_silgen_name("basic_rt_host_db_call") func rtHostDBCall(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
 @_silgen_name("basic_rt_host_db_schema") func rtHostDBSchema(_ json: UnsafePointer<CChar>)
+@_silgen_name("basic_rt_host_db_handles") func rtHostDBHandles(_ typeName: UnsafePointer<CChar>) -> Bool
 
 /// A handle to a database object the host holds: an id and what it is, as the
 /// interpreter's `.systemObject(kind, id)` is.
@@ -30,15 +31,21 @@ package final class RTDataHandle {
 }
 
 enum RTDatabase {
-    /// The pseudo classes this file answers for, spelled as the interpreter
-    /// spells them. `Recordset` is here because a cursor *is* one of these —
-    /// it simply comes from `Query` rather than from a constructor.
-    static let classNames: [String: String] = [
-        "SQLDATABASE": "SqlDatabase",
-        "DOCUMENTDATABASE": "DocumentDatabase",
-        "DATASTORE": "DataStore",
-        "RECORDSET": "Recordset",
-    ]
+    /// Whether a class name is one of the database family.
+    ///
+    /// Asked of the host rather than answered from a list here (D0.5). The
+    /// roster lives in `BASICSyntax`, which this module deliberately does not
+    /// depend on, and a second copy of the names would be a fifth place to
+    /// forget one — the precise failure the roster exists to prevent, and the
+    /// one that reads like a driver bug: the program builds, connects, and then
+    /// reports that a method does not exist.
+    ///
+    /// The stubs answer false, so a program built without the host half gets
+    /// "Unknown CLASS" for a name it cannot use — which is the truth — rather
+    /// than a database error about a class that was never a database.
+    static func handles(_ name: String) -> Bool {
+        name.withCString { rtHostDBHandles($0) }
+    }
 
     /// The program's class and ENUM declarations, as the compiler emitted
     /// them, held until a database is opened.

@@ -144,9 +144,8 @@ public enum BASICKeywords {
     /// mechanical derivation could not see them, and neither could the drift
     /// test. `BASICKeywordTests` now constructs each of these to prove the
     /// interpreter still answers to it.
-    public static let pseudoClasses: Set<String> = [
+    public static let pseudoClasses: Set<String> = databaseClasses.union([
         "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
-        "SQLDATABASE", "RECORDSET", "DOCUMENTDATABASE", "DATASTORE",
         "RICHPROGRESS", "RICHSYNTAX", "RICHTEXT", "SECONDSTIMER",
         "TUIAPP", "TUIBUTTON", "TUICHECK", "TUIDIALOG", "TUIFIELD", "TUIGAUGE",
         "TUILABEL", "TUILIST", "TUIMENU", "TUISTACK", "TUITABLE", "TUITEXT",
@@ -164,7 +163,14 @@ public enum BASICKeywords {
         "TUIWIZARD", "TUIBOARD", "TUIDIAGRAM", "TUILOG",
         "TUIPREFS", "TUIFORM", "TUIPREFSDIALOG", "TUILINK", "TUINAVIGATOR",
         "VECTORTERMINAL", "VTG",
-    ]
+    ])
+
+    /// The database family, from the one place it is registered (D0.5).
+    ///
+    /// Not spelled out again here. The scar this set's own comment describes --
+    /// a name present in one site and missing from another -- is exactly what a
+    /// second copy of these four would invite.
+    public static var databaseClasses: Set<String> { BASICDatabaseClasses.names }
 
     /// Names the language answers to itself, whatever a program assigns.
     ///

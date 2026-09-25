@@ -1,5 +1,6 @@
 import BASICCore
 import BASICRT
+import BASICSyntax
 import Foundation
 
 // BASICRTHost — the database, for a compiled program.
@@ -69,6 +70,15 @@ private let installMigrationInvoker: Void = {
         RTTUIHandlers.call(name)
     }
 }()
+
+/// Whether a class name is one of the database family (D0.5).
+///
+/// `BASICSyntax`'s roster is the one place these are registered, and this is how
+/// the compiled runtime reads it without depending on it.
+@_cdecl("basic_rt_host_db_handles")
+public func basic_rt_host_db_handles(_ typeName: UnsafePointer<CChar>) -> Bool {
+    BASICDatabaseClasses.handles(String(cString: typeName))
+}
 
 @_cdecl("basic_rt_host_db_schema")
 public func basic_rt_host_db_schema(_ json: UnsafePointer<CChar>) {

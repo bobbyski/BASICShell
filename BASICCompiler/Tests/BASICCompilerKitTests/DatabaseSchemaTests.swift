@@ -1,5 +1,6 @@
 @testable import BASICCompilerKit
 import BASICDialectTraditional
+import BASICSyntax
 import Foundation
 import Testing
 
@@ -121,5 +122,51 @@ struct DatabaseSchemaTests {
         #expect(json.contains(#""type":{"k":"record","n":"Point"}"#))
         #expect(json.contains(#""type":{"k":"variant"}"#))
         #expect(json.contains(#""type":{"k":"dictionary"}"#))
+    }
+}
+
+/// The compiler's half of the one registration point (D0.5).
+///
+/// `BASICSyntax`'s roster is where the database family is registered; this holds
+/// the compiler's member table to it. A name on the roster and missing here
+/// types as something else and fails with a message about indexes rather than
+/// about the class — the same drift the roster exists to prevent, seen from the
+/// other side.
+struct DatabaseRosterTests {
+
+    @Test("The member table covers every name on the roster")
+    func theTableCoversTheRoster() {
+        for pseudoClass in BASICDatabaseClasses.all {
+            #expect(
+                SemanticModel.isSystemClass(pseudoClass.normalizedName),
+                "\(pseudoClass.displayName) is on the roster and not a system class"
+            )
+            #expect(
+                SemanticModel.systemTypeName(pseudoClass.normalizedName) == pseudoClass.normalizedName,
+                "\(pseudoClass.displayName) types as something else"
+            )
+            // A class whose table is empty would accept any method and answer
+            // nothing, which is how a missing registration hides.
+            #expect(
+                SemanticModel.systemClasses[pseudoClass.normalizedName]?.isEmpty == false,
+                "\(pseudoClass.displayName) has no members"
+            )
+        }
+    }
+
+    @Test("Every name on the roster compiles as a receiver")
+    func everyNameCompiles() throws {
+        // Through the front end, not past it: a name that types wrongly fails
+        // here with a diagnostic rather than at run time with a driver error.
+        let source = """
+        LET DB = SqlDatabase(":memory:")
+        LET DOCS = DocumentDatabase("memory:")
+        LET STORE = DataStore(DB)
+        LET ROWS = DB.Query("select 1 as a")
+        PRINT ROWS.ColumnCount(); DOCS.Count("c"); STORE.SupportsTransactions()
+        """
+        #expect(throws: Never.self) {
+            _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "roster")
+        }
     }
 }

@@ -781,21 +781,29 @@ public final class BASICInterpreter {
     }
 
     private func uncheckedDatabaseObject(named name: String, arguments: [Expression]) throws -> BASICValue? {
-        switch name {
+        // The roster decides whether this is one of the family and how many
+        // arguments it takes (D0.5), so the arity check is written once rather
+        // than once per name -- and a produced class says so rather than
+        // falling through to "Unknown CLASS".
+        guard let pseudoClass = BASICDatabaseClasses.named(name) else { return nil }
+        guard let arity = pseudoClass.constructorArity else {
+            throw BASICError.runtime(pseudoClass.constructorDescription)
+        }
+        guard arguments.count == arity else {
+            throw BASICError.runtime(pseudoClass.constructorDescription)
+        }
+        switch pseudoClass.normalizedName {
         case "SQLDATABASE":
-            guard arguments.count == 1, let url = try evaluate(arguments[0]).string else {
-                throw BASICError.runtime("SqlDatabase wants a connection string")
+            guard let url = try evaluate(arguments[0]).string else {
+                throw BASICError.runtime(pseudoClass.constructorDescription)
             }
             return try runtime.dataRuntime.makeSQLDatabase(url: url.description)
         case "DOCUMENTDATABASE":
-            guard arguments.count == 1, let url = try evaluate(arguments[0]).string else {
-                throw BASICError.runtime("DocumentDatabase wants a connection string")
+            guard let url = try evaluate(arguments[0]).string else {
+                throw BASICError.runtime(pseudoClass.constructorDescription)
             }
             return try runtime.dataRuntime.makeDocumentDatabase(url: url.description)
         case "DATASTORE":
-            guard arguments.count == 1 else {
-                throw BASICError.runtime("DataStore wants a database")
-            }
             let database = try evaluate(arguments[0])
             return try runtime.dataRuntime.makeDataStore(
                 from: database,

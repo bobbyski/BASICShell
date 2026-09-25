@@ -208,3 +208,96 @@ struct BASICCompiledDataTests {
         }
     }
 }
+
+/// The one registration point, held (D0.5).
+///
+/// The scar this guards against is named in `BASICKeywords.pseudoClasses`: a
+/// class missing from one site "constructs, then reports 'has no method' for
+/// everything, which reads like a broken binding rather than a missing
+/// registration". For a database that reads like a driver bug. So every name on
+/// the roster is exercised here through every site that has to know it.
+@Suite("BASICDatabaseClasses")
+struct BASICDatabaseRosterTests {
+
+    @Test("Every name on the roster is a keyword")
+    func theRosterIsTheKeywordList() {
+        for pseudoClass in BASICDatabaseClasses.all {
+            #expect(BASICKeywords.pseudoClasses.contains(pseudoClass.normalizedName), "\(pseudoClass.displayName)")
+            #expect(BASICKeywords.isKeyword(pseudoClass.displayName), "\(pseudoClass.displayName)")
+        }
+        #expect(BASICDatabaseClasses.all.count == 4)
+    }
+
+    @Test("Every constructible name constructs, interpreted")
+    func everyNameConstructs() throws {
+        for pseudoClass in BASICDatabaseClasses.all where pseudoClass.isConstructible {
+            let session = BASICSession(host: TestHost())
+            // DataStore takes a database; the others take the URL their own
+            // provider answers to. Written as a program so this goes through the
+            // *language* rather than past it.
+            let argument: String
+            switch pseudoClass.normalizedName {
+            case "DATASTORE": argument = "SqlDatabase(\":memory:\")"
+            case "DOCUMENTDATABASE": argument = "\"memory:\""
+            default: argument = "\":memory:\""
+            }
+            session.program.loadSource("""
+            let it = \(pseudoClass.displayName)(\(argument))
+            print "made"
+            """, fileName: "roster.bas")
+            #expect(throws: Never.self, "\(pseudoClass.displayName) did not construct") {
+                try session.runProgram()
+            }
+        }
+    }
+
+    @Test("A produced name refuses construction in its own words, not by falling through")
+    func producedNamesSaySo() throws {
+        for pseudoClass in BASICDatabaseClasses.all where !pseudoClass.isConstructible {
+            let session = BASICSession(host: TestHost())
+            session.program.loadSource("let it = \(pseudoClass.displayName)()", fileName: "roster.bas")
+            do {
+                try session.runProgram()
+                Issue.record("\(pseudoClass.displayName) was constructible")
+            } catch let error as BASICError {
+                // Its own message, from the roster -- so "Unknown CLASS" can
+                // never be what a program is told about a class the language has.
+                #expect(error.description.contains(pseudoClass.constructorDescription), "\(error.description)")
+            }
+        }
+    }
+
+    @Test("Every name dispatches methods rather than reporting none")
+    func everyNameDispatches() throws {
+        // The scar exactly: a name that constructs and then says "has no
+        // method" for everything. Asking for a method that does not exist must
+        // name the *class*, which only happens if dispatch reached it.
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        let db = SqlDatabase(":memory:")
+        db.Execute("create table T (a integer)")
+        let rows = db.Query("select a from T")
+        let store = DataStore(db)
+        print "ok"
+        """, fileName: "roster.bas")
+        try session.runProgram()
+
+        for (name, receiver) in [("SqlDatabase", "db"), ("Recordset", "rows"), ("DataStore", "store")] {
+            let probe = BASICSession(host: TestHost())
+            probe.program.loadSource("""
+            let db = SqlDatabase(":memory:")
+            db.Execute("create table T (a integer)")
+            let rows = db.Query("select a from T")
+            let store = DataStore(db)
+            \(receiver).NoSuchMethod()
+            """, fileName: "roster.bas")
+            do {
+                try probe.runProgram()
+                Issue.record("\(name).NoSuchMethod did not fail")
+            } catch let error as BASICError {
+                #expect(error.description.contains(name), "\(name): \(error.description)")
+                #expect(error.description.contains("NoSuchMethod"), "\(error.description)")
+            }
+        }
+    }
+}
