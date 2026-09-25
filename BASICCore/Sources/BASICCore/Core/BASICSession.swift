@@ -1520,6 +1520,20 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
     }
 
+    /// The classes the current program declared, keyed by normalized name.
+    ///
+    /// The ORM's mapper reads these directly rather than going through
+    /// BASIC-visible reflection: the mapping is Swift, in BASICCore, and one
+    /// implementation serves every engine.
+    var declaredClasses: [String: BASICClassDefinition] { runtime.classDefinitions }
+
+    /// The enums the current program declared, keyed by normalized name.
+    ///
+    /// The mapper needs them because a payload-free ENUM *is* its number, so
+    /// storing the case name (§7.3) means looking the name up in the declaring
+    /// type — the same resolution PRINT does.
+    var declaredEnums: [String: BASICEnumDefinition] { runtime.enumDefinitions }
+
     /// Local variables visible in the active debugger frame.
     public var debugLocalVariables: [BASICVariableSnapshot] {
         activeInterpreter?.debugLocalVariables ?? runtime.localSnapshots()
