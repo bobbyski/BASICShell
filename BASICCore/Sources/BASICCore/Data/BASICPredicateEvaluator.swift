@@ -144,10 +144,29 @@ public enum BASICPredicateEvaluator {
         }
     }
 
-    /// SQL `LIKE`: `%` is any run, `_` is one character.
+    /// SQL `LIKE`: `%` is any run, `_` is one character, `\` escapes either.
+    ///
+    /// The escape is always backslash, which is PostgreSQL's default and what
+    /// `BASICSQLPredicateLowering` emits as `ESCAPE '\'`. Fixing it here means
+    /// a BEGINSWITH over a value containing `%` finds the same rows in the
+    /// document store, the reference SQL store and a real one.
     static func matchesLike(_ text: String, _ pattern: String) -> Bool {
         let subject = Array(text)
-        let template = Array(pattern)
+        var template: [(character: Character, isWildcard: Bool)] = []
+        var index = pattern.startIndex
+        while index < pattern.endIndex {
+            let character = pattern[index]
+            if character == "\\" {
+                let next = pattern.index(after: index)
+                if next < pattern.endIndex {
+                    template.append((pattern[next], false))
+                    index = pattern.index(after: next)
+                    continue
+                }
+            }
+            template.append((character, character == "%" || character == "_"))
+            index = pattern.index(after: index)
+        }
         var cache: [[Bool?]] = Array(
             repeating: Array(repeating: nil, count: template.count + 1),
             count: subject.count + 1
@@ -158,9 +177,11 @@ public enum BASICPredicateEvaluator {
             let result: Bool
             if p == template.count {
                 result = s == subject.count
-            } else if template[p] == "%" {
+            } else if template[p].isWildcard && template[p].character == "%" {
                 result = walk(s, p + 1) || (s < subject.count && walk(s + 1, p))
-            } else if s < subject.count && (template[p] == "_" || template[p] == subject[s]) {
+            } else if s < subject.count
+                && ((template[p].isWildcard && template[p].character == "_")
+                    || template[p].character == subject[s]) {
                 result = walk(s + 1, p + 1)
             } else {
                 result = false

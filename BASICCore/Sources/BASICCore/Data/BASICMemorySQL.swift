@@ -392,7 +392,11 @@ struct MemorySQLParser {
             return .compare(field: field, op: .between, operand: .range(low, high))
         }
         if matchWord("LIKE") {
-            return .compare(field: field, op: .like, operand: .term(try parseTerm(sql)))
+            let pattern = try parseTerm(sql)
+            // `ESCAPE 'x'` is accepted and ignored: the evaluator's escape is
+            // always backslash, which is what the lowering emits.
+            if matchWord("ESCAPE") { _ = try parseTerm(sql) }
+            return .compare(field: field, op: .like, operand: .term(pattern))
         }
 
         let op: BASICPredicateOperator
