@@ -67,6 +67,21 @@ final class BASICDataRuntime: @unchecked Sendable {
         return try box.take()
     }
 
+    /// Runs a database call and states its failure as the language does.
+    ///
+    /// `BASICDataError` is the data layer's own vocabulary, and the language has
+    /// exactly one: a `BASICError.runtime` is what `ON ERROR` traps and what
+    /// `ERR` reports. Without this an ordinary refusal -- a destructive schema
+    /// change, a missing migration -- escaped as a Swift error the program could
+    /// neither trap nor read.
+    static func translating<T>(_ body: () throws -> T) throws -> T {
+        do {
+            return try body()
+        } catch let error as BASICDataError {
+            throw BASICError.runtime(error.description)
+        }
+    }
+
     // MARK: - Construction
 
     /// `SqlDatabase(url$)` — opens a relational provider chosen by the URL.
@@ -109,7 +124,8 @@ final class BASICDataRuntime: @unchecked Sendable {
     /// `DataStore(database)` — the ORM over an already-open database.
     func makeDataStore(
         from database: BASICValue,
-        enumeration: @escaping (String) -> BASICEnumDefinition?
+        enumeration: @escaping (String) -> BASICEnumDefinition?,
+        invokeMigration: ((String) throws -> Void)? = nil
     ) throws -> BASICValue {
         guard case .systemObject(let typeName, let databaseID) = database else {
             throw BASICDataError.unsupported("DataStore takes a SqlDatabase or a DocumentDatabase")
@@ -130,6 +146,7 @@ final class BASICDataRuntime: @unchecked Sendable {
             throw BASICDataError.unsupported("DataStore takes a SqlDatabase or a DocumentDatabase, not a \(typeName)")
         }
         let store = BASICDataStore(backend: backend, enumeration: enumeration)
+        if let invokeMigration { store.setMigrationInvoker(invokeMigration) }
         let id = locked { () -> Int in
             let id = nextID
             nextID += 1
@@ -341,6 +358,35 @@ final class BASICDataRuntime: @unchecked Sendable {
             return .empty
         case "SUPPORTSTRANSACTIONS":
             return .boolean(store.supportsTransactions)
+
+        case "MIGRATION":
+            // Registered, never discovered: the name is an argument, so a
+            // compiled program resolves it at build time from a known set
+            // rather than by convention (D7, §1.5.1).
+            guard arguments.count == 4 else {
+                throw BASICError.runtime("DataStore.Migration wants a class name, a from version, a to version and a function name")
+            }
+            let className = try Self.string(arguments[0], method: "Migration")
+            guard let from = arguments[1].number, let to = arguments[2].number,
+                  from == from.rounded(), to == to.rounded() else {
+                throw BASICError.runtime("DataStore.Migration wants whole version numbers")
+            }
+            let function = try Self.string(arguments[3], method: "Migration")
+            // The class has to be one this store knows, so a typo in the name is
+            // caught here rather than the next time EnsureSchema runs.
+            _ = try mapping(named: className)
+            try store.register(migration: BASICMigration(
+                className: className, fromVersion: Int(from), toVersion: Int(to), functionName: function
+            ))
+            return .empty
+
+        case "SCHEMAVERSION":
+            let name = try Self.string(arguments.first, method: "SchemaVersion")
+            let version = try Self.blocking { try await store.schemaVersion(of: name) }
+            // -1 rather than EMPTY for "the database has never seen it": a
+            // program comparing versions is doing arithmetic, and EMPTY reads
+            // as 0, which is a real version (DB5).
+            return .number(Double(version ?? -1))
         default:
             throw BASICError.runtime("DataStore has no method \(method)")
         }

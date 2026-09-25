@@ -611,18 +611,26 @@ final class BASICRuntime {
                 typeName: typeName, id: id, method: method, arguments: arguments
             )
         case "SQLDATABASE":
-            return try dataRuntime.callSQLDatabase(id: id, method: method, arguments: arguments)
+            return try BASICDataRuntime.translating {
+                try dataRuntime.callSQLDatabase(id: id, method: method, arguments: arguments)
+            }
         case "DOCUMENTDATABASE":
-            return try dataRuntime.callDocumentDatabase(id: id, method: method, arguments: arguments)
+            return try BASICDataRuntime.translating {
+                try dataRuntime.callDocumentDatabase(id: id, method: method, arguments: arguments)
+            }
         case "RECORDSET":
-            return try dataRuntime.callRecordset(id: id, method: method, arguments: arguments)
+            return try BASICDataRuntime.translating {
+                try dataRuntime.callRecordset(id: id, method: method, arguments: arguments)
+            }
         case "DATASTORE":
-            return try dataRuntime.callDataStore(
-                id: id,
-                method: method,
-                arguments: arguments,
-                classDefinition: { [weak self] name in self?.classDefinitions[name.uppercased()] }
-            )
+            return try BASICDataRuntime.translating {
+                try dataRuntime.callDataStore(
+                    id: id,
+                    method: method,
+                    arguments: arguments,
+                    classDefinition: { [weak self] name in self?.classDefinitions[name.uppercased()] }
+                )
+            }
         case "HTTPCLIENT":
             guard method.uppercased() == "HEADER", arguments.count == 2,
                   let name = arguments[0].string, let value = arguments[1].string else {

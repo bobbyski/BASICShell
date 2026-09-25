@@ -777,6 +777,10 @@ public final class BASICInterpreter {
     /// had to be rescued from, and the reason D0.5 wants one registration
     /// point for all of them.
     private func constructDatabaseObject(named name: String, arguments: [Expression]) throws -> BASICValue? {
+        try BASICDataRuntime.translating { try uncheckedDatabaseObject(named: name, arguments: arguments) }
+    }
+
+    private func uncheckedDatabaseObject(named name: String, arguments: [Expression]) throws -> BASICValue? {
         switch name {
         case "SQLDATABASE":
             guard arguments.count == 1, let url = try evaluate(arguments[0]).string else {
@@ -793,9 +797,20 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("DataStore wants a database")
             }
             let database = try evaluate(arguments[0])
-            return try runtime.dataRuntime.makeDataStore(from: database) { [weak runtime] enumName in
-                runtime?.enumDefinitions[enumName.uppercased()]
-            }
+            return try runtime.dataRuntime.makeDataStore(
+                from: database,
+                enumeration: { [weak runtime] enumName in
+                    runtime?.enumDefinitions[enumName.uppercased()]
+                },
+                // How a migration gets back into the program (D7). The same
+                // route a TUI control's handler takes, for the same reason: the
+                // data layer has no path to the interpreter, and running a
+                // named function is the whole point of a migration.
+                invokeMigration: { [weak self] name in
+                    guard let self else { return }
+                    try self.callNamedHandler(name, arguments: [])
+                }
+            )
         default:
             return nil
         }

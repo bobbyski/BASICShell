@@ -187,6 +187,9 @@ public final class SemanticModel {
             "DELETE": (2, .number), "COUNT": (1, .number),
             "BEGIN": (0, .void), "COMMIT": (0, .void), "ROLLBACK": (0, .void),
             "SUPPORTSTRANSACTIONS": (0, .boolean),
+            // D7. `SchemaVersion` answers -1 for a class the database has never
+            // seen, because 0 is a real version (DB5).
+            "MIGRATION": (4, .void), "SCHEMAVERSION": (1, .number),
         ],
     ]
 

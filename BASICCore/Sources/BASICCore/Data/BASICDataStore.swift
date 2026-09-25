@@ -36,11 +36,62 @@ final class BASICDataStore: @unchecked Sendable {
     /// is already `@unchecked Sendable` because its mutable state is behind a
     /// lock. The closure is only ever called from inside that boundary.
     private let enumeration: (String) -> BASICEnumDefinition?
+    /// Registered migrations, newest registration winning for a given step.
+    private var migrations: [String: BASICMigration] = [:]
+    /// How a migration gets back into the program: a BASIC function, by name.
+    ///
+    /// Injected because `BASICCore` has no route to either engine's call
+    /// machinery — the interpreter passes its `callNamedHandler`, and a compiled
+    /// program passes the host's trampoline table. The same seam the TUI binding
+    /// already uses, for the same reason.
+    private var invoke: ((String) throws -> Void)?
+    /// Whether the ledger has been created in this session.
+    private var ledgerExists = false
 
     /// Creates a store over a provider.
     init(backend: Backend, enumeration: @escaping (String) -> BASICEnumDefinition? = { _ in nil }) {
         self.backend = backend
         self.enumeration = enumeration
+    }
+
+    /// Sets how a registered migration reaches the program.
+    func setMigrationInvoker(_ invoke: @escaping (String) throws -> Void) {
+        locked { self.invoke = invoke }
+    }
+
+    // MARK: - Migrations (D7)
+
+    /// Registers the function that takes a class from one version to the next.
+    func register(migration: BASICMigration) throws {
+        guard migration.toVersion == migration.fromVersion + 1 else {
+            throw BASICDataError.unsupported(
+                "a migration goes up one version at a time; \(migration.className) \(migration.fromVersion) to \(migration.toVersion) skips \(migration.toVersion - migration.fromVersion - 1)"
+            )
+        }
+        guard migration.toVersion > migration.fromVersion else {
+            throw BASICDataError.unsupported("migration is forward only; \(migration.className) cannot go from \(migration.fromVersion) to \(migration.toVersion)")
+        }
+        locked { migrations[Self.step(migration.className, migration.fromVersion)] = migration }
+    }
+
+    private static func step(_ className: String, _ from: Int) -> String {
+        "\(className.uppercased())#\(from)"
+    }
+
+    /// The chain from `current` to `wanted`, or the step that is missing.
+    func migrationPath(for className: String, from current: Int, to wanted: Int) throws -> [BASICMigration] {
+        var path: [BASICMigration] = []
+        var version = current
+        while version < wanted {
+            guard let migration = locked({ migrations[Self.step(className, version)] }) else {
+                throw BASICDataError.unsupported(
+                    "\(className) is at version \(version) in the database and \(wanted) in the program, and no migration is registered for \(version) to \(version + 1)"
+                )
+            }
+            path.append(migration)
+            version = migration.toVersion
+        }
+        return path
     }
 
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
@@ -115,6 +166,195 @@ final class BASICDataStore: @unchecked Sendable {
     /// this is for a program that wants its table to exist.
     @discardableResult
     func ensureSchema(_ mapping: BASICTableMapping) async throws -> [BASICSchemaChange] {
+        let changes = try await applySchema(mapping)
+        try await reconcileVersion(mapping)
+        return changes
+    }
+
+    /// Brings the *version* up to the class's, running registered migrations.
+    ///
+    /// Read before written, and refused rather than guessed at in three cases:
+    /// a database ahead of the program (migration is forward only), a missing
+    /// step in the chain, and a shape that changed with no version bump. The
+    /// last one is why the checksum is stored at all.
+    private func reconcileVersion(_ mapping: BASICTableMapping) async throws {
+        let shape = BASICSchemaLedger.shape(of: mapping)
+        guard let record = try await schemaRecord(for: mapping.className) else {
+            // First time: record where we are. An unversioned class recording
+            // version 0 is a legitimate starting state, not an error (DB5).
+            try await writeSchemaRecord(BASICSchemaRecord(
+                className: mapping.className, version: mapping.version,
+                appliedAt: BASICSchemaLedger.timestamp(), shape: shape
+            ))
+            return
+        }
+
+        if record.version > mapping.version {
+            throw BASICDataError.unsupported(
+                "the database holds \(mapping.className) at version \(record.version) and the program is at \(mapping.version); migration is forward only"
+            )
+        }
+
+        if record.version == mapping.version {
+            guard record.shape == shape else {
+                // The checksum is the safety net only where introspection
+                // cannot reach. A relational provider was just compared against
+                // the live table by `applySchema`, which is strictly better than
+                // a checksum: it applies the safe changes and refuses the
+                // destructive ones *by name*. Refusing here as well would refuse
+                // adding a column, which the plan calls safe and means it.
+                //
+                // A document store has no shape to introspect at all, so there
+                // the checksum is the only thing that can notice a field renamed
+                // or retyped with no version bump -- exactly the deliberate,
+                // dangerous change DB2 leaves behind.
+                if case .document = backend {
+                    // Which change, not just that there was one: adding a field
+                    // to a schemaless store is free, and refusing it would make
+                    // the ledger worse than no ledger. What cannot be waved
+                    // through is a column that *was* there and is not, or one
+                    // whose type moved -- a rename reads as both.
+                    let before = BASICSchemaLedger.columns(in: record.shape)
+                    let now = BASICSchemaLedger.columns(in: shape)
+                    var refused: [String] = []
+                    for (name, type) in before {
+                        guard let current = now[name] else {
+                            refused.append("\(mapping.className).\(name) was stored and is no longer in the class")
+                            continue
+                        }
+                        if current != type {
+                            refused.append("\(mapping.className).\(name) was stored as \(type) and the class now wants \(current)")
+                        }
+                    }
+                    guard refused.isEmpty else {
+                        throw BASICDataError.destructiveChangeRefused(
+                            refused + ["bump meta { version: \(mapping.version + 1) } and register a migration"]
+                        )
+                    }
+                }
+                // Safe, applied, and now recorded: the ledger tracks what is
+                // there rather than what was there first.
+                try await writeSchemaRecord(BASICSchemaRecord(
+                    className: mapping.className, version: mapping.version,
+                    appliedAt: BASICSchemaLedger.timestamp(), shape: shape
+                ))
+                return
+            }
+            return
+        }
+
+        // Behind: plan the whole chain before running any of it, so a missing
+        // step is a refusal rather than a half-migrated database.
+        let path = try migrationPath(for: mapping.className, from: record.version, to: mapping.version)
+        guard let invoke = locked({ self.invoke }) else {
+            throw BASICDataError.unsupported(
+                "\(mapping.className) needs \(path.count) migration(s) and this store has no way to call one"
+            )
+        }
+        for migration in path {
+            try invoke(migration.functionName)
+            try await writeSchemaRecord(BASICSchemaRecord(
+                className: mapping.className, version: migration.toVersion,
+                appliedAt: BASICSchemaLedger.timestamp(), shape: shape
+            ))
+        }
+    }
+
+    /// The version the database holds for a class, or nil when it holds none.
+    func schemaVersion(of className: String) async throws -> Int? {
+        try await schemaRecord(for: className)?.version
+    }
+
+    private func schemaRecord(for className: String) async throws -> BASICSchemaRecord? {
+        try await ensureLedger()
+        let filter = BASICQueryPredicate.compare("class_name", .equal, .text(className))
+        switch backend {
+        case .document(let provider):
+            let found = try await provider.find(
+                collection: BASICSchemaLedger.tableName, filter: filter, limit: 1
+            )
+            guard let document = found.first else { return nil }
+            return Self.record(from: BASICSchemaLedger.schema.columns.reduce(into: [:]) {
+                $0[$1.name] = document.scalar($1.name) ?? .null
+            })
+        case .sql(let provider):
+            let quote = provider.quoteIdentifier
+            let clause = try BASICSQLPredicateLowering.lower(
+                filter, quote: quote, supported: provider.capabilities.operators
+            )
+            let columns = BASICSchemaLedger.schema.columns.map { quote($0.name) }.joined(separator: ", ")
+            let sql = "SELECT \(columns) FROM \(quote(BASICSchemaLedger.tableName)) WHERE \(clause.sql) LIMIT 1"
+            let rows = try await provider.query(sql, clause.parameters).toArray()
+            guard let row = rows.first else { return nil }
+            return Self.record(from: row)
+        }
+    }
+
+    private static func record(from row: [String: BASICDataValue]) -> BASICSchemaRecord? {
+        func text(_ name: String) -> String {
+            if case .text(let value) = row[name] ?? .null { return value }
+            return ""
+        }
+        guard case .integer(let version) = row["version"] ?? .null else { return nil }
+        return BASICSchemaRecord(
+            className: text("class_name"), version: Int(version),
+            appliedAt: text("applied_at"), shape: text("shape")
+        )
+    }
+
+    private func writeSchemaRecord(_ record: BASICSchemaRecord) async throws {
+        try await ensureLedger()
+        let values: [(String, BASICDataValue)] = [
+            ("class_name", .text(record.className)),
+            ("version", .integer(Int64(record.version))),
+            ("applied_at", .text(record.appliedAt)),
+            ("shape", .text(record.shape)),
+        ]
+        switch backend {
+        case .document(let provider):
+            var document = BASICDocument()
+            for (name, value) in values { document.setScalar(name, value) }
+            try await provider.upsert(
+                collection: BASICSchemaLedger.tableName,
+                key: .text(record.className), document: document
+            )
+        case .sql(let provider):
+            let quote = provider.quoteIdentifier
+            let table = quote(BASICSchemaLedger.tableName)
+            let updated = try await provider.execute(
+                "UPDATE \(table) SET \(values.dropFirst().map { "\(quote($0.0)) = ?" }.joined(separator: ", ")) WHERE \(quote("class_name")) = ?",
+                values.dropFirst().map(\.1) + [.text(record.className)]
+            )
+            guard updated == 0 else { return }
+            try await provider.execute(
+                "INSERT INTO \(table) (\(values.map { quote($0.0) }.joined(separator: ", "))) VALUES (\(values.map { _ in "?" }.joined(separator: ", ")))",
+                values.map(\.1)
+            )
+        }
+    }
+
+    /// Creates the ledger if it is not there. Idempotent, and cheap after the
+    /// first call — a store is one connection, so this is once per process.
+    private func ensureLedger() async throws {
+        if locked({ ledgerExists }) { return }
+        switch backend {
+        case .document(let provider):
+            try await provider.ensureIndex(
+                collection: BASICSchemaLedger.tableName, fields: ["class_name"], unique: true
+            )
+        case .sql(let provider):
+            let present = try await provider.tables().contains {
+                $0.name.caseInsensitiveCompare(BASICSchemaLedger.tableName) == .orderedSame
+            }
+            if !present {
+                try await provider.apply([.createTable(BASICSchemaLedger.schema)])
+            }
+        }
+        locked { ledgerExists = true }
+    }
+
+    /// Brings the database's *shape* up to the class's, and refuses to guess.
+    private func applySchema(_ mapping: BASICTableMapping) async throws -> [BASICSchemaChange] {
         switch backend {
         case .document(let provider):
             for index in mapping.schema.indexes {

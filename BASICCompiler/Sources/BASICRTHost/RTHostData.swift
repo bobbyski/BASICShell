@@ -53,6 +53,23 @@ private func runtimeValue(_ value: BASICCompiledData.Value) -> RTValue {
     }
 }
 
+/// Hands BASICCore the route back into the program, once.
+///
+/// A migration is a named BASIC function (D7), and the compiler registered the
+/// functions a string could reach in `RTTUIHandlers`. BASICCore cannot reach
+/// machine code, so the route is handed in — the same arrangement the
+/// interpreter has with its own `callNamedHandler`.
+private let installMigrationInvoker: Void = {
+    BASICCompiledData.setMigrationInvoker { name in
+        guard RTTUIHandlers.has(name) else {
+            throw BASICCompiledData.Failure(
+                message: "migration \(name) is not a FUNCTION this program registered"
+            )
+        }
+        RTTUIHandlers.call(name)
+    }
+}()
+
 @_cdecl("basic_rt_host_db_schema")
 public func basic_rt_host_db_schema(_ json: UnsafePointer<CChar>) {
     do {
@@ -66,6 +83,7 @@ public func basic_rt_host_db_schema(_ json: UnsafePointer<CChar>) {
 
 @_cdecl("basic_rt_host_db_new")
 public func basic_rt_host_db_new(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    _ = installMigrationInvoker
     let name = String(cString: typeName)
     let values = (0..<count).map { bridgeValue(rtValue(arguments[$0])) }
     do {

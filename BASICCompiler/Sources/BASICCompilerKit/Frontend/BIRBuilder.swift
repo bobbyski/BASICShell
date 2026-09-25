@@ -124,9 +124,12 @@ public struct BIRBuilder {
         for index in module.functions.indices where model.eventHandlers.contains(module.functions[index].name) {
             module.functions[index].isEventHandler = true
         }
-        // A TUI control names its handler with a string, so a program that
-        // builds one registers every function such a string could reach.
-        if Self.usesTUI(lines) {
+        // A TUI control names its handler with a string, and so does a
+        // registered migration (D7), so a program that does either registers
+        // every function such a string could reach. Resolved here, at build
+        // time, from a known set -- never discovered by convention at run time,
+        // which would work interpreted and silently do nothing compiled.
+        if Self.usesTUI(lines) || Self.usesNamedCallback(lines) {
             for index in module.functions.indices where module.functions[index].parameters.count <= 1 && !module.functions[index].isAsync {
                 module.functions[index].isEventHandler = true
                 let name = module.functions[index].name
@@ -150,6 +153,23 @@ public struct BIRBuilder {
     }
 
     /// Whether the program constructs a TUI object anywhere.
+    /// Whether the program names a function in a string argument.
+    ///
+    /// Only `DataStore.Migration` does this today, and it is matched by method
+    /// name rather than by receiver type: the receiver may be a VARIANT, and a
+    /// program that calls `.Migration` on something else loses nothing by having
+    /// its functions registered.
+    private static func usesNamedCallback(_ lines: [ParsedLine]) -> Bool {
+        for line in lines {
+            for expression in Self.expressions(in: line.statement) {
+                if case .methodCall(_, let method, _) = expression, method.normalized == "MIGRATION" {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private static func usesTUI(_ lines: [ParsedLine]) -> Bool {
         var found = false
         func note(_ expression: Expression) {

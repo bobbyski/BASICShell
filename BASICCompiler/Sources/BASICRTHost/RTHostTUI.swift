@@ -24,6 +24,16 @@ enum RTTUIHandlers {
         guard let trampoline = trampolines[name.uppercased()] else { return }
         trampoline(nil)
     }
+
+    /// Whether the program registered a function by this name.
+    ///
+    /// A control whose handler is missing does nothing, which is a reasonable
+    /// thing for a button. A *migration* whose function is missing must say so:
+    /// it would otherwise record a version it never migrated to, which is the
+    /// deniable failure D12 exists to prevent.
+    static func has(_ name: String) -> Bool {
+        trampolines[name.uppercased()] != nil
+    }
 }
 
 @_cdecl("basic_rt_host_handler_register")

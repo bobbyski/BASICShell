@@ -50,7 +50,21 @@ public enum BASICCompiledData {
     /// than leaving it to be assumed.
     private static let runtime = BASICDataRuntime()
     nonisolated(unsafe) private static var schema = BASICDataCompiledSchema()
+    /// How a registered migration reaches the program (D7).
+    ///
+    /// Set by the host half, which owns the trampoline table the compiler
+    /// registered its functions in. `BASICCore` cannot reach it — a compiled
+    /// function is machine code — so the route is handed in, exactly as the
+    /// interpreter hands in its own.
+    nonisolated(unsafe) private static var invokeHandler: ((String) throws -> Void)?
     private static let lock = NSLock()
+
+    /// Sets how a migration reaches the program.
+    public static func setMigrationInvoker(_ invoke: @escaping (String) throws -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        invokeHandler = invoke
+    }
 
     // MARK: - The schema a compiled program declares
 
@@ -94,9 +108,12 @@ public enum BASICCompiledData {
                 guard arguments.count == 1 else {
                     throw BASICError.runtime("DataStore wants a database")
                 }
-                let store = try runtime.makeDataStore(from: basicValue(arguments[0])) { name in
-                    schema.enumeration(named: name)
-                }
+                let invoke = invokeHandler
+                let store = try runtime.makeDataStore(
+                    from: basicValue(arguments[0]),
+                    enumeration: { schema.enumeration(named: $0) },
+                    invokeMigration: invoke.map { call in { name in try call(name) } }
+                )
                 return bridgeValue(store)
             case "RECORDSET":
                 throw BASICError.runtime("A Recordset comes from SqlDatabase.Query, not from NEW")

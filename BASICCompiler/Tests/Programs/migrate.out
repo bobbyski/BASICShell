@@ -1,0 +1,15 @@
+the database has never heard of it: -1
+a new database starts at the class's version: 2
+so nothing ran: []
+
+-- a database that is behind --
+pretending it is at: 0
+migrations that ran: [0->1 1->2 ]
+and it is now at:    2
+
+-- a database ahead of the program is refused --
+refused: 5  still at: 9
+
+-- a missing step is named, not guessed --
+refused: 5  migrations that ran: []
+and it is still at:   0
