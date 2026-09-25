@@ -1,4 +1,8 @@
 import BASICCore
+// MongoDB (D8, DB11). The driver is the host's to link, and registering it is
+// what makes `mongodb://` a connection string this process recognizes. Done
+// once, at startup, before any program can name one.
+import BASICMongo
 import Darwin
 import TUIKit
 import Foundation
@@ -3554,6 +3558,8 @@ let session = BASICSession(
     promptTemplate: BASICPromptTemplateStore.load(default: BASICSession.defaultPromptTemplate)
 )
 session.shellModeEnabled = true
+// Before any program can name a `mongodb://` URL (D8).
+BASICMongoProvider.register()
 session.stringSubstitutionEnabled = true
 host.attachSession(session)
 host.attachExecutionControl(shellExecutionControl)

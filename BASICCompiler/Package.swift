@@ -75,7 +75,14 @@ let package = Package(
         // archive that both dialects link is simpler than two that must be
         // found — a Rev 1 program merely carries one small class it never
         // names.
-        .target(name: "BASICRTHost", dependencies: ["BASICRT", "BASICRTSwift", .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"), .product(name: "BASICCore", package: "BASICCore")]),
+        .target(name: "BASICRTHost", dependencies: [
+            "BASICRT", "BASICRTSwift",
+            .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"),
+            .product(name: "BASICCore", package: "BASICCore"),
+            // MongoDB (D8, DB11): the host half links the driver, so a
+            // compiled program reaches the same databases the shell does.
+            .product(name: "BASICMongo", package: "BASICCore"),
+        ]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",

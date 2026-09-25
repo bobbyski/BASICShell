@@ -25,6 +25,12 @@ let package = Package(
             name: "BASICShell",
             dependencies: [
                 "BASICCore",
+                // MongoDB (D8). A *host* links the driver, which is what DB11
+                // asks for and what keeps MongoKitten's thirteen packages out
+                // of BASICCore -- linked by everything, database or not.
+                // Linking it here is what makes `mongodb://` a connection
+                // string this shell recognizes.
+                .product(name: "BASICMongo", package: "BASICCore"),
                 "DocumentArchive",
                 "TUIKit",
                 "VectorTerminalSDK"

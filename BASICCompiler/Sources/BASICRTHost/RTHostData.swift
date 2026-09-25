@@ -1,4 +1,5 @@
 import BASICCore
+import BASICMongo
 import BASICRT
 import BASICSyntax
 import Foundation
@@ -61,6 +62,11 @@ private func runtimeValue(_ value: BASICCompiledData.Value) -> RTValue {
 /// machine code, so the route is handed in — the same arrangement the
 /// interpreter has with its own `callNamedHandler`.
 private let installMigrationInvoker: Void = {
+    // MongoDB, while we are here (D8, DB11): the host half links the driver, so
+    // a compiled program recognizes `mongodb://` exactly as the shell does. Done
+    // on the same first-use path, so a program that never opens a database pays
+    // nothing for it.
+    BASICMongoProvider.register()
     BASICCompiledData.setMigrationInvoker { name in
         guard RTTUIHandlers.has(name) else {
             throw BASICCompiledData.Failure(

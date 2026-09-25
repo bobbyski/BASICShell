@@ -107,10 +107,16 @@ final class BASICDataRuntime: @unchecked Sendable {
 
     /// `DocumentDatabase(url$)` — opens a document provider chosen by the URL.
     func makeDocumentDatabase(url: String) throws -> BASICValue {
-        guard BASICMemoryDocumentProvider.handles(url) else {
+        let provider: any BASICDocumentProvider
+        if BASICMemoryDocumentProvider.handles(url) {
+            provider = BASICMemoryDocumentProvider()
+        } else if let registered = BASICDataProviders.documentProvider(for: url) {
+            // A driver the host linked (DB11). BASICCore does not link Mongo --
+            // thirteen packages for a program that may never open a database.
+            provider = registered
+        } else {
             throw BASICDataError.noProviderFor(url: url)
         }
-        let provider = BASICMemoryDocumentProvider()
         try Self.blocking { try await provider.open(url) }
         let id = locked { () -> Int in
             let id = nextID

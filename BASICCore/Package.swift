@@ -10,6 +10,10 @@ let package = Package(
     platforms: [.macOS("16.0")],
     products: [
         .library(name: "BASICCore", targets: ["BASICCore"]),
+        // MongoDB, as its own product so a host opts in (DB11, D8). Linking
+        // it is what makes `mongodb://` a connection string this process
+        // recognizes; without it, a program naming one is told so by name.
+        .library(name: "BASICMongo", targets: ["BASICMongo"]),
         // The shared front end: lexer, parser, AST, types, keywords,
         // diagnostics. The interpreter and basicc both consume it, so the
         // language stays one language (BASIC_COMPILER.md, decision D2).
@@ -44,7 +48,16 @@ let package = Package(
         // points this way on purpose: CodeWatchLint's core is Foundation
         // only and is consumed by hosts that bring their own parser, which
         // is exactly what BASIC is.
-        .package(path: "../../../../AIResearch/CodeWatch/Code/CodeWatchLint")
+        .package(path: "../../../../AIResearch/CodeWatch/Code/CodeWatchLint"),
+        // MongoDB (DB13). The official driver was archived in 2023 and wraps
+        // `libmongoc`, which does not travel to Windows the way pure Swift and
+        // NIO do; MongoKitten is maintained, MIT, and does.
+        //
+        // The only *remote* dependency this package has, and it is deliberately
+        // not a dependency of `BASICCore`: it belongs to the `BASICMongo`
+        // target alone, which a host links only if it wants Mongo. It brings
+        // thirteen packages with it, and BASICCore is linked by everything.
+        .package(url: "https://github.com/orlandos-nl/MongoKitten.git", from: "7.16.3")
     ],
     targets: [
         .target(name: "BASICSyntax"),
@@ -63,7 +76,14 @@ let package = Package(
                 .product(name: "TUIDiagram", package: "TUIDiagram"),
             ]
         ),
+        // The MongoDB driver (D8). Not in `BASICCore`'s own dependencies --
+        // see the manifest note above.
+        .target(
+            name: "BASICMongo",
+            dependencies: ["BASICCore", .product(name: "MongoKitten", package: "MongoKitten")]
+        ),
         .testTarget(name: "BASICCoreTests", dependencies: ["BASICCore"]),
+        .testTarget(name: "BASICMongoTests", dependencies: ["BASICMongo"]),
         .testTarget(name: "BASICLintTests", dependencies: ["BASICLint", "BASICLintCodeWatch"], resources: [.copy("Fixtures")])
     ]
 )
