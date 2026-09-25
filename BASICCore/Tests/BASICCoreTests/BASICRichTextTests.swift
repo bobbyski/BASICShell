@@ -56,8 +56,15 @@ struct BASICRichTextTests {
             "TUISCROLL": "TUIStack(\"v\")",
             "TUISPLIT": "\"h\", TUILabel(\"a\"), TUILabel(\"b\")",
             "TUINAVIGATOR": "TUIStack(\"v\"), \"Settings\"",
+            "SQLDATABASE": "\":memory:\"",
+            "DOCUMENTDATABASE": "\"memory://test\"",
+            "DATASTORE": "SqlDatabase(\":memory:\")",
         ]
-        for name in BASICKeywords.pseudoClasses.sorted() {
+        // Types a program receives but never builds. A Recordset is a cursor
+        // into an open connection, handed back by Query -- constructing one
+        // would have nothing to be a cursor into.
+        let producedOnly: Set<String> = ["RECORDSET"]
+        for name in BASICKeywords.pseudoClasses.sorted() where !producedOnly.contains(name) {
             let host = TestHost()
             let session = BASICSession(host: host)
             session.program.loadSource(

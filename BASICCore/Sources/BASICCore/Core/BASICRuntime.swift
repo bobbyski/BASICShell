@@ -20,6 +20,8 @@ final class BASICRuntime {
     var enumNames: Set<String> = []
     /// The ENUMs themselves, for payload defaults and coercion (E3).
     var enumDefinitions: [String: BASICEnumDefinition] = [:]
+    /// The database pseudo classes' state: providers, cursors and stores.
+    let dataRuntime = BASICDataRuntime()
 
     var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     var classDefinitions: [String: BASICClassDefinition] = [:]
@@ -607,6 +609,19 @@ final class BASICRuntime {
             "RICHPROGRESS":
             return try callRichMethod(
                 typeName: typeName, id: id, method: method, arguments: arguments
+            )
+        case "SQLDATABASE":
+            return try dataRuntime.callSQLDatabase(id: id, method: method, arguments: arguments)
+        case "DOCUMENTDATABASE":
+            return try dataRuntime.callDocumentDatabase(id: id, method: method, arguments: arguments)
+        case "RECORDSET":
+            return try dataRuntime.callRecordset(id: id, method: method, arguments: arguments)
+        case "DATASTORE":
+            return try dataRuntime.callDataStore(
+                id: id,
+                method: method,
+                arguments: arguments,
+                classDefinition: { [weak self] name in self?.classDefinitions[name.uppercased()] }
             )
         case "HTTPCLIENT":
             guard method.uppercased() == "HEADER", arguments.count == 2,

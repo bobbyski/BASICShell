@@ -747,6 +747,38 @@ public final class BASICInterpreter {
         }
     }
 
+    /// Builds a database pseudo class, for `SqlDatabase(...)` and for
+    /// `NEW SqlDatabase(...)` alike.
+    ///
+    /// One function, consulted from both call sites, rather than a second
+    /// roster to keep in step — the drift the Rich and TUI families already
+    /// had to be rescued from, and the reason D0.5 wants one registration
+    /// point for all of them.
+    private func constructDatabaseObject(named name: String, arguments: [Expression]) throws -> BASICValue? {
+        switch name {
+        case "SQLDATABASE":
+            guard arguments.count == 1, let url = try evaluate(arguments[0]).string else {
+                throw BASICError.runtime("SqlDatabase wants a connection string")
+            }
+            return try runtime.dataRuntime.makeSQLDatabase(url: url.description)
+        case "DOCUMENTDATABASE":
+            guard arguments.count == 1, let url = try evaluate(arguments[0]).string else {
+                throw BASICError.runtime("DocumentDatabase wants a connection string")
+            }
+            return try runtime.dataRuntime.makeDocumentDatabase(url: url.description)
+        case "DATASTORE":
+            guard arguments.count == 1 else {
+                throw BASICError.runtime("DataStore wants a database")
+            }
+            let database = try evaluate(arguments[0])
+            return try runtime.dataRuntime.makeDataStore(from: database) { [weak runtime] enumName in
+                runtime?.enumDefinitions[enumName.uppercased()]
+            }
+        default:
+            return nil
+        }
+    }
+
     private func updateExecutionLocation(_ line: ParsedLine) {
         currentSourceFileName = line.fileName
         guard let executionControl else {
@@ -5609,6 +5641,9 @@ public final class BASICInterpreter {
             if name.normalized == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
             }
+            if let database = try constructDatabaseObject(named: name.normalized, arguments: arguments) {
+                return database
+            }
             // The same table the `.newObject` case above uses. The pseudo-class
             // names are listed in two places — here for `RichTable()` and there
             // for `NEW RichTable()` — and the four that came before this were
@@ -5652,6 +5687,9 @@ public final class BASICInterpreter {
             }
             if className.uppercased() == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
+            }
+            if let database = try constructDatabaseObject(named: className.uppercased(), arguments: arguments) {
+                return database
             }
             // The Rich* family. They take no constructor arguments — everything
             // is set by method afterwards — so one line handles all of them.

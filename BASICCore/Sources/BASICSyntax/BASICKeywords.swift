@@ -146,6 +146,7 @@ public enum BASICKeywords {
     /// interpreter still answers to it.
     public static let pseudoClasses: Set<String> = [
         "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
+        "SQLDATABASE", "RECORDSET", "DOCUMENTDATABASE", "DATASTORE",
         "RICHPROGRESS", "RICHSYNTAX", "RICHTEXT", "SECONDSTIMER",
         "TUIAPP", "TUIBUTTON", "TUICHECK", "TUIDIALOG", "TUIFIELD", "TUIGAUGE",
         "TUILABEL", "TUILIST", "TUIMENU", "TUISTACK", "TUITABLE", "TUITEXT",
