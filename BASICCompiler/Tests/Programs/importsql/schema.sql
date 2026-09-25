@@ -31,3 +31,11 @@ CREATE INDEX ix_orders_placed ON orders (placed_at);
 /* Not a table, and not the importer's business. */
 INSERT INTO customers ("Full Name") VALUES ('Ada Lovelace');
 GRANT SELECT ON customers TO reporting;
+
+-- A table BASIC cannot spell: a space in the name, so no CLASS can be called
+-- after it. The importer names it with a class-level DATABASE NAME (DB26).
+CREATE TABLE "order items" (
+    line_id  INTEGER PRIMARY KEY,
+    order_id INT NOT NULL,
+    qty      INT
+);

@@ -1204,7 +1204,7 @@ final class FunctionBuilder {
             }
             emit(.store(target, made))
         case .typeDeclaration, .typeField, .endType, .classDeclaration, .classField, .endClass,
-             .interfaceDeclaration, .interfaceFunctionSignature, .endInterface, .implementsDeclaration, .inheritsDeclaration:
+             .interfaceDeclaration, .interfaceFunctionSignature, .endInterface, .implementsDeclaration, .inheritsDeclaration, .databaseTableDeclaration:
             // Declarations are hoisted by the analyzer and never run.
             break
         case .importDirective:

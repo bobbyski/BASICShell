@@ -262,6 +262,18 @@ public struct Parser {
             let name = try consumeIdentifier("Expected type name after INHERITS")
             return .inheritsDeclaration(name)
         }
+        // `DATABASE NAME "table"` (DB26). Contextual, exactly as the field
+        // modifier is: a program may still have a variable called DATABASE, and
+        // only `DATABASE NAME` at the start of a statement means this.
+        if case .identifier(let first) = peek, first.uppercased() == "DATABASE",
+           case .identifier(let second) = peekNext, second.uppercased() == "NAME" {
+            _ = advance()
+            _ = advance()
+            guard case .string(let table) = advance() else {
+                throw syntax("Expected a table name string after DATABASE NAME")
+            }
+            return .databaseTableDeclaration(table)
+        }
         if isMemberModifier {
             return try parseModifiedMember()
         }

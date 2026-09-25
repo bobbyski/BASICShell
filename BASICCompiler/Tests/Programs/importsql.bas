@@ -12,6 +12,9 @@ LET STORE = DataStore(DB)
 PRINT STORE.Describe$("customers")
 PRINT STORE.Describe$("orders")
 
+' A table no CLASS could be called after: the class says which table it means.
+PRINT STORE.Describe$("OrderItems")
+
 PRINT "-- and the round trip: the generated classes make their own tables --"
 PRINT "customers: "; STORE.EnsureSchema("customers"); " change(s)"
 PRINT "orders:    "; STORE.EnsureSchema("orders"); " change(s)"
@@ -34,4 +37,15 @@ PRINT "loaded "; FOUND.FullName; ", vip "; FOUND.IsVip
 LET ROWS = DB.Query("select * from customers")
 PRINT "column 2 is still called: "; ROWS.ColumnName$(2)
 ROWS.Close()
+' And it maps where it says, not where it is called.
+STORE.EnsureSchema("OrderItems")
+DIM L AS OrderItems
+L = NEW OrderItems()
+L.OrderId = 7
+L.Qty = 3
+L = STORE.Save(L)
+LET LINES = DB.Query("select count(*) as c from [order items]")
+IF LINES.Read() THEN PRINT "rows in the table with a space in its name: "; LINES.Number("c")
+LINES.Close()
+
 DB.Close()

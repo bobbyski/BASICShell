@@ -1065,7 +1065,7 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("CLASS without END CLASS")
             }
             return .jump(index + 1)
-        case .classField, .implementsDeclaration, .inheritsDeclaration, .endClass:
+        case .classField, .implementsDeclaration, .inheritsDeclaration, .databaseTableDeclaration, .endClass:
             return .next
         case .importDirective:
             return .next
@@ -2231,6 +2231,7 @@ public final class BASICInterpreter {
             var interfaces: [String] = []
             var methods: [String: FunctionDefinition] = [:]
             var baseClass: String?
+            var databaseTableName: String?
             index += 1
             while index < parsed.count {
                 switch parsed[index].statement {
@@ -2253,6 +2254,11 @@ public final class BASICInterpreter {
                         throw BASICError.runtime("CLASS \(name) cannot inherit itself")
                     }
                     baseClass = baseClassName
+                case .databaseTableDeclaration(let table):
+                    guard databaseTableName == nil else {
+                        throw BASICError.runtime("CLASS \(name) names its table twice")
+                    }
+                    databaseTableName = table
                 case .functionDeclaration(let methodName, let parameters, let returnType, let isAsync, let visibility, let isOverride, let explicitInterfaceImplementations):
                     guard let endIndex = matchingEndFunction(after: index, in: parsed) else {
                         throw BASICError.runtime("FUNCTION without END FUNCTION")
@@ -2281,7 +2287,8 @@ public final class BASICInterpreter {
                         baseClassName: baseClass,
                         fields: fields,
                         implementedInterfaces: interfaces,
-                        methods: methods
+                        methods: methods,
+                        databaseTableName: databaseTableName
                     )
                     break
                 default:

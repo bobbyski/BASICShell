@@ -118,7 +118,8 @@ struct BASICDataCompiledSchema {
             // The mapper reads fields; a method is not a column. A compiled
             // program's bodies are machine code and could not be listed here
             // in any case.
-            methods: [:]
+            methods: [:],
+            databaseTableName: object["table"] as? String
         )
     }
 

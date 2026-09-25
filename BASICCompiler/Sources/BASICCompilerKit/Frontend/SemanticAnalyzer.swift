@@ -170,6 +170,8 @@ struct SemanticAnalyzer {
                             metadata: metadata.mapValues(literal)
                         ))
                     }
+                case .databaseTableDeclaration(let table):
+                    model.updateType(typeName) { $0.databaseTableName = table }
                 case .inheritsDeclaration(let baseName):
                     guard model.types[baseName.uppercased()]?.kind == .classType else {
                         throw CompileError("CLASS \(type.displayName) inherits unknown CLASS \(baseName)", at: location)

@@ -492,6 +492,12 @@ struct BASICClassDefinition: Equatable {
     let fields: [BASICClassField]
     let implementedInterfaces: [String]
     let methods: [String: FunctionDefinition]
+    /// The table this class maps to, when `DATABASE NAME` said one (DB26).
+    ///
+    /// A class names its table by being called the same thing, which is right
+    /// nearly always and impossible for a table BASIC cannot spell — `order
+    /// items`, or one whose name is a keyword. This is how it says otherwise.
+    var databaseTableName: String? = nil
 }
 
 /// Snapshot of a registered BASIC event handler.

@@ -93,7 +93,10 @@ enum BASICObjectMapper {
         tableName: String? = nil,
         enumeration: (String) -> BASICEnumDefinition? = { _ in nil }
     ) throws -> BASICTableMapping {
-        let table = tableName ?? definition.displayName
+        // Most specific wins: an explicit argument (an importer or a test), then
+        // what the class itself said with `DATABASE NAME` (DB26), then the class
+        // name — which is right nearly always and is why it is the default.
+        let table = tableName ?? definition.databaseTableName ?? definition.displayName
         try BASICSQLIdentifier.validated(table, describing: "table for CLASS \(definition.displayName)")
 
         let tier: BASICMappingTier

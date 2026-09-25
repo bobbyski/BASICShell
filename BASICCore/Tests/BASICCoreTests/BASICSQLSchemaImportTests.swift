@@ -159,17 +159,35 @@ struct BASICSQLSchemaImportTests {
         #expect(BASICSQLSchemaImport.identifier(from: "print") == "PrintField")
         #expect(BASICSQLSchemaImport.identifier(from: "!!") == "Column")
 
-        // A table has no such escape hatch: a CLASS names its table by being
-        // called the same thing, so the name is used exactly or refused.
-        #expect(try BASICSQLSchemaImport.className(fromTable: "customers") == "customers")
-        #expect(try BASICSQLSchemaImport.className(fromTable: "order_items") == "order_items")
-        #expect(throws: BASICSQLSchemaImport.Failure.self) {
-            try BASICSQLSchemaImport.className(fromTable: "order items")
-        }
-        // Refused for the same reason a keyword is: it would not parse.
-        #expect(throws: BASICSQLSchemaImport.Failure.self) {
-            try BASICSQLSchemaImport.className(fromTable: "print")
-        }
+        // A table is used exactly, because a CLASS names its table by being
+        // called the same thing -- prettifying `customers` to `Customers` is a
+        // different table on a case-sensitive server.
+        #expect(BASICSQLSchemaImport.className(fromTable: "customers") == "customers")
+        #expect(BASICSQLSchemaImport.className(fromTable: "order_items") == "order_items")
+        // And a name BASIC cannot spell gets a legal one plus a class-level
+        // DATABASE NAME saying which table it means (DB26).
+        #expect(BASICSQLSchemaImport.className(fromTable: "order items") == "OrderItems")
+        #expect(BASICSQLSchemaImport.className(fromTable: "print") == "PrintField")
+    }
+
+    @Test("A table BASIC cannot spell is named by the class rather than refused")
+    func unspellableTablesAreNamed() throws {
+        let source = try #require(try BASICSQLSchemaImport.basicSource(fromSQL: """
+        CREATE TABLE "order items" (id INTEGER PRIMARY KEY, qty INT);
+        CREATE TABLE customers (id INTEGER PRIMARY KEY);
+        """))
+        #expect(source.contains("CLASS OrderItems"))
+        #expect(source.contains("    DATABASE NAME \"order items\""))
+        // The one that *can* be called after its table says nothing extra.
+        #expect(source.contains("CLASS customers"))
+        #expect(!source.contains("DATABASE NAME \"customers\""))
+
+        // And the generated class maps where it says: run it, and ask.
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource(source + "\nPRINT \"ok\"\n", fileName: "generated.bas")
+        try session.runProgram()
+        let definition = try #require(session.declaredClasses["ORDERITEMS"])
+        #expect(try BASICObjectMapper.map(definition).tableName == "order items")
     }
 
     @Test("Two tables that would become one class are named, not merged")

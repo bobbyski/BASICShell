@@ -26,11 +26,16 @@ enum DatabaseSchemaDescriptor {
         var classes: [[String: Any]] = []
         for name in model.typeOrder {
             guard let type = model.types[name], type.kind == .classType else { continue }
-            classes.append([
+            var object: [String: Any] = [
                 "name": type.displayName,
                 "base": type.base.flatMap { model.types[$0]?.displayName } as Any? ?? NSNull(),
                 "fields": model.allFields(of: name).map { field($0, model: model) },
-            ])
+            ]
+            // DB26: a class that names a table it is not called after says so,
+            // and the compiled ORM has to map to the same table the interpreted
+            // one does.
+            if let table = type.databaseTableName { object["table"] = table }
+            classes.append(object)
         }
         guard !classes.isEmpty else { return nil }
 

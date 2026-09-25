@@ -17,9 +17,16 @@ class orders
     public PlacedAt as string database name "placed_at" index
     public Total as string database name "total"
 end class
+' OrderItems -> order items  (tier: explicit, version 0)
+class OrderItems
+    public LineId as integer database name "line_id" key
+    public OrderId as integer database name "order_id"
+    public Qty as integer database name "qty"
+end class
 -- and the round trip: the generated classes make their own tables --
 customers: 1 change(s)
 orders:    1 change(s)
 saved as #1
 loaded Ada Lovelace, vip TRUE
 column 2 is still called: Full Name
+rows in the table with a space in its name: 1

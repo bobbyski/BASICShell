@@ -51,6 +51,12 @@ public indirect enum Statement: Equatable {
     case classDeclaration(name: String)
     case implementsDeclaration(String)
     case inheritsDeclaration(String)
+    /// `DATABASE NAME "order items"` in a CLASS body: the table this class maps
+    /// to, when it is not the class's own name (DB26).
+    ///
+    /// A body statement, like `INHERITS` and `IMPLEMENTS` — VB's shape, and the
+    /// one a reader already knows for "something about this class".
+    case databaseTableDeclaration(String)
     case classField(name: String, type: BASICType, visibility: BASICMemberVisibility, arrayDimensions: [Int?], json: BASICJSONFieldOptions?, database: BASICDatabaseFieldOptions?, metadata: BASICLiteralMetadata, defaultValue: BASICLiteral?)
     case endClass
     case functionDeclaration(

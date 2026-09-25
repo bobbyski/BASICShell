@@ -83,6 +83,8 @@ public final class SemanticModel {
         /// Own methods by normalized name → function name.
         public var methods: [String: String]
         public var base: String?
+        /// The table this CLASS maps to, when `DATABASE NAME` said one (DB26).
+        public var databaseTableName: String?
         public var interfaces: [String]
         /// Interface members: name → (parameter types, return type).
         public var members: [String: (parameters: [BIRType], returnType: BIRType)]

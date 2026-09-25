@@ -211,7 +211,7 @@ public enum BASICSQLSchemaImport {
                 isIndexed: column.isIndexed || unique || isKey, isNotNull: column.isNotNull
             )
         }
-        return Table(sqlName: name, className: try className(fromTable: name), columns: resolved)
+        return Table(sqlName: name, className: className(fromTable: name), columns: resolved)
     }
 
     private static func index(_ scanner: inout Scanner) -> (table: String, columns: [String])? {
@@ -269,16 +269,14 @@ public enum BASICSQLSchemaImport {
     ///
     /// Verbatim when the table name is already a legal identifier, and *not*
     /// prettified -- because a class names its table by being called the same
-    /// thing, and there is no class-level `DATABASE NAME` to say otherwise. So
-    /// `customers` stays `CLASS customers`, which on a case-sensitive server is
-    /// the difference between the right table and a brand new one.
+    /// thing, and `customers` becoming `Customers` is, on a case-sensitive
+    /// server, the difference between the right table and a brand new one.
     ///
-    /// A name BASIC cannot spell is refused rather than approximated, for the
-    /// same reason: a generated class quietly pointing at a table that does not
-    /// exist is worse than being told to rename it or wrap it in a view.
-    public static func className(fromTable sqlName: String) throws -> String {
-        if isLegalIdentifier(sqlName) { return sqlName }
-        throw Failure(message: "table \(sqlName) cannot be a BASIC CLASS name, and a CLASS names its table by being called the same thing -- rename the table, or wrap it in a view called \(identifier(from: sqlName))")
+    /// A name BASIC cannot spell (`order items`, or one the language owns) gets
+    /// a legal one, and the generated class says which table it means with a
+    /// class-level `DATABASE NAME` (DB26).
+    public static func className(fromTable sqlName: String) -> String {
+        isLegalIdentifier(sqlName) ? sqlName : identifier(from: sqlName)
     }
 
     /// A BASIC identifier for a SQL column name.
@@ -322,6 +320,10 @@ public enum BASICSQLSchemaImport {
         ]
         for table in tables {
             lines.append("CLASS \(table.className)")
+            // DB26: only when the class cannot simply be called after its table.
+            if table.className != table.sqlName {
+                lines.append("    DATABASE NAME \"\(table.sqlName)\"")
+            }
             for column in table.columns {
                 var marker = "DATABASE"
                 if column.sqlName != column.fieldName {

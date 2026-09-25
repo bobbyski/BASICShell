@@ -278,3 +278,67 @@ struct BASICObjectMapperTests {
         #expect(try BASICObjectMapper.map(definition, tableName: "od\"d").tableName == "od\"d")
     }
 }
+
+/// DB26 — a CLASS that names a table it is not called after.
+@Suite("BASICClassTableName")
+struct BASICClassTableNameTests {
+
+    private func definition(_ source: String) throws -> BASICClassDefinition {
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource(source, fileName: "test.bas")
+        try session.runProgram()
+        return try #require(session.declaredClasses["ORDERS"])
+    }
+
+    @Test("DATABASE NAME in a CLASS body names the table")
+    func theClassNamesItsTable() throws {
+        let mapping = try BASICObjectMapper.map(try definition("""
+        class Orders
+            database name "order items"
+            public Id as integer database key
+        end class
+        print "ok"
+        """))
+        #expect(mapping.tableName == "order items")
+        #expect(mapping.className == "Orders", "the class keeps its own name")
+    }
+
+    @Test("Without it, a class is still called after its table")
+    func theDefaultIsUnchanged() throws {
+        let mapping = try BASICObjectMapper.map(try definition("""
+        class Orders
+            public Id as integer database key
+        end class
+        print "ok"
+        """))
+        #expect(mapping.tableName == "Orders")
+    }
+
+    @Test("DATABASE stays usable as a name, because the modifier is contextual")
+    func databaseIsNotReserved() throws {
+        // `DATABASE NAME "x"` is recognized only as those two words together at
+        // the start of a statement, so this costs no reserved word -- the same
+        // bargain the field modifier makes.
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        let database = 42
+        let name = "still a name"
+        print database; " "; name
+        """, fileName: "test.bas")
+        #expect(throws: Never.self) { try session.runProgram() }
+    }
+
+    @Test("A class that names its table twice is refused")
+    func namedTwiceIsRefused() {
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        class Orders
+            database name "a"
+            database name "b"
+            public Id as integer database key
+        end class
+        print "ok"
+        """, fileName: "test.bas")
+        #expect(throws: BASICError.self) { try session.runProgram() }
+    }
+}
