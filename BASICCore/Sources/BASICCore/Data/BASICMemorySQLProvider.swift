@@ -236,8 +236,9 @@ public final class BASICMemorySQLProvider: BASICSQLProvider, @unchecked Sendable
 
     public func execute(_ sql: String, _ parameters: [BASICDataValue]) async throws -> Int {
         let statement = try await prepare(sql)
-        defer { Task { await statement.close() } }
-        return try await statement.execute(parameters)
+        let affected = try await statement.execute(parameters)
+        await statement.close()
+        return affected
     }
 
     public func query(_ sql: String, _ parameters: [BASICDataValue]) async throws -> BASICResultSet {
