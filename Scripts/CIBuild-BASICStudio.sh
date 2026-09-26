@@ -77,9 +77,20 @@ APP="$OUTPUT/BASICStudio.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$PRODUCTS/BASICStudio" "$APP/Contents/MacOS/BASICStudio"
-for icon in "$ROOT"/BASICStudio/Sources/BASICStudio/Resources/AppIcon.icns "$ROOT"/BASICStudio/Sources/BASICStudio/Resources/Assets/AppIcon.icns; do
-    [ -f "$icon" ] && cp "$icon" "$APP/Contents/Resources/AppIcon.icns" && break
-done
+# **The icon, built from the iconset** (2026-09-25). Info.plist names AppIcon, and this
+# looked only for an AppIcon.icns that this repository does not have — it keeps the ten
+# PNGs in AppIcon.iconset — so the app shipped with no icon at all and Finder drew its
+# blank white placeholder in the disk image. `iconutil` makes the icns from the iconset,
+# which is the same artwork Xcode would use.
+ICONSET="$ROOT/BASICStudio/Sources/BASICStudio/Resources/AppIcon.iconset"
+if [ -f "$ROOT/BASICStudio/Sources/BASICStudio/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/BASICStudio/Sources/BASICStudio/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+elif [ -d "$ICONSET" ]; then
+    /usr/bin/iconutil --convert icns "$ICONSET" --output "$APP/Contents/Resources/AppIcon.icns"
+else
+    echo "error: no icon for BASIC Studio — neither AppIcon.icns nor AppIcon.iconset" >&2
+    exit 1
+fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
