@@ -137,6 +137,11 @@ public struct RuntimeLibrary: Sendable {
     /// stderr ("implemented in both"). Linking order does not help — the
     /// archive's own objects reference those classes directly. The fix is in
     /// how those two frameworks are published, not here.
+    /// **Never add a static-linking flag here.** unixODBC (DB27) is LGPL, and
+    /// linking it is settled on the basis that it is linked *dynamically* and on
+    /// no other. A `-Wl,-static`, a `-Bstatic`, a vendored copy or a `.a` path
+    /// that reaches `libodbc` changes the obligation — and this function is the
+    /// one place on the link line where such a flag would plausibly be added.
     public static func dynamicLinkArguments(besideArchive archive: String) -> [String] {
         let directory = (archive as NSString).deletingLastPathComponent
         let libraries = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])

@@ -24,6 +24,14 @@ struct BASICStudioApp: App {
                 .navigationTitle(model.windowTitle)
         }
         .commands {
+            // The stock item shows the app icon and nothing else; this one
+            // shows the badge and says what BASICStudio is.
+            CommandGroup(replacing: .appInfo) {
+                Button("About BASICStudio") {
+                    StudioAbout.show()
+                }
+            }
+
             CommandGroup(after: .newItem) {
                 Button("Load...") {
                     model.loadProgramFromMenu()
