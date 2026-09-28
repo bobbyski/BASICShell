@@ -73,7 +73,8 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
 
     public func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval) {
         let start = Int64(((time - origin) * sampleRate).rounded())
-        let end = start + Int64((event.duration * sampleRate).rounded())
+        // "Play indefinitely" lasts until the voice is silenced.
+        let end = event.duration.isFinite ? start + Int64((event.duration * sampleRate).rounded()) : Int64.max
         let note: Note
         switch event {
         case .tone(let frequency, _, let volume):

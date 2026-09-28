@@ -109,25 +109,25 @@ public final class BASICSoundSession {
             silence(voice: 1)
             return
         }
-        playGW([events])
+        try playGW([events])
     }
 
     /// BBC's `SOUND channel, amplitude, pitch, duration`.
     public func sound(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws {
         let note = try BASICSoundCommand.bbc(channel: channel, amplitude: amplitude, pitch: pitch, duration: duration)
         if note.flushes { silence(voice: note.channel) }
-        enqueue([[note.event]], voice: note.channel, capacity: Self.channelCapacity, waits: false)
+        try enqueue([[note.event]], voice: note.channel, capacity: Self.channelCapacity, waits: false)
     }
 
     /// `BEEP`, timed like any other GW note.
-    public func beep() {
-        playGW([BASICSoundCommand.beep])
+    public func beep() throws {
+        try playGW([BASICSoundCommand.beep])
     }
 
     /// `PLAY macro$`.
     public func play(_ macro: String, variables: BASICMusicMacro.Variables = .none) throws {
         let notes = try BASICMusicMacro.notes(for: macro, state: &music, variables: variables)
-        playGW(notes)
+        try playGW(notes)
     }
 
     /// `PLAY(n)`: notes still queued in the background; 0 in the foreground,
@@ -143,8 +143,12 @@ public final class BASICSoundSession {
     /// command has no prompt to go back to, only an exit that would cut the
     /// music short, so both engines wait here instead.
     public func finish() {
-        let ends = pending.values.compactMap(\.last)
+        let ends = pending.values.flatMap { $0 }.filter(\.isFinite)
         if let last = ends.max() { clock.wait(until: last) }
+        // A note played "indefinitely" stops with the program.
+        for (voice, notes) in pending where notes.contains(where: { !$0.isFinite }) {
+            output?.silence(voice: voice)
+        }
         pending.removeAll()
     }
 
@@ -156,14 +160,18 @@ public final class BASICSoundSession {
 
     /// Plays GW notes on voice 1, in the foreground or background as the
     /// last `MF`/`MB` said.
-    private func playGW(_ notes: [[BASICSoundEvent]]) {
-        enqueue(notes, voice: 1, capacity: Self.backgroundCapacity, waits: !music.isBackground)
+    private func playGW(_ notes: [[BASICSoundEvent]]) throws {
+        try enqueue(notes, voice: 1, capacity: Self.backgroundCapacity, waits: !music.isBackground)
     }
 
-    private func enqueue(_ notes: [[BASICSoundEvent]], voice: Int, capacity: Int, waits: Bool) {
+    private func enqueue(_ notes: [[BASICSoundEvent]], voice: Int, capacity: Int, waits: Bool) throws {
         for note in notes {
-            // A full queue makes the program wait for its oldest note.
+            // A full queue makes the program wait for its oldest note — unless
+            // that note never ends, when a BBC Micro would wait forever.
             if unfinished(voice: voice) >= capacity, let oldest = pending[voice]?.first {
+                guard oldest.isFinite else {
+                    throw BASICSoundError("SOUND's queue is full behind a note that never ends")
+                }
                 clock.wait(until: oldest)
             }
             var time = max(clock.now, pending[voice]?.last ?? 0)
@@ -173,7 +181,7 @@ public final class BASICSoundSession {
             }
             pending[voice, default: []].append(time)
         }
-        if waits, let end = pending[voice]?.last {
+        if waits, let end = pending[voice]?.last, end.isFinite {
             clock.wait(until: end)
         }
     }

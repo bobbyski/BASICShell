@@ -55,7 +55,8 @@ public struct BASICSoundError: Error, Equatable, Sendable {
 ///   SOUND channel, amplitude, pitch, duration     BBC BASIC
 ///     channel 0 noise, 1–3 tone; +16 (&10) flushes that channel first
 ///     amplitude -15 (loud) … 0 (silent); 1–16 names an ENVELOPE
-///     pitch in quarter semitones, 53 = middle C; duration in 1/20 s
+///     pitch in quarter semitones, 53 = middle C
+///     duration -1–254 in 1/20 s; -1 plays until the channel is flushed
 ///
 ///   BEEP                                    800 Hz for a quarter second
 /// ```
@@ -82,14 +83,17 @@ public enum BASICSoundCommand {
     /// BBC's `SOUND channel, amplitude, pitch, duration`: the channel it
     /// plays on, whether it flushes that channel first, and its event.
     ///
-    /// Not modeled: the sync and hold flags in the channel's upper digits, and
-    /// envelopes. `ENVELOPE` itself does not parse, and an envelope number
-    /// plays at full volume. Duration 255, "until flushed" on a BBC Micro,
-    /// plays for 12.75 s.
+    /// Middle C is 53, as on the BBC Micro, whose programs this is for. BBC
+    /// BASIC for Windows moved it to 100. The BB4W manual confirms the rest:
+    /// the flush digit, the amplitudes, twentieths of a second, and -1 for
+    /// "play indefinitely".
+    ///
+    /// Not modeled: the sync and hold digits, and envelopes. `ENVELOPE`
+    /// itself does not parse, and an envelope number plays at full volume.
     public static func bbc(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws
         -> (channel: Int, flushes: Bool, event: BASICSoundEvent) {
         guard channel == channel.rounded(), (0...0xFFFF).contains(channel),
-              (-15...16).contains(amplitude), (0...255).contains(pitch), (0...255).contains(duration) else {
+              (-15...16).contains(amplitude), (0...255).contains(pitch), (-1...254).contains(duration) else {
             throw BASICSoundError.illegalFunctionCall
         }
         let code = Int(channel)
@@ -97,7 +101,7 @@ public enum BASICSoundCommand {
         guard voice <= 3 else { throw BASICSoundError.illegalFunctionCall }
         let flushes = (code >> 4) & 0xF != 0
         let volume = amplitude <= 0 ? -amplitude / 15 : 1
-        let seconds = duration / 20
+        let seconds = duration == -1 ? TimeInterval.infinity : duration / 20
         if voice == 0 {
             return (voice, flushes, .noise(duration: seconds, volume: volume))
         }

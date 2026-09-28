@@ -1157,7 +1157,7 @@ public final class BASICInterpreter {
             return .next
         case .beep:
             let sound = soundSession()
-            sound.beep()
+            try withSoundErrors { try sound.beep() }
             if !sound.isAudible {
                 outputCoordinator.print("\u{07}", terminator: "")
             }

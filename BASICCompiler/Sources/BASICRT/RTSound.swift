@@ -67,7 +67,7 @@ enum RTSound {
 @_cdecl("basic_rt_beep")
 public func basic_rt_beep() {
     let session = RTSound.session
-    session.beep()
+    RTSound.checked { try session.beep() }
     if !session.isAudible {
         RTConsole.write("\u{07}")
     }

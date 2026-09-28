@@ -47,6 +47,8 @@ struct BASICSoundCommandTests {
         #expect(try BASICSoundCommand.bbc(channel: 0, amplitude: -15, pitch: 4, duration: 5).event == .noise(duration: 0.25, volume: 1))
         #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 4, amplitude: 0, pitch: 0, duration: 1) }
         #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 1, amplitude: -16, pitch: 0, duration: 1) }
+        #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 1, amplitude: 0, pitch: 0, duration: 255) }
+        #expect(try BASICSoundCommand.bbc(channel: 1, amplitude: 0, pitch: 53, duration: -1).event.duration == .infinity)
     }
 
     @Test("BEEP is 800 Hz for a quarter second")
@@ -180,6 +182,18 @@ struct BASICSoundSessionTests {
         #expect(output.played.last?.voice == 2 && output.played.last?.time == 1)
         try sound.sound(channel: 17, amplitude: -15, pitch: 53, duration: 20)
         #expect(output.silenced == [1])
+    }
+
+    @Test("a note played indefinitely holds its channel until it is flushed, and stops at the end")
+    func indefiniteNotes() throws {
+        let (sound, output, clock) = session()
+        try sound.sound(channel: 1, amplitude: -15, pitch: 53, duration: -1)
+        for _ in 0..<3 { try sound.sound(channel: 1, amplitude: -15, pitch: 53, duration: 20) }
+        #expect(throws: BASICSoundError.self) { try sound.sound(channel: 1, amplitude: -15, pitch: 53, duration: 20) }
+        try sound.sound(channel: 17, amplitude: -15, pitch: 53, duration: -1)
+        sound.finish()
+        #expect(clock.now == 0)
+        #expect(output.silenced == [1, 1])
     }
 
     @Test("finish lets background notes play out")
