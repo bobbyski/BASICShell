@@ -8573,7 +8573,10 @@ struct BASICCoreTests {
 
 // Not private: BASICKeywordTests needs a host too, and a second one written to
 // satisfy the same dozen protocols would be a copy that drifts.
-final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost {
+final class TestHost: BASICFileHost, BASICNetworkHost, BASICGraphicsHost, BASICSystemHost, BASICProcessHost, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICSoundHost {
+    /// Silent by default, and on a virtual clock, so no test waits for a note.
+    var soundOutput: BASICSoundOutput?
+    var soundClock: BASICSoundClock? = BASICVirtualSoundClock()
     var output: [String] = []
     var pendingOutput = ""
     var hasPendingUnterminatedOutput = false

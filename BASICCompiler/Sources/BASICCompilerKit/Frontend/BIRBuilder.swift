@@ -916,6 +916,18 @@ final class FunctionBuilder {
             emit(.locate(try lowerExpression(row, expecting: .number, context: "LOCATE"), try lowerExpression(column, expecting: .number, context: "LOCATE")))
         case .screen(let mode):
             emit(.screen(try lowerExpression(mode, expecting: .number, context: "SCREEN")))
+        case .beep:
+            emit(.discard(.hostCall("basic_rt_beep", [], returns: .void)))
+        case .sound(let arguments):
+            let values = try arguments.map { try lowerExpression($0, expecting: .number, context: "SOUND") }
+            emit(.discard(.hostCall(values.count == 2 ? "basic_rt_sound" : "basic_rt_sound_bbc", values, returns: .void)))
+        case .play(let expression):
+            // The string first, as the interpreter evaluates it first; then
+            // the variables its `=name;` and `X name;` may read.
+            let macro = hidden("play", .string)
+            emit(.store(macro, try lowerExpression(expression, expecting: .string, context: "PLAY")))
+            try emitPlayBindings(for: expression)
+            emit(.discard(.hostCall("basic_rt_play", [.load(macro)], returns: .void)))
         case .color(let colors):
             guard !colors.isEmpty, colors.count <= 2 else { throw CompileError("COLOR expects foreground and optional background", at: location) }
             emit(.color(boxed(try lowerExpression(colors[0])), colors.count == 2 ? boxed(try lowerExpression(colors[1])) : nil))
@@ -1648,6 +1660,55 @@ final class FunctionBuilder {
         }
         emit(.callMethod(receiver: .variable(instance), candidates: [BIRMethodCandidate(typeIndex: type.index, function: constructor.name)], arguments: lowered, result: nil))
         return .load(instance)
+    }
+
+    /// Binds the variables a `PLAY` string may name, because a compiled
+    /// program has no names left to look them up by at run time.
+    ///
+    /// A literal is scanned, and only what it names is bound. A computed
+    /// string could name anything in scope, so every scalar in scope is bound,
+    /// with the seeded numbers such as `PI`. A name the program never assigns
+    /// is left unbound, and the runtime reads it as the interpreter reads an
+    /// unset variable: 0, or "" for a `$` name.
+    private func emitPlayBindings(for expression: Expression) throws {
+        var names: [String]
+        if case .string(let literal) = expression, !(substitutesStrings && literal.contains("${")) {
+            names = Self.playVariableNames(in: literal)
+        } else {
+            names = (functionName.flatMap { model.localOrder[$0] } ?? []) + model.globalOrder
+            names += SemanticModel.seededNumbers.keys.sorted()
+        }
+        var bound: Set<String> = []
+        for name in names where !bound.contains(name) {
+            bound.insert(name)
+            let known = model.info(name, in: functionName) != nil
+            guard known || SemanticModel.seededNumbers[name] != nil else { continue }
+            if known, let rank = variable(VariableName(name: name, column: 0)).rank, rank > 0 { continue }
+            let value = try lowerExpression(.variable(VariableName(name: name, column: 0)))
+            switch value.type {
+            case .number:
+                emit(.discard(.hostCall("basic_rt_play_bind_number", [.string(name), value], returns: .void)))
+            case .string:
+                emit(.discard(.hostCall("basic_rt_play_bind_text", [.string(name), value], returns: .void)))
+            default:
+                continue
+            }
+        }
+    }
+
+    /// The names a literal `PLAY` string reads: after `=` and after `X`, each
+    /// up to its `;`, normalized as BASIC names are.
+    static func playVariableNames(in macro: String) -> [String] {
+        var names: [String] = []
+        var characters = Array(macro.uppercased())[...]
+        while let character = characters.popFirst() {
+            guard character == "=" || character == "X" else { continue }
+            guard let end = characters.firstIndex(of: ";") else { break }
+            let name = String(characters[characters.startIndex..<end]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { names.append(name) }
+            characters = characters[characters.index(after: end)...]
+        }
+        return names
     }
 
     /// A read target as a reference, so it can become a place.

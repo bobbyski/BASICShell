@@ -33,6 +33,8 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case hcs = "HCS", hsn = "HSN", htn = "HTN"
     case lct = "LCT", ln = "LN", log10 = "LOG10", ltw = "LTW"
     case rad = "RAD", dec = "DEC", deg = "DEG", scn = "SCN"
+    /// `PLAY(n)`: notes left in the background queue.
+    case play = "PLAY"
     case rnd = "RND"
     /// `ERR` and `ERL` read like variables but are runtime state.
     case err = "ERR"
@@ -67,7 +69,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
              .len, .asc, .val, .instr, .lof, .loc, .fileExists:
             return .number
-        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn:
+        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn, .play:
             return .number
         case .eof:
             return .boolean
@@ -86,7 +88,7 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .inputChars:
             return [.number]
-        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn:
+        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn, .play:
             return [.number]
         case .rnd, .err, .erl, .date, .time:
             return []

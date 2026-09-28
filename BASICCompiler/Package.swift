@@ -68,7 +68,10 @@ let package = Package(
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
-        .target(name: "BASICRT", dependencies: ["BASICRTSwift"]),
+        // BASICSound is the interpreter's own sound model — events, the music
+        // macro language, timing, and the synthesizer — so SOUND and PLAY
+        // behave the same compiled (BBC_ADINS.md A8, A9).
+        .target(name: "BASICRT", dependencies: ["BASICRTSwift", .product(name: "BASICSound", package: "BASICCore")]),
         .target(name: "BASICRTSwift"),
         // BASICRTSwift rides in the same archive: a program built with the
         // Swift dialect descends every CLASS from BASICObject, and one

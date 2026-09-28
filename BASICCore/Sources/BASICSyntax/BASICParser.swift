@@ -355,6 +355,26 @@ public struct Parser {
             let mode = try parseExpression()
             return .screen(mode)
         }
+        if matchIdentifier("BEEP") {
+            return .beep
+        }
+        if matchIdentifier("SOUND") {
+            var arguments = [try parseExpression()]
+            while match(.comma) {
+                arguments.append(try parseExpression())
+            }
+            guard arguments.count == 2 || arguments.count == 4 else {
+                throw syntax("SOUND takes two numbers (GW-BASIC's frequency and duration) or four (BBC BASIC's channel, amplitude, pitch and duration)")
+            }
+            return .sound(arguments)
+        }
+        if matchIdentifier("PLAY") {
+            // GW's PLAY ON/OFF/STOP arm ON PLAY events, which are not built.
+            if isWord("ON") || isWord("OFF") || isWord("STOP") {
+                throw syntax("PLAY ON, OFF and STOP are not supported yet")
+            }
+            return .play(try parseExpression())
+        }
         if matchIdentifier("COLOR") {
             var colors = [try parseExpression()]
             while match(.comma) {
@@ -1242,6 +1262,11 @@ public struct Parser {
     }
 
     private mutating func parseOnStatement() throws -> Statement {
+        // Refused by name: read as an ordinary computed GOSUB it would parse,
+        // and quietly mean "GOSUB when PLAY(n) happens to equal 1".
+        if isWord("PLAY"), peekNext == .leftParen {
+            throw syntax("ON PLAY is not supported yet")
+        }
         if matchIdentifier("ERROR") {
             guard matchIdentifier("GOTO") else { throw syntax("Expected GOTO after ON ERROR") }
             if case .number(let value) = peek, value == 0 {
@@ -2201,7 +2226,9 @@ public struct Parser {
         "LABEL", "REM", "PRINT", "PRINT#", "LOG", "MODULE", "TRON", "TROFF", "USING", "USING$", "SCREEN", "COLOR", "CLS", "LOCATE", "PSET", "PRESET", "LINE", "CIRCLE", "PAINT", "DRAW",
         "LET", "GLOBAL", "LOCAL", "OPTION", "INPUT", "INPUT#", "OPEN", "CLOSE", "PUT", "GET", "RESET", "DATA", "READ", "RESTORE", "LOAD", "SAVE", "CD", "FILES", "SETENV", "UNSETENV", "EXPORT", "WHICH", "PUSHD", "POPD", "DIRS", "SYSTEM", "EXEC", "PIPE", "JOIN", "CANCEL", "YIELD", "ON", "ERROR", "RESUME", "GOTO", "GOSUB", "RETURN", "IF",
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
-        "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "WHILE", "WEND", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE"
+        "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "WHILE", "WEND", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE",
+        // BBC add-ins: without these, `BEEP: PRINT "x"` reads as a label.
+        "BEEP", "SOUND", "PLAY", "CHAIN", "COMMON", "RUN"
     ]
 }
 

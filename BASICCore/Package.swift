@@ -18,6 +18,11 @@ let package = Package(
         // diagnostics. The interpreter and basicc both consume it, so the
         // language stays one language (BASIC_COMPILER.md, decision D2).
         .library(name: "BASICSyntax", targets: ["BASICSyntax"]),
+        // SOUND, PLAY and BEEP: the note model, GW's music macro language,
+        // the timing both engines keep, and a tone synthesizer where
+        // AVFoundation exists. Foundation only, so the compiled runtime links
+        // the same code the interpreter runs (BBC_ADINS.md A8, A9).
+        .library(name: "BASICSound", targets: ["BASICSound"]),
         // The linter: rules, profiles, and metrics over the same parser, so
         // a program lints exactly as it parses. Knows nothing about
         // CodeWatch — CodeWatch gets an adapter, not a copy.
@@ -61,6 +66,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "BASICSyntax"),
+        .target(name: "BASICSound"),
         .target(name: "BASICLint", dependencies: ["BASICSyntax"]),
         .target(
             name: "BASICLintCodeWatch",
@@ -70,6 +76,7 @@ let package = Package(
             name: "BASICCore",
             dependencies: [
                 "BASICSyntax",
+                "BASICSound",
                 .product(name: "RichSwift", package: "RichSwift"),
                 .product(name: "TUIKit", package: "TUIKit"),
                 .product(name: "TUIBoards", package: "TUIBoards"),
@@ -83,6 +90,7 @@ let package = Package(
             dependencies: ["BASICCore", .product(name: "MongoKitten", package: "MongoKitten")]
         ),
         .testTarget(name: "BASICCoreTests", dependencies: ["BASICCore"]),
+        .testTarget(name: "BASICSoundTests", dependencies: ["BASICSound"]),
         .testTarget(name: "BASICMongoTests", dependencies: ["BASICMongo"]),
         .testTarget(name: "BASICLintTests", dependencies: ["BASICLint", "BASICLintCodeWatch"], resources: [.copy("Fixtures")])
     ]

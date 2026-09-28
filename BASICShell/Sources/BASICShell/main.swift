@@ -1403,7 +1403,18 @@ enum ShellGraphicsPolicy: String {
     }
 }
 
-final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICProcessHost, BASICForegroundProcessObserver, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost {
+final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICProcessHost, BASICForegroundProcessObserver, BASICForegroundTTYProcessHost, BASICExecutableResolverHost, BASICCommandHistoryHost, BASICBlockingKeyboardHost, BASICConsoleHost, BASICConfiguredLineInputHost, BASICLoggingHost, BASICListingStyleHost, BASICRunDisplayHost, BASICGraphicsHost, BASICVectorTerminalHost, BASICSoundHost {
+    /// SOUND, PLAY and BEEP play on this Mac's speaker. Over SSH that is the
+    /// machine running the shell, not the terminal's, which is why BEEP
+    /// falls back to the terminal bell only when there is no audio at all.
+    var soundOutput: BASICSoundOutput? {
+        #if canImport(AVFoundation)
+        return BASICToneSynthesizer.shared
+        #else
+        return nil
+        #endif
+    }
+
     var usesColoredListing: Bool { true }
     var supportsForegroundTTYProcesses: Bool { true }
     var isBASICLoggingEnabled: Bool { false }

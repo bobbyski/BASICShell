@@ -687,6 +687,13 @@ struct LLVMLowering {
     declare double @basic_rt_ltw(double)
     declare double @basic_rt_rad(double)
     declare double @basic_rt_deg(double)
+    declare void @basic_rt_beep()
+    declare void @basic_rt_sound(double, double)
+    declare void @basic_rt_sound_bbc(double, double, double, double)
+    declare void @basic_rt_play(ptr)
+    declare void @basic_rt_play_bind_number(ptr, double)
+    declare void @basic_rt_play_bind_text(ptr, ptr)
+    declare double @basic_rt_play_count(double)
     """
 }
 
@@ -2720,6 +2727,8 @@ struct FunctionEmitter {
             return number("call double @basic_rt_\(intrinsic.rawValue.lowercased())(double \(a))")
         case .dec, .deg:
             return number("call double @basic_rt_deg(double \(a))")
+        case .play:
+            return number("call double @basic_rt_play_count(double \(a))")
         case .sgn, .scn:
             let negative = out.temp(), positive = out.temp(), partial = out.temp()
             out.emit("\(negative) = fcmp olt double \(a), 0.0")

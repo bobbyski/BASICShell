@@ -56,7 +56,12 @@ final class BASICRuntime {
     private var nextTimerObjectID = 1
     private var nextHTTPClientObjectID = 1
 
+    /// The run's `SOUND`, `PLAY` and `BEEP`, made on first use.
+    var sound: BASICSoundSession?
+
     func resetForRun() {
+        sound?.stop()
+        sound = nil
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()

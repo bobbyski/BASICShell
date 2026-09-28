@@ -58,6 +58,8 @@ public enum BASICKeywords {
         // interpreter seeds, so a program that assigns PI keeps its own.
         "DEG", "LN", "LOG10",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
+        // PLAY(n): notes left in the background queue (BBC add-ins A9).
+        "PLAY",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
         "TOJSONSTRING", "VAL", "FROMJSONSTRING", "USING$", "REFLECT",
@@ -108,9 +110,10 @@ public enum BASICKeywords {
 
     /// Console, files, and the shell.
     public static let io: Set<String> = [
-        "CD", "CLOSE", "DIRS", "EXEC", "EXPORT", "FILES", "GET", "INPUT",
+        "BEEP", "CD", "CLOSE", "DIRS", "EXEC", "EXPORT", "FILES", "GET", "INPUT",
         "INPUT#", "LINE", "LOAD", "LOG", "LSET", "OPEN", "PIPE", "POPD",
-        "PRINT", "PRINT#", "PUSHD", "PUT", "PWD", "RANDOMIZE", "RESET", "RSET", "RUN",
+        "PLAY", "PRINT", "PRINT#", "PUSHD", "PUT", "PWD", "RANDOMIZE", "RESET", "RSET", "RUN",
+        "SOUND",
         "SAVE", "SETENV", "SHELL", "SYSTEM", "UNSETENV", "WHICH", "WRITE",
         "WRITE#",
     ]

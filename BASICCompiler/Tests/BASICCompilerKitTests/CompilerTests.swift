@@ -259,6 +259,59 @@ struct EndToEndTests {
 }
 
 
+/// `SOUND`, `PLAY` and `BEEP` in both engines, compared by what they played
+/// (BBC_ADINS.md A8, A9). `BASIC_SOUND_TRACE` makes each engine write every
+/// event to a file on a virtual clock, so nothing sounds, nothing waits, and
+/// the two files must match byte for byte.
+struct SoundParityTests {
+    static let program = """
+        SOUND 440, 18.2
+        SOUND 32767, 9.1
+        BEEP
+        PLAY "T120 L4 O2 A MS C8 ML D. MN E-"
+        PLAY "MB O3 CDE"
+        PRINT "queued"; PLAY(0)
+        N = 37: T$ = "L16 CDEF"
+        PLAY "N=N; X T$;"
+        M$ = "O1 L=N; G"
+        PLAY M$ + " X T$;"
+        FUNCTION Tune(L AS DOUBLE) AS DOUBLE
+          PLAY "L=L; B"
+          RETURN 0
+        END FUNCTION
+        X = Tune(2)
+        SOUND 1, -15, 53, 20
+        SOUND 17, -7, 89, 10
+        SOUND 0, -10, 4, 5
+        PRINT "done"
+        """
+
+    @Test func bothEnginesPlayTheSameNotes() throws {
+        guard let interpreter = TestBuild.interpreter else { return }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-sound-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("sound.bas").path
+        try Self.program.write(toFile: source, atomically: true, encoding: .utf8)
+        let binary = directory.appendingPathComponent("sound").path
+        try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: binary) }
+
+        func traced(_ executable: String, _ arguments: [String], into name: String) throws -> (stdout: String, trace: String) {
+            let trace = directory.appendingPathComponent(name).path
+            var environment = ProcessInfo.processInfo.environment
+            environment["BASIC_SOUND_TRACE"] = trace
+            let result = try ProcessRunner.run(executable, arguments, environment: environment)
+            return (result.stdout, try String(contentsOfFile: trace, encoding: .utf8))
+        }
+        let compiled = try traced(binary, [], into: "compiled.trace")
+        let interpreted = try traced(interpreter, [source], into: "interpreted.trace")
+        #expect(compiled.stdout == "queued3\ndone\n")
+        #expect(compiled.stdout == interpreted.stdout)
+        #expect(compiled.trace.split(separator: "\n").count == 42)
+        #expect(compiled.trace == interpreted.trace)
+    }
+}
+
 /// `swift build` compiles BASIC through BASICBuildPlugin — held by building
 /// the example package for real.
 struct SwiftPMPluginTests {

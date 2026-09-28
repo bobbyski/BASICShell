@@ -696,6 +696,8 @@ public final class BASICInterpreter {
                 return
             }
         }
+        // Background music plays out rather than being cut off by the exit.
+        runtime.sound?.finish()
     }
 
     private func apply(flow: Flow, currentPC: Int, parsed: [ParsedLine]) throws {
@@ -1152,6 +1154,33 @@ public final class BASICInterpreter {
                 throw BASICError.runtime(graphicsHost.graphicsUnavailableMessage)
             }
             graphicsHost.setScreenMode(nativeScreenMode(for: modeNumber))
+            return .next
+        case .beep:
+            let sound = soundSession()
+            sound.beep()
+            if !sound.isAudible {
+                outputCoordinator.print("\u{07}", terminator: "")
+            }
+            return .next
+        case .sound(let arguments):
+            let values = try arguments.map { try numeric(evaluate($0)) }
+            try withSoundErrors {
+                if values.count == 2 {
+                    try soundSession().sound(frequency: values[0], ticks: values[1])
+                } else {
+                    try soundSession().sound(channel: values[0], amplitude: values[1], pitch: values[2], duration: values[3])
+                }
+            }
+            return .next
+        case .play(let expression):
+            guard let macro = try evaluate(expression).string else {
+                throw BASICError.runtime("Type mismatch")
+            }
+            let variables = BASICMusicMacro.Variables(
+                number: { [runtime] name in runtime.value(for: VariableName(name: name, column: 0)).number },
+                text: { [runtime] name in runtime.value(for: VariableName(name: name, column: 0)).string?.rawString }
+            )
+            try withSoundErrors { try soundSession().play(macro.rawString, variables: variables) }
             return .next
         case .color(let expressions):
             let (color, background) = try resolveColorStatement(expressions)
@@ -2691,6 +2720,11 @@ public final class BASICInterpreter {
         case "LOF":
             try requireArgumentCount(name.name, arguments, 1)
             return .number(Double(try legacyFileLength(arguments[0])))
+        case "PLAY":
+            // `PLAY(n)`: n is a dummy, as in GW-BASIC.
+            try requireArgumentCount(name.name, arguments, 1)
+            _ = try evaluate(arguments[0])
+            return .number(Double(runtime.sound?.queuedNotes() ?? 0))
         case "LOC":
             // Two languages' LOC in one name. With an open file's number it is
             // GW-BASIC's file position; otherwise it is IBM BASIC 1970's
@@ -3888,6 +3922,12 @@ public final class BASICInterpreter {
             return "troff"
         case .screen(let mode):
             return "screen \(traceText(for: mode))"
+        case .beep:
+            return "beep"
+        case .sound(let arguments):
+            return "sound " + arguments.map(traceText(for:)).joined(separator: ", ")
+        case .play(let expression):
+            return "play \(traceText(for: expression))"
         case .color(let values):
             return "color " + values.map(traceText(for:)).joined(separator: ", ")
         case .cls:
@@ -4368,6 +4408,24 @@ public final class BASICInterpreter {
         }
         runtime.restoreChainedGlobals(carried)
         return .jump(self.pc)
+    }
+
+    /// The run's sound, made on first use with the host's output.
+    private func soundSession() -> BASICSoundSession {
+        if let sound = runtime.sound { return sound }
+        let soundHost = host as? BASICSoundHost
+        let sound = BASICSoundSession.forProgram(output: soundHost?.soundOutput, clock: soundHost?.soundClock)
+        runtime.sound = sound
+        return sound
+    }
+
+    /// Runs `body`, reporting a refused note as the BASIC error it names.
+    private func withSoundErrors(_ body: () throws -> Void) throws {
+        do {
+            try body()
+        } catch let error as BASICSoundError {
+            throw BASICError.runtime(error.message)
+        }
     }
 
     private func saveProgram(path: String) throws {
@@ -6325,6 +6383,10 @@ public final class BASICInterpreter {
             case .setFieldString(let target, let value, _):
                 visit(target, capturesBase: false)
                 visit(value)
+            case .sound(let arguments):
+                arguments.forEach(visit)
+            case .play(let expression):
+                visit(expression)
             case .chain(let file, let start, _):
                 visit(file)
                 if case .line(let line) = start { visit(line) }

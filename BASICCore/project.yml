@@ -43,6 +43,8 @@ targets:
         product: BASICLint
       - package: BASICCore
         product: BASICLintCodeWatch
+      - package: BASICCore
+        product: BASICSound
     settings:
       base:
         CODE_SIGN_STYLE: Automatic
@@ -56,3 +58,4 @@ schemes:
       targets:
         - package: BASICCore/BASICCoreTests
         - package: BASICCore/BASICLintTests
+        - package: BASICCore/BASICSoundTests

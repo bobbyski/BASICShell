@@ -505,6 +505,24 @@ public extension BASICVectorTerminalHost {
     var isVectorTerminalAvailable: Bool { true }
 }
 
+/// Host capability for `SOUND`, `PLAY` and `BEEP`: somewhere notes are heard.
+///
+/// A host without it still keeps the notes' timing, silently, and `BEEP`
+/// rings the terminal bell instead (decision B7 in BBC_ADINS.md).
+public protocol BASICSoundHost: BASICHost {
+    /// Where notes play — usually `BASICToneSynthesizer.shared` — or nil to
+    /// keep their timing without a sound.
+    var soundOutput: BASICSoundOutput? { get }
+
+    /// The clock notes are timed against; nil, the default, for the system
+    /// clock. A test hands in a virtual one so its notes take no time.
+    var soundClock: BASICSoundClock? { get }
+}
+
+extension BASICSoundHost {
+    public var soundClock: BASICSoundClock? { nil }
+}
+
 /// Host interface for non-blocking INKEY$ keyboard input.
 public protocol BASICKeyboardHost: BASICHost {
     /// Reads one pending raw key sequence, or nil when no key is pending.

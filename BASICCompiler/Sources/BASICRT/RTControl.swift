@@ -75,6 +75,7 @@ public func basic_rt_start() {
 
 @_cdecl("basic_rt_finish")
 public func basic_rt_finish() {
+    RTSound.finish()
     RTGraphics.finish()
     RTTasks.finish()
     fflush(stdout)

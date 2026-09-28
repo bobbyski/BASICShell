@@ -81,6 +81,14 @@ public indirect enum Statement: Equatable {
     case traceOff
     case screen(Expression)
     case color([Expression])
+    /// `BEEP` — GW-BASIC's 800 Hz for a quarter second.
+    case beep
+    /// `SOUND freq, ticks` (GW-BASIC, two arguments) or `SOUND channel,
+    /// amplitude, pitch, duration` (BBC BASIC, four). The parser allows only
+    /// those two counts.
+    case sound([Expression])
+    /// `PLAY macro$` — GW-BASIC's music macro language.
+    case play(Expression)
     case cls
     case locate(row: Expression, column: Expression)
     case pset(GraphicsPoint, Expression?)
