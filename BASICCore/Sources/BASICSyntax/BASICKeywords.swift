@@ -53,6 +53,10 @@ public enum BASICKeywords {
         // DB19's conversions, spelled as VB spells the two it already had.
         "CDATE", "CDATETIME", "CDEC", "CTIME",
         "CINT", "COS", "COT", "CSC", "DATE$", "DEC",
+        // BBC add-ins A3/A4: BBC's names for DEC and a natural log, and
+        // VB.NET's for a base-10 one. PI is not here: it is a variable the
+        // interpreter seeds, so a program that assigns PI keeps its own.
+        "DEG", "LN", "LOG10",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",
         "FILEEXISTS", "SIN", "SPACE$", "SPC", "SQR", "STR$", "STRING$", "TAB", "TAN", "TIME$", "POS",
@@ -195,6 +199,17 @@ public enum BASICKeywords {
         "STATUS",
     ]
 
+    /// Variables the interpreter assigns before a program starts.
+    ///
+    /// The opposite of ``pseudoVariables``: these are ordinary variables with
+    /// a starting value, so a program that assigns one simply replaces it.
+    /// That matters most for `PI`, because Microsoft-lineage programs very
+    /// often begin `PI = 3.14159` — their BASIC had no `PI` — and must keep
+    /// working now that this one does (decision B2 in BBC_ADINS.md).
+    public static let seededVariables: Set<String> = [
+        "ARGC", "ARGV$", "CURRENTDIR$", "PI", "SCREENHEIGHT", "SCREENWIDTH", "SCRIPT$",
+    ]
+
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
         "AIBASIC", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
@@ -216,7 +231,7 @@ public enum BASICKeywords {
     public static let all: Set<String> =
         control.union(declaration).union(io).union(graphics)
             .union(types).union(pseudoClasses).union(pseudoVariables)
-            .union(options).union(functions)
+            .union(seededVariables).union(options).union(functions)
 
     /// Every word, ordered — for completion menus and anything else that shows
     /// them to a person.
@@ -250,6 +265,7 @@ public enum BASICKeywords {
             (types, .type),
             (pseudoClasses, .type),
             (pseudoVariables, .function),
+            (seededVariables, .function),
             (options, .option),
             (functions, .function),
         ] {

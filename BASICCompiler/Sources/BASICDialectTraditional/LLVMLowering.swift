@@ -672,6 +672,19 @@ struct LLVMLowering {
     declare double @llvm.log.f64(double)
     declare double @tan(double)
     declare double @atan(double)
+    declare double @basic_rt_acs(double)
+    declare double @basic_rt_asn(double)
+    declare double @basic_rt_cot(double)
+    declare double @basic_rt_csc(double)
+    declare double @basic_rt_sec(double)
+    declare double @basic_rt_hcs(double)
+    declare double @basic_rt_hsn(double)
+    declare double @basic_rt_htn(double)
+    declare double @basic_rt_lct(double)
+    declare double @basic_rt_log10(double)
+    declare double @basic_rt_ltw(double)
+    declare double @basic_rt_rad(double)
+    declare double @basic_rt_deg(double)
     """
 }
 
@@ -2642,12 +2655,40 @@ struct FunctionEmitter {
         }
     }
 
+    /// Branches to a runtime failure with `message` when `test`, an `i1`
+    /// expression, holds; code after this runs only when it does not.
+    private mutating func failIf(_ test: String, _ message: String) {
+        let condition = out.temp()
+        out.emit("\(condition) = \(test)")
+        let failLabel = out.freshLabel("math.fail")
+        let okLabel = out.freshLabel("math.ok")
+        out.emit("br i1 \(condition), label %\"\(failLabel)\", label %\"\(okLabel)\"")
+        out.label(failLabel)
+        out.emit("call void @basic_rt_fail(ptr \(constants.constant(message)))")
+        out.emit("unreachable")
+        out.label(okLabel)
+    }
+
+    /// The interpreter's rule for a math result: not a number is Illegal
+    /// function call, and an infinite one is Overflow.
+    private mutating func requireFinite(_ value: String) {
+        failIf("fcmp uno double \(value), \(value)", "Illegal function call")
+        let magnitude = out.temp()
+        out.emit("\(magnitude) = call double @llvm.fabs.f64(double \(value))")
+        failIf("fcmp oeq double \(magnitude), 0x7FF0000000000000", "Overflow")
+    }
+
     private mutating func lowerIntrinsic(_ intrinsic: BIRIntrinsic, _ arguments: [BIRExpression]) -> (String, owned: Bool) {
         let values = arguments.map { lowerValue($0).0 }
         let result = out.temp()
         func number(_ text: String) -> (String, owned: Bool) { out.emit("\(result) = \(text)"); return (result, false) }
         func string(_ text: String) -> (String, owned: Bool) { out.emit("\(result) = \(text)"); owned.append(result); return (result, true) }
         let a = values.first ?? ""
+        func checked(_ text: String) -> (String, owned: Bool) {
+            out.emit("\(result) = \(text)")
+            requireFinite(result)
+            return (result, false)
+        }
         switch intrinsic {
         case .abs: return number("call double @llvm.fabs.f64(double \(a))")
         case .int: return number("call double @llvm.floor.f64(double \(a))")
@@ -2659,14 +2700,25 @@ struct FunctionEmitter {
             out.emit("\(result) = call ptr @basic_rt_exact_convert(ptr \(a), i64 \(basicExactKind(kind)))")
             own(result, as: .variant)
             return (result, true)
-        case .sqr: return number("call double @llvm.sqrt.f64(double \(a))")
-        case .sin: return number("call double @llvm.sin.f64(double \(a))")
-        case .cos: return number("call double @llvm.cos.f64(double \(a))")
-        case .exp: return number("call double @llvm.exp.f64(double \(a))")
-        case .log: return number("call double @llvm.log.f64(double \(a))")
-        case .tan: return number("call double @tan(double \(a))")
-        case .atn: return number("call double @atan(double \(a))")
-        case .sgn:
+        // The math family checks its domain as the interpreter's
+        // `BASICMathIntrinsic` does (decision B4): the fast ones inline, next
+        // to the LLVM intrinsic, and the rest inside their runtime entry.
+        case .sqr:
+            failIf("fcmp olt double \(a), 0.0", "Illegal function call")
+            return checked("call double @llvm.sqrt.f64(double \(a))")
+        case .log, .ln:
+            failIf("fcmp ole double \(a), 0.0", "Illegal function call")
+            return checked("call double @llvm.log.f64(double \(a))")
+        case .sin: return checked("call double @llvm.sin.f64(double \(a))")
+        case .cos: return checked("call double @llvm.cos.f64(double \(a))")
+        case .exp: return checked("call double @llvm.exp.f64(double \(a))")
+        case .tan: return checked("call double @tan(double \(a))")
+        case .atn: return checked("call double @atan(double \(a))")
+        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .log10, .ltw, .rad:
+            return number("call double @basic_rt_\(intrinsic.rawValue.lowercased())(double \(a))")
+        case .dec, .deg:
+            return number("call double @basic_rt_deg(double \(a))")
+        case .sgn, .scn:
             let negative = out.temp(), positive = out.temp(), partial = out.temp()
             out.emit("\(negative) = fcmp olt double \(a), 0.0")
             out.emit("\(positive) = fcmp ogt double \(a), 0.0")

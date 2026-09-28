@@ -63,7 +63,8 @@ public struct ProgramFacts: Sendable {
         names.formUnion(BASICKeywords.pseudoClasses)
         names.formUnion(BASICKeywords.pseudoVariables)
         names.formUnion(["READ", "WRITE", "BOTH", "RAW", "TEXT", "JSON", "NATIVE", "LITTLE", "BIG"])
-        names.formUnion(["SCREENWIDTH", "SCREENHEIGHT", "CURRENTDIR$", "ERR", "ERL"])
+        names.formUnion(BASICKeywords.seededVariables)
+        names.formUnion(["ERR", "ERL"])
         return Set(names.map { $0.uppercased() })
     }()
 

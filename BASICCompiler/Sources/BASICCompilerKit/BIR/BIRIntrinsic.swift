@@ -26,6 +26,13 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     case exp = "EXP"
     case log = "LOG"
     case sgn = "SGN"
+    /// The rest of the one-argument math family (BBC add-ins A3/A4). Each
+    /// lowers to a `basic_rt_<name>` entry that checks its domain the way
+    /// the interpreter's `BASICMathIntrinsic` does.
+    case acs = "ACS", asn = "ASN", cot = "COT", csc = "CSC", sec = "SEC"
+    case hcs = "HCS", hsn = "HSN", htn = "HTN"
+    case lct = "LCT", ln = "LN", log10 = "LOG10", ltw = "LTW"
+    case rad = "RAD", dec = "DEC", deg = "DEG", scn = "SCN"
     case rnd = "RND"
     /// `ERR` and `ERL` read like variables but are runtime state.
     case err = "ERR"
@@ -60,6 +67,8 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .rnd, .err, .erl,
              .len, .asc, .val, .instr, .lof, .loc, .fileExists:
             return .number
+        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn:
+            return .number
         case .eof:
             return .boolean
         case .str, .chr, .left, .right, .mid, .space, .stringRepeat, .date, .time, .inputChars:
@@ -76,6 +85,8 @@ public enum BIRIntrinsic: String, Sendable, CaseIterable {
     public var parameterTypes: [BIRType] {
         switch self {
         case .abs, .int, .fix, .cint, .sqr, .sin, .cos, .tan, .atn, .exp, .log, .sgn, .str, .chr, .space, .eof, .lof, .loc, .inputChars:
+            return [.number]
+        case .acs, .asn, .cot, .csc, .sec, .hcs, .hsn, .htn, .lct, .ln, .log10, .ltw, .rad, .dec, .deg, .scn:
             return [.number]
         case .rnd, .err, .erl, .date, .time:
             return []

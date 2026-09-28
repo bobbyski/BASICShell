@@ -385,6 +385,16 @@ public final class BASICInterpreter {
             declaredType: .scalar(.double),
             value: .number(Double(rows))
         )
+        // Seeded rather than built in (decision B2 in BBC_ADINS.md): old
+        // programs very often begin `PI = 3.14159` because their BASIC had no
+        // PI, and a variable they assign simply replaces this one. basicc
+        // does the same through `SemanticModel.seededNumbers`.
+        try runtime.assign(
+            kind: .global,
+            variable: VariableName(name: "PI", column: 0),
+            declaredType: .scalar(.double),
+            value: .number(Double.pi)
+        )
         try runtime.assign(
             kind: .global,
             variable: VariableName(name: "SCRIPT$", column: 0),
@@ -2528,12 +2538,14 @@ public final class BASICInterpreter {
     private func callIntrinsicFunction(name: VariableName, arguments: [Expression]) throws -> BASICValue {
         let normalized = name.normalized
 
+        if let math = BASICMathIntrinsic(rawValue: normalized) {
+            return .number(try math.apply(singleNumericArgument(name: name.name, arguments: arguments)))
+        }
+
         switch normalized {
         case "ABS":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(abs(value))
-        case "ACS":
-            return .number(acos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASC":
             try requireArgumentCount(name.name, arguments, 1)
             guard let string = try evaluate(arguments[0]).string,
@@ -2541,8 +2553,6 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("ASC requires a non-empty string")
             }
             return .number(Double(byte))
-        case "ASN":
-            return .number(asin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "ASYNCVALUE":
             try requireArgumentCount(name.name, arguments, 1)
             let value = try evaluate(arguments[0])
@@ -2559,8 +2569,6 @@ public final class BASICInterpreter {
                 return value
             }
             return .task(handle)
-        case "ATN":
-            return .number(atan(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "BINARY$":
             let value = try singleIntegerArgument(name: name.name, arguments: arguments)
             guard value >= 0 else {
@@ -2599,21 +2607,11 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("CDEC wants a whole number or text; a fractional DOUBLE has already lost the exactness DECIMAL is for")
             }
             return .decimal(value)
-        case "COS":
-            return .number(cos(try singleNumericArgument(name: name.name, arguments: arguments)))
-        case "COT":
-            return .number(1 / tan(try singleNumericArgument(name: name.name, arguments: arguments)))
-        case "CSC":
-            return .number(1 / sin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "DATE$":
             try requireArgumentCount(name.name, arguments, 0)
             let formatter = DateFormatter()
             formatter.dateFormat = "MM-dd-yyyy"
             return .string(BASICString(formatter.string(from: Date())))
-        case "DEC":
-            return .number(try singleNumericArgument(name: name.name, arguments: arguments) * 180 / Double.pi)
-        case "EXP":
-            return .number(exp(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "FILEEXISTS":
             try requireArgumentCount(name.name, arguments, 1)
             guard let fileHost = host as? BASICFileHost else {
@@ -2626,18 +2624,12 @@ public final class BASICInterpreter {
         case "FIX":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(value < 0 ? ceil(value) : floor(value))
-        case "HCS":
-            return .number(cosh(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "HEX$":
             let value = try singleIntegerArgument(name: name.name, arguments: arguments)
             guard value >= 0 else {
                 throw BASICError.runtime("HEX$ requires a non-negative value")
             }
             return .string(BASICString(String(value, radix: 16, uppercase: true)))
-        case "HSN":
-            return .number(sinh(try singleNumericArgument(name: name.name, arguments: arguments)))
-        case "HTN":
-            return .number(tanh(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "HTTPGETASYNC":
             try requireArgumentCount(name.name, arguments, 1)
             let url = try rawString(arguments[0])
@@ -2681,8 +2673,6 @@ public final class BASICInterpreter {
             return .number(Double(try intrinsicInstr(arguments: arguments)))
         case "INT":
             return .number(floor(try singleNumericArgument(name: name.name, arguments: arguments)))
-        case "LCT":
-            return .number(log10(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "LEFT$":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try rawString(arguments[0])
@@ -2692,17 +2682,17 @@ public final class BASICInterpreter {
             try requireArgumentCount(name.name, arguments, 1)
             return .number(Double(try legacyFileLength(arguments[0])))
         case "LOC":
+            // Two languages' LOC in one name. With an open file's number it is
+            // GW-BASIC's file position; otherwise it is IBM BASIC 1970's
+            // natural log (GC28-6837-0, Table 2), checked like LOG.
             try requireArgumentCount(name.name, arguments, 1)
             let value = try evaluate(arguments[0])
             if let number = value.number, number.rounded() == number,
+               abs(number) < BASICArithmetic.wholeNumberLimit,
                legacyFiles[Int(number)]?.isOpen == true {
                 return .number(Double(try legacyFileLocation(handle: Int(number))))
             }
-            return .number(log(try numeric(value)))
-        case "LOG":
-            return .number(log(try singleNumericArgument(name: name.name, arguments: arguments)))
-        case "LTW":
-            return .number(log2(try singleNumericArgument(name: name.name, arguments: arguments)))
+            return .number(try BASICMathIntrinsic.log.apply(numeric(value)))
         case "MID$":
             return try intrinsicMid(arguments: arguments)
         case "MKI$":
@@ -2779,8 +2769,6 @@ public final class BASICInterpreter {
         case "SETFIELD":
             try requireArgumentCount(name.name, arguments, 3)
             return try runtime.settingReflectedField(value: evaluate(arguments[0]), selector: evaluate(arguments[1]), newValue: evaluate(arguments[2]))
-        case "RAD":
-            return .number(try singleNumericArgument(name: name.name, arguments: arguments) * Double.pi / 180)
         case "READFILEASYNC":
             try requireArgumentCount(name.name, arguments, 1)
             let path = try rawString(arguments[0])
@@ -2810,8 +2798,6 @@ public final class BASICInterpreter {
         case "SCN", "SGN":
             let value = try singleNumericArgument(name: name.name, arguments: arguments)
             return .number(value == 0 ? 0 : (value < 0 ? -1 : 1))
-        case "SEC":
-            return .number(1 / cos(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SEEK":
             try requireArgumentCount(name.name, arguments, 1)
             let handle = try legacyFileHandle(arguments[0])
@@ -2854,16 +2840,12 @@ public final class BASICInterpreter {
             }
             let status = snapshot.isCancellationRequested ? BASICTaskState.cancelled : snapshot.state
             return .string(BASICString(status.rawValue.uppercased()))
-        case "SIN":
-            return .number(sin(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "SPACE$":
             let count = max(0, try singleIntegerArgument(name: name.name, arguments: arguments))
             return .string(BASICString(String(repeating: " ", count: count)))
         case "SPC":
             let count = max(0, try singleIntegerArgument(name: name.name, arguments: arguments))
             return .string(BASICString(String(repeating: " ", count: count)))
-        case "SQR":
-            return .number(sqrt(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "STR$":
             // DB19: one of the four gives its own text -- the same text PRINT
             // shows, and the same text that reads back as a literal. VB's
@@ -2885,8 +2867,6 @@ public final class BASICInterpreter {
         case "TAB":
             let target = max(1, try singleIntegerArgument(name: name.name, arguments: arguments))
             return .string(BASICString(String(repeating: " ", count: target - 1)))
-        case "TAN":
-            return .number(tan(try singleNumericArgument(name: name.name, arguments: arguments)))
         case "TIME$":
             try requireArgumentCount(name.name, arguments, 0)
             let formatter = DateFormatter()

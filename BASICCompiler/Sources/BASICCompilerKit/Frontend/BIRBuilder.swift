@@ -400,6 +400,7 @@ final class FunctionBuilder {
         }
         try indexTargets()
         emitImplicitDimensions()
+        if signature == nil && closureLines == nil { emitSeededNumbers() }
         if signature == nil {
             tracksStatements = ownedLines.contains { index in
                 if case .onErrorGoto = lines[index].statement { return true }
@@ -435,6 +436,15 @@ final class FunctionBuilder {
             throw CompileError(unterminatedFrameMessage(), at: location)
         }
         function.pruneUnreachableBlocks()
+    }
+
+    /// Gives a seeded number the program has made its own, such as `PI`,
+    /// the value the interpreter starts it with.
+    private func emitSeededNumbers() {
+        for (name, value) in SemanticModel.seededNumbers.sorted(by: { $0.key < $1.key })
+        where model.info(name, in: nil) != nil {
+            emit(.store(variable(VariableName(name: name, column: 0)), .number(value)))
+        }
     }
 
     private var endBlockID: BIRBlockID?
@@ -1952,6 +1962,9 @@ final class FunctionBuilder {
             if name.normalized == "ERL" { return .intrinsic(.erl, []) }
             if SemanticModel.namedConstants.contains(name.normalized), model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
                 return .string(name.normalized)
+            }
+            if let seeded = SemanticModel.seededNumbers[name.normalized], model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
+                return .number(seeded)
             }
             if let host = SemanticModel.hostVariables[name.normalized], model.info(name.normalized, in: functionName) == nil, closureLocals?[name.normalized] == nil {
                 let symbol = ["SCREENWIDTH": "basic_rt_screen_width", "SCREENHEIGHT": "basic_rt_screen_height", "CURRENTDIR$": "basic_rt_current_dir"][name.normalized]!

@@ -308,6 +308,14 @@ public final class SemanticModel {
         "TUINAVIGATOR": "TUINavigator",
     ]
 
+    /// Numbers the interpreter assigns before the program starts, as
+    /// ordinary variables (`seedHostVariables`). A program that never assigns
+    /// one reads the constant; one that does owns the variable, which main
+    /// seeds with the same value, so a read before the assignment agrees with
+    /// the interpreter too. `PI` is why: programs written for a BASIC without
+    /// one begin `PI = 3.14159` (decision B2 in BBC_ADINS.md).
+    public static let seededNumbers: [String: Double] = ["PI": Double.pi]
+
     /// Builtin variables the interpreter assigns at start; read through the
     /// runtime when the program never assigns them.
     public static let hostVariables: [String: BIRType] = ["SCREENWIDTH": .number, "SCREENHEIGHT": .number, "CURRENTDIR$": .string]

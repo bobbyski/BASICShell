@@ -348,10 +348,16 @@ public func basic_rt_file_lof(_ number: Double) -> Double {
     Double(RTFiles.file(number).content.byteCount)
 }
 
-/// `LOC(n)`: records completed for RANDOM files, else the position.
+/// `LOC(n)`: two languages' LOC in one name, as the interpreter reads it.
+/// With an open file's number it is GW-BASIC's position — records completed
+/// for RANDOM files, else the byte position. Otherwise it is IBM BASIC 1970's
+/// natural log (GC28-6837-0, Table 2), with LOG's domain check.
 @_cdecl("basic_rt_file_loc")
 public func basic_rt_file_loc(_ number: Double) -> Double {
-    let file = RTFiles.file(number)
+    guard number.rounded() == number, abs(number) < RTArithmetic.wholeNumberLimit,
+          let file = RTFiles.open[Int(number)] else {
+        return rtFinite(log(rtPositive(number)))
+    }
     if file.legacyMode == .random, let recordLength = file.recordLength, recordLength > 0 {
         return Double(file.position / recordLength)
     }

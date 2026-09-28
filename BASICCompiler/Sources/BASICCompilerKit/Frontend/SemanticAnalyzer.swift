@@ -632,6 +632,7 @@ struct SemanticAnalyzer {
         if key == "ERR" || key == "ERL" { return }
         if SemanticModel.namedConstants.contains(key), case .scalar = storage, model.info(key, in: function) == nil { return }
         if SemanticModel.hostVariables[key] != nil, case .scalar = storage, model.info(key, in: function) == nil { return }
+        if SemanticModel.seededNumbers[key] != nil, case .scalar = storage, model.info(key, in: function) == nil { return }
         let before = model.info(key, in: function)
         model.update(key, in: function) { info in
             if case .array(let rank) = storage, info.rank == nil { info.rank = rank }
@@ -694,6 +695,7 @@ struct SemanticAnalyzer {
             if let known = model.info(name.normalized, in: function)?.type { return known }
             if SemanticModel.namedConstants.contains(name.normalized) { return .string }
             if let host = SemanticModel.hostVariables[name.normalized] { return host }
+            if SemanticModel.seededNumbers[name.normalized] != nil { return .number }
             return Self.suffixType(name.normalized)
         case .variableReference(let reference):
             guard var type = model.info(reference.base.normalized, in: function)?.type ?? Self.suffixType(reference.base.normalized) else { return nil }

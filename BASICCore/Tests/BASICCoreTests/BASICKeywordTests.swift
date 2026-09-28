@@ -162,6 +162,20 @@ struct BASICKeywordTests {
         }
     }
 
+    /// A seeded variable starts with its value and belongs to the program the
+    /// moment the program assigns it — the reverse of a pseudo-variable.
+    ///
+    /// `PI` is the case that matters: a program written for a BASIC without
+    /// one begins `PI = 3.14159`, and must print its own value afterwards.
+    @Test("PI reads as pi until a program assigns its own")
+    func seededPIYieldsToTheProgram() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("PRINT PI\nPI = 3.14159\nPRINT PI * 2")
+        session.submit("RUN")
+        #expect(host.output == ["3.141592653589793", "6.28318"])
+    }
+
     /// Nothing the language does not implement is advertised.
     ///
     /// A regression guard with names on it. Each of these was in the old
