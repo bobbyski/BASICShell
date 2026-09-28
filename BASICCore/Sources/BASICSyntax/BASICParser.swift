@@ -459,6 +459,9 @@ public struct Parser {
             } while match(.comma)
             return .fieldFile(number: number, fields: fields)
         }
+        if case .identifier(let word) = peek, word.uppercased() == "MID$", peekNext == .leftParen {
+            return try parseMidAssignment()
+        }
         let fieldAlignment: Bool?
         if matchIdentifier("LSET") {
             fieldAlignment = false
@@ -1022,6 +1025,21 @@ public struct Parser {
             guard match(.hash) else { throw syntax("Expected file number") }
         }
         return try parseExpression()
+    }
+
+    /// `MID$(target$, start [, count]) = replacement$`. Only ever a statement:
+    /// the function form, `MID$(s$, 2)`, is an expression and never starts one.
+    private mutating func parseMidAssignment() throws -> Statement {
+        _ = advance()
+        _ = advance()
+        let reference = try parseVariableReference(message: "Expected a string variable in MID$")
+        let target: ReadTarget = reference.isSimple ? .variable(reference.base) : .reference(reference)
+        guard match(.comma) else { throw syntax("Expected , after the MID$ string") }
+        let start = try parseExpression()
+        let count = match(.comma) ? try parseExpression() : nil
+        guard match(.rightParen) else { throw syntax("Expected ) to close MID$") }
+        guard match(.equals) else { throw syntax("Expected = after MID$(...)") }
+        return .midAssignment(target: target, start: start, count: count, value: try parseExpression())
     }
 
     private mutating func parseFileTargets() throws -> [ReadTarget] {

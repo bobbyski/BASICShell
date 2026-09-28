@@ -493,6 +493,11 @@ struct SemanticAnalyzer {
         case .setFieldString(.variable(let name), let value, _):
             try record(name, .scalar, .string, at: line, in: function, changed: &changed)
             try noteReferences(in: value, at: line, in: function, changed: &changed)
+        case .midAssignment(let target, let start, let count, let value):
+            noteTarget(target, at: line, in: function, changed: &changed)
+            try noteReferences(in: start, at: line, in: function, changed: &changed)
+            if let count { try noteReferences(in: count, at: line, in: function, changed: &changed) }
+            try noteReferences(in: value, at: line, in: function, changed: &changed)
         case .input(_, let target):
             noteTarget(target, at: line, in: function, changed: &changed)
         case .lineInput(let prompt, let target, let exitTarget, let length, let maximum, let defaultText):

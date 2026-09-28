@@ -70,6 +70,19 @@ package struct RTText: Equatable {
         return false
     }
 
+    /// This text `count` times over; data stays data, as in the interpreter's
+    /// `BASICString.repeated`.
+    func repeated(_ count: Int) -> RTText {
+        switch storage {
+        case .text(let value):
+            return RTText(String(repeating: value, count: count))
+        case .data(let data):
+            var result = Data(capacity: data.count * count)
+            for _ in 0..<count { result.append(data) }
+            return RTText(data: result)
+        }
+    }
+
     func concatenating(_ other: RTText) -> RTText {
         switch (storage, other.storage) {
         case (.text(let left), .text(let right)): return RTText(left + right)
@@ -274,13 +287,40 @@ public func basic_rt_space(_ count: Double) -> UnsafeMutableRawPointer {
     rtOwned(String(repeating: " ", count: max(0, RTArithmetic.wholeNumber(count))))
 }
 
-/// `STRING$(count, text)`: the first character of `text`, repeated.
+/// `STRING$(count, text)`: the whole of `text`, repeated — BBC BASIC's form.
+/// The numeric form, `STRING$(count, code)`, arrives here as `CHR$(code)`.
 @_cdecl("basic_rt_string_repeat")
 public func basic_rt_string_repeat(_ count: Double, _ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let first = rtText(pointer).first else {
-        basic_rt_fail("STRING$ requires a non-empty string")
-    }
-    return rtOwned(String(repeating: String(first), count: max(0, RTArithmetic.wholeNumber(count))))
+    rtOwned(rtString(pointer).repeated(max(0, RTArithmetic.wholeNumber(count))))
+}
+
+/// `target` with `replacement` written over it from `start`, never changing
+/// its length — BASICCore's `BASICMidStatement.replacing`, which this matches.
+/// A `start` below 1 or past the end, or a negative `count`, is Illegal
+/// function call.
+func rtMidReplacing(_ target: String, start: Double, count: Double?, with replacement: String) -> String {
+    var characters = Array(target)
+    let position = RTArithmetic.wholeNumber(start)
+    guard position >= 1, position <= characters.count else { basic_rt_fail("Illegal function call") }
+    let limit = count.map(RTArithmetic.wholeNumber)
+    if let limit, limit < 0 { basic_rt_fail("Illegal function call") }
+    let offset = position - 1
+    let replacementCharacters = Array(replacement)
+    let length = min(limit ?? replacementCharacters.count, replacementCharacters.count, characters.count - offset)
+    characters.replaceSubrange(offset..<offset + length, with: replacementCharacters.prefix(length))
+    return String(characters)
+}
+
+/// `MID$(target$, start) = replacement$`: the new value of the target, owned.
+@_cdecl("basic_rt_mid_assign")
+public func basic_rt_mid_assign(_ target: UnsafeMutableRawPointer?, _ start: Double, _ replacement: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    rtOwned(RTText(rtMidReplacing(rtText(target), start: start, count: nil, with: rtText(replacement))))
+}
+
+/// `MID$(target$, start, count) = replacement$`: the new value, owned.
+@_cdecl("basic_rt_mid_assign_count")
+public func basic_rt_mid_assign_count(_ target: UnsafeMutableRawPointer?, _ start: Double, _ count: Double, _ replacement: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    rtOwned(RTText(rtMidReplacing(rtText(target), start: start, count: count, with: rtText(replacement))))
 }
 
 /// `WRITE #`'s quoting: `"text"` with inner quotes doubled; owned.

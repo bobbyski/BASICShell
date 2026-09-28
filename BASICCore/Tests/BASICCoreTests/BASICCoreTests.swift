@@ -2424,6 +2424,19 @@ struct BASICCoreTests {
         ])
     }
 
+    /// BBC BASIC's form, adopted 2026-09-27: the whole string repeats, so a
+    /// one-character string behaves as GW's first-character rule did.
+    @Test("STRING$ repeats the whole string")
+    func stringRepeatsWholeText() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        print STRING$(3,"ab");"|";STRING$(3,"A");"|";STRING$(2,66);"|";STRING$(3,"");"|"
+        """)
+        session.submit("RUN")
+        #expect(host.output == ["ababab|AAA|BB||"])
+    }
+
     @Test("GW BASIC string intrinsics")
     func gwBasicStringIntrinsics() {
         let host = TestHost()

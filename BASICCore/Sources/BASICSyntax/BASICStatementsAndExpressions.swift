@@ -109,6 +109,10 @@ public indirect enum Statement: Equatable {
     case writeFile(number: Expression, values: [Expression])
     case fieldFile(number: Expression, fields: [BASICLegacyFieldSpec])
     case setFieldString(target: ReadTarget, value: Expression, rightAligned: Bool)
+    /// `MID$(target$, start [, count]) = replacement$` — GW-BASIC's MID$
+    /// statement and VB's `Mid`: overwrite part of a string in place, never
+    /// changing its length. `count` is nil when it is omitted.
+    case midAssignment(target: ReadTarget, start: Expression, count: Expression?, value: Expression)
     case seekFile(number: Expression, position: Expression)
     case resetFile(Expression)
     case printFile(number: Expression, parts: [PrintPart])

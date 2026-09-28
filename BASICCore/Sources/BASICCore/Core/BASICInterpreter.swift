@@ -1428,6 +1428,9 @@ public final class BASICInterpreter {
         case .setFieldString(let target, let value, let rightAligned):
             try setLegacyFieldString(target: target, value: value, rightAligned: rightAligned)
             return .next
+        case .midAssignment(let target, let start, let count, let value):
+            try assignMid(target: target, start: start, count: count, value: value)
+            return .next
         case .seekFile(let number, let position):
             try seekLegacyFile(number: number, position: position)
             return .next
@@ -3037,20 +3040,22 @@ public final class BASICInterpreter {
         return .string(BASICString(String(suffix.prefix(count))))
     }
 
+    /// `STRING$(n, code)` repeats one character; `STRING$(n, text)` repeats
+    /// the whole text, BBC BASIC's form (Bobby, 2026-09-27). A one-character
+    /// text therefore behaves exactly as GW's first-character rule did.
     private func intrinsicString(arguments: [Expression]) throws -> BASICValue {
         try requireArgumentCount("STRING$", arguments, 2)
         let count = max(0, try integer(arguments[0]))
         let value = try evaluate(arguments[1])
-        let character: String
         if let number = value.number {
-            let code = Int(number.rounded())
-            character = code == 0 ? "\0" : try BASICString.character(code: code).description
-        } else if let string = value.string?.description, let first = string.first {
-            character = String(first)
-        } else {
-            throw BASICError.runtime("STRING$ requires a character code or non-empty string")
+            let code = try BASICArithmetic.wholeNumber(number)
+            let character = code == 0 ? "\0" : try BASICString.character(code: code).description
+            return .string(BASICString(String(repeating: character, count: count)))
         }
-        return .string(BASICString(String(repeating: character, count: count)))
+        guard let text = value.string else {
+            throw BASICError.runtime("STRING$ requires a character code or a string")
+        }
+        return .string(text.repeated(count))
     }
 
     private static func leadingNumber(in value: String) -> Double? {
@@ -4574,6 +4579,23 @@ public final class BASICInterpreter {
             bytes = rightAligned ? padding + bytes : bytes + padding
         }
         try assignReadValue(.string(BASICString(rawData: bytes)), to: target)
+    }
+
+    /// `MID$(target$, start [, count]) = replacement$`, read and written back
+    /// through the same target helpers `INPUT` uses.
+    private func assignMid(target: ReadTarget, start: Expression, count: Expression?, value: Expression) throws {
+        guard let current = try currentValue(for: target).string else {
+            throw BASICError.runtime("Type mismatch")
+        }
+        let position = try integer(start)
+        let length = try count.map(integer)
+        guard let replacement = try evaluate(value).string else {
+            throw BASICError.runtime("Type mismatch")
+        }
+        let result = try BASICMidStatement.replacing(
+            current.rawString, start: position, count: length, with: replacement.rawString
+        )
+        try assignReadValue(.string(BASICString(result)), to: target)
     }
 
     private func putLegacyRecord(handle: Int, parts: [PrintPart]) throws {
@@ -6239,6 +6261,13 @@ public final class BASICInterpreter {
                 }
             case .setFieldString(let target, let value, _):
                 visit(target, capturesBase: false)
+                visit(value)
+            case .midAssignment(let target, let start, let count, let value):
+                // Read as well as written: the untouched characters are the
+                // target's own, so its base is captured like any read.
+                visit(target, capturesBase: true)
+                visit(start)
+                count.map(visit)
                 visit(value)
             case .seekFile(let number, let position):
                 visit(number)

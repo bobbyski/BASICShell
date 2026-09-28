@@ -418,6 +418,8 @@ struct LLVMLowering {
     declare void @basic_rt_randomize_time()
     declare double @basic_rt_rnd()
     declare double @basic_rt_power(double, double)
+    declare ptr @basic_rt_mid_assign(ptr, double, ptr)
+    declare ptr @basic_rt_mid_assign_count(ptr, double, double, ptr)
     declare double @basic_rt_modulo(double, double)
     declare double @basic_rt_integer_divide(double, double)
     declare void @basic_rt_print_text(ptr)

@@ -984,6 +984,18 @@ final class FunctionBuilder {
                 number: try lowerExpression(number, expecting: .number, context: "FIELD"),
                 fields: try fields.map { BIRFieldSpec(width: try lowerExpression($0.width, expecting: .number, context: "FIELD width"), variable: variable($0.variable)) }
             ))
+        case .midAssignment(let target, let start, let count, let value):
+            // Read the target, splice through the runtime, store it back —
+            // the interpreter's `assignMid`, with the same target rules INPUT has.
+            let place = try lowerPlace(readTargetReference(target))
+            guard place.type == .string else {
+                throw CompileError("Type error: MID$ needs a string variable", at: location)
+            }
+            var arguments = [load(place), try lowerExpression(start, expecting: .number, context: "MID$ start")]
+            if let count { arguments.append(try lowerExpression(count, expecting: .number, context: "MID$ count")) }
+            arguments.append(try lowerExpression(value, expecting: .string, context: "MID$ replacement"))
+            let symbol = count == nil ? "basic_rt_mid_assign" : "basic_rt_mid_assign_count"
+            emitStore(place, .hostCall(symbol, arguments, returns: .string))
         case .setFieldString(let target, let value, let rightAligned):
             guard case .variable(let name) = target else { throw CompileError("LSET and RSET require a FIELD string variable", at: location) }
             emit(.setFieldString(variable(name), try lowerExpression(value, expecting: .string, context: rightAligned ? "RSET" : "LSET"), rightAligned: rightAligned))
@@ -2501,6 +2513,9 @@ final class FunctionBuilder {
         case .mid where lowered.count == 2: lowered.append(.number(-1))
         case .instr where lowered.count == 2: lowered.insert(.number(1), at: 0)
         case .rnd: lowered = []
+        // `STRING$(n, 66)`: GW's numeric form is one character, repeated.
+        case .stringRepeat where lowered.count == 2 && lowered[1].type == .number:
+            lowered[1] = .intrinsic(.chr, [lowered[1]])
         default: break
         }
         for (index, expected) in intrinsic.parameterTypes.enumerated() where index < lowered.count && lowered[index].type == .variant {

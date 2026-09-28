@@ -217,6 +217,11 @@ public struct ProgramFacts: Sendable {
                 assign(target, range)
             case .inputFile(_, let targets), .getFile(_, let targets):
                 for target in targets { assign(target, range) }
+            case .midAssignment(let target, let start, let count, let value):
+                note(start, range)
+                if let count { note(count, range) }
+                note(value, range)
+                assign(target, range)
             default:
                 break
             }

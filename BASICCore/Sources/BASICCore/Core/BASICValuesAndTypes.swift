@@ -59,6 +59,19 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         }
     }
 
+    /// This string `count` times over — `STRING$(3, "ab")` is `ababab`.
+    /// Data-backed strings stay data, so bytes from `MKI$` repeat intact.
+    func repeated(_ count: Int) -> BASICString {
+        switch storage {
+        case .text(let value):
+            return BASICString(String(repeating: value, count: count))
+        case .data(let data):
+            var result = Data(capacity: data.count * count)
+            for _ in 0..<count { result.append(data) }
+            return BASICString(rawData: result)
+        }
+    }
+
     func concatenating(_ other: BASICString) -> BASICString {
         switch (storage, other.storage) {
         case (.text(let left), .text(let right)):
