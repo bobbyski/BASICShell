@@ -93,13 +93,13 @@ public enum BASICKeywords {
     public static let control: Set<String> = [
         "AND", "ASYNC", "AWAIT", "BACKGROUND", "CALL", "CANCEL", "CASE", "ELSE",
         "ELSEIF", "END", "ERROR", "EXIT", "WHILE", "WEND", "FOR", "GOSUB", "GOTO", "IF", "IS",
-        "EQV", "IMP", "JOIN", "MOD", "NEXT", "NOT", "ON", "OR", "PAUSE", "XOR", "REM", "RESUME", "RETURN", "SELECT",
+        "CHAIN", "EQV", "IMP", "JOIN", "MOD", "NEXT", "NOT", "ON", "OR", "PAUSE", "XOR", "REM", "RESUME", "RETURN", "SELECT",
         "STEP", "STOP", "THEN", "TO", "YIELD",
     ]
 
     /// Names and shapes.
     public static let declaration: Set<String> = [
-        "AS", "CLASS", "DATA", "DEF", "DEFAULT", "DIM", "FIELD", "FUNCTION",
+        "AS", "CLASS", "COMMON", "DATA", "DEF", "DEFAULT", "DIM", "FIELD", "FUNCTION",
         "GLOBAL", "IMPLEMENTS", "IMPORT", "INHERITS", "INTERFACE", "LABEL",
         "LET", "LOCAL", "ME", "META", "MODULE", "MUTABLE", "NAME", "NEW", "OPTION",
         "OVERRIDES", "PRIVATE", "PROTECTED", "PUBLIC", "READ", "READONLY",
@@ -110,7 +110,7 @@ public enum BASICKeywords {
     public static let io: Set<String> = [
         "CD", "CLOSE", "DIRS", "EXEC", "EXPORT", "FILES", "GET", "INPUT",
         "INPUT#", "LINE", "LOAD", "LOG", "LSET", "OPEN", "PIPE", "POPD",
-        "PRINT", "PRINT#", "PUSHD", "PUT", "PWD", "RANDOMIZE", "RESET", "RSET",
+        "PRINT", "PRINT#", "PUSHD", "PUT", "PWD", "RANDOMIZE", "RESET", "RSET", "RUN",
         "SAVE", "SETENV", "SHELL", "SYSTEM", "UNSETENV", "WHICH", "WRITE",
         "WRITE#",
     ]
@@ -212,7 +212,7 @@ public enum BASICKeywords {
 
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
-        "AIBASIC", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
+        "AIBASIC", "ALL", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
         "GAMEPAD", "IBM", "KEYS", "LENGTH", "MAX", "MODE", "MOUSE", "OFF",
         "ONLY", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT", "TROFF", "TRON",
         "TTY", "USING",

@@ -505,7 +505,39 @@ public struct Parser {
             return .input(prompt: prompt, target: reference.isSimple ? .variable(reference.base) : .reference(reference))
         }
         if matchIdentifier("LOAD") {
-            return .load(try parseExpression())
+            let file = try parseExpression()
+            // `LOAD f$, R` runs what it loads, keeping files open: TRS-80's
+            // manual calls it the same command as `RUN f$, R`.
+            if match(.comma) {
+                try consumeRunOption()
+                return .runFile(file: file, keepsFiles: true)
+            }
+            return .load(file)
+        }
+        if matchIdentifier("RUN") {
+            guard !isStatementEnd else {
+                throw syntax("RUN in a program needs a file name: RUN \"next.bas\"")
+            }
+            let file = try parseExpression()
+            if match(.comma) {
+                try consumeRunOption()
+                return .runFile(file: file, keepsFiles: true)
+            }
+            return .runFile(file: file, keepsFiles: false)
+        }
+        if matchIdentifier("CHAIN") {
+            return try parseChain()
+        }
+        if matchIdentifier("COMMON") {
+            var names: [VariableName] = []
+            repeat {
+                names.append(try consumeVariableName("Expected a variable in COMMON"))
+                // `D()` names an array, as GW writes it; the name is the same.
+                if match(.leftParen) {
+                    guard match(.rightParen) else { throw syntax("Expected () after an array in COMMON") }
+                }
+            } while match(.comma)
+            return .common(names)
         }
         if matchIdentifier("SAVE") {
             return .save(isStatementEnd ? nil : try parseExpression())
@@ -1025,6 +1057,62 @@ public struct Parser {
             guard match(.hash) else { throw syntax("Expected file number") }
         }
         return try parseExpression()
+    }
+
+    /// `CHAIN file$ [, [start] [, [ALL]]]`, GW-BASIC's grammar. `MERGE` and
+    /// `DELETE` are refused by name: they lay one program's lines over
+    /// another's, and wait for a later phase of BBC_ADINS.md.
+    private mutating func parseChain() throws -> Statement {
+        if isWord("MERGE") { throw syntax("CHAIN MERGE is not supported yet") }
+        let file = try parseExpression()
+        var start: ChainStart?
+        var keepsAll = false
+        if match(.comma) {
+            if matchIdentifier("ALL") {
+                keepsAll = true
+            } else if peek != .comma {
+                if case .identifier(let name) = peek, peekNext == .comma || isStatementEnd(after: 1) {
+                    _ = advance()
+                    start = .label(name)
+                } else {
+                    start = .line(try parseExpression())
+                }
+            }
+            if !keepsAll, match(.comma) {
+                if isWord("DELETE") { throw syntax("CHAIN ... DELETE is not supported yet") }
+                guard matchIdentifier("ALL") else { throw syntax("Expected ALL") }
+                keepsAll = true
+            }
+            if match(.comma) {
+                if isWord("DELETE") { throw syntax("CHAIN ... DELETE is not supported yet") }
+                throw syntax("Unexpected input after CHAIN")
+            }
+        }
+        return .chain(file: file, start: start, keepsAllVariables: keepsAll)
+    }
+
+    /// The `R` of `RUN f$, R` and `LOAD f$, R`.
+    ///
+    /// Compared as text rather than through `matchIdentifier`, deliberately:
+    /// the vocabulary is built from `matchIdentifier` calls, and a one-letter
+    /// word there would color every variable named `R` as a keyword.
+    private mutating func consumeRunOption() throws {
+        guard isWord("R") else { throw syntax("Expected R after the file name") }
+        _ = advance()
+    }
+
+    /// Whether the next token is `word`, without consuming it.
+    private func isWord(_ word: String) -> Bool {
+        if case .identifier(let name) = peek { return name.uppercased() == word }
+        return false
+    }
+
+    /// Whether the statement ends `offset` tokens ahead.
+    private func isStatementEnd(after offset: Int) -> Bool {
+        let index = current + offset
+        guard index < tokens.count else { return true }
+        let token = tokens[index].token
+        return token == .eof || token == .colon || (stopsAtElse && isElse(token))
     }
 
     /// `MID$(target$, start [, count]) = replacement$`. Only ever a statement:

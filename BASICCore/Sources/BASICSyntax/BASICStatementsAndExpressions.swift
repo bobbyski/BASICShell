@@ -120,6 +120,18 @@ public indirect enum Statement: Equatable {
     case inputFile(number: Expression, targets: [ReadTarget])
     case lineInputFile(number: Expression, target: ReadTarget)
     case load(Expression)
+    /// `CHAIN file$ [, start] [, ALL]` — run another program in this one's
+    /// place. Open files stay open; the variables `COMMON` names survive, or
+    /// all of them with `ALL`; everything else starts fresh (BBC_ADINS.md A7).
+    case chain(file: Expression, start: ChainStart?, keepsAllVariables: Bool)
+    /// `COMMON a, b$, c()` — the variables a `CHAIN` carries into the next
+    /// program. Declarative, as in GW-BASIC: `CHAIN` reads every `COMMON` in
+    /// the program, wherever it sits, and executing one does nothing.
+    case common([VariableName])
+    /// `RUN file$ [, R]` inside a program, and `LOAD file$, R`, which is the
+    /// same statement — TRS-80 Model III and GW-BASIC's way to chain. No
+    /// variables survive; `R` keeps open files open.
+    case runFile(file: Expression, keepsFiles: Bool)
     case save(Expression?)
     case cd(Expression?)
     case pwd
@@ -190,6 +202,13 @@ public struct ClosureBodyLine: Equatable {
         self.sourceLineNumber = sourceLineNumber
         self.statement = statement
     }
+}
+
+/// Where a `CHAIN` starts the next program: at a line number, which may be
+/// computed, or at a label — a bare name, the way `GOTO` reads one.
+public enum ChainStart: Equatable {
+    case line(Expression)
+    case label(String)
 }
 
 public enum CaseClause: Equatable {

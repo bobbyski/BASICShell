@@ -71,6 +71,27 @@ final class BASICRuntime {
         clearLastError()
     }
 
+    /// The global variables a `CHAIN` carries into the next program: the ones
+    /// `COMMON` names, or every one when `names` is nil (`CHAIN … ALL`).
+    func chainedGlobals(named names: Set<String>?) -> [String: VariableBinding] {
+        guard let names else { return globals }
+        return globals.filter { names.contains($0.key) }
+    }
+
+    /// Puts carried variables back after `resetForRun` and the next
+    /// program's own seeding, so a carried `PI` keeps the program's value.
+    func restoreChainedGlobals(_ bindings: [String: VariableBinding]) {
+        for (name, binding) in bindings {
+            globals[name] = binding
+        }
+    }
+
+    /// The timers the program started, so a `CHAIN` can stop them before the
+    /// program that owns their handlers is gone.
+    var timerObjectIDs: [Int] {
+        Array(timerObjects.keys)
+    }
+
     func clearAll() {
         resetForRun()
         letMode = .global

@@ -1272,6 +1272,17 @@ final class FunctionBuilder {
             emit(.discard(.hostCall("basic_rt_task_background", [boxed(try lowerExpression(expression))], returns: .void)))
         case .load, .save, .cd, .pwd:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
+        // A compiled program has no program text to swap, and one binary
+        // holding several programs is decision B6 in BBC_ADINS.md. Refused
+        // by name, at compile time, rather than built into something that
+        // behaves differently from the interpreter.
+        case .chain:
+            throw CompileError("CHAIN runs another program in this one's place, which a compiled program cannot do yet; run it with BASICShell", at: location)
+        case .runFile:
+            throw CompileError("RUN (or LOAD ..., R) with a file name runs another program, which a compiled program cannot do yet; run it with BASICShell", at: location)
+        case .common:
+            // Declarative: only a CHAIN reads it, and a compiled program has none.
+            break
         default:
             throw unsupported(describe(statement))
         }

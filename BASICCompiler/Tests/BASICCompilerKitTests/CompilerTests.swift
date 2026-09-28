@@ -144,6 +144,22 @@ struct DiagnosticTests {
         }
     }
 
+    /// `CHAIN` and `RUN f$` hand off to another program, which a compiled one
+    /// cannot do yet (BBC_ADINS.md, decision B6). Refused by name at compile
+    /// time, never built into something that behaves differently; `COMMON`
+    /// alone is declarative and compiles.
+    @Test func chainingToAnotherProgramIsRefusedByName() throws {
+        for source in ["CHAIN \"next.bas\"", "RUN \"next.bas\"", "RUN \"next.bas\", R", "LOAD \"next.bas\", R"] {
+            do {
+                _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "chain")
+                Issue.record("\(source) compiled")
+            } catch let error as CompileError {
+                #expect(String(describing: error).contains("cannot do yet"), "\(source): \(error)")
+            }
+        }
+        _ = try Compilation(dialect: TraditionalDialect()).bir(source: "COMMON A, B$\nPRINT 1", name: "common")
+    }
+
     @Test func mixedTypesAreAnError() {
         #expect(throws: CompileError.self) {
             try Compilation(dialect: TraditionalDialect()).bir(source: "A = 1\nA = \"x\"", name: "bad")

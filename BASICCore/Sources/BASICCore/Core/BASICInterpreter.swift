@@ -1453,6 +1453,13 @@ public final class BASICInterpreter {
             let resolvedPath = try string(path)
             try loadProgram(path: resolvedPath)
             return .next
+        case .chain(let file, let start, let keepsAll):
+            let carried: Set<String>? = keepsAll ? nil : BASICChain.commonNames(in: parsed)
+            return try chainProgram(file: file, start: start, carrying: carried, keepsFiles: true, pc: pc, parsed: parsed)
+        case .common:
+            return .next
+        case .runFile(let file, let keepsFiles):
+            return try chainProgram(file: file, start: nil, carrying: [], keepsFiles: keepsFiles, pc: pc, parsed: parsed)
         case .save(let path):
             let resolvedPath = try path.map(string) ?? fileState.lastFilePath
             guard let resolvedPath else { throw BASICError.syntax("Expected path after SAVE") }
@@ -4307,6 +4314,62 @@ public final class BASICInterpreter {
         }
     }
 
+    /// Runs another program in this one's place (`CHAIN`, `RUN f$`,
+    /// `LOAD f$, R`), keeping what `BASICChain`'s table says survives.
+    ///
+    /// The handoff happens in place: the next program is prepared into this
+    /// interpreter and the flow returned jumps to its first statement, so the
+    /// run loop simply carries on in it.
+    private func chainProgram(
+        file: Expression,
+        start: ChainStart?,
+        carrying names: Set<String>?,
+        keepsFiles: Bool,
+        pc: Int,
+        parsed: [ParsedLine]
+    ) throws -> Flow {
+        guard functionStack.isEmpty else {
+            throw BASICError.runtime("CHAIN and RUN cannot hand off from inside a FUNCTION or SUB")
+        }
+        guard let fileHost = host as? BASICFileHost else {
+            throw BASICError.runtime("CHAIN is not supported by this host")
+        }
+        // Everything the old program decides is read before it is gone: the
+        // file name, a computed start line, the variables that survive.
+        let requested = try string(file)
+        let resolved = Self.resolvedImportPath(requested, relativeTo: parsed[safe: pc]?.fileName)
+        guard let path = try BASICChain.candidatePaths(for: requested, resolvedBesideProgram: resolved)
+            .first(where: { try fileHost.fileExists(path: $0) }) else {
+            throw BASICError.runtime("File not found: \(requested)")
+        }
+        var startLine: Int?
+        if case .line(let expression) = start {
+            startLine = try integer(expression)
+        }
+        let carried = runtime.chainedGlobals(named: names)
+        let source = try fileHost.loadTextFile(path: path)
+
+        if !keepsFiles {
+            try closeLegacyFile(number: nil)
+        }
+        for id in runtime.timerObjectIDs {
+            timerHost?.stopTimer(id: id)
+        }
+        runtime.resetForRun()
+        gosubStack.removeAll()
+        forStack.removeAll()
+        resetErrorTrap()
+        program.loadSource(source, fileName: path)
+        fileState.lastFilePath = path
+        try prepare(startLine: startLine)
+        if case .label(let label) = start {
+            guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+            self.pc = index
+        }
+        runtime.restoreChainedGlobals(carried)
+        return .jump(self.pc)
+    }
+
     private func saveProgram(path: String) throws {
         guard let fileHost = host as? BASICFileHost else {
             throw BASICError.runtime("SAVE is not supported by this host")
@@ -6262,6 +6325,11 @@ public final class BASICInterpreter {
             case .setFieldString(let target, let value, _):
                 visit(target, capturesBase: false)
                 visit(value)
+            case .chain(let file, let start, _):
+                visit(file)
+                if case .line(let line) = start { visit(line) }
+            case .runFile(let file, _):
+                visit(file)
             case .midAssignment(let target, let start, let count, let value):
                 // Read as well as written: the untouched characters are the
                 // target's own, so its base is captured like any read.
