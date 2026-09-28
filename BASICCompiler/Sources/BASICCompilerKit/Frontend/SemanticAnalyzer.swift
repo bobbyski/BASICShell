@@ -745,7 +745,7 @@ struct SemanticAnalyzer {
             // number, which is what BIRBuilder lowers -- and the two have to
             // agree, or a variable is "used as both decimal and number".
             switch operation {
-            case .add, .subtract, .multiply, .divide:
+            case .add, .subtract, .multiply, .divide, .power, .modulo, .integerDivide:
                 let leftType = try? typeOf(left, in: function)
                 return Self.isExact(leftType) ? (leftType ?? .number) : ((try? typeOf(right, in: function)) ?? .number)
             default:

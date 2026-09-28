@@ -417,6 +417,9 @@ struct LLVMLowering {
     declare void @basic_rt_randomize(double)
     declare void @basic_rt_randomize_time()
     declare double @basic_rt_rnd()
+    declare double @basic_rt_power(double, double)
+    declare double @basic_rt_modulo(double, double)
+    declare double @basic_rt_integer_divide(double, double)
     declare void @basic_rt_print_text(ptr)
     declare void @basic_rt_print_number(double)
     declare void @basic_rt_print_boolean(i1)
@@ -2440,6 +2443,12 @@ struct FunctionEmitter {
                 out.emit("unreachable")
                 out.label(okLabel)
                 out.emit("\(result) = fdiv double \(l), \(r)")
+            case .power:
+                out.emit("\(result) = call double @basic_rt_power(double \(l), double \(r))")
+            case .modulo:
+                out.emit("\(result) = call double @basic_rt_modulo(double \(l), double \(r))")
+            case .integerDivide:
+                out.emit("\(result) = call double @basic_rt_integer_divide(double \(l), double \(r))")
             }
             return (result, false)
         case .concat(let left, let right):

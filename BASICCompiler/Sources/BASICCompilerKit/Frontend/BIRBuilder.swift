@@ -2089,6 +2089,9 @@ final class FunctionBuilder {
         case .subtract: symbol = "-"; returns = .exact(kind)
         case .multiply: symbol = "*"; returns = .exact(kind)
         case .divide: symbol = "/"; returns = .exact(kind)
+        case .power: symbol = "^"; returns = .exact(kind)
+        case .modulo: symbol = "MOD"; returns = .exact(kind)
+        case .integerDivide: symbol = "\\"; returns = .exact(kind)
         case .equal: symbol = "="; returns = .number
         case .notEqual: symbol = "<>"; returns = .number
         case .less: symbol = "<"; returns = .number
@@ -2099,6 +2102,19 @@ final class FunctionBuilder {
         case .and, .or, .xor, .eqv, .imp: return nil
         }
         return .exactBinary(symbol, l, r, returns: returns)
+    }
+
+    /// The BIR operation for an arithmetic `BinaryOperation` other than `+`,
+    /// and the symbol a type error names it by.
+    private static func arithmetic(for operation: BinaryOperation) -> (BIRArithmetic, String) {
+        switch operation {
+        case .multiply: return (.multiply, "*")
+        case .divide: return (.divide, "/")
+        case .power: return (.power, "^")
+        case .modulo: return (.modulo, "MOD")
+        case .integerDivide: return (.integerDivide, "\\")
+        default: return (.subtract, "-")
+        }
     }
 
     private func lowerBinary(_ left: Expression, _ operation: BinaryOperation, _ right: Expression) throws -> BIRExpression {
@@ -2117,11 +2133,10 @@ final class FunctionBuilder {
             if dynamic { return .valueAdd(boxed(l), boxed(r)) }
             try requireNumbers(l, r, "+")
             return .arithmetic(.add, l, r)
-        case .subtract, .multiply, .divide:
+        case .subtract, .multiply, .divide, .power, .modulo, .integerDivide:
             if dynamic { l = convert(l, to: .number, name: nil); r = convert(r, to: .number, name: nil) }
-            let symbol = ["subtract": "-", "multiply": "*", "divide": "/"][String(describing: operation)] ?? "?"
+            let (op, symbol) = Self.arithmetic(for: operation)
             try requireNumbers(l, r, symbol)
-            let op: BIRArithmetic = operation == .subtract ? .subtract : operation == .multiply ? .multiply : .divide
             return .arithmetic(op, l, r)
         case .equal, .notEqual:
             if dynamic || l.type.isComposite || l.type == .dictionary || l.type.isArray || r.type.isComposite || r.type == .dictionary || r.type.isArray {

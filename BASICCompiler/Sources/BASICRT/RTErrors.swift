@@ -32,6 +32,7 @@ enum RTError {
         if isTypeError { return 13 }
         if message.localizedCaseInsensitiveContains("division by zero") { return 11 }
         if message.localizedCaseInsensitiveContains("type mismatch") { return 13 }
+        if message == "Overflow" { return 6 }
         return 5
     }
 

@@ -760,6 +760,8 @@ public final class BASICInterpreter {
             return 11
         case .runtime(let message) where message.localizedCaseInsensitiveContains("type mismatch"):
             return 13
+        case .runtime(let message) where message == "Overflow":
+            return 6
         case .type, .contextualType:
             return 13
         case .missingLine, .missingLabel:
@@ -4091,6 +4093,9 @@ public final class BASICInterpreter {
         case .subtract: return "-"
         case .multiply: return "*"
         case .divide: return "/"
+        case .power: return "^"
+        case .modulo: return "mod"
+        case .integerDivide: return "\\"
         case .equal: return "="
         case .notEqual: return "<>"
         case .less: return "<"
@@ -5644,7 +5649,8 @@ public final class BASICInterpreter {
                 }
             }
             throw BASICError.runtime("Cannot compare these values")
-        case .add, .subtract, .multiply, .divide, .and, .or, .xor, .eqv, .imp:
+        case .add, .subtract, .multiply, .divide, .power, .modulo, .integerDivide,
+             .and, .or, .xor, .eqv, .imp:
             throw BASICError.runtime("Invalid CASE comparison")
         }
     }
@@ -6579,6 +6585,12 @@ public final class BASICInterpreter {
             let divisor = try numeric(right)
             guard divisor != 0 else { throw BASICError.runtime("Division by zero") }
             return .number(try numeric(left) / divisor)
+        case .power:
+            return .number(try BASICArithmetic.power(numeric(left), numeric(right)))
+        case .modulo:
+            return .number(try BASICArithmetic.modulo(numeric(left), numeric(right)))
+        case .integerDivide:
+            return .number(try BASICArithmetic.integerDivide(numeric(left), numeric(right)))
         case .equal:
             return .number(left == right ? 1 : 0)
         case .notEqual:
@@ -6673,7 +6685,7 @@ public final class BASICInterpreter {
     }
 
     private func integer(_ expression: Expression) throws -> Int {
-        Int(try numeric(try evaluate(expression)).rounded())
+        try BASICArithmetic.wholeNumber(numeric(try evaluate(expression)))
     }
 
     private func string(_ expression: Expression) throws -> String {

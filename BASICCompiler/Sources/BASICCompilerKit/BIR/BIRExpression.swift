@@ -4,6 +4,10 @@ import Foundation
 /// Arithmetic on numbers.
 public enum BIRArithmetic: String, Sendable {
     case add, subtract, multiply, divide
+    /// `^`, `MOD` and `\`. Each lowers to a runtime call rather than an
+    /// instruction, because each carries the interpreter's error rules
+    /// (`BASICArithmetic` in BASICCore, `RTArithmetic` in BASICRT).
+    case power, modulo, integerDivide
 }
 
 /// The six comparisons. Each yields the number `1` or `0`.

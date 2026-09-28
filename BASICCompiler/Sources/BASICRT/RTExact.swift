@@ -213,6 +213,13 @@ enum RTExact {
             case "/":
                 guard b != 0 else { basic_rt_fail("Division by zero") }
                 return .decimal(a / b)
+            case "^": return .decimal(decimalPower(a, b))
+            case "MOD":
+                let (x, y) = wholeDecimalOperands(a, b)
+                return .decimal(Decimal(x % y))
+            case "\\":
+                let (x, y) = wholeDecimalOperands(a, b)
+                return .decimal(Decimal(x / y))
             case "=": return .boolean(a == b)
             case "<>": return .boolean(a != b)
             case "<": return .boolean(a < b)
@@ -235,11 +242,51 @@ enum RTExact {
         case "<=": return .boolean(a <= b)
         case ">": return .boolean(a > b)
         case ">=": return .boolean(a >= b)
-        case "+", "-", "*", "/":
+        case "+", "-", "*", "/", "^", "MOD", "\\":
             basic_rt_fail("Arithmetic on a DATE, TIME or DATETIME needs a unit; compare them, or convert with CDATE")
         default:
             basic_rt_fail("A DATE, TIME or DATETIME is not a condition")
         }
+    }
+
+    /// `a ^ b` for a whole-number `b`, exactly — the interpreter's
+    /// `BASICExactArithmetic.decimalPower`, which refuses any other exponent
+    /// rather than routing a DECIMAL through a Double.
+    private static func decimalPower(_ base: Decimal, _ exponent: Decimal) -> Decimal {
+        guard let power = wholeInt(exponent) else {
+            basic_rt_fail_type("A DECIMAL can only be raised to a whole-number power")
+        }
+        if base == 0 && power < 0 { basic_rt_fail("Division by zero") }
+        let magnitude = pow(base, abs(power))
+        guard !magnitude.isNaN else { basic_rt_fail("Overflow") }
+        return power < 0 ? 1 / magnitude : magnitude
+    }
+
+    /// Both operands of `MOD` or `\` rounded to whole numbers, GW's rule.
+    private static func wholeDecimalOperands(_ dividend: Decimal, _ divisor: Decimal) -> (Int, Int) {
+        guard let left = wholeInt(rounding(dividend)), let right = wholeInt(rounding(divisor)) else {
+            basic_rt_fail("Overflow")
+        }
+        guard right != 0 else { basic_rt_fail("Division by zero") }
+        return (left, right)
+    }
+
+    /// `value` rounded half away from zero, as `CINT` rounds.
+    private static func rounding(_ value: Decimal) -> Decimal {
+        var input = value
+        var result = Decimal()
+        NSDecimalRound(&result, &input, 0, .plain)
+        return result
+    }
+
+    /// `value` as an `Int` when it is whole and small enough to be one; read
+    /// through the text, which is exact for a whole number.
+    private static func wholeInt(_ value: Decimal) -> Int? {
+        guard rounding(value) == value,
+              abs(NSDecimalNumber(decimal: value).doubleValue) < RTArithmetic.wholeNumberLimit else {
+            return nil
+        }
+        return Int(value.description)
     }
 
     /// The padded form, which is what makes a text comparison exact.

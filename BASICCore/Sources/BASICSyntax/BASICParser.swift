@@ -1625,11 +1625,31 @@ public struct Parser {
     }
 
     private mutating func parseTerm() throws -> Expression {
-        var expression = try parseFactor()
+        var expression = try parseModulo()
         while true {
-            if match(.plus) { expression = .binary(expression, .add, try parseFactor()) }
-            else if match(.minus) { expression = .binary(expression, .subtract, try parseFactor()) }
+            if match(.plus) { expression = .binary(expression, .add, try parseModulo()) }
+            else if match(.minus) { expression = .binary(expression, .subtract, try parseModulo()) }
             else { break }
+        }
+        return expression
+    }
+
+    /// `MOD` sits between `+`/`-` and `\`, where GW-BASIC's table and VB.NET
+    /// both put it: `a + b MOD c` is `a + (b MOD c)`, and `a \ b MOD c` is
+    /// `(a \ b) MOD c`.
+    private mutating func parseModulo() throws -> Expression {
+        var expression = try parseIntegerDivide()
+        while matchIdentifier("MOD") {
+            expression = .binary(expression, .modulo, try parseIntegerDivide())
+        }
+        return expression
+    }
+
+    /// `\` binds just looser than `*` and `/`, as GW's table orders them.
+    private mutating func parseIntegerDivide() throws -> Expression {
+        var expression = try parseFactor()
+        while match(.backslash) {
+            expression = .binary(expression, .integerDivide, try parseFactor())
         }
         return expression
     }
@@ -1651,7 +1671,25 @@ public struct Parser {
         if matchIdentifier("AWAIT") {
             return .await(try parseUnary())
         }
-        return try parsePrimary()
+        return try parsePower()
+    }
+
+    /// `^` binds tighter than unary minus, so `-2^2` is `-4`, and groups left
+    /// to right, so `2^3^2` is `64` — GW-BASIC's order and VB's. The exponent
+    /// may carry its own sign, as VB allows: `2^-1` is `0.5`.
+    private mutating func parsePower() throws -> Expression {
+        var expression = try parsePrimary()
+        while match(.caret) {
+            let exponent: Expression
+            if match(.minus) {
+                exponent = .unaryMinus(try parsePrimary())
+            } else {
+                _ = match(.plus)
+                exponent = try parsePrimary()
+            }
+            expression = .binary(expression, .power, exponent)
+        }
+        return expression
     }
 
     private mutating func parsePrimary() throws -> Expression {

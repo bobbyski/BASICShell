@@ -61,6 +61,13 @@ enum BASICExactArithmetic {
         case .divide:
             guard b != 0 else { throw BASICError.runtime("Division by zero") }
             return .decimal(a / b)
+        case .power: return .decimal(try decimalPower(a, b))
+        case .modulo:
+            let (x, y) = try wholeDecimalOperands(a, b)
+            return .decimal(Decimal(x % y))
+        case .integerDivide:
+            let (x, y) = try wholeDecimalOperands(a, b)
+            return .decimal(Decimal(x / y))
         case .equal: return .number(a == b ? 1 : 0)
         case .notEqual: return .number(a != b ? 1 : 0)
         case .less: return .number(a < b ? 1 : 0)
@@ -73,6 +80,54 @@ enum BASICExactArithmetic {
         case .eqv: return .number((a != 0) == (b != 0) ? 1 : 0)
         case .imp: return .number(a == 0 || b != 0 ? 1 : 0)
         }
+    }
+
+    /// `a ^ b` for a whole-number `b`, computed exactly.
+    ///
+    /// Any other exponent would need a `Double`, and a DECIMAL that went
+    /// through a `Double` has lost what it exists for, so it is refused by
+    /// name, as every other lossy mix is.
+    private static func decimalPower(_ base: Decimal, _ exponent: Decimal) throws -> Decimal {
+        guard let power = wholeInt(exponent) else {
+            throw BASICError.type(message: "A DECIMAL can only be raised to a whole-number power")
+        }
+        if base == 0 && power < 0 {
+            throw BASICError.runtime("Division by zero")
+        }
+        let magnitude = pow(base, abs(power))
+        guard !magnitude.isNaN else { throw BASICError.runtime("Overflow") }
+        return power < 0 ? 1 / magnitude : magnitude
+    }
+
+    /// Both operands of `MOD` or `\` rounded to whole numbers, GW's rule, as
+    /// `BASICArithmetic` applies it to a `Double`.
+    private static func wholeDecimalOperands(_ dividend: Decimal, _ divisor: Decimal) throws -> (Int, Int) {
+        guard let left = wholeInt(rounding(dividend)), let right = wholeInt(rounding(divisor)) else {
+            throw BASICError.runtime("Overflow")
+        }
+        guard right != 0 else {
+            throw BASICError.runtime("Division by zero")
+        }
+        return (left, right)
+    }
+
+    /// `value` rounded half away from zero, as `CINT` rounds.
+    private static func rounding(_ value: Decimal) -> Decimal {
+        var input = value
+        var result = Decimal()
+        NSDecimalRound(&result, &input, 0, .plain)
+        return result
+    }
+
+    /// `value` as an `Int` when it is whole and small enough to be one.
+    private static func wholeInt(_ value: Decimal) -> Int? {
+        guard rounding(value) == value,
+              abs(NSDecimalNumber(decimal: value).doubleValue) < BASICArithmetic.wholeNumberLimit else {
+            return nil
+        }
+        // Through the text, which is exact for a whole number; `intValue` has
+        // been known to answer wrongly for decimals with many digits.
+        return Int(value.description)
     }
 
     // MARK: - DATE, TIME, DATETIME
@@ -100,7 +155,7 @@ enum BASICExactArithmetic {
         case .lessEqual: return .number(order <= 0 ? 1 : 0)
         case .greater: return .number(order > 0 ? 1 : 0)
         case .greaterEqual: return .number(order >= 0 ? 1 : 0)
-        case .add, .subtract, .multiply, .divide:
+        case .add, .subtract, .multiply, .divide, .power, .modulo, .integerDivide:
             throw BASICError.type(
                 message: "Arithmetic on a DATE, TIME or DATETIME needs a unit; compare them, or convert with CDATE"
             )

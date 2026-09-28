@@ -253,7 +253,8 @@ public struct BIRPrinter {
         case .logicalNot(let inner):
             return "not " + render(inner)
         case .arithmetic(let op, let left, let right):
-            let symbol = ["add": "+", "subtract": "-", "multiply": "*", "divide": "/"][op.rawValue]!
+            let symbol = ["add": "+", "subtract": "-", "multiply": "*", "divide": "/",
+                          "power": "^", "modulo": "MOD", "integerDivide": "\\"][op.rawValue]!
             return "(\(render(left)) \(symbol) \(render(right)))"
         case .concat(let left, let right):
             return "(\(render(left)) & \(render(right)))"

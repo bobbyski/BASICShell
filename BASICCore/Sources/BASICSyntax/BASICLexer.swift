@@ -68,6 +68,8 @@ public struct Lexer {
         case "-": token = .minus
         case "*": token = .star
         case "/": token = .slash
+        case "^": token = .caret
+        case "\\": token = .backslash
         case ".": token = .dot
         case "(": token = .leftParen
         case ")": token = .rightParen

@@ -220,7 +220,7 @@ public func basic_rt_string_instr(_ startValue: Double, _ haystackPointer: Unsaf
 /// The text `PRINT` shows for a number: whole numbers without a decimal
 /// point, everything else as Swift renders a Double.
 func rtNumberText(_ value: Double) -> String {
-    if value.rounded() == value, abs(value) < 9.2e18 {
+    if value.rounded() == value, abs(value) < RTArithmetic.wholeNumberLimit {
         return String(Int(value))
     }
     return String(value)
@@ -243,17 +243,17 @@ public func basic_rt_number_str(_ value: Double) -> UnsafeMutableRawPointer {
 /// `CHR$`: one byte, 0…255.
 @_cdecl("basic_rt_chr")
 public func basic_rt_chr(_ value: Double) -> UnsafeMutableRawPointer {
-    rtOwned(RTText.character(code: Int(value.rounded())))
+    rtOwned(RTText.character(code: RTArithmetic.wholeNumber(value)))
 }
 
 @_cdecl("basic_rt_string_left")
 public func basic_rt_string_left(_ pointer: UnsafeMutableRawPointer?, _ count: Double) -> UnsafeMutableRawPointer {
-    rtOwned(String(rtText(pointer).prefix(max(0, Int(count.rounded())))))
+    rtOwned(String(rtText(pointer).prefix(max(0, RTArithmetic.wholeNumber(count)))))
 }
 
 @_cdecl("basic_rt_string_right")
 public func basic_rt_string_right(_ pointer: UnsafeMutableRawPointer?, _ count: Double) -> UnsafeMutableRawPointer {
-    rtOwned(String(rtText(pointer).suffix(max(0, Int(count.rounded())))))
+    rtOwned(String(rtText(pointer).suffix(max(0, RTArithmetic.wholeNumber(count)))))
 }
 
 /// `MID$(s, start[, length])`; a negative length means "to the end".
@@ -271,7 +271,7 @@ public func basic_rt_string_mid(_ pointer: UnsafeMutableRawPointer?, _ startValu
 
 @_cdecl("basic_rt_space")
 public func basic_rt_space(_ count: Double) -> UnsafeMutableRawPointer {
-    rtOwned(String(repeating: " ", count: max(0, Int(count.rounded()))))
+    rtOwned(String(repeating: " ", count: max(0, RTArithmetic.wholeNumber(count))))
 }
 
 /// `STRING$(count, text)`: the first character of `text`, repeated.
@@ -280,7 +280,7 @@ public func basic_rt_string_repeat(_ count: Double, _ pointer: UnsafeMutableRawP
     guard let first = rtText(pointer).first else {
         basic_rt_fail("STRING$ requires a non-empty string")
     }
-    return rtOwned(String(repeating: String(first), count: max(0, Int(count.rounded()))))
+    return rtOwned(String(repeating: String(first), count: max(0, RTArithmetic.wholeNumber(count))))
 }
 
 /// `WRITE #`'s quoting: `"text"` with inner quotes doubled; owned.

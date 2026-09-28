@@ -350,6 +350,11 @@ public struct GraphicsPoint: Equatable {
 
 public enum BinaryOperation: Equatable {
     case add, subtract, multiply, divide
+    /// `^`, `MOD` and `\`, in the order they bind, tightest first. `^` binds
+    /// tighter than unary minus and groups left to right, as GW-BASIC and VB
+    /// do. `MOD` and `\` round both operands to whole numbers first — GW's
+    /// rule, so `25.68 MOD 6.99` is `26 MOD 7`.
+    case power, modulo, integerDivide
     case equal, notEqual, less, lessEqual, greater, greaterEqual
     /// The logical set, loosest last: `AND`, `OR`, `XOR`, `EQV`, `IMP`.
     /// `EQV` is true when both sides agree; `IMP` is false only when the
@@ -380,6 +385,11 @@ public enum Token: Equatable {
     case minus
     case star
     case slash
+    /// `^`, exponentiation.
+    case caret
+    /// `\`, integer division. A `\` that ends a line never gets here: it
+    /// continues the line onto the next, and is removed before lexing.
+    case backslash
     case hash
     case dot
     case leftParen

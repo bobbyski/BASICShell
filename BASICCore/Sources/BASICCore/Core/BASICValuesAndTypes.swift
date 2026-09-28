@@ -154,7 +154,11 @@ indirect enum BASICValue: Equatable, CustomStringConvertible, Sendable {
         case .null:
             return "NULL"
         case .number(let value):
-            if value.rounded() == value {
+            // Bounded, because infinity counts as whole and anything past 2⁶³
+            // cannot become an Int: either one would trap and take the shell
+            // down. The compiled runtime's `rtNumberText` uses the same bound,
+            // so the two print a large number the same way.
+            if value.rounded() == value, abs(value) < BASICArithmetic.wholeNumberLimit {
                 return String(Int(value))
             }
             return String(value)
@@ -478,7 +482,7 @@ struct BASICEnumDefinition: Equatable {
     /// The member with this value, or nil — VB shows the number when no
     /// member matches, which is what a nil here means.
     func name(of value: Double) -> String? {
-        guard value == value.rounded() else { return nil }
+        guard value == value.rounded(), abs(value) < BASICArithmetic.wholeNumberLimit else { return nil }
         let whole = Int(value)
         return members.first { $0.value == whole }?.name
     }

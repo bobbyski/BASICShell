@@ -68,14 +68,14 @@ public func basic_rt_print_comma() {
 /// `TAB(n)` — pad to column n (1-based); nothing when already past it.
 @_cdecl("basic_rt_print_tab")
 public func basic_rt_print_tab(_ target: Double) {
-    let targetColumn = max(0, Int(target.rounded()) - 1)
+    let targetColumn = max(0, RTArithmetic.wholeNumber(target) - 1)
     RTConsole.write(String(repeating: " ", count: max(0, targetColumn - RTConsole.effectiveColumn)))
 }
 
 /// `SPC(n)` — n spaces.
 @_cdecl("basic_rt_print_spc")
 public func basic_rt_print_spc(_ count: Double) {
-    RTConsole.write(String(repeating: " ", count: max(0, Int(count.rounded()))))
+    RTConsole.write(String(repeating: " ", count: max(0, RTArithmetic.wholeNumber(count))))
 }
 
 @_cdecl("basic_rt_print_newline")

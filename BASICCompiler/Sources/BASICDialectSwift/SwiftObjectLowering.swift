@@ -300,6 +300,8 @@ public struct SwiftObjectLowering {
                 case .subtract: instruction = "fsub"
                 case .multiply: instruction = "fmul"
                 case .divide: instruction = "fdiv"
+                case .power, .modulo, .integerDivide:
+                    throw Unsupported(context: context, reason: "`^`, `MOD` and `\\` are not lowered in method bodies yet — each needs the runtime's error rules")
                 }
                 let result = temporary()
                 text += "  \(result) = \(instruction) double \(left), \(right)\n"
