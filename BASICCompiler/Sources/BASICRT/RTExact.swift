@@ -204,7 +204,7 @@ enum RTExact {
         if kind(of: left) == .decimal || kind(of: right) == .decimal {
             guard case .decimal(let a)? = converted(left, to: .decimal),
                   case .decimal(let b)? = converted(right, to: .decimal) else {
-                basic_rt_fail("A DECIMAL can only be combined with a DECIMAL or a whole number")
+                basic_rt_fail_type("A DECIMAL can only be combined with a DECIMAL or a whole number")
             }
             switch op {
             case "+": return .decimal(a + b)
