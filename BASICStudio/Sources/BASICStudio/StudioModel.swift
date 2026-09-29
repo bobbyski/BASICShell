@@ -1314,6 +1314,14 @@ final class StudioModel: ObservableObject {
         inputCoordinator.setProgramRunning(false)
         // A program's windows go with it: nothing is left to answer them.
         auiBridge.closeAll()
+        if !paused {
+            // And so do the terminal modes it set. `ON MOUSE` turns mouse
+            // reporting on in the console's terminal; left on, every click at
+            // the prompt arrives typed in, as `ESC[<0;95;21M`. A reset does
+            // not clear it, so neither does CLS.
+            vtgCanvas.disableMouseReporting()
+            vtgCanvas.disableResizeEvents()
+        }
         drainPendingLogEntries()
         appendLog(level: paused ? "PAUSE" : "RUN", issuer: .basic, text: paused ? "program paused" : "program finished")
 
