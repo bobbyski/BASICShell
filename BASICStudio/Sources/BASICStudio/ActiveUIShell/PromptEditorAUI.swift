@@ -53,7 +53,8 @@ final class PromptEditorAUI {
         preview.wraps = false
         let previewScroll = AUIScrollView(.horizontal)
         previewScroll.addChild(preview)
-        previewScroll.minimumSize = CGSize(width: 0, height: 40)
+        previewScroll.minimumSize = CGSize(width: 0, height: 44)
+        previewScroll.maximumSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: 44)
         previewScroll.backgroundColor = .textBackground
         previewScroll.cornerRadius = 8
 
@@ -95,6 +96,13 @@ final class PromptEditorAUI {
         // AUITextField has no font of its own; the template reads best monospaced.
         (templateField.nativeView as? NSTextField)?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         templateField.flexibility = .horizontal()
+        // Several lines, as SwiftUI's lineLimit(4...7) field shows.
+        templateField.minimumSize = CGSize(width: 0, height: 96)
+        if let field = templateField.nativeView as? NSTextField {
+            field.usesSingleLineMode = false
+            field.cell?.wraps = true
+            field.cell?.isScrollable = false
+        }
 
         let left = Self.column([
             Self.caption("Segments", bold: true), segmentTable, newSegment, segmentHelp,
@@ -114,6 +122,8 @@ final class PromptEditorAUI {
 
         root = Self.column([Self.caption("Preview", bold: true), previewScroll, columns], spacing: 14)
         root.padding = AUIEdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20)
+        // Tall enough for the whole page: the Settings window sizes to it.
+        root.minimumSize = CGSize(width: 720, height: 540)
 
         // Actions. Each edit goes through `commit`, as the SwiftUI view's do.
         segmentTable.onSelectionChange = { [weak self] rows in
