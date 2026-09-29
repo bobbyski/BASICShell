@@ -250,7 +250,9 @@ struct MonacoEditor: NSViewRepresentable {
         "[" + words.sorted().map { "\"\($0)\"" }.joined(separator: ", ") + "]"
     }
 
-    private static let html = """
+    /// The editor page. Internal so a test can check its script parses: a
+    /// syntax error here leaves the editor blank, with nothing in any log.
+    static let html = """
     <!doctype html>
     <html>
     <head>
@@ -635,7 +637,32 @@ struct MonacoEditor: NSViewRepresentable {
             ioKeywords: \(monarchArray(BASICKeywords.io)),
             graphicsKeywords: \(monarchArray(BASICKeywords.graphics)),
             typeKeywords: \(monarchArray(BASICKeywords.types)),
-            builtinFunctions: \(monarchArray(BASICKeywords.functions))
+            builtinFunctions: \(monarchArray(BASICKeywords.functions)),
+            tokenizer: {
+              root: [
+                [/^\\s*#!.*$/, "comment.extension.aibasic"],
+                [/^\\s*#.*$/, "comment.extension.aibasic"],
+                [/"/, { token: "string.quote.aibasic", next: "@string" }],
+                [/\\/\\/.*$/, "comment.extension.aibasic"],
+                [/'.*$/, "comment.basic.aibasic"],
+                [/\\bREM\\b.*$/, "comment.basic.aibasic"],
+                [/^\\s*\\d+\\b/, "number.line.aibasic"],
+                [/\\b\\d+(\\.\\d+)?\\b/, "number"],
+                [/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*:/, "identifier.label.aibasic"],
+                [/[A-Za-z_][A-Za-z0-9_]*\\$?/, {
+                  cases: {
+                    "@controlKeywords": "keyword.control.aibasic",
+                    "@optionKeywords": "keyword.option.aibasic",
+                    "@declarationKeywords": "keyword.declaration.aibasic",
+                    "@ioKeywords": "keyword.io.aibasic",
+                    "@graphicsKeywords": "keyword.graphics.aibasic",
+                    "@typeKeywords": "keyword.type.aibasic",
+                    "@builtinFunctions": "predefined.aibasic",
+                    "@default": "identifier"
+                  }
+                }],
+                [/[<>]=?|=|\\+|-|\\*|\\//, "operator"],
+                [/[(),.:;]/, "delimiter"]
               ],
               string: [
                 [/""/, "string.escape.aibasic"],
