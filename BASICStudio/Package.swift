@@ -10,7 +10,11 @@ let package = Package(
         .package(path: "../DocumentArchive"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         .package(url: "https://github.com/bobbyski/SwiftTerm.git", from: "1.5.6"),
-        .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6")
+        .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6"),
+        // The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md).
+        // A sibling checkout, as FreebirdStudio took it before it moved to
+        // prebuilt frameworks.
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI")
     ],
     targets: [
         .executableTarget(
@@ -20,7 +24,8 @@ let package = Package(
                 "DocumentArchive",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",
-                "VectorTerminalSDK"
+                "VectorTerminalSDK",
+                .product(name: "ActiveUI", package: "ActiveUI")
             ],
             exclude: [
                 "Resources/AppIcon.iconset"

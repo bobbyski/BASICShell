@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
-@main
+/// The SwiftUI shell. ``StudioMain`` starts it unless `--activeui` is given.
 struct BASICStudioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = StudioModel()

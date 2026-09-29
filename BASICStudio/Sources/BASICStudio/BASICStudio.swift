@@ -1,12 +1,27 @@
-import BASICCore
-import AppKit
-import CoreText
-import GameController
-import MarkdownUI
-import SwiftUI
-import SwiftTerm
-import UniformTypeIdentifiers
-import VectorTerminalSDK
-import WebKit
+//
+//  BASICStudio.swift
+//  BASICStudio
+//
+//  The entry point: one binary, two shells.
+//
 
-// BASICStudio has been split into focused files in this directory.
+import SwiftUI
+
+/// Puts up the shell the command line asks for: the SwiftUI shell by
+/// default, the ActiveUI shell with `--activeui` (``StudioLaunchOptions``).
+///
+/// Both run over the same ``StudioModel`` and the same projections, which is
+/// what lets ACTIVEUI_TRANSITION.md's parity walk be the same binary, the
+/// same program and the same checklist, twice.
+@main
+enum StudioMain {
+    @MainActor
+    static func main() {
+        switch StudioLaunchOptions.current.shell {
+        case .swiftUI:
+            BASICStudioApp.main()
+        case .activeUI:
+            StudioActiveUIShell.run(launch: .current)
+        }
+    }
+}
