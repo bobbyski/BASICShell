@@ -117,10 +117,10 @@ public struct SwiftPackageResolver {
                 : "swift package dump-symbol-graph failed in \(path):\n\(Self.lastLines(graph.stderr))"
             throw Failure(importName: importName, problem: detail)
         }
-        let objectDirectory = "\(scratch)/release/\(importName).build"
-        let objects = Self.currentObjects(in: objectDirectory)
+        let objects = Self.targetObjects(importName, scratch: scratch)
         guard !objects.isEmpty else {
-            throw Failure(importName: importName, problem: "swift build produced no objects in \(objectDirectory)")
+            throw Failure(importName: importName,
+                          problem: "swift build produced no objects for \(importName) under \(scratch)/release")
         }
         return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph,
                                objects: objects, exported: Self.exportedSymbols(of: objects))
@@ -545,7 +545,59 @@ public struct SwiftPackageResolver {
         return found
     }
 
-    /// The objects the *current* build of a target produced.
+    /// The objects this build of `target` produced, in whichever layout the
+    /// toolchain's build system writes.
+    ///
+    /// ```text
+    ///   native      <scratch>/release/<T>.build/*.o, as output-file-map.json
+    ///               names them (Swift 6.3 and before)
+    ///   swiftbuild  <scratch>/out/Intermediates.noindex/<T>.build/…/
+    ///               Objects-normal/<arch>/*.o, as <T>.LinkFileList names
+    ///               them (Swift 6.4's default)
+    /// ```
+    ///
+    /// SwiftPM records which system built the scratch directory last in
+    /// `.buildSystem_release`, so a directory an older toolchain left behind
+    /// is never read as if the new one wrote it.
+    ///
+    /// **Not the prelinked `<scratch>/release/<T>.o`**, though Swift Build
+    /// writes one and it would be simpler. Prelinking turns private-external
+    /// symbols into local ones, and a library-evolution module's method
+    /// bodies are exactly those: `Widget.summary()` survives only as its
+    /// dispatch thunk. The exported-symbol check then drops the method, and a
+    /// BASIC class inheriting it reports "has no method summary". The
+    /// per-file objects keep those symbols linkable, as the native layout did.
+    static func targetObjects(_ target: String, scratch: String) -> [String] {
+        let marker = try? String(contentsOfFile: "\(scratch)/.buildSystem_release", encoding: .utf8)
+        if marker?.trimmingCharacters(in: .whitespacesAndNewlines) != "native" {
+            let objects = swiftBuildObjects(target, scratch: scratch)
+            if !objects.isEmpty { return objects }
+        }
+        return currentObjects(in: "\(scratch)/release/\(target).build")
+    }
+
+    /// The objects Swift Build links for `target` on this machine's
+    /// architecture, from the link file list it writes beside them.
+    static func swiftBuildObjects(_ target: String, scratch: String) -> [String] {
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
+        let root = "\(scratch)/out/Intermediates.noindex/\(target).build/Release"
+        guard let walker = FileManager.default.enumerator(atPath: root) else { return [] }
+        for case let entry as String in walker
+        where entry.hasSuffix("/Objects-normal/\(architecture)/\(target).LinkFileList") {
+            let list = (root as NSString).appendingPathComponent(entry)
+            guard let text = try? String(contentsOfFile: list, encoding: .utf8) else { return [] }
+            return text.split(separator: "\n").map(String.init)
+                .filter { FileManager.default.fileExists(atPath: $0) }
+        }
+        return []
+    }
+
+    /// The objects the *current* build of a target produced, under the
+    /// native build system.
     ///
     /// SwiftPM never deletes the object of a source that is gone, so listing
     /// the directory links leftovers from earlier builds: ActiveUI's held 281
