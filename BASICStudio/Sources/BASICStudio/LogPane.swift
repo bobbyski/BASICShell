@@ -12,52 +12,49 @@ import WebKit
 struct LogPane: View {
     @ObservedObject var model: StudioModel
 
-    private static let timestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter
-    }()
-
     var body: some View {
+        // Everything drawn comes from the projection, which the ActiveUI
+        // pane reads too. The toggles still bind to the model directly.
+        let pane = LogPaneModel(model)
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Toggle("Enabled", isOn: $model.isLoggingEnabled)
                     Spacer()
                     Button("Clear") { model.clearLogs() }
-                        .disabled(model.logEntries.isEmpty)
+                        .disabled(!pane.canClear)
                 }
 
                 HStack {
                     Toggle("User", isOn: $model.showUserLogs)
                     Toggle("BASIC", isOn: $model.showBasicLogs)
                     Toggle("Trace", isOn: $model.isTraceLoggingEnabled)
-                    Button(model.isTraceLoggingEnabled ? "TROFF" : "TRON") {
+                    Button(pane.traceButtonTitle) {
                         model.toggleTraceLogging()
                     }
                     .buttonStyle(.bordered)
                     Spacer()
                     Menu("Levels") {
-                        if model.availableLogLevels.isEmpty {
-                            Text("No Levels")
-                        } else {
-                            Button(model.selectedLogLevels.isEmpty ? "All Selected" : "Show All") {
+                        if let header = pane.levelsMenuHeader {
+                            Button(header) {
                                 model.selectedLogLevels.removeAll()
                             }
                             Divider()
-                            ForEach(model.availableLogLevels, id: \.self) { level in
+                            ForEach(pane.levelsMenu, id: \.level) { item in
                                 Button {
-                                    model.toggleLogLevel(level)
+                                    model.toggleLogLevel(item.level)
                                 } label: {
                                     HStack {
-                                        Text(level)
-                                        if model.selectedLogLevels.isEmpty || model.selectedLogLevels.contains(level) {
+                                        Text(item.level)
+                                        if item.isChecked {
                                             Spacer()
                                             Image(systemName: "checkmark")
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            Text(LogPaneModel.noLevelsTitle)
                         }
                     }
                 }
@@ -68,8 +65,8 @@ struct LogPane: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(model.filteredLogEntries) { entry in
-                        logRow(entry)
+                    ForEach(pane.rows) { row in
+                        logRow(row)
                     }
                 }
                 .padding(12)
@@ -80,50 +77,43 @@ struct LogPane: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private func logRow(_ entry: StudioLogEntry) -> some View {
+    private func logRow(_ row: LogPaneModel.Row) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Text(Self.timestampFormatter.string(from: entry.timestamp))
+                Text(row.time)
                     .foregroundStyle(.secondary)
-                Text(entry.issuer.rawValue)
+                Text(row.issuer)
                     .fontWeight(.bold)
-                Text(entry.level)
+                Text(row.level)
                     .fontWeight(.semibold)
-                    .foregroundStyle(color(for: entry.level))
-                Text(entry.module)
+                    .foregroundStyle(color(for: row.levelKind))
+                Text(row.module)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
             .font(.caption.monospaced())
 
-            Text(entry.text)
+            Text(row.text)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color(for: entry.level).opacity(0.12))
+        .background(color(for: row.levelKind).opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func color(for level: String) -> SwiftUI.Color {
-        switch level.uppercased() {
-        case "ERROR", "ERR", "FATAL":
-            return .red
-        case "WARN", "WARNING":
-            return .yellow
-        case "DEBUG", "TRACE", "INPUT":
-            return .blue
-        case "TARGET":
-            return SwiftUI.Color(red: 0.95, green: 0.15, blue: 0.85)
-        case "RUN", "INFO":
-            return .green
-        case "PAUSE":
-            return .orange
-        default:
-            return .primary
+    private func color(for kind: LogPaneModel.LevelKind) -> SwiftUI.Color {
+        switch kind {
+        case .error: return .red
+        case .warning: return .yellow
+        case .debug: return .blue
+        case .target: return SwiftUI.Color(red: 0.95, green: 0.15, blue: 0.85)
+        case .run: return .green
+        case .pause: return .orange
+        case .plain: return .primary
         }
     }
 }
