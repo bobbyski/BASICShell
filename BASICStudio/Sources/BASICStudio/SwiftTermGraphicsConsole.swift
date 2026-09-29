@@ -116,7 +116,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         let font = NSFont(name: family, size: CGFloat(size))
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
         terminalView.font = font
-        applyScreenSize(force: true)
+        applyScreenSize()
         refreshTerminalDisplay()
     }
 
@@ -128,7 +128,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
     override func layout() {
         super.layout()
-        applyScreenSize(force: false)
+        applyScreenSize()
         updateMouseTrackingArea()
     }
 
@@ -235,7 +235,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
 
         if renderedScreenSize != screenSize {
             renderedScreenSize = screenSize
-            applyScreenSize(force: true)
+            applyScreenSize()
         }
 
         // `trimmedCharacters` counts what scrollback trimming has dropped off the front of
@@ -264,7 +264,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         }
     }
 
-    private func applyScreenSize(force: Bool) {
+    private func applyScreenSize() {
         let screenSize = renderedScreenSize ?? .flexible
         if let dimensions = screenSize.dimensions {
             terminalView.getTerminal().resize(cols: dimensions.cols, rows: dimensions.rows)
@@ -287,7 +287,12 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             return
         }
 
-        guard force || bounds.width > 0 else { return }
+        // Only a real size. ActiveUI lays the tree out once before it is in a
+        // window, at a width and no height (168 × 0), and SwiftTerm refuses
+        // only 0 × 0: sized from that, the terminal had 18 columns when the
+        // first prompt arrived and wrapped it there, and a terminal does not
+        // reflow what it has drawn. Until then it keeps setup's 80 × 25.
+        guard bounds.width > 0, bounds.height > 0 else { return }
         terminalView.frame = bounds
         terminalView.sizeChanged(source: terminalView.getTerminal())
         let terminal = terminalView.getTerminal()
