@@ -41,9 +41,9 @@ struct ActiveUIDebugPaneTests {
     func disclosure() {
         let pane = DebugPaneAUI(model: StudioHarness().model)
         let files = pane.sections[4]
-        #expect(!files.content.isHidden && files.header.title == "▾ Files")
+        #expect(!files.content.isHidden && files.header.title == "Files" && files.header.image?.accessibilityDescription == "Collapse")
         files.header.onClick?()
-        #expect(files.content.isHidden && files.header.title == "▸ Files")
+        #expect(files.content.isHidden && files.header.title == "Files" && files.header.image?.accessibilityDescription == "Expand")
     }
 
     @Test("D5 · A gutter click in the code view toggles the model's breakpoint")

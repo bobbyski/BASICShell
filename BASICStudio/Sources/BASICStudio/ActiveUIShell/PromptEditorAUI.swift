@@ -51,12 +51,19 @@ final class PromptEditorAUI {
 
         preview = AUIStack(.horizontal, spacing: 0, alignment: .center)
         preview.wraps = false
+        preview.padding = AUIEdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10)
         let previewScroll = AUIScrollView(.horizontal)
         previewScroll.addChild(preview)
         previewScroll.minimumSize = CGSize(width: 0, height: 44)
         previewScroll.maximumSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: 44)
-        previewScroll.backgroundColor = .textBackground
-        previewScroll.cornerRadius = 8
+        // The box and its outline go on a card around the scroll view, which
+        // draws no background of its own.
+        let previewBox = LogPaneAUI.card(previewScroll, color: .textBackground, cornerRadius: 8)
+        previewBox.borderWidth = 1
+        // A card takes its child's flexibility; the box keeps the strip's height.
+        previewBox.minimumSize = CGSize(width: 0, height: 44)
+        previewBox.maximumSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: 44)
+        previewBox.borderColor = AUIColor.secondary.opacity(0.25)
 
         let segments = segments
         segmentTable = AUITable(rowCount: { segments.segments.count }) { index in
@@ -72,6 +79,11 @@ final class PromptEditorAUI {
         segmentTable.allowsReordering = true
         let newSegment = AUIButton("New Segment")
         newSegment.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        // Its own width, not the column's, as SwiftUI's bordered button.
+        newSegment.alignSelf = .leading
+        let tokenHelp = Self.caption(PromptEditorModel.tokenHelp)
+        tokenHelp.wraps = true
+        tokenHelp.lineLimit = nil
         let segmentHelp = Self.caption(PromptEditorModel.segmentListHelp)
         segmentHelp.wraps = true
         segmentHelp.lineLimit = nil
@@ -96,8 +108,8 @@ final class PromptEditorAUI {
         // AUITextField has no font of its own; the template reads best monospaced.
         (templateField.nativeView as? NSTextField)?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         templateField.flexibility = .horizontal()
-        // Several lines, as SwiftUI's lineLimit(4...7) field shows.
-        templateField.minimumSize = CGSize(width: 0, height: 96)
+        // Seven lines, the most SwiftUI's lineLimit(4...7) field grows to.
+        templateField.minimumSize = CGSize(width: 0, height: 108)
         if let field = templateField.nativeView as? NSTextField {
             field.usesSingleLineMode = false
             field.cell?.wraps = true
@@ -111,8 +123,7 @@ final class PromptEditorAUI {
         let right = Self.column([
             addForm.root, editForm.root, noSelectionLabel, editButtons,
             Self.caption("Presets", bold: true), LogPaneAUI.row([shellStyle, plain, classic]),
-            Self.caption("Generated Template", bold: true), templateField,
-            Self.caption(PromptEditorModel.tokenHelp),
+            Self.caption("Generated Template", bold: true), templateField, tokenHelp,
         ])
         right.minimumSize = CGSize(width: 260, height: 0)
         let columns = AUIStack(.horizontal, spacing: 14, alignment: .leading)
@@ -120,10 +131,16 @@ final class PromptEditorAUI {
         columns.addChild(left.stretches())
         columns.addChild(right.stretches())
 
-        root = Self.column([Self.caption("Preview", bold: true), previewScroll, columns], spacing: 14)
-        root.padding = AUIEdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20)
-        // Tall enough for the whole page: the Settings window sizes to it.
-        root.minimumSize = CGSize(width: 720, height: 540)
+        // A caption sits 8 above what it names, and the parts 14 apart, as
+        // `NerdPromptEditorView` spaces them.
+        let previewSection = Self.column([Self.caption("Preview", bold: true), previewBox])
+        root = Self.column([previewSection, columns], spacing: 14)
+        // No padding of its own: the Settings window already insets a page
+        // by 36 on each side (``SettingsAUI/pageInset``), where SwiftUI's
+        // Settings pads by 16.
+        root.padding = .zero
+        // As wide as the window leaves; the Settings window sizes to its height.
+        root.minimumSize = CGSize(width: SettingsAUI.pageWidth, height: 0)
 
         // Actions. Each edit goes through `commit`, as the SwiftUI view's do.
         segmentTable.onSelectionChange = { [weak self] rows in
@@ -334,6 +351,14 @@ final class SegmentForm {
         // colors on one row; the two edges on one row.
         func labeled(_ label: String, _ control: AUIView) -> [AUIView] {
             [AUILabel(label), control]
+        }
+        // Each type's symbol beside its name, as SwiftUI's Label items show.
+        // AUIPicker takes titles only; its options never change here, so the
+        // native items it made keep the images.
+        if let popup = kind.nativeView as? NSPopUpButton {
+            for (item, kind) in zip(popup.itemArray, NerdPromptSegment.Kind.allCases) {
+                item.image = NSImage(systemSymbolName: kind.systemImage, accessibilityDescription: nil)
+            }
         }
         literalRow = LogPaneAUI.row(labeled("Text", literal.stretches()))
         let rows: [AUIView] = [

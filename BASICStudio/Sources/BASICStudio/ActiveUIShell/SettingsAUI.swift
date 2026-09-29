@@ -48,28 +48,31 @@ final class SettingsAUI {
         sizeLabel = AUILabel("")
         sizeLabel.usesMonospacedDigits = true
         sizeLabel.minimumSize = CGSize(width: 32, height: 0)
+        sizeLabel.alignment = .trailing
         let fontForm = AUIForm()
         fontForm.addSection(SettingsViewModel.fontSectionTitle, isFirst: true)
         fontForm.addRow("Font", fontPicker)
         fontForm.addRow("Size", LogPaneAUI.row([sizeSlider.stretches(), sizeLabel]))
-        fontForm.addFooter(SettingsViewModel.fontNote)
-        fontPage = PromptEditorAUI.column([fontForm])
-        fontPage.padding = AUIEdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20)
+        fontPage = PromptEditorAUI.column([fontForm, Self.note(SettingsViewModel.fontNote)])
+        fontPage.padding = .zero
 
         let range = SettingsViewModel.scrollbackRange
         let bounds = Double(range.lowerBound)...Double(range.upperBound)
         let step = Double(SettingsViewModel.scrollbackStep)
         scrollbackSlider = AUISlider(value: Double(model.consoleScrollbackLines), in: bounds)
+        scrollbackSlider.tickMarks = (range.upperBound - range.lowerBound) / SettingsViewModel.scrollbackStep + 1
+        scrollbackSlider.snapsToTickMarks = true
         scrollbackStepper = AUIStepper("", value: Double(model.consoleScrollbackLines), in: bounds, step: step)
         scrollbackLabel = AUILabel("")
         scrollbackLabel.usesMonospacedDigits = true
         scrollbackLabel.minimumSize = CGSize(width: 56, height: 0)
+        scrollbackLabel.alignment = .trailing
         let consoleForm = AUIForm()
         consoleForm.addSection(SettingsViewModel.scrollbackSectionTitle, isFirst: true)
-        consoleForm.addRow("Lines", LogPaneAUI.row([scrollbackSlider.stretches(), scrollbackStepper, scrollbackLabel]))
-        consoleForm.addFooter(SettingsViewModel.scrollbackNote)
-        consolePage = PromptEditorAUI.column([consoleForm])
-        consolePage.padding = AUIEdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20)
+        // The value, then its stepper: a SwiftUI Stepper draws its label first.
+        consoleForm.addRow("Lines", LogPaneAUI.row([scrollbackSlider.stretches(), scrollbackLabel, scrollbackStepper]))
+        consolePage = PromptEditorAUI.column([consoleForm, Self.note(SettingsViewModel.scrollbackNote)])
+        consolePage.padding = .zero
 
         fontPicker.onSelectionChange = { [weak self] index in
             guard let self else { return }
@@ -85,6 +88,33 @@ final class SettingsAUI {
             model?.consoleScrollbackLines = Int(value.rounded())
         }
         refresh()
+    }
+
+    /// How far the Settings window insets a page on each side: its 20-point
+    /// window margin, then 16 around the page's scroll view. A page adds no
+    /// padding of its own; SwiftUI's Settings pads by 16 in all.
+    static let pageInset: CGFloat = 36
+
+    /// How much shorter than its page the legacy Settings window comes out.
+    ///
+    /// ActiveUI's legacy resize sets the window's height to the page's plus
+    /// the icon strip's, but the window then insets its root by the 20-point
+    /// window margin, top and bottom, and the page loses those 40 points to
+    /// clipping. Padding the page's foot by as much gives them back. Remove
+    /// it once `resizeForPaneIfLegacy` counts the margin.
+    static let legacyResizeShortfall: CGFloat = 40
+
+    /// A page's width inside the Settings window.
+    static var pageWidth: CGFloat { SettingsViewModel.windowSize.width - 2 * pageInset }
+
+    /// A page's explanation, under its form. `AUIForm.addFooter` would span
+    /// the form's two columns, and a spanning label is measured unwrapped,
+    /// so a long note ran off the page; the page's column wraps it.
+    static func note(_ text: String) -> AUILabel {
+        let label = PromptEditorAUI.caption(text)
+        label.wraps = true
+        label.lineLimit = nil
+        return label
     }
 
     private var isInstalled = false
@@ -111,6 +141,7 @@ final class SettingsAUI {
         let tabs = SettingsViewModel.tabs
         let pages = [promptEditor.root, fontPage, consolePage]
         for (tab, page) in zip(tabs, pages) {
+            page.padding = AUIEdgeInsets(top: 0, leading: 0, bottom: Self.legacyResizeShortfall, trailing: 0)
             window.addPage(tab.title, symbol: tab.symbol) { page }
         }
     }

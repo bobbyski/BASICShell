@@ -41,9 +41,13 @@ final class DocsPaneAUI {
         heading.isBold = true
         let menu = AUIMenu("Documentation", items: [])
         menuButton = AUIMenuButton("Documentation Menu", systemSymbol: "book", menu: menu)
-        let header = LogPaneAUI.row([heading, AUISpacer(), menuButton])
-        header.padding = AUIEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
-        header.backgroundColor = .controlBackground
+        // The menu's width: at most 280, as `UserDocumentationPane` frames
+        // it, and able to shrink toward 80 when the inspector is narrow.
+        menuButton.flexibility = .horizontal()
+        menuButton.minimumSize = CGSize(width: 80, height: 0)
+        let headerRow = LogPaneAUI.ends(heading, menuButton)
+        headerRow.padding = AUIEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+        let header = LogPaneAUI.card(headerRow, color: .controlBackground)
 
         viewer = AUIMarkdownEditor()
         viewer.isReadOnly = true
@@ -81,6 +85,7 @@ final class DocsPaneAUI {
         let pane = DocsPaneModel(docs: docs, selectedID: selectedID)
         guard pane != drawn else { return }
         menuButton.title = pane.menuTitle
+        fitMenuToTitle()
         menuButton.isHidden = !pane.showsMenu
         if pane.selectedDoc != drawn?.selectedDoc {
             viewer.load(markdown: pane.selectedDoc?.content ?? "")
@@ -88,6 +93,14 @@ final class DocsPaneAUI {
         viewer.isHidden = pane.selectedDoc == nil
         emptyLabel.isHidden = pane.selectedDoc != nil
         drawn = pane
+    }
+
+    /// Caps the menu at its title's width, and at 280. Flexible so it can
+    /// shrink, it must not grow past what it shows.
+    private func fitMenuToTitle() {
+        menuButton.maximumSize.width = .greatestFiniteMagnitude
+        let natural = menuButton.layoutSize(fitting: CGSize(width: 10_000, height: 10_000)).width
+        menuButton.maximumSize.width = min(280, natural)
     }
 
     private func menuItems() -> [AUIMenuItem] {

@@ -33,6 +33,7 @@ final class LogPaneAUI {
     let trace: AUIToggle
     let traceButton: AUIButton
     let levels: AUIMenuButton
+    let header: AUIStack
     let table: AUITable
     private(set) var drawn: LogPaneModel?
     /// The rows the table shows; its closures read them from here.
@@ -53,9 +54,12 @@ final class LogPaneAUI {
         traceButton = AUIButton("TRON") { [weak model] in model?.toggleTraceLogging() }
         levels = AUIMenuButton("Levels", menu: Self.levelsMenu(model: model))
 
-        let firstRow = Self.row([enabled, AUISpacer(), clear])
-        let secondRow = Self.row([user, basic, trace, traceButton, AUISpacer(), levels])
-        let header = AUIStack(.vertical, spacing: 8, alignment: .fill)
+        let firstRow = Self.ends(enabled, clear)
+        // A checkbox's frame carries a couple of points past its title, so 6
+        // between them looks like the 8 of `LogPane`'s HStack, and the row
+        // fits the inspector's default width as that one does.
+        let secondRow = Self.ends(Self.row([user, basic, trace, traceButton], spacing: 6), levels)
+        header = AUIStack(.vertical, spacing: 8, alignment: .fill)
         header.wraps = false
         header.addChild(firstRow)
         header.addChild(secondRow)
@@ -66,6 +70,10 @@ final class LogPaneAUI {
             Self.rowView(rows.rows[index])
         }
         table.flexibility = .both()
+        // `LogPane`'s list: 12 points in from the sides, 6 between entries
+        // (the table adds 2 of its own between rows).
+        table.rowHorizontalPadding = 0
+        table.rowInsets = AUIEdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12)
 
         let body = AUIStack(.vertical, spacing: 0, alignment: .fill)
         body.wraps = false
@@ -136,14 +144,12 @@ final class LogPaneAUI {
         text.lineLimit = nil
         text.isSelectable = true
 
-        let box = AUIStack(.vertical, spacing: 3, alignment: .fill)
-        box.wraps = false
-        box.addChild(facts)
-        box.addChild(text)
-        box.padding = AUIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
-        box.backgroundColor = tint.opacity(0.12)
-        box.cornerRadius = 6
-        return box
+        let content = AUIStack(.vertical, spacing: 3, alignment: .fill)
+        content.wraps = false
+        content.addChild(facts)
+        content.addChild(text)
+        content.padding = AUIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+        return card(content, color: tint.opacity(0.12), cornerRadius: 6)
     }
 
     /// The level tints `LogPane` uses.
@@ -164,6 +170,31 @@ final class LogPaneAUI {
         label.font = .monospaced(size: 10)
         label.textColor = color
         return label
+    }
+
+    /// `content` on a tinted, rounded card that covers its padding too.
+    ///
+    /// A view's padding sits outside its own background (a margin, in CSS
+    /// terms), so a view given both draws its tint short of its edges. The
+    /// tint goes on a box around the padded content instead, the way
+    /// SwiftUI's `.padding()` then `.background()` stacks.
+    static func card(_ content: AUIView, color: AUIColor?, cornerRadius: CGFloat = 0) -> AUIStack {
+        let card = AUIStack(.vertical, spacing: 0, alignment: .fill)
+        card.wraps = false
+        card.addChild(content)
+        card.backgroundColor = color
+        card.cornerRadius = cornerRadius
+        return card
+    }
+
+    /// `leading` at the start of a row and `trailing` at its end, the way
+    /// `HStack { a; Spacer(); b }` places them. When space is tight they close
+    /// to the row's spacing; a spacer between them would keep a gap on each
+    /// side of it, twice SwiftUI's.
+    static func ends(_ leading: AUIView, _ trailing: AUIView, spacing: CGFloat = 8) -> AUIStack {
+        let stack = row([leading, trailing], spacing: spacing)
+        stack.distribution = .spaceBetween
+        return stack
     }
 
     static func row(_ views: [AUIView], spacing: CGFloat = 8) -> AUIStack {

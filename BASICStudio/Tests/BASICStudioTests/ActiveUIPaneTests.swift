@@ -62,6 +62,52 @@ struct ActiveUIPaneTests {
         #expect(model.showBasicLogs)
     }
 
+    /// `view`'s frame in `root`'s coordinates, once `root` is laid out at
+    /// `size` the way a window would lay it out.
+    private func frame(of view: AUIView, in root: AUIView, size: CGSize) -> CGRect {
+        root.place(in: CGRect(origin: .zero, size: size))
+        root.nativeView.layoutSubtreeIfNeeded()
+        return view.nativeView.convert(view.nativeView.bounds, to: root.nativeView)
+    }
+
+    @Test("L2 L3 · The Log header fits the inspector at its default width, as LogPane's does")
+    func logHeaderFits() {
+        let pane = LogPaneAUI(model: StudioHarness().model)
+        let width = StudioShellModel.defaultInspectorWidth
+        let size = CGSize(width: width, height: 100)
+        let levels = frame(of: pane.levels, in: pane.header, size: size)
+        let clear = frame(of: pane.clear, in: pane.header, size: size)
+        // Inside the header's 12-point margin, with the title unclipped.
+        #expect(levels.maxX <= width - 12 + 0.5, "\(levels)")
+        #expect(clear.maxX <= width - 12 + 0.5, "\(clear)")
+        #expect(levels.width >= pane.levels.layoutSize(fitting: size).width - 0.5)
+    }
+
+    @Test("L1 · A log entry's tint covers its padding, as LogPane's does")
+    func logRowTint() throws {
+        let row = LogPaneModel.Row(id: UUID(), time: "12:00:00.000", issuer: "U", level: "INFO",
+                                   levelKind: .run, module: "demo.bas", text: "hello")
+        let box = try #require(LogPaneAUI.rowView(row) as? AUIStack)
+        let content = try #require(box.children.first)
+        #expect(box.backgroundColor != nil)
+        let inner = frame(of: content, in: box, size: CGSize(width: 300, height: 60))
+        // The padded content starts 8 in from the tinted box's edge.
+        #expect(abs(inner.minX - 8) < 0.5 && abs(inner.minY - 8) < 0.5, "\(inner)")
+    }
+
+    @Test("O2 · The Docs menu stays inside a narrow inspector, and at its title's width in a wide one")
+    func docsMenuFits() {
+        let docs = [UserDoc(id: "A.md", title: "Async Programming Tutorial", category: .tutorials, content: "# A")]
+        let pane = DocsPaneAUI(docs: docs)
+        let natural = pane.menuButton.maximumSize.width
+        #expect(natural > 80 && natural <= 280)
+        let narrow = frame(of: pane.menuButton, in: pane.root, size: CGSize(width: 300, height: 400))
+        #expect(narrow.maxX <= 300 - 12 + 0.5, "\(narrow)")
+        let wide = frame(of: pane.menuButton, in: pane.root, size: CGSize(width: 700, height: 400))
+        #expect(abs(wide.maxX - (700 - 12)) < 0.5, "\(wide)")
+        #expect(abs(wide.width - natural) < 0.5, "\(wide)")
+    }
+
     @Test("L7 · The Levels menu: a header, then each level checked")
     func levelsMenu() {
         let model = StudioHarness().model

@@ -42,6 +42,44 @@ struct ActiveUISettingsTests {
         #expect(SettingsAUI.snapped(262, step: 100, from: 200) == 300)
     }
 
+    @Test("S4 · The Console page's note wraps inside the page, and the value sits before its stepper")
+    func consolePageFits() {
+        let settings = SettingsAUI(model: StudioHarness().model, installedFamilies: [])
+        let width = SettingsAUI.pageWidth
+        let page = settings.consolePage
+        page.place(in: CGRect(x: 0, y: 0, width: width, height: page.layoutSize(fitting: CGSize(width: width, height: 10_000)).height))
+        page.nativeView.layoutSubtreeIfNeeded()
+        func frame(_ view: AUIView) -> CGRect { view.nativeView.convert(view.nativeView.bounds, to: page.nativeView) }
+        let note = frame(page.children.last!)
+        #expect(note.maxX <= width + 0.5, "\(note)")
+        // Two lines of caption at this width, not one clipped one.
+        #expect(note.height >= 24, "\(note)")
+        #expect(frame(settings.scrollbackLabel).maxX <= frame(settings.scrollbackStepper).minX + 0.5)
+        #expect(settings.scrollbackSlider.tickMarks == 499)
+    }
+
+    @Test("N5 · Laid out at the Settings window's page width, nothing on the prompt editor ends past it")
+    func promptEditorFits() {
+        let editor = SettingsAUI(model: StudioHarness().model, installedFamilies: []).promptEditor
+        let width = SettingsAUI.pageWidth
+        #expect(width == 688)
+        let root = editor.root
+        root.place(in: CGRect(x: 0, y: 0, width: width, height: 600))
+        root.nativeView.layoutSubtreeIfNeeded()
+        // Every view's right edge, except what a scroll view holds (the
+        // preview scrolls sideways by design).
+        var overflowing: [String] = []
+        func visit(_ view: AUIView) {
+            guard !view.isHidden else { return }
+            let frame = view.nativeView.convert(view.nativeView.bounds, to: root.nativeView)
+            if frame.maxX > width + 0.5 { overflowing.append("\(type(of: view)) \(frame)") }
+            guard !(view is AUIScrollView) else { return }
+            view.children.forEach(visit)
+        }
+        visit(root)
+        #expect(overflowing.isEmpty, "\(overflowing)")
+    }
+
     @Test("N6 · On the preset's template it opens on the preset's segments, editing the first, as SwiftUI's does on appear")
     func promptEditorStarts() {
         let model = StudioHarness().model

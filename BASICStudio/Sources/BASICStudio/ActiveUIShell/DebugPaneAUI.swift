@@ -149,10 +149,9 @@ final class DebugPaneAUI {
         let tint = Self.color(for: task.stateKind)
         let state = Self.label(task.stateText, color: tint, size: 9)
         state.isBold = true
-        state.backgroundColor = tint.opacity(0.18)
-        state.cornerRadius = 7
         state.padding = AUIEdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6)
-        var lines: [AUIView] = [LogPaneAUI.row([id, name.stretches(), state])]
+        let badge = LogPaneAUI.card(state, color: tint.opacity(0.18), cornerRadius: 7)
+        var lines: [AUIView] = [LogPaneAUI.row([id, name.stretches(), badge])]
         if !task.metadata.isEmpty {
             lines.append(LogPaneAUI.row(task.metadata.map { Self.label($0, color: .secondary, size: 10) }, spacing: 10))
         }
@@ -163,11 +162,9 @@ final class DebugPaneAUI {
             error.lineLimit = 2
             lines.append(error)
         }
-        let row = PromptEditorAUI.column(lines, spacing: 4)
-        row.padding = AUIEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
-        row.backgroundColor = task.isSelected ? AUIColor.accent.opacity(0.18) : nil
-        row.cornerRadius = 5
-        return row
+        let content = PromptEditorAUI.column(lines, spacing: 4)
+        content.padding = AUIEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        return LogPaneAUI.card(content, color: task.isSelected ? AUIColor.accent.opacity(0.18) : nil, cornerRadius: 5)
     }
 
     private func taskDetail(_ detail: DebugPaneModel.TaskDetail) -> AUIView {
@@ -213,10 +210,12 @@ final class DebugPaneAUI {
                 detail.capturedGlobals.flatMap { self.variableNode($0, indent: 12) }
             })
         }
-        let box = PromptEditorAUI.column(lines, spacing: 8)
-        box.padding = AUIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
-        box.backgroundColor = AUIColor.textBackground.opacity(0.48)
-        box.cornerRadius = 6
+        let content = PromptEditorAUI.column(lines, spacing: 8)
+        content.padding = AUIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+        let box = LogPaneAUI.card(content, color: AUIColor.textBackground.opacity(0.48), cornerRadius: 6)
+        // The separator-colored outline `DebugPane` strokes around it.
+        box.borderWidth = 1
+        box.borderColor = .separator
         return box
     }
 
@@ -231,10 +230,9 @@ final class DebugPaneAUI {
             ]
             if let metadata = frame.metadata { parts.append(Self.label(metadata, color: .secondary)) }
             if let line = frame.lineText { parts.append(Self.label(line, color: .secondary)) }
-            let row = LogPaneAUI.row(parts)
-            row.padding = AUIEdgeInsets(top: 5, leading: 6, bottom: 5, trailing: 6)
-            row.backgroundColor = frame.isSelected ? AUIColor.accent.opacity(0.18) : nil
-            row.cornerRadius = 5
+            let content = LogPaneAUI.row(parts)
+            content.padding = AUIEdgeInsets(top: 5, leading: 6, bottom: 5, trailing: 6)
+            let row = LogPaneAUI.card(content, color: frame.isSelected ? AUIColor.accent.opacity(0.18) : nil, cornerRadius: 5)
             Click.on(row) { [weak self] in
                 guard let self else { return }
                 DebugPaneModel.selectFrame(index: frame.index, on: self.model)
@@ -252,8 +250,10 @@ final class DebugPaneAUI {
     private func variableNode(_ variable: BASICVariableSnapshot, indent: CGFloat) -> [AUIView] {
         let hasChildren = !variable.children.isEmpty
         let isOpen = openRows.contains(variable.id)
-        let marker = Self.label(hasChildren ? (isOpen ? "▾" : "▸") : " ", color: .secondary)
-        marker.minimumSize = CGSize(width: 12, height: 0)
+        let marker = AUIImageView(hasChildren ? DisclosureSection.chevron(isOpen: isOpen) : nil)
+        marker.contentTint = .secondary
+        marker.minimumSize = CGSize(width: 12, height: 12)
+        marker.maximumSize = CGSize(width: 12, height: 12)
         let name = Self.label(variable.name)
         name.isBold = true
         name.minimumSize = CGSize(width: 70, height: 0)
@@ -298,7 +298,10 @@ final class DebugPaneAUI {
     /// suspended frame's Locals.
     private func disclosure(_ key: String, title: String, indent: CGFloat, content: () -> [AUIView]) -> AUIView {
         let isOpen = openRows.contains(key)
-        let header = Self.label("\(isOpen ? "▾" : "▸") \(title)", size: 10)
+        let chevron = AUIImageView(DisclosureSection.chevron(isOpen: isOpen))
+        chevron.minimumSize = CGSize(width: 12, height: 12)
+        chevron.maximumSize = CGSize(width: 12, height: 12)
+        let header = LogPaneAUI.row([chevron, Self.label(title, size: 10), AUISpacer()], spacing: 4)
         header.padding = AUIEdgeInsets(top: 0, leading: indent, bottom: 0, trailing: 0)
         Click.on(header) { [weak self] in self?.toggle(key) }
         let views = isOpen ? content() : []
@@ -338,7 +341,7 @@ final class DebugPaneAUI {
 }
 
 /// A title that opens and closes the rows under it, like SwiftUI's
-/// `DisclosureGroup`: ▾ open, ▸ closed.
+/// `DisclosureGroup`: a chevron down when open, right when closed.
 @MainActor
 final class DisclosureSection {
     let root: AUIStack
@@ -371,8 +374,19 @@ final class DisclosureSection {
         views.forEach(content.addChild)
     }
 
+    /// The chevron a `DisclosureGroup` draws before its title.
+    static func chevron(isOpen: Bool) -> NSImage? {
+        NSImage(systemSymbolName: chevronSymbol(isOpen: isOpen), accessibilityDescription: isOpen ? "Collapse" : "Expand")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+    }
+
+    static func chevronSymbol(isOpen: Bool) -> String {
+        isOpen ? "chevron.down" : "chevron.right"
+    }
+
     private func applyOpenState() {
-        header.title = "\(isOpen ? "▾" : "▸") \(title)"
+        header.title = title
+        header.image = Self.chevron(isOpen: isOpen)
         content.isHidden = !isOpen
         root.invalidateLayout()
     }
