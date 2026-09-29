@@ -68,7 +68,11 @@ final class PromptEditorAUI {
         let segments = segments
         segmentTable = AUITable(rowCount: { segments.segments.count }) { index in
             let segment = segments.segments[index]
-            let row = Self.segmentRow(segment)
+            // A line under every row but the last, as SwiftUI's List draws;
+            // a table grid would rule the empty space below the rows too.
+            var parts: [AUIView] = [Self.segmentRow(segment)]
+            if index < segments.segments.count - 1 { parts.append(AUIDivider()) }
+            let row = Self.column(parts, spacing: 4)
             row.contextMenu = AUIMenu("", items: [
                 AUIMenuItem("Edit", action: { segments.onEdit?(segment.id) }),
                 AUIMenuItem("Delete", action: { segments.onDelete?(segment.id) }),
@@ -76,6 +80,12 @@ final class PromptEditorAUI {
             return row
         }
         segmentTable.minimumSize = CGSize(width: 260, height: 180)
+        // SwiftUI's List: rows the full width, and the selection a light
+        // accent band. The alpha goes in the native color, which is what the
+        // table's selection fill draws with.
+        segmentTable.rowHorizontalPadding = 0
+        segmentTable.rowInsets = AUIEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)
+        segmentTable.selectionColor = AUIColor(NSColor.controlAccentColor.withAlphaComponent(0.18))
         segmentTable.allowsReordering = true
         let newSegment = AUIButton("New Segment")
         newSegment.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
