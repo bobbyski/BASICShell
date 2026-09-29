@@ -3175,6 +3175,22 @@ public final class BASICInterpreter {
             if typeName.uppercased() == "HTTPCLIENT", method.normalized == "GET" {
                 return try callHTTPClientGet(id: id, arguments: arguments)
             }
+            if BASICAUIKind(named: typeName) != nil {
+                // Here rather than in the runtime's switch: a window's `run`
+                // waits, and only the interpreter can drain events and see a
+                // Stop while it does.
+                return try runtime.callAUIMethod(
+                    typeName: typeName,
+                    id: id,
+                    method: method.name,
+                    arguments: try arguments.map(evaluate),
+                    host: host as? BASICAUIHost,
+                    pump: { [self] in
+                        try checkExecutionBreak()
+                        try drainPendingEventsIfAllowed(limit: 16)
+                    }
+                )
+            }
             return try runtime.callSystemObjectMethod(
                 typeName: typeName,
                 id: id,
@@ -3703,21 +3719,28 @@ public final class BASICInterpreter {
     }
 
     func dispatchEvent(selector: BASICEventSelector, data: BASICValue) throws {
+        // An ActiveUI control's own handler (`button.onclick("Saved")`) comes
+        // first; `ON AUI CLICK CALL` catches the controls that have none.
+        let controlHandler = auiControlHandler(selector: selector, data: data)
         let registration = runtime.eventHandler(for: selector)
             ?? selector.subtype.map { _ in runtime.eventHandler(for: BASICEventSelector(type: selector.type)) }
             ?? nil
-        guard let registration else {
+        guard let handlerName = controlHandler?.uppercased() ?? registration?.normalizedHandlerName else {
             logMissingEventHandler(selector: selector, detail: nil)
             return
         }
-        guard let definition = functionDefinitions[registration.normalizedHandlerName] else {
-            logMissingEventHandler(selector: selector, detail: " handler=\(registration.handlerName)")
+        guard let definition = functionDefinitions[handlerName] else {
+            logMissingEventHandler(selector: selector, detail: " handler=\(controlHandler ?? registration?.handlerName ?? handlerName)")
             return
         }
         guard !definition.isAsync else {
             throw BASICError.runtime("Event handler \(definition.displayName) must be synchronous")
         }
         let payload = try eventPayload(for: selector, data: data, handler: definition)
+        // A control's handler may take no event: `function Closed()`. Only
+        // for ActiveUI, whose handlers are per control and often need none;
+        // the older event families keep requiring the parameter.
+        let arguments = selector.type == "AUI" && definition.parameters.isEmpty ? [] : [payload]
         logTarget(
             module: "BASICInterpreter.swift",
             text: "event handler begin selector=\(selector.description) handler=\(definition.displayName)"
@@ -3727,7 +3750,7 @@ public final class BASICInterpreter {
                 definition: definition,
                 receiver: nil,
                 receiverClassName: nil,
-                argumentValues: [payload],
+                argumentValues: arguments,
                 allowVoid: true
             )
             logTarget(
@@ -3741,6 +3764,18 @@ public final class BASICInterpreter {
             )
             throw error
         }
+    }
+
+    /// The per-control handler named for an ActiveUI event, if its control
+    /// set one.
+    private func auiControlHandler(selector: BASICEventSelector, data: BASICValue) -> String? {
+        guard selector.type == "AUI",
+              let kind = selector.subtype,
+              case .dictionary(let dictionary) = data,
+              case .number(let source)? = fieldValue("source", from: dictionary) else {
+            return nil
+        }
+        return runtime.auiHandler(id: Int(source), kind: kind)
     }
 
     private func eventPayload(
@@ -3779,6 +3814,8 @@ public final class BASICInterpreter {
             typeName = "BASICRouteEvent"
         case "NETWORK":
             typeName = "BASICNetworkEvent"
+        case "AUI":
+            typeName = "BASICAUIEvent"
         default:
             typeName = "BASICEvent"
         }
@@ -3861,6 +3898,10 @@ public final class BASICInterpreter {
             fields["REQUESTID"] = fieldValue("requestID", from: dictionary)
                 ?? fieldValue("requestId", from: dictionary)
                 ?? .string(BASICString(""))
+        case "AUI":
+            fields["SOURCE"] = fieldValue("source", from: dictionary) ?? .number(0)
+            fields["TEXT$"] = fieldValue("text", from: dictionary) ?? .string(BASICString(""))
+            fields["INDEX"] = fieldValue("index", from: dictionary) ?? .number(-1)
         default:
             break
         }
@@ -5932,6 +5973,9 @@ public final class BASICInterpreter {
                     typeName: tuiName, arguments: try arguments.map(evaluate)
                 )
             }
+            if let kind = BASICAUIKind(named: name.normalized) {
+                return try runtime.auiObject(kind: kind, arguments: try arguments.map(evaluate), host: host as? BASICAUIHost)
+            }
             if functionDefinitions[name.normalized] != nil {
                 return try callFunction(name: name, arguments: arguments)
             }
@@ -5975,6 +6019,9 @@ public final class BASICInterpreter {
                 return try runtime.tuiObject(
                     typeName: tuiName, arguments: try arguments.map(evaluate)
                 )
+            }
+            if let kind = BASICAUIKind(named: className) {
+                return try runtime.auiObject(kind: kind, arguments: try arguments.map(evaluate), host: host as? BASICAUIHost)
             }
             guard let classDefinition = classDefinitions[className.uppercased()] else {
                 throw BASICError.runtime("Unknown CLASS \(className)")

@@ -59,21 +59,28 @@ struct BASICRichTextTests {
             "SQLDATABASE": "\":memory:\"",
             "DOCUMENTDATABASE": "\"memory://test\"",
             "DATASTORE": "SqlDatabase(\":memory:\")",
+            "AUITABLE": "\"Name\"",
+            "AUIDIALOG": "\"Title\", \"Message\"",
         ]
         // Types a program receives but never builds. A Recordset is a cursor
         // into an open connection, handed back by Query -- constructing one
         // would have nothing to be a cursor into.
         let producedOnly: Set<String> = ["RECORDSET"]
         for name in BASICKeywords.pseudoClasses.sorted() where !producedOnly.contains(name) {
-            let host = TestHost()
-            let session = BASICSession(host: host)
+            // The ActiveUI classes need a host that can make windows; a text
+            // host refuses them by design, which is not what is tested here.
+            let isActiveUI = BASICAUIKind(named: name) != nil
+            let testHost = TestHost()
+            let windowHost = RecordingAUIHost()
+            let session = isActiveUI ? BASICSession(host: windowHost) : BASICSession(host: testHost)
             session.program.loadSource(
                 "LET Handle = \(name)(\(arguments[name] ?? ""))\nPRINT \"ok\""
             )
             session.submit("RUN")
+            let output = isActiveUI ? windowHost.output : testHost.output
             #expect(
-                host.output == ["ok"],
-                "\(name) constructed but could not be assigned: \(host.output)"
+                output == ["ok"],
+                "\(name) constructed but could not be assigned: \(output)"
             )
         }
     }

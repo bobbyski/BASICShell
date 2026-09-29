@@ -50,6 +50,13 @@ final class BASICRuntime {
     // enough without a rendering binding in it.
     var richObjects: [Int: BASICRichObject] = [:]
     var nextRichObjectID = 1
+    // The ActiveUI pseudo classes (BASICActiveUI.swift): each control's kind,
+    // and its per-control handlers. The host holds the controls themselves.
+    // Ids are never reused within a session, not even across RUNs, so a
+    // host still closing the last run's windows cannot confuse them.
+    var auiObjects: [Int: BASICAUIKind] = [:]
+    var auiHandlers: [String: String] = [:]
+    var nextAUIObjectID = 1
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
@@ -68,6 +75,8 @@ final class BASICRuntime {
         timerObjects.removeAll()
         httpClientObjects.removeAll()
         richObjects.removeAll()
+        auiObjects.removeAll()
+        auiHandlers.removeAll()
         eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
@@ -442,7 +451,7 @@ final class BASICRuntime {
     private static let builtInEventTypes: Set<String> = [
         "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT",
         "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT",
-        "BASICNETWORKEVENT",
+        "BASICNETWORKEVENT", "BASICAUIEVENT",
     ]
 
     /// Whether `name` is a type the language provides rather than the program.
@@ -2527,10 +2536,14 @@ final class BASICRuntime {
                 switch name.uppercased() {
                 case "VECTORTERMINAL", "VTG":
                     return vectorTerminalObject()
-                case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
+                case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT", "BASICAUIEVENT":
                     return Self.builtInEventObject(typeName: name, fields: [:])
                 case "SECONDSTIMER":
                     return secondsTimerObject(intervalSeconds: 0)
+                case let upper where BASICAUIKind(named: upper) != nil:
+                    // Not a control yet: id 0 names nothing, so a method on
+                    // it says so rather than reaching the host.
+                    return .systemObject(BASICAUIKind(named: upper)!.rawValue, 0)
                 default:
                     return fileObject()
                 }
@@ -3132,7 +3145,7 @@ final class BASICRuntime {
 
     static func builtInEventClassName(_ name: String) -> String? {
         switch name.uppercased() {
-        case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
+        case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT", "BASICAUIEVENT":
             return name.uppercased()
         default:
             return nil
@@ -3224,6 +3237,14 @@ final class BASICRuntime {
                 eventField("Error", .scalar(.string), declaringClassName: normalized),
                 eventField("RequestID", .scalar(.string), declaringClassName: normalized)
             ]
+        case "BASICAUIEVENT":
+            // Source is the control's id (control.id()); Text$ its text, a
+            // list's selected item, or a field's contents; Index a selection.
+            ownFields = [
+                eventField("Source", .scalar(.integer), declaringClassName: normalized),
+                eventField("Text$", .scalar(.string), declaringClassName: normalized),
+                eventField("Index", .scalar(.integer), declaringClassName: normalized)
+            ]
         default:
             ownFields = []
         }
@@ -3232,7 +3253,7 @@ final class BASICRuntime {
 
     private static func builtInEventBaseClassName(_ normalizedName: String) -> String? {
         switch normalizedName {
-        case "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT":
+        case "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT", "BASICAUIEVENT":
             return "BASICEVENT"
         default:
             return nil
@@ -3249,6 +3270,7 @@ final class BASICRuntime {
         case "BASICFRAMEEVENT": return "BASICFrameEvent"
         case "BASICROUTEEVENT": return "BASICRouteEvent"
         case "BASICNETWORKEVENT": return "BASICNetworkEvent"
+        case "BASICAUIEVENT": return "BASICAUIEvent"
         default: return normalizedName
         }
     }

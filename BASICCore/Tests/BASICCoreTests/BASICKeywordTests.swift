@@ -99,7 +99,11 @@ struct BASICKeywordTests {
     @Test("every pseudo class in the vocabulary can be constructed")
     func pseudoClassesAreConstructible() {
         for name in BASICKeywords.pseudoClasses.sorted() {
-            let session = BASICSession(host: TestHost())
+            // The host the session prints to. This read a fresh TestHost's
+            // output, which is always empty, so a runtime complaint could
+            // never fail the test (found 2026-09-29, ACTIVEUI_TRANSITION.md).
+            let host = TestHost()
+            let session = BASICSession(host: host)
             session.program.loadSource("LET Handle = \(name)()")
             session.submit("RUN")
             // "array index must be numeric" belongs here too: a name the
@@ -107,7 +111,7 @@ struct BASICKeywordTests {
             // missing registration reports a subscript complaint rather than an
             // unknown class. Checking only for "Unknown CLASS" let three
             // unregistered classes through.
-            let complaints = (session.diagnostics().map { $0.message } + TestHost().output)
+            let complaints = (session.diagnostics().map { $0.message } + host.output)
                 .filter {
                     $0.contains("Unknown CLASS") || $0.contains("array index must be numeric")
                 }
@@ -139,6 +143,16 @@ struct BASICKeywordTests {
                 "\(name) is in tuiClassNames but not in BASICKeywords.pseudoClasses"
             )
         }
+    }
+
+    /// The ActiveUI classes: the vocabulary's AUI names and the interpreter's
+    /// ``BASICAUIKind`` are the same list, spelled the same way.
+    @Test("every ActiveUI pseudo class has a kind, and every kind is in the vocabulary")
+    func activeUIPseudoClassesAreRegistered() {
+        let listed = BASICKeywords.pseudoClasses.filter { $0.hasPrefix("AUI") }
+        let kinds = Set(BASICAUIKind.allCases.map { $0.rawValue.uppercased() })
+        #expect(listed == kinds)
+        #expect(BASICKeywords.activeUIClasses == BASICAUIKind.allCases.map(\.rawValue))
     }
 
     /// Every listed pseudo-variable really is reserved.

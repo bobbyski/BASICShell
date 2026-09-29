@@ -157,7 +157,7 @@ public enum BASICKeywords {
     /// mechanical derivation could not see them, and neither could the drift
     /// test. `BASICKeywordTests` now constructs each of these to prove the
     /// interpreter still answers to it.
-    public static let pseudoClasses: Set<String> = databaseClasses.union([
+    public static let pseudoClasses: Set<String> = databaseClasses.union(activeUIClasses.map { $0.uppercased() }).union([
         "FILE", "HTTPCLIENT", "RICHMARKDOWN", "RICHPANEL", "RICHTABLE",
         "RICHPROGRESS", "RICHSYNTAX", "RICHTEXT", "SECONDSTIMER",
         "TUIAPP", "TUIBUTTON", "TUICHECK", "TUIDIALOG", "TUIFIELD", "TUIGAUGE",
@@ -177,6 +177,17 @@ public enum BASICKeywords {
         "TUIPREFS", "TUIFORM", "TUIPREFSDIALOG", "TUILINK", "TUINAVIGATOR",
         "VECTORTERMINAL", "VTG",
     ])
+
+    /// The ActiveUI family (ACTIVEUI_TRANSITION.md P6): real Mac windows for a
+    /// BASIC program, in a host that can make them (BASICStudio).
+    ///
+    /// Spelled as a program writes them, because the interpreter's
+    /// `BASICAUIKind` takes its raw values from here and basicc refuses them
+    /// by name from here. One list, three readers.
+    public static let activeUIClasses: [String] = [
+        "AUIWindow", "AUIStack", "AUILabel", "AUIButton", "AUIField",
+        "AUIList", "AUITable", "AUIDialog",
+    ]
 
     /// The database family, from the one place it is registered (D0.5).
     ///

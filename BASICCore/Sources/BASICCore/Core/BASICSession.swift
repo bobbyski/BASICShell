@@ -180,6 +180,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private let hostEventLock = NSLock()
     private var pendingHostEvents: [BASICEventSelector: BASICValue] = [:]
     private var pendingHostEventOrder: [BASICEventSelector] = []
+    /// Events that must each arrive, in order: two clicks are two clicks.
+    /// The coalesced ones above keep only the latest per selector, which is
+    /// right for a resize and wrong for a button.
+    private var queuedHostEvents: [(BASICEventSelector, BASICValue)] = []
     private var isHostEventDrainQueued = false
     private var aliases: [String: String] = [:]
     private var pendingInteractiveLines: [String] = []
@@ -1149,6 +1153,26 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         )
     }
 
+    /// Posts what the user did to an ActiveUI control: `kind` is CLICK,
+    /// SELECT, SUBMIT, CHANGE or CLOSE, `source` the control's id. It reaches
+    /// the control's own `on<kind>` handler, else `ON AUI <kind> CALL`, as a
+    /// `BASICAUIEvent`. Unlike the other host events, none is coalesced.
+    public func postAUIEvent(kind: String, source: Int, text: String = "", index: Int = -1) {
+        let normalizedKind = kind.uppercased()
+        postEvent(
+            selector: BASICEventSelector(type: "AUI", subtype: normalizedKind),
+            fields: [
+                "type": .string(BASICString("AUI")),
+                "subtype": .string(BASICString(normalizedKind)),
+                "source": .number(Double(source)),
+                "text": .string(BASICString(text)),
+                "index": .number(Double(index)),
+                "timestamp": .number(Date().timeIntervalSince1970)
+            ],
+            coalesces: false
+        )
+    }
+
     /// Posts a network event for future HTTP/socket hosts.
     public func postNetworkEvent(
         subtype: String,
@@ -1271,7 +1295,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
     }
 
-    private func postEvent(selector: BASICEventSelector, fields: [String: BASICValue]) {
+    private func postEvent(selector: BASICEventSelector, fields: [String: BASICValue], coalesces: Bool = true) {
         guard !eventLoop.hasPendingError else {
             if selector.type == "TIMER" {
                 logTimerTarget("timer event purged selector=\(selector.description) reason=pending-error")
@@ -1280,11 +1304,15 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
         let data = BASICValue.dictionary(BASICDictionary(values: fields))
         hostEventLock.lock()
-        let replacesExisting = pendingHostEvents[selector] != nil
-        if !replacesExisting {
-            pendingHostEventOrder.append(selector)
+        let replacesExisting = coalesces && pendingHostEvents[selector] != nil
+        if !coalesces {
+            queuedHostEvents.append((selector, data))
+        } else {
+            if !replacesExisting {
+                pendingHostEventOrder.append(selector)
+            }
+            pendingHostEvents[selector] = data
         }
-        pendingHostEvents[selector] = data
         guard !isHostEventDrainQueued else {
             hostEventLock.unlock()
             if selector.type == "TIMER", replacesExisting {
@@ -1308,9 +1336,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
         let events = orderedSelectors.compactMap { selector in
             pendingHostEvents[selector].map { (selector, $0) }
-        }
+        } + queuedHostEvents
         pendingHostEvents.removeAll()
         pendingHostEventOrder.removeAll()
+        queuedHostEvents.removeAll()
         isHostEventDrainQueued = false
         hostEventLock.unlock()
 
@@ -1347,6 +1376,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let timerCount = pendingHostEvents.keys.filter { $0.type == "TIMER" }.count
         pendingHostEvents.removeAll()
         pendingHostEventOrder.removeAll()
+        queuedHostEvents.removeAll()
         isHostEventDrainQueued = false
         hostEventLock.unlock()
         if timerCount > 0 {
