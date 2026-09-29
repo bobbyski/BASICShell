@@ -16,6 +16,14 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.1
+  DocumentArchive:
+    path: ../DocumentArchive
+  # The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md): the
+  # sibling ActiveUI checkout, as Package.swift takes it.
+  ActiveUI:
+    path: ../../../../AIResearch/ActiveUI/Code/ActiveUI
+  ActiveUIMarkdown:
+    path: ../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -39,6 +47,8 @@ targets:
         type: folder
       - path: Sources/BASICStudio/Resources/Assets.xcassets
         buildPhase: resources
+      - path: Sources/BASICStudio/Resources/UserDocs.zip
+        buildPhase: resources
     dependencies:
       - package: BASICCore
         product: BASICCore
@@ -48,9 +58,16 @@ targets:
         product: VectorTerminalSDK
       - package: MarkdownUI
         product: MarkdownUI
+      - package: DocumentArchive
+        product: DocumentArchive
+      - package: ActiveUI
+        product: ActiveUI
+      - package: ActiveUIMarkdown
+        product: ActiveUIMarkdown
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aibasic.BASICStudio
+        DEVELOPMENT_TEAM: 4G3PGPSVTU
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -69,3 +86,12 @@ schemes:
       config: Debug
     test:
       config: Debug
+  # The same app in the ActiveUI shell.
+  BASICStudio-ActiveUI:
+    build:
+      targets:
+        BASICStudio: all
+    run:
+      config: Debug
+      commandLineArguments:
+        "--activeui": true

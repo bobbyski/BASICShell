@@ -143,9 +143,13 @@ struct UserDoc: Identifiable, Hashable {
         if let bundled = Bundle.main.url(forResource: "UserDocs", withExtension: "zip") {
             sources.append(.archive(bundled))
         }
+        // Only a SwiftPM build has a module bundle; the Xcode app target
+        // (project.yml) ships the zip in Bundle.main, found above.
+        #if SWIFT_PACKAGE
         if let bundled = Bundle.module.url(forResource: "UserDocs", withExtension: "zip") {
             sources.append(.archive(bundled))
         }
+        #endif
 
         let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         sources.append(.directory(currentDirectory.appendingPathComponent("UserDocs")))

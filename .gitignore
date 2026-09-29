@@ -20,7 +20,12 @@ DocumentArchive/.swiftpm
 # without anyone having to remember this file — which is how 1495 build
 # artifacts once reached a commit.
 .build/
-.swiftpm/
+**/.swiftpm/*
+# Except BASICStudio's shared Xcode schemes (BASICStudio-ActiveUI runs the
+# ActiveUI shell), so every checkout has them.
+!BASICStudio/.swiftpm/xcode/
+BASICStudio/.swiftpm/xcode/*
+!BASICStudio/.swiftpm/xcode/xcshareddata/
 
 # Rev 2 interop demo build products
 BASICCompiler/Examples/SwiftInterop/Build/
