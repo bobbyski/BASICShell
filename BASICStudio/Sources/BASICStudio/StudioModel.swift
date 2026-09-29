@@ -568,6 +568,84 @@ final class StudioModel: ObservableObject {
         selectedPane = .editor
     }
 
+    // MARK: - New files and projects (STUDIO_FEATURES.md M10, ruled 2026-09-29)
+
+    /// Where a new program goes: the open project, else the working directory.
+    var currentDirectoryURL: URL {
+        projectDirectoryURL ?? workingDirectoryURL
+    }
+
+    /// The first of "Untitled.bas", "Untitled 2.bas", … not yet in `directory`;
+    /// with no extension, a folder name.
+    static func untitledName(in directory: URL, base: String = "Untitled", extension ext: String? = "bas") -> String {
+        let suffix = ext.map { ".\($0)" } ?? ""
+        var number = 1
+        while true {
+            let name = number == 1 ? "\(base)\(suffix)" : "\(base) \(number)\(suffix)"
+            let candidate = directory.appendingPathComponent(name)
+            if !FileManager.default.fileExists(atPath: candidate.path) { return name }
+            number += 1
+        }
+    }
+
+    /// File ▸ New (⌘N): a new BASIC program in the current directory, named
+    /// in a save panel that starts there, then opened in the editor.
+    func newProgramFromMenu() {
+        let panel = NSSavePanel()
+        panel.title = "New BASIC Program"
+        panel.directoryURL = currentDirectoryURL
+        panel.nameFieldStringValue = Self.untitledName(in: currentDirectoryURL)
+        panel.allowedContentTypes = Self.basicProgramContentTypes
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try createProgram(at: url)
+        } catch {
+            presentFileError("Unable to create \(url.lastPathComponent).", error: error)
+        }
+    }
+
+    /// Creates the program at `url` and opens it. A file already there is
+    /// opened as it is, never overwritten.
+    func createProgram(at url: URL) throws {
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try "' \(url.lastPathComponent)\n".write(to: url, atomically: true, encoding: .utf8)
+        }
+        try loadProgram(from: url)
+        rescanProject()
+    }
+
+    /// File ▸ New Project… (⇧⌘N): a new folder, named in a save panel, with
+    /// a main.bas in it; the folder opens as the project and main.bas in the
+    /// editor.
+    func newProjectFromMenu() {
+        let panel = NSSavePanel()
+        panel.title = "New Project"
+        panel.prompt = "Create"
+        panel.canCreateDirectories = true
+        panel.directoryURL = currentDirectoryURL
+        panel.nameFieldStringValue = Self.untitledName(in: currentDirectoryURL, base: "Untitled Project", extension: nil)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try createProject(at: url)
+        } catch {
+            presentFileError("Unable to create the project \(url.lastPathComponent).", error: error)
+        }
+    }
+
+    /// Creates folder `url` with a main.bas, opens it as the project, and
+    /// loads main.bas. An existing folder is used as it is, and an existing
+    /// main.bas in it is kept.
+    func createProject(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let main = url.appendingPathComponent("main.bas")
+        if !FileManager.default.fileExists(atPath: main.path) {
+            let name = url.lastPathComponent
+            try "' main.bas — \(name)\n\nPRINT \"Hello from \(name)\"\n".write(to: main, atomically: true, encoding: .utf8)
+        }
+        openProject(at: url)
+        openProjectFile("main.bas")
+    }
+
     // MARK: - The project (ACTIVEUI_TRANSITION.md P3.7)
 
     /// Makes `url` the open project: its BASIC programs list in the sidebar,
@@ -1505,7 +1583,7 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    private static var basicProgramContentTypes: [UTType] {
+    static var basicProgramContentTypes: [UTType] {
         var types: [UTType] = [.plainText, .text, .sourceCode]
         if let basic = UTType(filenameExtension: "bas") {
             types.append(basic)

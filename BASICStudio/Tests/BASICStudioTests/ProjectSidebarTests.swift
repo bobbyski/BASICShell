@@ -96,6 +96,45 @@ struct ProjectSidebarTests {
         #expect(studio.sidebar.headerActions.map(\.tooltip) == [ProjectModel.openProjectTitle, "Rescan the project"])
     }
 
+    @Test("M10 · New makes a program in the current directory and opens it; an existing file is opened, not overwritten")
+    func newProgram() throws {
+        let root = try makeProject()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = StudioHarness().model
+        model.openProject(at: root)
+        #expect(model.currentDirectoryURL == root.standardizedFileURL)
+        #expect(StudioModel.untitledName(in: root) == "Untitled.bas")
+        let url = root.appendingPathComponent("Untitled.bas")
+        try model.createProgram(at: url)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(model.currentProgramURL == url && model.programText == "' Untitled.bas\n")
+        #expect(model.projectFiles.contains("Untitled.bas"))
+        #expect(StudioModel.untitledName(in: root) == "Untitled 2.bas")
+
+        try model.createProgram(at: root.appendingPathComponent("hello.bas"))
+        #expect(model.programText == "PRINT \"HELLO\"")
+    }
+
+    @Test("M10 · New Project makes a folder with main.bas, opens it as the project, and main.bas in the editor")
+    func newProject() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("studio-new-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        #expect(StudioModel.untitledName(in: parent, base: "Untitled Project", extension: nil) == "Untitled Project")
+        let model = StudioHarness().model
+        let project = parent.appendingPathComponent("Rockets")
+        try model.createProject(at: project)
+        #expect(model.projectDirectoryURL == project.standardizedFileURL)
+        #expect(model.projectFiles == ["main.bas"])
+        #expect(model.currentProgramURL?.lastPathComponent == "main.bas")
+        #expect(model.programText.contains("PRINT \"Hello from Rockets\""))
+        #expect(model.selectedPane == .editor)
+
+        try "PRINT 42".write(to: project.appendingPathComponent("main.bas"), atomically: true, encoding: .utf8)
+        try model.createProject(at: project)
+        #expect(model.programText == "PRINT 42")
+    }
+
     @Test("P3.7 · View ▸ Toggle Sidebar collapses it")
     func toggle() {
         let studio = StudioActiveUIShell(model: StudioHarness().model)

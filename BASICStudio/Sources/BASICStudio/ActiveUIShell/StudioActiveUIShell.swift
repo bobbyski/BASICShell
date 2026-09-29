@@ -374,7 +374,7 @@ final class StudioActiveUIShell {
         let openProject = AUIMenuItem(ProjectModel.openProjectTitle, shortcut: AUIKeyboardShortcut("o", modifiers: [.command, .shift])) { [weak model] in
             model?.openProjectFromMenu()
         }
-        let file = AUIMenu("File", items: items(commands.fileOpen, model: model) + [openProject] + items(commands.fileSave, model: model) + [
+        let file = AUIMenu("File", items: items(commands.fileNew, model: model) + items(commands.fileOpen, model: model) + [openProject] + items(commands.fileSave, model: model) + [
             .separator(),
             .command(.closeDocument, title: "Close", shortcut: .command("w")),
         ])

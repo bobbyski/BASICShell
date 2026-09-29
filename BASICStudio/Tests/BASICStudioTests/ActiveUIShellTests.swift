@@ -36,11 +36,11 @@ struct ActiveUIShellTests {
         #expect(menus.map(\.title) == ["BASICStudio", "File", "Edit", "View", "Examples", "Console", "Debug", "Window", "Help"])
     }
 
-    @Test("P2.3 M6–M9 · File: Load, Open Project, Save, Save As, Set Working Directory, with their shortcuts, then Close")
+    @Test("P2.3 M6–M10 · File: New, New Project, Load, Open Project, Save, Save As, Set Working Directory, then Close")
     func fileMenu() throws {
         let file = try #require(shell().menuBar.menus.first { $0.title == "File" })
         let titles = file.items.map(\.title).filter { !$0.isEmpty }
-        #expect(Array(titles.prefix(5)) == ["Load...", "Open Project…", "Save", "Save As...", "Set Working Directory..."])
+        #expect(Array(titles.prefix(7)) == ["New", "New Project...", "Load...", "Open Project…", "Save", "Save As...", "Set Working Directory..."])
         let openProject = try #require(file.items.first { $0.title == "Open Project…" })
         #expect(openProject.shortcut == AUIKeyboardShortcut("o", modifiers: [.command, .shift]))
         #expect(titles.last == "Close")

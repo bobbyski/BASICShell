@@ -15,7 +15,9 @@ import Foundation
 ///
 /// ```text
 ///   BASICStudio  About BASICStudio                    about
-///   File         Load…                 ⌘O             fileOpen
+///   File         New                   ⌘N             fileNew
+///                New Project…          ⇧⌘N
+///                Load…                 ⌘O             fileOpen
 ///                Save                  ⌘S             fileSave
 ///                Save As…              ⇧⌘S
 ///                ─────
@@ -32,6 +34,7 @@ struct MenuCommandModel: Equatable {
     /// What a menu item does. ``perform(_:on:)`` turns it into a model call.
     enum Action: Equatable {
         case about
+        case newProgram, newProject
         case load, save, saveAs, setWorkingDirectory
         case example(BundledExample)
         case find, findAndReplace
@@ -71,6 +74,10 @@ struct MenuCommandModel: Equatable {
     }
 
     let about: Item
+    /// File ▸ New and New Project…, in place of the standard New group:
+    /// ⌘N used to open a second window over the same program (M10, ruled
+    /// 2026-09-29).
+    let fileNew: [Entry]
     /// File items that go where New's group ends.
     let fileOpen: [Entry]
     /// File items that replace the standard Save group.
@@ -83,6 +90,10 @@ struct MenuCommandModel: Equatable {
     @MainActor
     init(_ model: StudioModel) {
         about = Item(title: "About BASICStudio", shortcut: nil, action: .about, isChecked: nil)
+        fileNew = [
+            .item(Item(title: "New", shortcut: Shortcut(key: "n", modifiers: [.command]), action: .newProgram, isChecked: nil)),
+            .item(Item(title: "New Project...", shortcut: Shortcut(key: "n", modifiers: [.command, .shift]), action: .newProject, isChecked: nil)),
+        ]
         fileOpen = [
             .item(Item(title: "Load...", shortcut: Shortcut(key: "o", modifiers: [.command]), action: .load, isChecked: nil)),
         ]
@@ -127,6 +138,8 @@ struct MenuCommandModel: Equatable {
     static func perform(_ action: Action, on model: StudioModel) {
         switch action {
         case .about: StudioAbout.show()
+        case .newProgram: model.newProgramFromMenu()
+        case .newProject: model.newProjectFromMenu()
         case .load: model.loadProgramFromMenu()
         case .save: model.saveProgramFromMenu()
         case .saveAs: model.saveProgramAsFromMenu()

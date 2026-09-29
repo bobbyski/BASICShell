@@ -36,6 +36,11 @@ struct BASICStudioApp: App {
                 menuItem(menu.about)
             }
 
+            // ⌘N makes a new program, not a second window over this one.
+            CommandGroup(replacing: .newItem) {
+                menuEntries(menu.fileNew)
+            }
+
             CommandGroup(after: .newItem) {
                 menuEntries(menu.fileOpen)
             }

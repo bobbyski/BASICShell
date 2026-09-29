@@ -37,6 +37,13 @@ struct MenuCommandModelTests {
         ])
     }
 
+    @Test("M10 · File ▸ New ⌘N and New Project ⇧⌘N, in place of a second window")
+    func fileNew() {
+        let menu = MenuCommandModel(StudioHarness().model)
+        #expect(items(menu.fileNew).map { "\($0.title) \(describe($0.shortcut))" } == ["New ⌘N", "New Project... ⇧⌘N"])
+        #expect(items(menu.fileNew).map(\.action) == [.newProgram, .newProject])
+    }
+
     @Test("M3 · Edit gets a divider, then Find ⌘F and Find and Replace ⌥⌘F")
     func editItems() {
         let menu = MenuCommandModel(StudioHarness().model)
