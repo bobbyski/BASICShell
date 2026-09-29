@@ -11,31 +11,32 @@ import WebKit
 
 struct StudioView: View {
     @ObservedObject var model: StudioModel
-    @State private var inspectorWidth: CGFloat = 360
+    @State private var inspectorWidth: CGFloat = StudioShellModel.defaultInspectorWidth
 
     var body: some View {
+        // The chrome's state comes from the projection the ActiveUI shell
+        // reads too, and every button goes through StudioShellModel.perform.
+        let shell = StudioShellModel(model)
         VStack(spacing: 0) {
             GeometryReader { geometry in
                 HStack(spacing: 0) {
                     mainPane
-                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(minWidth: StudioShellModel.minimumMainWidth, maxWidth: .infinity, maxHeight: .infinity)
 
-                    if let inspectorPane = model.inspectorPane {
+                    if let inspectorPane = shell.inspector {
                         InspectorDivider(
                             width: $inspectorWidth,
-                            availableWidth: geometry.size.width,
-                            minimumMainWidth: 420,
-                            minimumInspectorWidth: 260
+                            availableWidth: geometry.size.width
                         )
 
                         inspectorView(for: inspectorPane)
-                            .frame(width: clampedInspectorWidth(availableWidth: geometry.size.width))
+                            .frame(width: StudioShellModel.clampedInspectorWidth(inspectorWidth, availableWidth: geometry.size.width))
                             .frame(maxHeight: .infinity)
                     }
                 }
             }
 
-            if model.isCommandBarVisible {
+            if shell.showsCommandBar {
                 Divider()
 
                 HStack {
@@ -47,7 +48,7 @@ struct StudioView: View {
                     // has no interpreter to step.
                     Button("JIT") { model.jitEditorProgram() }
                         .keyboardShortcut("r", modifiers: [.command, .shift])
-                        .disabled(model.isProgramRunning || model.isJITRunning)
+                        .disabled(!shell.isCommandBarJITEnabled)
                         .help("Compile, then run")
                     Button("List") { model.listProgram() }
                     Button("New") { model.clearProgram() }
@@ -64,144 +65,55 @@ struct StudioView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    model.runEditorProgram()
-                } label: {
-                    Image(systemName: "play.fill")
-                        .foregroundStyle(model.isProgramRunning ? Color.secondary : Color.primary)
-                }
-                .disabled(model.isProgramRunning || model.isJITRunning)
-                .help("Run")
-
-                Button {
-                    model.jitEditorProgram()
-                } label: {
-                    Image(systemName: "bolt.fill")
-                        .foregroundStyle(model.isProgramRunning || model.isJITRunning ? Color.secondary : Color.primary)
-                }
-                .disabled(model.isProgramRunning || model.isJITRunning)
-                .help("Compile, then run — no debugger on this path")
-
-                Button {
-                    model.stopProgram()
-                } label: {
-                    Image(systemName: "stop.fill")
-                        .foregroundStyle(model.isProgramRunning || model.isJITRunning ? Color.red : Color.secondary)
-                }
-                .disabled(!model.isProgramRunning && !model.isJITRunning)
-                .help("Stop")
-
-                Divider()
-
-                Button {
-                    model.selectedPane = .console
-                } label: {
-                    Image(systemName: "terminal")
-                        .foregroundStyle(model.selectedPane == .console ? Color.blue : Color.primary)
-                }
-                .help("Console")
-
-                Button {
-                    model.selectedPane = .editor
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .foregroundStyle(model.selectedPane == .editor ? Color.blue : Color.primary)
-                }
-                .help("Editor")
-
-                Button {
-                    model.toggleInspector(.debug)
-                } label: {
-                    Image(systemName: "ladybug")
-                        .foregroundStyle(model.inspectorPane == .debug ? Color.blue : Color.primary)
-                }
-                .help("Debug")
-
-                Button {
-                    model.toggleInspector(.docs)
-                } label: {
-                    Image(systemName: "book")
-                        .foregroundStyle(model.inspectorPane == .docs ? Color.blue : Color.primary)
-                }
-                .help("Documentation")
-
-                Button {
-                    model.toggleInspector(.logs)
-                } label: {
-                    Image(systemName: "list.bullet.rectangle")
-                        .foregroundStyle(model.inspectorPane == .logs ? Color.blue : Color.primary)
-                }
-                .help("Log")
-
-                Button {
-                    model.isCommandBarVisible.toggle()
-                } label: {
-                    Image(systemName: "keyboard")
-                        .foregroundStyle(model.isCommandBarVisible ? Color.blue : Color.primary)
-                }
-                .help("Command Bar")
-
-                Button {
-                    model.toggleGraphicsLayersVisible()
-                } label: {
-                    Image(systemName: model.areGraphicsLayersVisible ? "eye.fill" : "eye.slash.fill")
-                        .foregroundStyle(model.areGraphicsLayersVisible ? Color.green : Color.red)
-                }
-                .help(model.areGraphicsLayersVisible ? "Graphics Visible" : "Graphics Hidden")
-
-                Button {
-                    model.isEditorGutterVisible.toggle()
-                } label: {
-                    Image(systemName: "list.number")
-                        .foregroundStyle(model.isEditorGutterVisible ? Color.blue : Color.primary)
-                }
-                .help("Editor Line Numbers")
-
-                Button {
-                    model.showFind()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .help("Find")
-
-                Menu {
-                    ForEach(EditorTheme.allCases, id: \.self) { theme in
-                        Button {
-                            model.editorTheme = theme
-                        } label: {
-                            HStack {
-                                Text(theme.label)
-                                if model.editorTheme == theme {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                ForEach(shell.toolbar, id: \.command) { button in
+                    Button {
+                        StudioShellModel.perform(button.command, on: model)
+                    } label: {
+                        Image(systemName: button.symbol)
+                            .foregroundStyle(Self.color(for: button.tint))
                     }
-                } label: {
-                    Label(model.editorTheme.label, systemImage: "paintpalette")
-                }
-                .help("Editor Theme")
+                    .disabled(!button.isEnabled)
+                    .help(button.help)
 
-                Menu {
-                    ForEach(TerminalScreenSize.allCases, id: \.self) { size in
-                        Button {
-                            model.terminalScreenSize = size
-                        } label: {
-                            HStack {
-                                Text(size.label)
-                                if model.terminalScreenSize == size {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                    if button.command == StudioShellModel.dividerAfter {
+                        Divider()
                     }
-                } label: {
-                    Label(model.terminalScreenSize.label, systemImage: "rectangle.inset.filled")
                 }
-                .help("Screen Size")
+
+                toolbarMenu(shell.themeMenu) { StudioShellModel.chooseTheme($0, on: model) }
+                toolbarMenu(shell.screenSizeMenu) { StudioShellModel.chooseScreenSize($0, on: model) }
             }
+        }
+    }
+
+    private func toolbarMenu(_ menu: StudioShellModel.Menu, choose: @escaping (Int) -> Void) -> some View {
+        Menu {
+            ForEach(Array(menu.items.enumerated()), id: \.offset) { index, item in
+                Button {
+                    choose(index)
+                } label: {
+                    HStack {
+                        Text(item.title)
+                        if item.isChecked {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(menu.label, systemImage: menu.symbol)
+        }
+        .help(menu.help)
+    }
+
+    private static func color(for tint: StudioShellModel.Tint) -> SwiftUI.Color {
+        switch tint {
+        case .normal: return .primary
+        case .dimmed: return .secondary
+        case .selected: return .blue
+        case .alert: return .red
+        case .on: return .green
         }
     }
 
@@ -246,17 +158,11 @@ struct StudioView: View {
             LogPane(model: model)
         }
     }
-
-    private func clampedInspectorWidth(availableWidth: CGFloat) -> CGFloat {
-        min(max(inspectorWidth, 260), max(260, availableWidth - 420))
-    }
 }
 
 struct InspectorDivider: View {
     @Binding var width: CGFloat
     let availableWidth: CGFloat
-    let minimumMainWidth: CGFloat
-    let minimumInspectorWidth: CGFloat
     @State private var dragStartWidth: CGFloat?
 
     var body: some View {
@@ -278,10 +184,11 @@ struct InspectorDivider: View {
                     if dragStartWidth == nil {
                         dragStartWidth = width
                     }
-
-                    let maximumWidth = max(minimumInspectorWidth, availableWidth - minimumMainWidth)
-                    let proposedWidth = (dragStartWidth ?? width) - value.translation.width
-                    width = min(max(proposedWidth, minimumInspectorWidth), maximumWidth)
+                    width = StudioShellModel.draggedInspectorWidth(
+                        startWidth: dragStartWidth ?? width,
+                        translation: value.translation.width,
+                        availableWidth: availableWidth
+                    )
                 }
                 .onEnded { _ in
                     dragStartWidth = nil
