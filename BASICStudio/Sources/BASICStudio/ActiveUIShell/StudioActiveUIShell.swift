@@ -87,8 +87,8 @@ final class StudioActiveUIShell {
         let mainArea = AUIZStack(alignment: .fill)
         mainArea.addChild(consoleHost)
         mainArea.addChild(editorHost)
+        // Edge to edge: the console and the editor meet the window's edges.
         mainArea.flexibility = .both()
-        mainArea.padding = AUIEdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
 
         commandField = AUITextField("", placeholder: "Immediate command")
         commandField.flexibility = .horizontal()
@@ -114,6 +114,9 @@ final class StudioActiveUIShell {
         body.minimumSize = StudioShellModel.minimumWindowSize
         sidebar = AUISidebar(items: [], selectedIndex: nil, content: body)
         sidebar.minimumSidebarWidth = 180
+        // Studio opens on the program, not the project: the sidebar is a
+        // toolbar button or View ▸ Show Sidebar away.
+        sidebar.isSidebarCollapsed = true
         // Wide enough for most demo names without truncating.
         sidebar.sidebarWidth = 240
         sidebar.headerActions = [

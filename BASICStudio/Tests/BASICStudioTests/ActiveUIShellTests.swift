@@ -89,14 +89,20 @@ struct ActiveUIShellTests {
         #expect(!studio.consoleHost.isHidden)
         #expect(studio.editorHost.isHidden)
         #expect(studio.commandBar.isHidden)
-        // The sidebar takes its column; the console fills the rest of the
-        // window, less the main pane's 16-point padding on each side.
+        // The console fills the sidebar's content edge to edge: the main
+        // pane has no padding. (With no window the split view keeps the
+        // sidebar's column even though it starts collapsed.)
         let frame = studio.console.frame
         let content = studio.sidebar.contentPane.nativeView.frame
-        #expect(content.width > 700 && content.width < 1000, "content \(content)")
-        #expect(abs(frame.width - (content.width - 32)) < 1 && abs(frame.height - (700 - 32)) < 1,
+        #expect(content.width > 700 && content.width <= 1000, "content \(content)")
+        #expect(abs(frame.width - content.width) < 1 && abs(frame.height - 700) < 1,
                 "console \(frame), content \(content), root \(studio.root.nativeView.frame)")
         #expect(studio.console.translatesAutoresizingMaskIntoConstraints)
+    }
+
+    @Test("P3.7 · The sidebar starts collapsed: Studio opens on the program")
+    func sidebarStartsCollapsed() {
+        #expect(shell().sidebar.isSidebarCollapsed)
     }
 
     @Test("P2.6 · A model change refreshes the shell on the next turn: the editor shows, Stop lights while running")
