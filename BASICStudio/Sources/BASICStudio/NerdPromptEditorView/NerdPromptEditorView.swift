@@ -4,14 +4,9 @@ import SwiftUI
 struct NerdPromptEditorView: View {
     @Binding var promptTemplate: String
 
-    @State private var segments = NerdPromptSegment.shellStylePreset
-    @State private var selectedKind: NerdPromptSegment.Kind = .currentDirectory
-    @State private var selectedForeground: NerdPromptColor = .white
-    @State private var selectedBackground: NerdPromptColor = .blue
-    @State private var selectedLeftEdge: NerdPromptSegmentEdge = .match
-    @State private var selectedRightEdge: NerdPromptSegmentEdge = .angled
-    @State private var selectedLiteral = "BASIC"
-    @State private var selectedSegmentID: NerdPromptSegment.ID?
+    /// The segments, the selection and the Add form. Every edit goes through
+    /// it, and then its template is written back (``commit(_:)``).
+    @State private var editor = PromptEditorModel()
     @State private var isSyncingFromTemplate = false
 
     var body: some View {
@@ -23,7 +18,7 @@ struct NerdPromptEditorView: View {
                     .frame(minWidth: 260)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    if selectedSegmentID == nil {
+                    if !editor.isEditing {
                         addSegmentControls
                     } else {
                         segmentInspector
@@ -50,11 +45,11 @@ struct NerdPromptEditorView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                    ForEach(Array(editor.segments.enumerated()), id: \.element.id) { index, segment in
                         NerdPromptSegmentPreview(
-                            previousSegment: segments[safe: index - 1],
+                            previousSegment: editor.segments[safe: index - 1],
                             segment: segment,
-                            nextSegment: segments[safe: index + 1]
+                            nextSegment: editor.segments[safe: index + 1]
                         )
                     }
                     Text(" ")
@@ -79,13 +74,9 @@ struct NerdPromptEditorView: View {
                 .foregroundStyle(.secondary)
 
             List {
-                ForEach(segments) { segment in
+                ForEach(editor.segments) { segment in
                     Button {
-                        if selectedSegmentID == segment.id {
-                            selectedSegmentID = nil
-                        } else {
-                            selectedSegmentID = segment.id
-                        }
+                        editor.toggleSelection(segment.id)
                     } label: {
                         HStack(spacing: 8) {
                             Text(segment.kind.icon)
@@ -107,29 +98,33 @@ struct NerdPromptEditorView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(segment.id == selectedSegmentID ? Color.accentColor.opacity(0.18) : Color.clear)
+                    .listRowBackground(segment.id == editor.selectedSegmentID ? Color.accentColor.opacity(0.18) : Color.clear)
                     .contextMenu {
                         Button("Edit") {
-                            selectedSegmentID = segment.id
+                            editor.select(segment.id)
                         }
                         Button("Delete") {
-                            delete(segment)
+                            commit { $0.delete(segment.id) }
                         }
                     }
                 }
-                .onMove(perform: moveSegments)
-                .onDelete(perform: deleteSegments)
+                .onMove { source, destination in
+                    commit { $0.move(fromOffsets: source, toOffset: destination) }
+                }
+                .onDelete { offsets in
+                    commit { $0.delete(atOffsets: offsets) }
+                }
             }
             .frame(minHeight: 180)
 
             Button {
-                selectedSegmentID = nil
+                editor.deselect()
             } label: {
                 Label("New Segment", systemImage: "plus")
             }
             .buttonStyle(.bordered)
 
-            Text("Select a segment to edit it. Select it again or use New Segment to return to adding. Drag to reorder.")
+            Text(PromptEditorModel.segmentListHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -141,27 +136,27 @@ struct NerdPromptEditorView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            if let selectedIndex {
-                Picker("Type", selection: selectedKindBinding) {
+            if let selectedIndex = editor.selectedIndex {
+                Picker("Type", selection: selectedBinding(\.selectedKind) { $0.setSelectedKind($1) }) {
                     ForEach(NerdPromptSegment.Kind.allCases, id: \.self) { kind in
                         Label(kind.title, systemImage: kind.systemImage).tag(kind)
                     }
                 }
                 .pickerStyle(.menu)
 
-                if segments[selectedIndex].kind == .literal {
-                    TextField("Text", text: selectedLiteralBinding)
+                if editor.segments[selectedIndex].kind == .literal {
+                    TextField("Text", text: selectedBinding(\.selectedLiteral) { $0.setSelectedLiteral($1) })
                         .textFieldStyle(.roundedBorder)
                 }
 
                 HStack {
-                    Picker("Text", selection: selectedForegroundBinding) {
+                    Picker("Text", selection: selectedBinding(\.selectedForeground) { $0.setSelectedForeground($1) }) {
                         ForEach(NerdPromptColor.allCases, id: \.self) { color in
                             Text(color.title).tag(color)
                         }
                     }
 
-                    Picker("Fill", selection: selectedBackgroundBinding) {
+                    Picker("Fill", selection: selectedBinding(\.selectedBackground) { $0.setSelectedBackground($1) }) {
                         ForEach(NerdPromptColor.allCases, id: \.self) { color in
                             Text(color.title).tag(color)
                         }
@@ -170,13 +165,13 @@ struct NerdPromptEditorView: View {
                 .pickerStyle(.menu)
 
                 HStack {
-                    Picker("Left", selection: selectedLeftEdgeBinding) {
+                    Picker("Left", selection: selectedBinding(\.selectedLeftEdge) { $0.setSelectedLeftEdge($1) }) {
                         ForEach(NerdPromptSegmentEdge.leftChoices, id: \.self) { edge in
                             Text(edge.title).tag(edge)
                         }
                     }
 
-                    Picker("Right", selection: selectedRightEdgeBinding) {
+                    Picker("Right", selection: selectedBinding(\.selectedRightEdge) { $0.setSelectedRightEdge($1) }) {
                         ForEach(NerdPromptSegmentEdge.rightChoices, id: \.self) { edge in
                             Text(edge.title).tag(edge)
                         }
@@ -186,25 +181,25 @@ struct NerdPromptEditorView: View {
 
                 HStack {
                     Button {
-                        selectedSegmentID = nil
+                        editor.deselect()
                     } label: {
                         Label("Done", systemImage: "checkmark")
                     }
 
                     Button {
-                        duplicateSelectedSegment()
+                        commit { $0.duplicateSelected() }
                     } label: {
                         Label("Duplicate", systemImage: "plus.square.on.square")
                     }
 
                     Button(role: .destructive) {
-                        deleteSelectedSegment()
+                        commit { $0.deleteSelected() }
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
                 }
             } else {
-                Text("Select a segment on the left to edit its type, text, and colors.")
+                Text(PromptEditorModel.noSelectionHelp)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -219,26 +214,26 @@ struct NerdPromptEditorView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            Picker("Type", selection: $selectedKind) {
+            Picker("Type", selection: $editor.newKind) {
                 ForEach(NerdPromptSegment.Kind.allCases, id: \.self) { kind in
                     Label(kind.title, systemImage: kind.systemImage).tag(kind)
                 }
             }
             .pickerStyle(.menu)
 
-            if selectedKind == .literal {
-                TextField("Text", text: $selectedLiteral)
+            if editor.newKind == .literal {
+                TextField("Text", text: $editor.newLiteral)
                     .textFieldStyle(.roundedBorder)
             }
 
             HStack {
-                Picker("Text", selection: $selectedForeground) {
+                Picker("Text", selection: $editor.newForeground) {
                     ForEach(NerdPromptColor.allCases, id: \.self) { color in
                         Text(color.title).tag(color)
                     }
                 }
 
-                Picker("Fill", selection: $selectedBackground) {
+                Picker("Fill", selection: $editor.newBackground) {
                     ForEach(NerdPromptColor.allCases, id: \.self) { color in
                         Text(color.title).tag(color)
                     }
@@ -247,13 +242,13 @@ struct NerdPromptEditorView: View {
             .pickerStyle(.menu)
 
             HStack {
-                Picker("Left", selection: $selectedLeftEdge) {
+                Picker("Left", selection: $editor.newLeftEdge) {
                     ForEach(NerdPromptSegmentEdge.leftChoices, id: \.self) { edge in
                         Text(edge.title).tag(edge)
                     }
                 }
 
-                Picker("Right", selection: $selectedRightEdge) {
+                Picker("Right", selection: $editor.newRightEdge) {
                     ForEach(NerdPromptSegmentEdge.rightChoices, id: \.self) { edge in
                         Text(edge.title).tag(edge)
                     }
@@ -262,7 +257,7 @@ struct NerdPromptEditorView: View {
             .pickerStyle(.menu)
 
             Button {
-                addSelectedSegment()
+                commit { $0.addNewSegment() }
             } label: {
                 Label("Add", systemImage: "plus")
             }
@@ -277,16 +272,15 @@ struct NerdPromptEditorView: View {
 
             HStack {
                 Button("Shell Style") {
-                    segments = NerdPromptSegment.shellStylePreset
-                    updateTemplateFromSegments()
+                    commit { $0.applyShellStylePreset() }
                 }
 
                 Button("Plain Default") {
-                    promptTemplate = BASICSession.plainPromptTemplate
+                    promptTemplate = PromptEditorModel.plainDefaultTemplate
                 }
 
                 Button("Classic BASIC") {
-                    promptTemplate = "READY%nl> "
+                    promptTemplate = PromptEditorModel.classicBASICTemplate
                 }
             }
         }
@@ -303,150 +297,36 @@ struct NerdPromptEditorView: View {
                 .lineLimit(4...7)
                 .textFieldStyle(.roundedBorder)
 
-            Text("Tokens: ${user}, ${currentdir}, ${gitstatus}, %cwd, %git, %gitSegment, %nl")
+            Text(PromptEditorModel.tokenHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private func addSelectedSegment() {
-        let literal = selectedKind == .literal ? selectedLiteral : ""
-        let segment = NerdPromptSegment(
-            kind: selectedKind,
-            literal: literal,
-            foreground: selectedForeground,
-            background: selectedBackground,
-            leftEdge: selectedLeftEdge,
-            rightEdge: selectedRightEdge
-        )
-        segments.append(segment)
-        selectedSegmentID = segment.id
-        updateTemplateFromSegments()
-    }
-
-    private func moveSegments(from source: IndexSet, to destination: Int) {
-        segments.move(fromOffsets: source, toOffset: destination)
-        updateTemplateFromSegments()
-    }
-
-    private func deleteSegments(at offsets: IndexSet) {
-        let deletedIDs = offsets.map { segments[$0].id }
-        segments.remove(atOffsets: offsets)
-        if let selectedSegmentID, deletedIDs.contains(selectedSegmentID) {
-            self.selectedSegmentID = segments.first?.id
-        }
-        updateTemplateFromSegments()
-    }
-
-    private func delete(_ segment: NerdPromptSegment) {
-        segments.removeAll { $0.id == segment.id }
-        if selectedSegmentID == segment.id {
-            selectedSegmentID = segments.first?.id
-        }
-        updateTemplateFromSegments()
-    }
-
-    private func deleteSelectedSegment() {
-        guard let selectedSegmentID,
-              let index = segments.firstIndex(where: { $0.id == selectedSegmentID }) else { return }
-        segments.remove(at: index)
-        self.selectedSegmentID = segments[safe: min(index, segments.count - 1)]?.id ?? segments.last?.id
-        updateTemplateFromSegments()
-    }
-
-    private func duplicateSelectedSegment() {
-        guard let selectedIndex else { return }
-        let original = segments[selectedIndex]
-        let duplicate = NerdPromptSegment(
-            kind: original.kind,
-            literal: original.literal,
-            foreground: original.foreground,
-            background: original.background,
-            leftEdge: original.leftEdge,
-            rightEdge: original.rightEdge
-        )
-        segments.insert(duplicate, at: selectedIndex + 1)
-        selectedSegmentID = duplicate.id
-        updateTemplateFromSegments()
-    }
-
-    private var selectedIndex: Int? {
-        guard let selectedSegmentID else { return nil }
-        return segments.firstIndex { $0.id == selectedSegmentID }
-    }
-
-    private var selectedKindBinding: Binding<NerdPromptSegment.Kind> {
+    /// A picker's binding to one field of the selected segment.
+    private func selectedBinding<Value>(
+        _ field: KeyPath<PromptEditorModel, Value>,
+        set: @escaping (inout PromptEditorModel, Value) -> Void
+    ) -> Binding<Value> {
         Binding {
-            selectedIndex.map { segments[$0].kind } ?? .literal
-        } set: { newKind in
-            updateSelectedSegment {
-                $0.kind = newKind
-                if newKind != .literal {
-                    $0.literal = ""
-                }
-            }
-        }
-    }
-
-    private var selectedLiteralBinding: Binding<String> {
-        Binding {
-            selectedIndex.map { segments[$0].literal } ?? ""
+            editor[keyPath: field]
         } set: { newValue in
-            updateSelectedSegment { $0.literal = newValue }
+            commit { set(&$0, newValue) }
         }
     }
 
-    private var selectedForegroundBinding: Binding<NerdPromptColor> {
-        Binding {
-            selectedIndex.map { segments[$0].foreground } ?? .white
-        } set: { newColor in
-            updateSelectedSegment { $0.foreground = newColor }
-        }
-    }
-
-    private var selectedBackgroundBinding: Binding<NerdPromptColor> {
-        Binding {
-            selectedIndex.map { segments[$0].background } ?? .blue
-        } set: { newColor in
-            updateSelectedSegment { $0.background = newColor }
-        }
-    }
-
-    private var selectedLeftEdgeBinding: Binding<NerdPromptSegmentEdge> {
-        Binding {
-            selectedIndex.map { segments[$0].leftEdge } ?? .match
-        } set: { newEdge in
-            updateSelectedSegment { $0.leftEdge = newEdge }
-        }
-    }
-
-    private var selectedRightEdgeBinding: Binding<NerdPromptSegmentEdge> {
-        Binding {
-            guard let edge = selectedIndex.map({ segments[$0].rightEdge }) else { return .angled }
-            return edge == .match ? .angled : edge
-        } set: { newEdge in
-            updateSelectedSegment { $0.rightEdge = newEdge == .match ? .angled : newEdge }
-        }
-    }
-
-    private func updateSelectedSegment(_ update: (inout NerdPromptSegment) -> Void) {
-        guard let selectedIndex else { return }
-        update(&segments[selectedIndex])
-        updateTemplateFromSegments()
-    }
-
-    private func updateTemplateFromSegments() {
+    /// Makes an edit, then writes the segments' template back, without the
+    /// write coming back around as an outside change.
+    private func commit(_ edit: (inout PromptEditorModel) -> Void) {
+        edit(&editor)
         isSyncingFromTemplate = true
-        promptTemplate = NerdPromptTemplateBuilder.template(for: segments)
+        promptTemplate = editor.template
         isSyncingFromTemplate = false
     }
 
     private func syncFromTemplateIfNeeded() {
         guard !isSyncingFromTemplate else { return }
-        if promptTemplate == NerdPromptTemplateBuilder.template(for: NerdPromptSegment.shellStylePreset) {
-            segments = NerdPromptSegment.shellStylePreset
-            selectedSegmentID = segments.first?.id
-        }
+        editor.sync(fromTemplate: promptTemplate)
     }
 }
 
@@ -488,129 +368,7 @@ private struct NerdPromptSegmentPreview: View {
     }
 }
 
-private struct NerdPromptSegment: Identifiable, Equatable {
-    enum Kind: String, CaseIterable {
-        case os
-        case home
-        case currentDirectory
-        case gitBranch
-        case gitStatus
-        case user
-        case literal
-        case newline
-
-        var title: String {
-            switch self {
-            case .os: return "macOS Icon"
-            case .home: return "Home"
-            case .currentDirectory: return "Current Directory"
-            case .gitBranch: return "Git Branch"
-            case .gitStatus: return "Git Status"
-            case .user: return "User"
-            case .literal: return "Text"
-            case .newline: return "New Line"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .os: return ""
-            case .home: return ""
-            case .currentDirectory: return ""
-            case .gitBranch: return ""
-            case .gitStatus: return "!"
-            case .user: return ""
-            case .literal: return "T"
-            case .newline: return "↵"
-            }
-        }
-
-        var systemImage: String {
-            switch self {
-            case .os: return "desktopcomputer"
-            case .home: return "house"
-            case .currentDirectory: return "folder"
-            case .gitBranch: return "point.3.connected.trianglepath.dotted"
-            case .gitStatus: return "exclamationmark.triangle"
-            case .user: return "person"
-            case .literal: return "textformat"
-            case .newline: return "return"
-            }
-        }
-    }
-
-    let id = UUID()
-    var kind: Kind
-    var literal: String = ""
-    var foreground: NerdPromptColor
-    var background: NerdPromptColor
-    var leftEdge: NerdPromptSegmentEdge = .match
-    var rightEdge: NerdPromptSegmentEdge = .angled
-
-    var title: String {
-        kind == .literal ? "Text: \(literal)" : kind.title
-    }
-
-    var previewText: String {
-        switch kind {
-        case .os: return ""
-        case .home: return " ~"
-        case .currentDirectory: return " ~/src/AIBasic/Code"
-        case .gitBranch: return "git  feature/classes"
-        case .gitStatus: return "!1 ⇡2"
-        case .user: return "bobby"
-        case .literal: return literal.isEmpty ? "Text" : literal
-        case .newline: return "↵"
-        }
-    }
-
-    var templateSource: String {
-        switch kind {
-        case .os: return ""
-        case .home: return " ~"
-        case .currentDirectory: return " ${currentdir}"
-        case .gitBranch: return "git  ${gitstatus}"
-        case .gitStatus: return "!1"
-        case .user: return "${user}"
-        case .literal: return literal
-        case .newline: return "%nl"
-        }
-    }
-
-    static let shellStylePreset: [NerdPromptSegment] = [
-        NerdPromptSegment(kind: .os, foreground: .black, background: .silver),
-        NerdPromptSegment(kind: .currentDirectory, foreground: .white, background: .purple),
-        NerdPromptSegment(kind: .gitBranch, foreground: .black, background: .gold),
-        NerdPromptSegment(kind: .gitStatus, literal: "!1", foreground: .black, background: .gold),
-        NerdPromptSegment(kind: .literal, literal: "Ready", foreground: .black, background: .green)
-    ]
-}
-
-private enum NerdPromptColor: String, CaseIterable {
-    case terminalBackground
-    case black
-    case white
-    case silver
-    case blue
-    case purple
-    case gold
-    case green
-    case red
-
-    var title: String {
-        switch self {
-        case .terminalBackground: return "Terminal"
-        case .black: return "Black"
-        case .white: return "White"
-        case .silver: return "Silver"
-        case .blue: return "Blue"
-        case .purple: return "Purple"
-        case .gold: return "Gold"
-        case .green: return "Green"
-        case .red: return "Red"
-        }
-    }
-
+extension NerdPromptColor {
     var color: Color {
         switch self {
         case .terminalBackground: return Color(nsColor: .textBackgroundColor)
@@ -623,131 +381,6 @@ private enum NerdPromptColor: String, CaseIterable {
         case .green: return Color(red: 0.18, green: 0.78, blue: 0.22)
         case .red: return Color(red: 0.92, green: 0.18, blue: 0.16)
         }
-    }
-
-    var ansiCode: Int {
-        switch self {
-        case .terminalBackground: return 0
-        case .black: return 16
-        case .white: return 15
-        case .silver: return 250
-        case .blue: return 57
-        case .purple: return 99
-        case .gold: return 142
-        case .green: return 40
-        case .red: return 196
-        }
-    }
-}
-
-private enum NerdPromptSegmentEdge: String, CaseIterable {
-    case match
-    case rounded
-    case angled
-    case flat
-
-    var title: String {
-        switch self {
-        case .match: return "Match"
-        case .rounded: return "Rounded"
-        case .angled: return "Angled"
-        case .flat: return "Flat"
-        }
-    }
-
-    static let leftChoices: [NerdPromptSegmentEdge] = [.match, .rounded, .angled, .flat]
-    static let rightChoices: [NerdPromptSegmentEdge] = [.rounded, .angled, .flat]
-
-    var leftGlyph: String? {
-        switch self {
-        case .match: return nil
-        case .rounded: return ""
-        case .angled: return ""
-        case .flat: return nil
-        }
-    }
-
-    var rightGlyph: String? {
-        switch self {
-        case .match: return nil
-        case .rounded: return ""
-        case .angled: return ""
-        case .flat: return nil
-        }
-    }
-
-    func matchedLeftGlyph(previousRightEdge: NerdPromptSegmentEdge?) -> String? {
-        guard self == .match else { return nil }
-        return previousRightEdge?.rightGlyph
-    }
-}
-
-private enum NerdPromptTemplateBuilder {
-    static func template(for segments: [NerdPromptSegment]) -> String {
-        guard !segments.isEmpty else { return BASICSession.defaultPromptTemplate }
-        var output = ""
-        for index in segments.indices {
-            let segment = segments[index]
-            if segment.kind == .newline {
-                output += "%nl"
-                continue
-            }
-
-            let previousSegment = segments[safe: index - 1]
-            if let matchedGlyph = segment.leftEdge.matchedLeftGlyph(previousRightEdge: previousSegment?.rightEdge),
-               let previousSegment {
-                output += sgr(foreground: previousSegment.background, background: segment.background)
-                output += matchedGlyph
-            } else if let leftGlyph = segment.leftEdge.leftGlyph {
-                let leftBackground = segment.leftEdge == .match ? previousSegment?.background : nil
-                output += sgr(foreground: segment.background, background: leftBackground)
-                output += leftGlyph
-            }
-
-            output += sgr(foreground: segment.foreground, background: segment.background)
-            output += " \(segment.templateSource) "
-
-            let nextSegment = segments[safe: index + 1]
-            let hasAdjacentSegment = nextSegment?.kind != nil && nextSegment?.kind != .newline
-
-            if nextSegment?.leftEdge != .match,
-               let rightGlyph = segment.rightEdge.rightGlyph,
-               let next = nextSegment,
-               next.kind != .newline {
-                output += sgr(foreground: segment.background, background: next.background)
-                output += rightGlyph
-            } else if nextSegment?.leftEdge != .match,
-                      let rightGlyph = segment.rightEdge.rightGlyph {
-                output += sgr(foreground: segment.background, background: nil)
-                output += rightGlyph
-            }
-
-            if !hasAdjacentSegment {
-                output += reset
-                output += " "
-            }
-        }
-        return output
-    }
-
-    private static var reset: String {
-        "\u{001B}[0m"
-    }
-
-    private static func sgr(foreground: NerdPromptColor, background: NerdPromptColor?) -> String {
-        var parts = ["38;5;\(foreground.ansiCode)"]
-        if let background, background != .terminalBackground {
-            parts.append("48;5;\(background.ansiCode)")
-        } else {
-            parts.append("49")
-        }
-        return "\u{001B}[\(parts.joined(separator: ";"))m"
-    }
-}
-
-private extension Array {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }
 
