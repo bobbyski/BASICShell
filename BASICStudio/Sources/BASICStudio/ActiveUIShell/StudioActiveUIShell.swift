@@ -50,6 +50,10 @@ final class StudioActiveUIShell {
     let editorHost: AUINativeHost
     let commandBar: AUIStack
     let commandField: AUITextField
+    /// The main pane, the drag handle, and the inspector.
+    let layout: InspectorLayout
+    let logPane: LogPaneAUI
+    let docsPane: DocsPaneAUI
 
     let toolbarItems: [StudioShellModel.Command: AUIToolbarItem]
     let themeItem: AUIToolbarItem
@@ -85,9 +89,18 @@ final class StudioActiveUIShell {
         commandBar.wraps = false
         commandBar.padding = AUIEdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
 
+        // The inspectors, one showing at a time. Each keeps its state while
+        // hidden, as the SwiftUI shell's do not.
+        logPane = LogPaneAUI(model: model)
+        docsPane = DocsPaneAUI()
+        let inspectors = AUIZStack(alignment: .fill)
+        inspectors.addChild(logPane.root)
+        inspectors.addChild(docsPane.root)
+        layout = InspectorLayout(main: mainArea, inspector: inspectors)
+
         let body = AUIStack(.vertical, spacing: 0, alignment: .fill)
         body.wraps = false
-        body.addChild(mainArea)
+        body.addChild(layout)
         body.addChild(commandBar)
         body.minimumSize = StudioShellModel.minimumWindowSize
         root = body
@@ -180,6 +193,12 @@ final class StudioActiveUIShell {
         // when nothing changed.
         console.render(ConsoleRenderInput(model))
         editor.sync(.mainEditor(model))
+        // Only the inspector on screen reads the model.
+        switch model.inspectorPane {
+        case .logs: logPane.refresh()
+        case .docs: docsPane.refresh()
+        case .debug, nil: break
+        }
         if commandField.text != model.command {
             commandField.text = model.command
         }
@@ -202,6 +221,9 @@ final class StudioActiveUIShell {
         if shell.screenSizeMenu.label != old?.screenSizeMenu.label {
             screenSizeItem.label = shell.screenSizeMenu.label
         }
+        layout.showsInspector = shell.inspector != nil
+        logPane.root.isHidden = shell.inspector != .logs
+        docsPane.root.isHidden = shell.inspector != .docs
         consoleHost.isHidden = shell.mainPane != .console
         editorHost.isHidden = shell.mainPane != .editor
         commandBar.isHidden = !shell.showsCommandBar

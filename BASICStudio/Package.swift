@@ -14,7 +14,8 @@ let package = Package(
         // The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md).
         // A sibling checkout, as FreebirdStudio took it before it moved to
         // prebuilt frameworks.
-        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI")
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI"),
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown")
     ],
     targets: [
         .executableTarget(
@@ -25,7 +26,8 @@ let package = Package(
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",
                 "VectorTerminalSDK",
-                .product(name: "ActiveUI", package: "ActiveUI")
+                .product(name: "ActiveUI", package: "ActiveUI"),
+                .product(name: "ActiveUIMarkdown", package: "ActiveUIMarkdown")
             ],
             exclude: [
                 "Resources/AppIcon.iconset"
