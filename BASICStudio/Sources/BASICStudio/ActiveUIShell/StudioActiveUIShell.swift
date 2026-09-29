@@ -56,6 +56,10 @@ final class StudioActiveUIShell {
     let docsPane: DocsPaneAUI
     let debugPane: DebugPaneAUI
     let settings: SettingsAUI
+    /// The project sidebar (P3.7): a real one, the window's own, collapsible
+    /// from View ▸ Toggle Sidebar and the toolbar. Everything else is its
+    /// content.
+    let sidebar: AUISidebar
 
     let toolbarItems: [StudioShellModel.Command: AUIToolbarItem]
     let themeItem: AUIToolbarItem
@@ -65,6 +69,7 @@ final class StudioActiveUIShell {
     // What was last drawn. See the type's note on the reader checking.
     private var drawnShell: StudioShellModel?
     private var drawnTitle: String?
+    private(set) var drawnProject: ProjectModel?
     private var observation: AnyCancellable?
     private var isRefreshScheduled = false
     /// How many refreshes have run; tests watch it.
@@ -107,7 +112,17 @@ final class StudioActiveUIShell {
         body.addChild(layout)
         body.addChild(commandBar)
         body.minimumSize = StudioShellModel.minimumWindowSize
-        root = body
+        sidebar = AUISidebar(items: [], selectedIndex: nil, content: body)
+        sidebar.minimumSidebarWidth = 180
+        sidebar.headerActions = [
+            AUISidebarHeaderAction(systemSymbol: "folder.badge.plus", tooltip: ProjectModel.openProjectTitle) { [weak model] in
+                model?.openProjectFromMenu()
+            },
+            AUISidebarHeaderAction(systemSymbol: "arrow.clockwise", tooltip: "Rescan the project") { [weak model] in
+                model?.rescanProject()
+            },
+        ]
+        root = sidebar
 
         let settings = SettingsAUI(model: model)
         self.settings = settings
@@ -120,6 +135,10 @@ final class StudioActiveUIShell {
 
         buildCommandBar()
         editor.onTextChange = { [weak model] text in model?.programText = text }
+        sidebar.onSelect = { [weak self] index in
+            guard let self, let rows = self.drawnProject?.rows, rows.indices.contains(index) else { return }
+            self.model.openProjectFile(rows[index].path)
+        }
 
         observation = model.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
@@ -210,6 +229,17 @@ final class StudioActiveUIShell {
         if commandField.text != model.command {
             commandField.text = model.command
         }
+        let project = ProjectModel(model)
+        if project != drawnProject {
+            if project.rows != drawnProject?.rows {
+                sidebar.items = project.rows.map {
+                    AUISidebarItem(symbol: "doc.text", title: $0.title, subtitle: $0.subtitle)
+                }
+            }
+            sidebar.headerTitle = project.title
+            sidebar.selectedIndex = project.selectedIndex
+            drawnProject = project
+        }
         if model.windowTitle != drawnTitle {
             AUIApplication.mainWindowTitle = model.windowTitle
             drawnTitle = model.windowTitle
@@ -273,7 +303,7 @@ final class StudioActiveUIShell {
             (StudioShellModel($0).screenSizeMenu, StudioShellModel.chooseScreenSize)
         })
         screenSize.tooltip = shell.screenSizeMenu.help
-        let toolbar = AUIToolbar(items: items + [theme, screenSize])
+        let toolbar = AUIToolbar(items: [.toggleSidebar(), .sidebarTrackingSeparator()] + items + [theme, screenSize])
         toolbar.displayMode = .iconOnly
         return (toolbar, buttons, theme, screenSize)
     }
@@ -339,7 +369,12 @@ final class StudioActiveUIShell {
     /// the app, File, Edit, View, Examples, Console, Debug, Window, Help.
     static func makeMenuBar(model: StudioModel, onSettings: (() -> Void)? = nil) -> AUIMenuBar {
         let commands = MenuCommandModel(model)
-        let file = AUIMenu("File", items: items(commands.fileOpen + commands.fileSave, model: model) + [
+        // Open Project… is the ActiveUI shell's own (P3.7); the SwiftUI shell
+        // is the reference and gets no new features.
+        let openProject = AUIMenuItem(ProjectModel.openProjectTitle, shortcut: AUIKeyboardShortcut("o", modifiers: [.command, .shift])) { [weak model] in
+            model?.openProjectFromMenu()
+        }
+        let file = AUIMenu("File", items: items(commands.fileOpen, model: model) + [openProject] + items(commands.fileSave, model: model) + [
             .separator(),
             .command(.closeDocument, title: "Close", shortcut: .command("w")),
         ])

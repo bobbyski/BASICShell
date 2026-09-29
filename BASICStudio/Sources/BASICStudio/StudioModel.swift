@@ -66,6 +66,11 @@ final class StudioModel: ObservableObject {
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
+    /// The folder open as a project, and the programs in it (P3.7).
+    @Published private(set) var projectDirectoryURL: URL? {
+        didSet { saveSettings() }
+    }
+    @Published private(set) var projectFiles: [String] = []
     @Published var promptTemplate = BASICSession.defaultPromptTemplate {
         didSet {
             guard !isLoadingSettings else { return }
@@ -226,6 +231,11 @@ final class StudioModel: ObservableObject {
         fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
+        if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
+            let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+            projectDirectoryURL = directory
+            projectFiles = ProjectModel.scan(directory)
+        }
         isLoadingSettings = false
         if persistsSettings {
             BASICPromptTemplateStore.save(promptTemplate)
@@ -538,15 +548,62 @@ final class StudioModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
-            let source = try String(contentsOf: url, encoding: .utf8)
-            programText = source
-            currentProgramURL = url
-            currentProgramFileName = url.path
-            workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
-            updateWindowTitle()
-            editorErrorLine = nil
-            rebuildProgramFromEditor()
-            selectedPane = .editor
+            try loadProgram(from: url)
+        } catch {
+            presentFileError("Unable to load \(url.lastPathComponent).", error: error)
+        }
+    }
+
+    /// Loads `url` into the editor as the current program, as File ▸ Load…
+    /// and the project sidebar both do.
+    func loadProgram(from url: URL) throws {
+        let source = try String(contentsOf: url, encoding: .utf8)
+        programText = source
+        currentProgramURL = url
+        currentProgramFileName = url.path
+        workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
+        updateWindowTitle()
+        editorErrorLine = nil
+        rebuildProgramFromEditor()
+        selectedPane = .editor
+    }
+
+    // MARK: - The project (ACTIVEUI_TRANSITION.md P3.7)
+
+    /// Makes `url` the open project: its BASIC programs list in the sidebar,
+    /// and it becomes the working directory.
+    func openProject(at url: URL) {
+        let directory = url.standardizedFileURL
+        projectDirectoryURL = directory
+        projectFiles = ProjectModel.scan(directory)
+        workingDirectoryURL = directory
+    }
+
+    /// File ▸ Open Project…: choose a folder.
+    func openProjectFromMenu() {
+        let panel = NSOpenPanel()
+        panel.title = ProjectModel.openProjectTitle
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = projectDirectoryURL ?? workingDirectoryURL
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openProject(at: url)
+    }
+
+    /// Lists the project's programs again, for files added or removed
+    /// outside Studio.
+    func rescanProject() {
+        guard let projectDirectoryURL else { return }
+        projectFiles = ProjectModel.scan(projectDirectoryURL)
+    }
+
+    /// Opens the project's program at `path`, relative to the project.
+    func openProjectFile(_ path: String) {
+        guard let projectDirectoryURL else { return }
+        let url = projectDirectoryURL.appendingPathComponent(path)
+        do {
+            try loadProgram(from: url)
         } catch {
             presentFileError("Unable to load \(url.lastPathComponent).", error: error)
         }
@@ -1352,7 +1409,8 @@ final class StudioModel: ObservableObject {
                 promptTemplate: promptTemplate,
                 fontFamily: fontFamily,
                 fontSize: fontSize,
-                consoleScrollbackLines: consoleScrollbackLines
+                consoleScrollbackLines: consoleScrollbackLines,
+                projectDirectoryPath: projectDirectoryURL?.path
             )
         )
     }

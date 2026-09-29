@@ -36,11 +36,13 @@ struct ActiveUIShellTests {
         #expect(menus.map(\.title) == ["BASICStudio", "File", "Edit", "View", "Examples", "Console", "Debug", "Window", "Help"])
     }
 
-    @Test("P2.3 M6–M9 · File: Load, Save, Save As, Set Working Directory, with their shortcuts, then Close")
+    @Test("P2.3 M6–M9 · File: Load, Open Project, Save, Save As, Set Working Directory, with their shortcuts, then Close")
     func fileMenu() throws {
         let file = try #require(shell().menuBar.menus.first { $0.title == "File" })
         let titles = file.items.map(\.title).filter { !$0.isEmpty }
-        #expect(Array(titles.prefix(4)) == ["Load...", "Save", "Save As...", "Set Working Directory..."])
+        #expect(Array(titles.prefix(5)) == ["Load...", "Open Project…", "Save", "Save As...", "Set Working Directory..."])
+        let openProject = try #require(file.items.first { $0.title == "Open Project…" })
+        #expect(openProject.shortcut == AUIKeyboardShortcut("o", modifiers: [.command, .shift]))
         #expect(titles.last == "Close")
         let saveAs = try #require(file.items.first { $0.title == "Save As..." })
         #expect(saveAs.shortcut == AUIKeyboardShortcut("s", modifiers: [.command, .shift]))
@@ -87,8 +89,13 @@ struct ActiveUIShellTests {
         #expect(!studio.consoleHost.isHidden)
         #expect(studio.editorHost.isHidden)
         #expect(studio.commandBar.isHidden)
+        // The sidebar takes its column; the console fills the rest of the
+        // window, less the main pane's 16-point padding on each side.
         let frame = studio.console.frame
-        #expect(frame.width > 900 && frame.height > 600, "console \(frame), host \(studio.consoleHost.nativeView.frame), root \(studio.root.nativeView.frame)")
+        let content = studio.sidebar.contentPane.nativeView.frame
+        #expect(content.width > 700 && content.width < 1000, "content \(content)")
+        #expect(abs(frame.width - (content.width - 32)) < 1 && abs(frame.height - (700 - 32)) < 1,
+                "console \(frame), content \(content), root \(studio.root.nativeView.frame)")
         #expect(studio.console.translatesAutoresizingMaskIntoConstraints)
     }
 

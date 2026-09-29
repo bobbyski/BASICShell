@@ -85,6 +85,8 @@ struct StudioSettings: Codable {
     var fontFamily: String = StudioFonts.defaultFamily
     var fontSize: Double = 13
     var consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines
+    /// The folder open as a project, reopened at launch (P3.7).
+    var projectDirectoryPath: String?
 
     private enum CodingKeys: String, CodingKey {
         case editorTheme
@@ -95,6 +97,7 @@ struct StudioSettings: Codable {
         case fontFamily
         case fontSize
         case consoleScrollbackLines
+        case projectDirectoryPath
     }
 
     init(
@@ -105,7 +108,8 @@ struct StudioSettings: Codable {
         promptTemplate: String = BASICSession.defaultPromptTemplate,
         fontFamily: String = StudioFonts.defaultFamily,
         fontSize: Double = 13,
-        consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines
+        consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines,
+        projectDirectoryPath: String? = nil
     ) {
         self.editorTheme = editorTheme
         self.isEditorGutterVisible = isEditorGutterVisible
@@ -115,6 +119,7 @@ struct StudioSettings: Codable {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.consoleScrollbackLines = Self.clampedConsoleScrollbackLines(consoleScrollbackLines)
+        self.projectDirectoryPath = projectDirectoryPath
     }
 
     init(from decoder: Decoder) throws {
@@ -129,6 +134,7 @@ struct StudioSettings: Codable {
         consoleScrollbackLines = Self.clampedConsoleScrollbackLines(
             try container.decodeIfPresent(Int.self, forKey: .consoleScrollbackLines) ?? Self.defaultConsoleScrollbackLines
         )
+        projectDirectoryPath = try container.decodeIfPresent(String.self, forKey: .projectDirectoryPath)
     }
 }
 
