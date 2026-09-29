@@ -14,7 +14,7 @@ import Foundation
 ///
 /// ```text
 ///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line               buttons
-///   ┌ code: a second Monaco, read-only ────┐   EditorRenderInput.debugCodeView
+///   ┌ code: a second editor, read-only ────┐   EditorRenderInput.debugCodeView
 ///   ├════════════ drag ════════════════════┤   DebugPaneModel's height rules
 ///   │ ▾ Tasks                              │   one scroll view of disclosure
 ///   │ ▾ Call Stack                         │   sections, as SwiftUI's
@@ -33,8 +33,8 @@ final class DebugPaneAUI {
     let root: AUIView
     let buttons: [DebugPaneModel.Command: AUIButton]
     let liveLine: AUIToggle
-    let codeView = MonacoEditorController()
-    let codeHost: AUINativeHost
+    let codeView = SourceEditorAUI()
+    let codeHost: AUIView
     let sections: [DisclosureSection]
     private let body: DebugBodyLayout
     /// Open disclosure rows: variables with children, and the task detail's
@@ -63,8 +63,8 @@ final class DebugPaneAUI {
         let controlRow = LogPaneAUI.row(controls, spacing: 10)
         controlRow.padding = AUIEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
 
-        codeView.breakpointToggle = { [weak model] line in model?.toggleDebuggerBreakpoint(atSourceLine: line) }
-        codeHost = AUINativeHost(codeView.makeWebView())
+        codeView.onToggleBreakpoint = { [weak model] line in model?.toggleDebuggerBreakpoint(atSourceLine: line) }
+        codeHost = codeView.editor
         codeHost.cornerRadius = 6
 
         sections = DebugPaneModel.sections.map { DisclosureSection(title: $0.title, isOpen: $0.isExpandedByDefault) }

@@ -15,7 +15,11 @@ let package = Package(
         // A sibling checkout, as FreebirdStudio took it before it moved to
         // prebuilt frameworks.
         .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI"),
-        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown")
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown"),
+        // The ActiveUI shell's source editor, over SwiftyCodeEditor, whose
+        // themes and highlighter types it names directly.
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUICode"),
+        .package(path: "../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor")
     ],
     targets: [
         .executableTarget(
@@ -27,7 +31,9 @@ let package = Package(
                 "SwiftTerm",
                 "VectorTerminalSDK",
                 .product(name: "ActiveUI", package: "ActiveUI"),
-                .product(name: "ActiveUIMarkdown", package: "ActiveUIMarkdown")
+                .product(name: "ActiveUIMarkdown", package: "ActiveUIMarkdown"),
+                .product(name: "ActiveUICode", package: "ActiveUICode"),
+                .product(name: "SwiftyCodeEditor", package: "SwiftyCodeEditor")
             ],
             exclude: [
                 "Resources/AppIcon.iconset"

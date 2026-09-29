@@ -24,6 +24,11 @@ packages:
     path: ../../../../AIResearch/ActiveUI/Code/ActiveUI
   ActiveUIMarkdown:
     path: ../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown
+  # The ActiveUI shell's source editor, over SwiftyCodeEditor.
+  ActiveUICode:
+    path: ../../../../AIResearch/ActiveUI/Code/ActiveUICode
+  SwiftyCodeEditor:
+    path: ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -64,6 +69,10 @@ targets:
         product: ActiveUI
       - package: ActiveUIMarkdown
         product: ActiveUIMarkdown
+      - package: ActiveUICode
+        product: ActiveUICode
+      - package: SwiftyCodeEditor
+        product: SwiftyCodeEditor
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aibasic.BASICStudio

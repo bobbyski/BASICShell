@@ -50,7 +50,7 @@ struct ActiveUIDebugPaneTests {
     func gutterToggles() {
         let model = StudioHarness(program: "PRINT 1\nPRINT 2").model
         let pane = DebugPaneAUI(model: model)
-        pane.codeView.breakpointToggle?(2)
+        pane.codeView.onToggleBreakpoint?(2)
         #expect(model.debuggerBreakpointLines == [2])
     }
 

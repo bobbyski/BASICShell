@@ -13,10 +13,10 @@ import Foundation
 /// BASICStudio's second shell, over the same ``StudioModel`` as the SwiftUI
 /// one (Documents/ACTIVEUI_TRANSITION.md, P2).
 ///
-/// It draws nothing of its own. Its state comes from the P1 projections, and
-/// the two native views are the SwiftUI shell's own: the console is
-/// `AIBasicTerminalContainerView` and the editor is `MonacoEditorController`'s
-/// web view, each wrapped in an `AUINativeHost`.
+/// It draws nothing of its own. Its state comes from the P1 projections. The
+/// console is the SwiftUI shell's own `AIBasicTerminalContainerView`, wrapped
+/// in an `AUINativeHost`; the editor is ActiveUI's source editor
+/// (`SourceEditorAUI`), where the SwiftUI shell has Monaco.
 ///
 /// ```text
 ///   model.objectWillChange ─► scheduleRefresh ─► (next turn) refresh()
@@ -45,9 +45,9 @@ final class StudioActiveUIShell {
     let toolbar: AUIToolbar
 
     let console = AIBasicTerminalContainerView()
-    let editor = MonacoEditorController()
+    let editor = SourceEditorAUI()
     let consoleHost: AUINativeHost
-    let editorHost: AUINativeHost
+    let editorHost: AUIView
     let commandBar: AUIStack
     let commandField: AUITextField
     /// The main pane, the drag handle, and the inspector.
@@ -80,7 +80,7 @@ final class StudioActiveUIShell {
 
         console.attach(to: model)
         consoleHost = AUINativeHost(console)
-        editorHost = AUINativeHost(editor.makeWebView())
+        editorHost = editor.editor
 
         // Both panes stay alive, and switching shows one and hides the other.
         // The SwiftUI shell rebuilds the native view on every switch.

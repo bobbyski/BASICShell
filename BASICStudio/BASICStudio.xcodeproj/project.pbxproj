@@ -25,13 +25,16 @@
 		4D7FD52C1482075CEA7484E4 /* LogPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 274E10BC1DC8322BB117728E /* LogPaneAUI.swift */; };
 		4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
 		4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		543916F96C24C380A7DEF63E /* SwiftyCodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 955277B154524A585B8D179D /* SwiftyCodeEditor */; };
 		55AA22B456CC0B14F3F85659 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3F0871282F50834880A591A8 /* Assets.xcassets */; };
 		58976B826AE6E3E9FA6967AA /* NerdPromptSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD856E6A67B449DF70D14B01 /* NerdPromptSegments.swift */; };
 		6095E23C83DAF700CE5333E9 /* SettingsAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */; };
 		693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
+		6BABADE2659A798EF66D0DF8 /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; };
 		7091141BEB6366B0BF388EC6 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = B28A38404D59414EADD295C5 /* Fonts */; };
 		74D0835107EBA56BF18A331D /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; };
 		797CEBCC3F1A3E1385DF48F0 /* DocsPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786414E68D08A63E6898020E /* DocsPaneModel.swift */; };
+		8491C77AAFE0684FB7E5BD47 /* SourceEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D0EF453B77151D2563402A /* SourceEditorAUI.swift */; };
 		8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CB8284FB31709C1BD017047 /* MonacoEditor.swift */; };
 		9606D359B9EB6DF218563A37 /* DocsPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */; };
 		986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */; };
@@ -62,6 +65,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		011AFAC86C3D24E2C652443E /* ActiveUICode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICode; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICode; sourceTree = SOURCE_ROOT; };
 		0CB8284FB31709C1BD017047 /* MonacoEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonacoEditor.swift; sourceTree = "<group>"; };
 		1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioHostFlags.swift; sourceTree = "<group>"; };
 		1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudioApp.swift; sourceTree = "<group>"; };
@@ -84,6 +88,7 @@
 		66762CB96B98F1DE50DFCE7D /* ActiveUIMarkdown */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUIMarkdown; path = ../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown; sourceTree = SOURCE_ROOT; };
 		689A82CD724959C8AA8FE537 /* LogPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPaneModel.swift; sourceTree = "<group>"; };
 		6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModel.swift; sourceTree = "<group>"; };
+		72D0EF453B77151D2563402A /* SourceEditorAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditorAUI.swift; sourceTree = "<group>"; };
 		786414E68D08A63E6898020E /* DocsPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsPaneModel.swift; sourceTree = "<group>"; };
 		7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermGraphicsConsole.swift; sourceTree = "<group>"; };
 		8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdPromptEditorView.swift; sourceTree = "<group>"; };
@@ -112,6 +117,7 @@
 		ED3E736836021C24D244390D /* DebugPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPaneModel.swift; sourceTree = "<group>"; };
 		F768CDEF475FDA4603BD917D /* DebugPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPane.swift; sourceTree = "<group>"; };
 		FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuCommandModel.swift; sourceTree = "<group>"; };
+		FDA023CFFFD1F535E44E65FD /* SwiftyCodeEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftyCodeEditor; path = ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -126,6 +132,8 @@
 				091E1770B6363E5775960262 /* DocumentArchive in Frameworks */,
 				1AEDBCF61A189708EB2AF9A6 /* ActiveUI in Frameworks */,
 				38BC0F614387753C63AE3A59 /* ActiveUIMarkdown in Frameworks */,
+				6BABADE2659A798EF66D0DF8 /* ActiveUICode in Frameworks */,
+				543916F96C24C380A7DEF63E /* SwiftyCodeEditor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,6 +169,7 @@
 				274E10BC1DC8322BB117728E /* LogPaneAUI.swift */,
 				C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */,
 				474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */,
+				72D0EF453B77151D2563402A /* SourceEditorAUI.swift */,
 				978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */,
 				4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */,
 			);
@@ -171,9 +180,11 @@
 			isa = PBXGroup;
 			children = (
 				E01D1E66A75BA2495AEA6493 /* ActiveUI */,
+				011AFAC86C3D24E2C652443E /* ActiveUICode */,
 				66762CB96B98F1DE50DFCE7D /* ActiveUIMarkdown */,
 				2F75838E7973F9367D5B0837 /* BASICCore */,
 				9B36187CAF5A2F8FF3127D1A /* DocumentArchive */,
+				FDA023CFFFD1F535E44E65FD /* SwiftyCodeEditor */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -276,6 +287,8 @@
 				5AAB125FD1626D4E8281F069 /* DocumentArchive */,
 				717CF46DC0F9232475AACCEA /* ActiveUI */,
 				810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */,
+				08C7821063F11AADE9C1548C /* ActiveUICode */,
+				955277B154524A585B8D179D /* SwiftyCodeEditor */,
 			);
 			productName = BASICStudio;
 			productReference = 393A6113D352F2C1DAC75002 /* BASICStudio.app */;
@@ -310,9 +323,11 @@
 				22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				F766C66770B99FFD0D86DFFE /* XCRemoteSwiftPackageReference "VectorTerminalSDK" */,
 				E88FD3C083EEDDCE90DCC798 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUI" */,
+				4AE31DEFF35EF04327D7CE47 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICode" */,
 				BAA134AC8186EEF8E6B53498 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown" */,
 				51196CCCA29E213E68ADF750 /* XCLocalSwiftPackageReference "../BASICCore" */,
 				530285D0FF39F32DD8A80DC9 /* XCLocalSwiftPackageReference "../DocumentArchive" */,
+				25EFF9CF2C51DE9F3649914D /* XCLocalSwiftPackageReference "../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 105417A0EC732F96246ADE77 /* Products */;
@@ -366,6 +381,7 @@
 				44FE9EE08A4BB2C50D554C20 /* RenderInputs.swift in Sources */,
 				6095E23C83DAF700CE5333E9 /* SettingsAUI.swift in Sources */,
 				B7922A21D2E5A7B60E0CDF0D /* SettingsViewModel.swift in Sources */,
+				8491C77AAFE0684FB7E5BD47 /* SourceEditorAUI.swift in Sources */,
 				9F2A3BF20C0C0DDB72F667F5 /* StudioAUIBridge.swift in Sources */,
 				A1432993494F6BA04B2BAD6C /* StudioAbout.swift in Sources */,
 				D05ADC8871BB376F69B2C843 /* StudioActiveUIShell.swift in Sources */,
@@ -579,6 +595,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		25EFF9CF2C51DE9F3649914D /* XCLocalSwiftPackageReference "../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor;
+		};
+		4AE31DEFF35EF04327D7CE47 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICode" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../AIResearch/ActiveUI/Code/ActiveUICode;
+		};
 		51196CCCA29E213E68ADF750 /* XCLocalSwiftPackageReference "../BASICCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../BASICCore;
@@ -625,6 +649,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		08C7821063F11AADE9C1548C /* ActiveUICode */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ActiveUICode;
+		};
 		130A03B0A453DD5074363E15 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
@@ -646,6 +674,10 @@
 		810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ActiveUIMarkdown;
+		};
+		955277B154524A585B8D179D /* SwiftyCodeEditor */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwiftyCodeEditor;
 		};
 		A5E611364F88C87B9EAAD4AF /* BASICCore */ = {
 			isa = XCSwiftPackageProductDependency;
