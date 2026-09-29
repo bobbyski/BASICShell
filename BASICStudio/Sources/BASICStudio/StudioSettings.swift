@@ -177,27 +177,28 @@ struct SettingsView: View {
     @ObservedObject var model: StudioModel
 
     var body: some View {
+        let tabs = SettingsViewModel.tabs
         TabView {
             generalPage
                 .tabItem {
-                    Label("General", systemImage: "gearshape")
+                    Label(tabs[0].title, systemImage: tabs[0].symbol)
                 }
 
             fontPage
                 .tabItem {
-                    Label("Font", systemImage: "textformat")
+                    Label(tabs[1].title, systemImage: tabs[1].symbol)
                 }
 
             consolePage
                 .tabItem {
-                    Label("Console", systemImage: "terminal")
+                    Label(tabs[2].title, systemImage: tabs[2].symbol)
                 }
         }
         .padding()
     }
 
     private static let scrollbackSliderBounds: ClosedRange<Double> = {
-        let range = StudioSettings.consoleScrollbackRange
+        let range = SettingsViewModel.scrollbackRange
         return Double(range.lowerBound)...Double(range.upperBound)
     }()
 
@@ -209,23 +210,24 @@ struct SettingsView: View {
     }
 
     private var consolePage: some View {
-        Form {
-            Section("Scrollback") {
+        let settings = SettingsViewModel(model)
+        return Form {
+            Section(SettingsViewModel.scrollbackSectionTitle) {
                 HStack {
                     Text("Lines")
-                    Slider(value: scrollbackLinesBinding, in: Self.scrollbackSliderBounds, step: 100)
+                    Slider(value: scrollbackLinesBinding, in: Self.scrollbackSliderBounds, step: Double(SettingsViewModel.scrollbackStep))
                     Stepper(
                         value: $model.consoleScrollbackLines,
-                        in: StudioSettings.consoleScrollbackRange,
-                        step: 100
+                        in: SettingsViewModel.scrollbackRange,
+                        step: SettingsViewModel.scrollbackStep
                     ) {
-                        Text("\(model.consoleScrollbackLines)")
+                        Text(settings.scrollbackText)
                             .frame(width: 56, alignment: .trailing)
                             .monospacedDigit()
                     }
                 }
 
-                Text("Older console lines are discarded once the console passes this many lines. Lowering it reduces memory use and speeds up programs that print heavily, because the console re-reads its buffer on every update.")
+                Text(SettingsViewModel.scrollbackNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -237,8 +239,9 @@ struct SettingsView: View {
     }
 
     private var fontPage: some View {
-        Form {
-            Section("Editor And Console Font") {
+        let settings = SettingsViewModel(model)
+        return Form {
+            Section(SettingsViewModel.fontSectionTitle) {
                 Picker("Font", selection: $model.fontFamily) {
                     ForEach(Self.availableFontFamilies, id: \.self) { family in
                         Text(family).tag(family)
@@ -248,13 +251,13 @@ struct SettingsView: View {
 
                 HStack {
                     Text("Size")
-                    Slider(value: $model.fontSize, in: 10...24, step: 1)
-                    Text("\(Int(model.fontSize))")
+                    Slider(value: $model.fontSize, in: SettingsViewModel.fontSizeRange, step: SettingsViewModel.fontSizeStep)
+                    Text(settings.fontSizeText)
                         .frame(width: 32, alignment: .trailing)
                         .monospacedDigit()
                 }
 
-                Text("The selected font is used by Monaco and the SwiftTerm console. Prompt symbols need a Nerd Font or a font with matching glyph coverage.")
+                Text(SettingsViewModel.fontNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -262,17 +265,6 @@ struct SettingsView: View {
     }
 
     private static var availableFontFamilies: [String] {
-        let families = NSFontManager.shared.availableFontFamilies.sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
-        }
-        let preferred = [StudioFonts.defaultFamily, "SF Mono", "Hack Nerd Font", "JetBrains Mono", "Menlo", "Monaco"]
-        var result: [String] = []
-        for family in preferred where !result.contains(family) {
-            result.append(family)
-        }
-        for family in families where !result.contains(family) {
-            result.append(family)
-        }
-        return result
+        SettingsViewModel.fontFamilies(installed: NSFontManager.shared.availableFontFamilies)
     }
 }
