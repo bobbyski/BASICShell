@@ -200,9 +200,12 @@ final class StudioModel: ObservableObject {
     /// Whether settings are read from and written back to Application Support.
     /// A headless model (a test's) leaves them alone.
     private let persistsSettings: Bool
+    /// The parity walk's opening state, applied once at launch.
+    private var walk: StudioLaunchOptions.Walk?
 
     init(launch: StudioLaunchOptions = .current) {
         persistsSettings = launch.persistsSettings
+        walk = launch.walk
         auiBridge.postEvent = { [weak self] kind, source, text, index in
             self?.session.postAUIEvent(kind: kind, source: source, text: text, index: index)
         }
@@ -258,9 +261,28 @@ final class StudioModel: ObservableObject {
     }
 
     func runStartupProgramIfNeeded() {
+        let pane = walk?.pane
+        applyWalk()
+        defer {
+            // After the run, which shows the console: the walk's pane wins.
+            if let pane { selectedPane = pane }
+        }
         guard shouldRunStartupProgram else { return }
         shouldRunStartupProgram = false
         runEditorProgram()
+    }
+
+    /// Puts the window in the state `--walk` asked for, once, before the
+    /// startup program runs.
+    private func applyWalk() {
+        guard let walk else { return }
+        self.walk = nil
+        if let inspector = walk.inspector { inspectorPane = inspector }
+        if walk.showsCommandBar { isCommandBarVisible = true }
+        for line in walk.breakpoints { toggleDebuggerBreakpoint(atSourceLine: line) }
+        if let path = walk.projectPath {
+            openProject(at: URL(fileURLWithPath: expandedPath(path), isDirectory: true))
+        }
     }
 
     func toggleInspector(_ pane: InspectorPane) {

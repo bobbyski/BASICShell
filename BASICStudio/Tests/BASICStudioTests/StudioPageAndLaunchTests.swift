@@ -83,6 +83,27 @@ struct StudioLaunchOptionsTests {
         #expect(options.programPath == "-NSDocumentRevisionsDebugMode")
     }
 
+    @Test("--walk opens a stated state on default settings, saving nothing; its values are not the program")
+    func walk() {
+        let options = StudioLaunchOptions.parse([
+            "--activeui", "--walk", "--pane", "editor", "--inspector", "debug", "--command-bar",
+            "--breakpoint", "2", "--breakpoint", "5", "--settings", "Font", "--project", "~/demos", "demo.bas",
+        ])
+        #expect(options.shell == .activeUI)
+        #expect(options.programPath == "demo.bas")
+        #expect(!options.persistsSettings)
+        let walk = options.walk
+        #expect(walk?.pane == .editor && walk?.inspector == .debug && walk?.showsCommandBar == true)
+        #expect(walk?.breakpoints == [2, 5])
+        #expect(walk?.settingsTab == "font" && walk?.settingsTabIndex == 1)
+        #expect(walk?.projectPath == "~/demos")
+        #expect(StudioLaunchOptions.parse(["demo.bas"]).walk == nil)
+        // The program can come from the environment, where AppKit cannot see it.
+        let fromEnvironment = StudioLaunchOptions.parse(["--walk"], environment: ["BASICSTUDIO_PROGRAM": "env.bas"])
+        #expect(fromEnvironment.programPath == "env.bas")
+        #expect(StudioLaunchOptions.parse([], environment: ["BASICSTUDIO_PROGRAM": "env.bas"]).programPath == nil)
+    }
+
     @Test("Headless models persist nothing")
     func headless() {
         #expect(!StudioLaunchOptions.headless.persistsSettings)

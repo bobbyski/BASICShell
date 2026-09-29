@@ -354,7 +354,8 @@ final class DisclosureSection {
         header.isBordered = false
         content = PromptEditorAUI.column([], spacing: 0)
         content.padding = AUIEdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
-        root = PromptEditorAUI.column([header, content], spacing: 0)
+        // The title sits at the leading edge, as a DisclosureGroup's does.
+        root = PromptEditorAUI.column([LogPaneAUI.row([header, AUISpacer()]), content], spacing: 0)
         header.onClick = { [weak self] in self?.toggle() }
         applyOpenState()
     }

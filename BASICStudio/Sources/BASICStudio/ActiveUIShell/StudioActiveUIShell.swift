@@ -151,6 +151,11 @@ final class StudioActiveUIShell {
     /// Puts up the window and runs the app. Returns only when the app quits.
     static func run(launch: StudioLaunchOptions) {
         StudioFonts.registerBundledFonts()
+        if launch.walk != nil {
+            // The parity walk photographs the window; it must not take the
+            // focus from whoever is at the keyboard.
+            setenv("AUI_BACKGROUND", "1", 1)
+        }
         let shell = StudioActiveUIShell(model: StudioModel(launch: launch))
         // The app keeps the views; this keeps the shell, and with it the
         // subscription that refreshes them. `run` does not return, so a
@@ -159,6 +164,10 @@ final class StudioActiveUIShell {
         AUIApplication.onLaunch = {
             shell.refresh()
             shell.model.runStartupProgramIfNeeded()
+            if let tab = launch.walk?.settingsTab {
+                shell.settings.show()
+                AUIPreferencesWindow.shared.select(identifier: tab)
+            }
         }
         _ = AUIApplication.run(
             shell.root,
@@ -359,8 +368,12 @@ final class StudioActiveUIShell {
         case .alert: .systemRed
         case .on: .systemGreen
         }
-        return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [color]))
+        // A symbol image is a template, and the toolbar draws a template in
+        // its own gray; the tint shows only once it is not one.
+        image?.isTemplate = false
+        return image
     }
 
     // MARK: The menu bar

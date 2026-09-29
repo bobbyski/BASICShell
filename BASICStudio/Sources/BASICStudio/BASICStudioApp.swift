@@ -131,7 +131,34 @@ private extension EventModifiers {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let walk = StudioLaunchOptions.current.walk else {
+            NSApplication.shared.setActivationPolicy(.regular)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+        // The parity walk photographs the window and must not keep the focus.
+        // SwiftUI opens no window for an app that never activates, so it
+        // activates for a moment, then hands the focus back to whatever had
+        // it; the window stays up behind.
+        let previous = NSWorkspace.shared.frontmostApplication
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        if walk.settingsTab != nil {
+            // Opened while the app is still active; an inactive one ignores it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                NSApplication.shared.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if let previous, previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                previous.activate()
+            }
+        }
+        // Windows arrive over the first seconds; each is put up as it does.
+        for delay in stride(from: 1.0, through: 6.0, by: 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                NSApplication.shared.windows.filter(\.canBecomeMain).forEach { $0.orderFrontRegardless() }
+            }
+        }
     }
 }

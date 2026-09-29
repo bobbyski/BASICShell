@@ -181,24 +181,29 @@ private extension JSONEncoder {
 
 struct SettingsView: View {
     @ObservedObject var model: StudioModel
+    /// General at first, or the tab the parity walk asked for.
+    @State private var tab = StudioLaunchOptions.current.walk?.settingsTabIndex ?? 0
 
     var body: some View {
         let tabs = SettingsViewModel.tabs
-        TabView {
+        TabView(selection: $tab) {
             generalPage
                 .tabItem {
                     Label(tabs[0].title, systemImage: tabs[0].symbol)
                 }
+                .tag(0)
 
             fontPage
                 .tabItem {
                     Label(tabs[1].title, systemImage: tabs[1].symbol)
                 }
+                .tag(1)
 
             consolePage
                 .tabItem {
                     Label(tabs[2].title, systemImage: tabs[2].symbol)
                 }
+                .tag(2)
         }
         .padding()
     }
