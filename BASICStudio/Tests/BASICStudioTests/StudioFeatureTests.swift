@@ -162,6 +162,31 @@ struct StudioFeatureTests {
         #expect(studio.model.consoleText.contains("RUN\n2\n"), "\(studio.model.consoleText.debugDescription)")
     }
 
+    @Test("D21 · Pause stops a running program at its current statement; Continue resumes; Stop ends it")
+    func pausePausesAndContinueResumes() async throws {
+        let studio = StudioHarness(program: """
+        10 A = A + 1
+        20 GOTO 10
+        """)
+        studio.model.openDebugger()
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the loop to spin") { studio.model.isProgramRunning }
+        try await Task.sleep(for: .milliseconds(50))
+        DebugPaneModel.perform(.pause, on: studio.model)
+        try await studio.waitUntilStopped()
+        #expect(studio.model.isProgramPaused)
+        let line = try #require(studio.model.debuggerExecutionLine)
+        #expect([1, 2].contains(line))
+        #expect(!studio.model.debuggerCallStack.isEmpty)
+
+        studio.model.continueDebugging()
+        try await studio.waitUntil("the loop to resume") { studio.model.isProgramRunning }
+        #expect(!studio.model.isProgramPaused)
+        studio.model.stopProgram()
+        try await studio.waitUntilStopped()
+        #expect(!studio.model.isProgramPaused)
+    }
+
     @Test("D3 · Paused, the variables pane sees the program's globals")
     func pausedGlobalsAreVisible() async throws {
         let studio = StudioHarness(program: """

@@ -228,14 +228,14 @@ struct DebugPaneModel: Equatable {
 
     // MARK: Actions
 
-    /// Does what the button does. Pause stops the program, as it always has
-    /// (STUDIO_FEATURES.md D21, awaiting a ruling).
+    /// Does what the button does. Pause stops at the next statement, in the
+    /// debugger (STUDIO_FEATURES.md D21, ruled 2026-09-29).
     @MainActor
     static func perform(_ command: Command, on model: StudioModel) {
         switch command {
         case .run: model.runEditorProgram()
         case .continueExecution: model.continueDebugging()
-        case .pause: model.stopProgram()
+        case .pause: model.pauseProgram()
         case .step: model.stepDebugging()
         case .stepOver: model.stepOverDebugging()
         case .stepOut: model.stepOutDebugging()

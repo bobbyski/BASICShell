@@ -745,6 +745,16 @@ final class StudioModel: ObservableObject {
         inputCoordinator.endRawKeyInput()
     }
 
+    /// Pause: the running program stops at its next statement, in the
+    /// debugger, exactly as a step would stop it; Continue and Step go on from
+    /// there. Stop still ends the program. (STUDIO_FEATURES.md D21, ruled by
+    /// Bobby 2026-09-29: Pause used to call stopProgram and end the run.)
+    func pauseProgram() {
+        guard isProgramRunning, !isJITRunning, let control = activeExecutionControl else { return }
+        control.setTargetTaskID(nil)
+        control.setMode(.stepInto)
+    }
+
     func continueDebugging() {
         guard isProgramPaused else { return }
         startProgramRun(startLine: nil, command: .continueExecution)
