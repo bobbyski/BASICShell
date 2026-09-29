@@ -42,6 +42,9 @@ final class SettingsAUI {
 
         fontPicker = AUIPicker(families)
         sizeSlider = AUISlider(value: model.fontSize, in: SettingsViewModel.fontSizeRange)
+        // Stepped by the point, with the ticks SwiftUI's stepped slider shows.
+        sizeSlider.tickMarks = Int(SettingsViewModel.fontSizeRange.upperBound - SettingsViewModel.fontSizeRange.lowerBound) + 1
+        sizeSlider.snapsToTickMarks = true
         sizeLabel = AUILabel("")
         sizeLabel.usesMonospacedDigits = true
         sizeLabel.minimumSize = CGSize(width: 32, height: 0)
@@ -100,6 +103,9 @@ final class SettingsAUI {
     /// Adds the three pages to `window`, replacing any there.
     func install(in window: AUIPreferencesWindow = .shared) {
         window.removeAllPages()
+        // The icon strip across the top, as SwiftUI's Settings scene draws
+        // it; it also sizes the window to each page, so none is clipped.
+        window.style = .legacy
         window.title = "Settings"
         window.contentSize = CGSize(width: SettingsViewModel.windowSize.width, height: SettingsViewModel.windowSize.height)
         let tabs = SettingsViewModel.tabs

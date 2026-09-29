@@ -114,6 +114,8 @@ final class StudioActiveUIShell {
         body.minimumSize = StudioShellModel.minimumWindowSize
         sidebar = AUISidebar(items: [], selectedIndex: nil, content: body)
         sidebar.minimumSidebarWidth = 180
+        // Wide enough for most demo names without truncating.
+        sidebar.sidebarWidth = 240
         sidebar.headerActions = [
             AUISidebarHeaderAction(systemSymbol: "folder.badge.plus", tooltip: ProjectModel.openProjectTitle) { [weak model] in
                 model?.openProjectFromMenu()

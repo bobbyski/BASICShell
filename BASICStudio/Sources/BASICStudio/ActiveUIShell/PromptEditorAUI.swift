@@ -79,8 +79,11 @@ final class PromptEditorAUI {
         editForm = SegmentForm(title: "Edit Segment", editsSelection: true)
         noSelectionLabel = Self.caption(PromptEditorModel.noSelectionHelp)
         let done = AUIButton("Done")
+        done.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
         let duplicate = AUIButton("Duplicate")
+        duplicate.image = NSImage(systemSymbolName: "plus.square.on.square", accessibilityDescription: nil)
         let delete = AUIButton("Delete")
+        delete.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
         editButtons = LogPaneAUI.row([done, duplicate, delete])
 
         let shellStyle = AUIButton("Shell Style")
@@ -313,15 +316,23 @@ final class SegmentForm {
     var onChange: ((Change) -> Void)?
     var onAdd: (() -> Void)?
 
+    /// The text row, label and field together, so it hides whole.
+    private(set) var literalRow: AUIStack!
+
     init(title: String, editsSelection: Bool) {
-        let form = AUIForm()
-        form.addRow("Type", kind)
-        form.addRow("Text", literal)
-        form.addRow("Text color", foreground)
-        form.addRow("Fill", background)
-        form.addRow("Left", leftEdge)
-        form.addRow("Right", rightEdge)
-        var views: [AUIView] = [PromptEditorAUI.caption(title, bold: true), form]
+        // SwiftUI's layout: Type; Text (for a Text segment only); the two
+        // colors on one row; the two edges on one row.
+        func labeled(_ label: String, _ control: AUIView) -> [AUIView] {
+            [AUILabel(label), control]
+        }
+        literalRow = LogPaneAUI.row(labeled("Text", literal.stretches()))
+        let rows: [AUIView] = [
+            LogPaneAUI.row(labeled("Type", kind)),
+            literalRow,
+            LogPaneAUI.row(labeled("Text", foreground) + labeled("Fill", background)),
+            LogPaneAUI.row(labeled("Left", leftEdge) + labeled("Right", rightEdge)),
+        ]
+        var views: [AUIView] = [PromptEditorAUI.caption(title, bold: true)] + rows
         if !editsSelection {
             add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
             views.append(add)
@@ -342,7 +353,7 @@ final class SegmentForm {
               background: NerdPromptColor, leftEdge: NerdPromptSegmentEdge, rightEdge: NerdPromptSegmentEdge) {
         self.kind.selectedIndex = NerdPromptSegment.Kind.allCases.firstIndex(of: kind)
         if self.literal.text != literal { self.literal.text = literal }
-        self.literal.isHidden = kind != .literal
+        literalRow.isHidden = kind != .literal
         self.foreground.selectedIndex = NerdPromptColor.allCases.firstIndex(of: foreground)
         self.background.selectedIndex = NerdPromptColor.allCases.firstIndex(of: background)
         self.leftEdge.selectedIndex = NerdPromptSegmentEdge.leftChoices.firstIndex(of: leftEdge)

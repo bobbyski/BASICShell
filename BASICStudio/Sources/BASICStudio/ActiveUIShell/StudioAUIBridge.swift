@@ -114,6 +114,12 @@ final class StudioAUIBridge {
             openWindows.insert(id)
             if showsWindows {
                 window.show()
+                // A program's window fits what the program put in it, at
+                // least 480 × 360 and no taller than 900.
+                if let root = windowRoots[id] {
+                    let fitted = root.layoutSize(fitting: CGSize(width: 520, height: 10_000))
+                    window.setContentSize(CGSize(width: max(480, fitted.width), height: min(900, max(360, fitted.height))))
+                }
             }
         case .close(let id):
             guard let window = windows[id] else { throw missing(id) }
