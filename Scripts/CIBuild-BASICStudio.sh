@@ -67,6 +67,12 @@ echo "Building BASICStudio (Release) with xcodebuild…"
     -skipMacroValidation -skipPackagePluginValidation CLANG_COVERAGE_MAPPING=NO \
     SWIFT_SUPPRESS_WARNINGS=NO CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
     LD_RUNPATH_SEARCH_PATHS='@executable_path/../Frameworks' -quiet)
+# The build is done with the project out of the way, so put it back now, before the
+# step below. That step restores every tracked Package.resolved git sees as deleted, and
+# the project's own is one while the project is aside: restoring it recreated
+# BASICStudio.xcodeproj around that one file, the exit trap then found a project in
+# place, and the real one stayed in the output folder (found 2026-09-29).
+restore
 # xcodebuild deletes a tracked Package.resolved it does not need; put any back.
 git -C "$ROOT" checkout -- $(git -C "$ROOT" ls-files --deleted -- '*Package.resolved') 2>/dev/null || true
 
