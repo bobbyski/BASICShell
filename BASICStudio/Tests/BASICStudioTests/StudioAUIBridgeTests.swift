@@ -143,6 +143,74 @@ struct StudioAUIBridgeTests {
         #expect(bridge.views.isEmpty && (try? bridge.perform(.isOpen(id: 1))) == .flag(false))
     }
 
+    /// ACTIVEUI_TRANSITION.md P6.4: the demo is the acceptance test. If a
+    /// user could not do this, the binding has a hole.
+    @Test("P6.4 · aui-gallery.bas, from the Examples menu, worked through by the user")
+    func galleryDemo() async throws {
+        let studio = harness("")
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "aui-gallery" })
+        studio.model.loadBundledExample(example)
+        let bridge = studio.model.auiBridge
+        var asked: String?
+        bridge.presentDialog = { title, _, _, done in
+            asked = title
+            done(0)
+        }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the window") { (try? bridge.perform(.isOpen(id: 1))) == .flag(true) }
+
+        // Ids follow the program's order of construction.
+        let info = try #require(bridge.views[2] as? AUILabel)
+        let field = try #require(bridge.views[3] as? AUITextField)
+        let names = try #require(bridge.views[4] as? AUITable)
+        let born = try #require(bridge.views[5] as? AUITable)
+        let counter = try #require(bridge.views[6] as? AUIButton)
+        let add = try #require(bridge.views[8] as? AUIButton)
+        let clear = try #require(bridge.views[10] as? AUIButton)
+        #expect(names.rowCount() == 3 && born.rowCount() == 3)
+
+        field.text = "Hedy Lamarr"
+        add.onClick?()
+        try await studio.waitUntil("the name added") { info.text == "Added Hedy Lamarr." }
+        #expect(names.rowCount() == 4 && field.text.isEmpty)
+
+        counter.onClick?()
+        counter.onClick?()
+        try await studio.waitUntil("the count") { counter.title == "Clicked 2 times" }
+
+        names.selectedRows = [1]
+        names.onSelectionChange?([1])
+        try await studio.waitUntil("the pick") { info.text == "You picked Grace Hopper, row 2." }
+
+        clear.onClick?()
+        try await studio.waitUntil("the clear") { info.text == "Cleared." }
+        #expect(asked == "Clear the list?" && names.rowCount() == 0 && born.rowCount() == 3)
+
+        _ = try bridge.perform(.close(id: 1))
+        try await studio.waitUntilStopped()
+        #expect(studio.model.consoleText.contains("Window closed.\nThe window closed after 2 clicks, with 0 names.\n"))
+    }
+
+    /// P6.6: a real ActiveUI app, translated file for file, behaves as the
+    /// original does. ActiveUICounterDemo counts clicks into its label.
+    @Test("P6.6 · The translated ActiveUICounterDemo counts its clicks")
+    func counterDemo() async throws {
+        let studio = harness("")
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "aui/ActiveUICounterDemo" })
+        studio.model.loadBundledExample(example)
+        let bridge = studio.model.auiBridge
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the window") { (try? bridge.perform(.isOpen(id: 2))) == .flag(true) }
+        let (_, label) = try #require(control(AUILabel.self, in: bridge))
+        let (_, button) = try #require(control(AUIButton.self, in: bridge))
+        #expect(label.text == "Count: 0" && button.title == "Click me")
+        button.onClick?()
+        button.onClick?()
+        try await studio.waitUntil("two clicks") { label.text == "Count: 2" }
+        _ = try bridge.perform(.close(id: 2))
+        try await studio.waitUntilStopped()
+    }
+
     @Test("P6 · The bridge builds each kind of control, and refuses a request for the wrong one")
     func bridgeKinds() throws {
         let bridge = StudioAUIBridge()
