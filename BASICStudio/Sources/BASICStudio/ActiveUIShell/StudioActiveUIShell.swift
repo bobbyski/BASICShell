@@ -54,6 +54,7 @@ final class StudioActiveUIShell {
     let layout: InspectorLayout
     let logPane: LogPaneAUI
     let docsPane: DocsPaneAUI
+    let debugPane: DebugPaneAUI
     let settings: SettingsAUI
 
     let toolbarItems: [StudioShellModel.Command: AUIToolbarItem]
@@ -94,7 +95,9 @@ final class StudioActiveUIShell {
         // hidden, as the SwiftUI shell's do not.
         logPane = LogPaneAUI(model: model)
         docsPane = DocsPaneAUI()
+        debugPane = DebugPaneAUI(model: model)
         let inspectors = AUIZStack(alignment: .fill)
+        inspectors.addChild(debugPane.root)
         inspectors.addChild(logPane.root)
         inspectors.addChild(docsPane.root)
         layout = InspectorLayout(main: mainArea, inspector: inspectors)
@@ -201,7 +204,8 @@ final class StudioActiveUIShell {
         switch model.inspectorPane {
         case .logs: logPane.refresh()
         case .docs: docsPane.refresh()
-        case .debug, nil: break
+        case .debug: debugPane.refresh()
+        case nil: break
         }
         if commandField.text != model.command {
             commandField.text = model.command
@@ -228,6 +232,7 @@ final class StudioActiveUIShell {
         layout.showsInspector = shell.inspector != nil
         logPane.root.isHidden = shell.inspector != .logs
         docsPane.root.isHidden = shell.inspector != .docs
+        debugPane.root.isHidden = shell.inspector != .debug
         consoleHost.isHidden = shell.mainPane != .console
         editorHost.isHidden = shell.mainPane != .editor
         commandBar.isHidden = !shell.showsCommandBar
