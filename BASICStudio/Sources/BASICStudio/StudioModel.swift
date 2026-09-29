@@ -177,6 +177,8 @@ final class StudioModel: ObservableObject {
     private var suppressNextProgramNewlineKey = false
     private var debuggerTaskRefreshTask: Task<Void, Never>?
     private let hostFlags = StudioHostFlags()
+    /// A running program's own ActiveUI windows (`AUIWindow` and friends).
+    let auiBridge = StudioAUIBridge()
     private let logBuffer = StudioLogBuffer()
     private var logDrainTask: Task<Void, Never>?
 
@@ -196,6 +198,9 @@ final class StudioModel: ObservableObject {
 
     init(launch: StudioLaunchOptions = .current) {
         persistsSettings = launch.persistsSettings
+        auiBridge.postEvent = { [weak self] kind, source, text, index in
+            self?.session.postAUIEvent(kind: kind, source: source, text: text, index: index)
+        }
         gamepadInputCoordinator.eventHandler = { [weak self] subtype, controller, control, value in
             Task { @MainActor [weak self] in
                 self?.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
@@ -1130,6 +1135,8 @@ final class StudioModel: ObservableObject {
         }
         isProgramRunning = false
         inputCoordinator.setProgramRunning(false)
+        // A program's windows go with it: nothing is left to answer them.
+        auiBridge.closeAll()
         drainPendingLogEntries()
         appendLog(level: paused ? "PAUSE" : "RUN", issuer: .basic, text: paused ? "program paused" : "program finished")
 
@@ -1417,7 +1424,7 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    nonisolated private func valueOnMainSync<T: Sendable>(_ body: @MainActor () -> T) -> T {
+    nonisolated func valueOnMainSync<T: Sendable>(_ body: @MainActor () -> T) -> T {
         if Thread.isMainThread {
             return MainActor.assumeIsolated {
                 body()
