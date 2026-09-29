@@ -14,23 +14,13 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AIBasicTerminalContainerView {
         let view = AIBasicTerminalContainerView()
-        view.model = model
-        view.connectVTG(to: model)
+        view.attach(to: model)
         return view
     }
 
     func updateNSView(_ nsView: AIBasicTerminalContainerView, context: Context) {
-        nsView.model = model
-        nsView.connectVTG(to: model)
-        nsView.render(
-            consoleText: model.consoleText,
-            trimmedCharacters: model.consoleTrimmedCharacters,
-            scrollbackLines: model.consoleScrollbackLines,
-            screenSize: model.terminalScreenSize,
-            fontFamily: model.fontFamily,
-            fontSize: model.fontSize,
-            graphicsLayersVisible: model.areGraphicsLayersVisible
-        )
+        nsView.attach(to: model)
+        nsView.render(ConsoleRenderInput(model))
     }
 }
 
@@ -195,6 +185,26 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             deltaY: Double(event.scrollingDeltaY)
         )
         super.scrollWheel(with: event)
+    }
+
+    /// Points this view at `model`: its input goes there, and the model's
+    /// VTG drawing comes here. Safe to call on every update.
+    func attach(to model: StudioModel) {
+        self.model = model
+        connectVTG(to: model)
+    }
+
+    /// Draws `input`: only what changed since the last call.
+    func render(_ input: ConsoleRenderInput) {
+        render(
+            consoleText: input.consoleText,
+            trimmedCharacters: input.trimmedCharacters,
+            scrollbackLines: input.scrollbackLines,
+            screenSize: input.screenSize,
+            fontFamily: input.fontFamily,
+            fontSize: input.fontSize,
+            graphicsLayersVisible: input.graphicsLayersVisible
+        )
     }
 
     func render(

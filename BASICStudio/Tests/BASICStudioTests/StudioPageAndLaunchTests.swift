@@ -16,7 +16,7 @@ struct MonacoPageTests {
     /// The page's own inline script: everything between the last `<script>`
     /// and its `</script>`. The first script tag is Monaco's loader, by URL.
     private static var inlineScript: String? {
-        let html = MonacoEditor.html
+        let html = MonacoEditorController.html
         guard let open = html.range(of: "<script>", options: .backwards),
               let close = html.range(of: "</script>", range: open.upperBound..<html.endIndex) else {
             return nil

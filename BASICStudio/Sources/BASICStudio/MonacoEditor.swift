@@ -9,229 +9,214 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
+/// The Monaco editor in SwiftUI: a thin host for ``MonacoEditorController``,
+/// which owns the page and is shared with the ActiveUI shell. Everything it
+/// shows arrives as one ``EditorRenderInput``; edits go back through `text`.
 struct MonacoEditor: NSViewRepresentable {
     @Binding var text: String
-    let showsLineNumbers: Bool
-    let theme: EditorTheme
-    let errorLine: Int?
-    let diagnostics: [BASICDiagnostic]
-    let executionLine: Int?
-    let breakpointLines: Set<Int>
-    let isReadOnly: Bool
-    let fontFamily: String
-    let fontSize: Double
-    let findRequest: Int
-    let replaceRequest: Int
+    let input: EditorRenderInput
     let breakpointToggle: ((Int) -> Void)?
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, breakpointToggle: breakpointToggle)
+    func makeCoordinator() -> MonacoEditorController {
+        MonacoEditorController(breakpointToggle: breakpointToggle)
     }
 
     func makeNSView(context: Context) -> WKWebView {
+        context.coordinator.makeWebView()
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        let text = $text
+        context.coordinator.onTextChange = { text.wrappedValue = $0 }
+        context.coordinator.sync(input)
+    }
+
+    static func dismantleNSView(_ nsView: WKWebView, coordinator: MonacoEditorController) {
+        coordinator.dismantle(nsView)
+    }
+}
+
+/// The Monaco page and its bridge, with no SwiftUI in it: it loads the page
+/// into a `WKWebView`, pushes ``EditorRenderInput`` changes in as JavaScript
+/// calls, and reports edits and gutter clicks back through closures. The
+/// SwiftUI shell hosts it through ``MonacoEditor``; the ActiveUI shell wraps
+/// its web view directly.
+@MainActor
+final class MonacoEditorController: NSObject, WKScriptMessageHandler {
+    /// Called with the page's text after each edit the user makes.
+    var onTextChange: ((String) -> Void)?
+    var breakpointToggle: ((Int) -> Void)?
+    weak var webView: WKWebView?
+    private var isReady = false
+    private var pendingText: String?
+    private var pendingShowsLineNumbers: Bool?
+    private var pendingTheme: EditorTheme?
+    private var pendingErrorLine: Int?
+    private var pendingDiagnostics: [BASICDiagnostic] = []
+    private var pendingExecutionLine: Int?
+    private var pendingBreakpointLines: Set<Int> = []
+    private var pendingIsReadOnly = false
+    private var pendingFontFamily = StudioFonts.defaultFamily
+    private var pendingFontSize = 13.0
+    private var pendingFindRequest: Int?
+    private var pendingReplaceRequest: Int?
+    private var lastAppliedText: String?
+    private var lastAppliedShowsLineNumbers: Bool?
+    private var lastAppliedTheme: EditorTheme?
+    private var lastAppliedErrorLine: Int?
+    private var lastAppliedDiagnostics: [BASICDiagnostic] = []
+    private var lastAppliedExecutionLine: Int?
+    private var lastAppliedBreakpointLines: Set<Int> = []
+    private var lastAppliedIsReadOnly: Bool?
+    private var lastAppliedFontFamily: String?
+    private var lastAppliedFontSize: Double?
+    private var lastAppliedFindRequest: Int?
+    private var lastAppliedReplaceRequest: Int?
+
+    init(breakpointToggle: ((Int) -> Void)? = nil) {
+        self.breakpointToggle = breakpointToggle
+    }
+
+    /// A web view with the page loading, reporting to this controller.
+    func makeWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.userContentController.add(context.coordinator, name: "basicStudio")
+        configuration.userContentController.add(self, name: "basicStudio")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
         webView.loadHTMLString(Self.html, baseURL: Bundle.main.resourceURL)
-        context.coordinator.webView = webView
+        self.webView = webView
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.text = $text
-        context.coordinator.sync(
-            text: text,
-            showsLineNumbers: showsLineNumbers,
-            theme: theme,
-            errorLine: errorLine,
-            diagnostics: diagnostics,
-            executionLine: executionLine,
-            breakpointLines: breakpointLines,
-            isReadOnly: isReadOnly,
-            fontFamily: fontFamily,
-            fontSize: fontSize,
-            findRequest: findRequest,
-            replaceRequest: replaceRequest
-        )
+    /// Stops `webView` reporting here, before it goes away.
+    func dismantle(_ webView: WKWebView) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "basicStudio")
     }
 
-    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
-        nsView.configuration.userContentController.removeScriptMessageHandler(forName: "basicStudio")
-    }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let type = body["type"] as? String else { return }
 
-    @MainActor
-    final class Coordinator: NSObject, WKScriptMessageHandler {
-        var text: Binding<String>
-        var breakpointToggle: ((Int) -> Void)?
-        weak var webView: WKWebView?
-        private var isReady = false
-        private var pendingText: String?
-        private var pendingShowsLineNumbers: Bool?
-        private var pendingTheme: EditorTheme?
-        private var pendingErrorLine: Int?
-        private var pendingDiagnostics: [BASICDiagnostic] = []
-        private var pendingExecutionLine: Int?
-        private var pendingBreakpointLines: Set<Int> = []
-        private var pendingIsReadOnly = false
-        private var pendingFontFamily = StudioFonts.defaultFamily
-        private var pendingFontSize = 13.0
-        private var pendingFindRequest: Int?
-        private var pendingReplaceRequest: Int?
-        private var lastAppliedText: String?
-        private var lastAppliedShowsLineNumbers: Bool?
-        private var lastAppliedTheme: EditorTheme?
-        private var lastAppliedErrorLine: Int?
-        private var lastAppliedDiagnostics: [BASICDiagnostic] = []
-        private var lastAppliedExecutionLine: Int?
-        private var lastAppliedBreakpointLines: Set<Int> = []
-        private var lastAppliedIsReadOnly: Bool?
-        private var lastAppliedFontFamily: String?
-        private var lastAppliedFontSize: Double?
-        private var lastAppliedFindRequest: Int?
-        private var lastAppliedReplaceRequest: Int?
-
-        init(text: Binding<String>, breakpointToggle: ((Int) -> Void)?) {
-            self.text = text
-            self.breakpointToggle = breakpointToggle
-        }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any],
-                  let type = body["type"] as? String else { return }
-
-            switch type {
-            case "ready":
-                isReady = true
-                applyPending()
-            case "change":
-                guard let newText = body["text"] as? String else { return }
-                lastAppliedText = newText
-                text.wrappedValue = newText
-            case "toggleBreakpoint":
-                guard let lineNumber = body["lineNumber"] as? Int else { return }
-                breakpointToggle?(lineNumber)
-            default:
-                break
-            }
-        }
-
-        func sync(
-            text: String,
-            showsLineNumbers: Bool,
-            theme: EditorTheme,
-            errorLine: Int?,
-            diagnostics: [BASICDiagnostic],
-            executionLine: Int?,
-            breakpointLines: Set<Int>,
-            isReadOnly: Bool,
-            fontFamily: String,
-            fontSize: Double,
-            findRequest: Int,
-            replaceRequest: Int
-        ) {
-            pendingText = text
-            pendingShowsLineNumbers = showsLineNumbers
-            pendingTheme = theme
-            pendingErrorLine = errorLine
-            pendingDiagnostics = diagnostics
-            pendingExecutionLine = executionLine
-            pendingBreakpointLines = breakpointLines
-            pendingIsReadOnly = isReadOnly
-            pendingFontFamily = fontFamily
-            pendingFontSize = fontSize
-            pendingFindRequest = findRequest
-            pendingReplaceRequest = replaceRequest
+        switch type {
+        case "ready":
+            isReady = true
             applyPending()
+        case "change":
+            guard let newText = body["text"] as? String else { return }
+            lastAppliedText = newText
+            onTextChange?(newText)
+        case "toggleBreakpoint":
+            guard let lineNumber = body["lineNumber"] as? Int else { return }
+            breakpointToggle?(lineNumber)
+        default:
+            break
+        }
+    }
+
+    /// Hands the page `input`. Only what changed since the last call reaches
+    /// the page, and nothing does until the page reports it is ready.
+    func sync(_ input: EditorRenderInput) {
+        pendingText = input.text
+        pendingShowsLineNumbers = input.showsLineNumbers
+        pendingTheme = input.theme
+        pendingErrorLine = input.errorLine
+        pendingDiagnostics = input.diagnostics
+        pendingExecutionLine = input.executionLine
+        pendingBreakpointLines = input.breakpointLines
+        pendingIsReadOnly = input.isReadOnly
+        pendingFontFamily = input.fontFamily
+        pendingFontSize = input.fontSize
+        pendingFindRequest = input.findRequest
+        pendingReplaceRequest = input.replaceRequest
+        applyPending()
+    }
+
+    private func applyPending() {
+        guard isReady, let webView else { return }
+
+        if let pendingText, pendingText != lastAppliedText {
+            webView.evaluateJavaScript("window.basicStudioSetText(\(json(pendingText)));")
+            lastAppliedText = pendingText
         }
 
-        private func applyPending() {
-            guard isReady, let webView else { return }
+        if let pendingShowsLineNumbers, pendingShowsLineNumbers != lastAppliedShowsLineNumbers {
+            webView.evaluateJavaScript("window.basicStudioSetLineNumbers(\(pendingShowsLineNumbers ? "true" : "false"));")
+            lastAppliedShowsLineNumbers = pendingShowsLineNumbers
+        }
 
-            if let pendingText, pendingText != lastAppliedText {
-                webView.evaluateJavaScript("window.basicStudioSetText(\(json(pendingText)));")
-                lastAppliedText = pendingText
+        if let pendingTheme, pendingTheme != lastAppliedTheme {
+            webView.evaluateJavaScript("window.basicStudioSetTheme(\(json(pendingTheme.monacoName)));")
+            lastAppliedTheme = pendingTheme
+        }
+
+        if pendingErrorLine != lastAppliedErrorLine {
+            if let pendingErrorLine {
+                webView.evaluateJavaScript("window.basicStudioSetErrorLine(\(pendingErrorLine));")
+            } else {
+                webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
             }
+            lastAppliedErrorLine = pendingErrorLine
+        }
 
-            if let pendingShowsLineNumbers, pendingShowsLineNumbers != lastAppliedShowsLineNumbers {
-                webView.evaluateJavaScript("window.basicStudioSetLineNumbers(\(pendingShowsLineNumbers ? "true" : "false"));")
-                lastAppliedShowsLineNumbers = pendingShowsLineNumbers
-            }
-
-            if let pendingTheme, pendingTheme != lastAppliedTheme {
-                webView.evaluateJavaScript("window.basicStudioSetTheme(\(json(pendingTheme.monacoName)));")
-                lastAppliedTheme = pendingTheme
-            }
-
-            if pendingErrorLine != lastAppliedErrorLine {
-                if let pendingErrorLine {
-                    webView.evaluateJavaScript("window.basicStudioSetErrorLine(\(pendingErrorLine));")
-                } else {
-                    webView.evaluateJavaScript("window.basicStudioSetErrorLine(null);")
-                }
-                lastAppliedErrorLine = pendingErrorLine
-            }
-
-            if pendingDiagnostics != lastAppliedDiagnostics {
-                if let data = try? JSONEncoder().encode(pendingDiagnostics),
-                   let json = String(data: data, encoding: .utf8) {
-                    webView.evaluateJavaScript("window.basicStudioSetDiagnostics(\(json));")
-                    lastAppliedDiagnostics = pendingDiagnostics
-                }
-            }
-
-            if pendingExecutionLine != lastAppliedExecutionLine {
-                if let pendingExecutionLine {
-                    webView.evaluateJavaScript("window.basicStudioSetExecutionLine(\(pendingExecutionLine));")
-                } else {
-                    webView.evaluateJavaScript("window.basicStudioSetExecutionLine(null);")
-                }
-                lastAppliedExecutionLine = pendingExecutionLine
-            }
-
-            if pendingBreakpointLines != lastAppliedBreakpointLines {
-                let sorted = pendingBreakpointLines.sorted()
-                if let data = try? JSONEncoder().encode(sorted),
-                   let json = String(data: data, encoding: .utf8) {
-                    webView.evaluateJavaScript("window.basicStudioSetBreakpoints(\(json));")
-                    lastAppliedBreakpointLines = pendingBreakpointLines
-                }
-            }
-
-            if pendingIsReadOnly != lastAppliedIsReadOnly {
-                webView.evaluateJavaScript("window.basicStudioSetReadOnly(\(pendingIsReadOnly ? "true" : "false"));")
-                lastAppliedIsReadOnly = pendingIsReadOnly
-            }
-
-            if pendingFontFamily != lastAppliedFontFamily || pendingFontSize != lastAppliedFontSize {
-                webView.evaluateJavaScript("window.basicStudioSetFont(\(json(pendingFontFamily)), \(pendingFontSize));")
-                lastAppliedFontFamily = pendingFontFamily
-                lastAppliedFontSize = pendingFontSize
-            }
-
-            if let pendingFindRequest, pendingFindRequest != lastAppliedFindRequest {
-                if pendingFindRequest > 0 {
-                    webView.evaluateJavaScript("window.basicStudioFind(false);")
-                }
-                lastAppliedFindRequest = pendingFindRequest
-            }
-
-            if let pendingReplaceRequest, pendingReplaceRequest != lastAppliedReplaceRequest {
-                if pendingReplaceRequest > 0 {
-                    webView.evaluateJavaScript("window.basicStudioFind(true);")
-                }
-                lastAppliedReplaceRequest = pendingReplaceRequest
+        if pendingDiagnostics != lastAppliedDiagnostics {
+            if let data = try? JSONEncoder().encode(pendingDiagnostics),
+               let json = String(data: data, encoding: .utf8) {
+                webView.evaluateJavaScript("window.basicStudioSetDiagnostics(\(json));")
+                lastAppliedDiagnostics = pendingDiagnostics
             }
         }
 
-        private func json(_ value: String) -> String {
-            guard let data = try? JSONEncoder().encode(value),
-                  let encoded = String(data: data, encoding: .utf8) else {
-                return "\"\""
+        if pendingExecutionLine != lastAppliedExecutionLine {
+            if let pendingExecutionLine {
+                webView.evaluateJavaScript("window.basicStudioSetExecutionLine(\(pendingExecutionLine));")
+            } else {
+                webView.evaluateJavaScript("window.basicStudioSetExecutionLine(null);")
             }
-            return encoded
+            lastAppliedExecutionLine = pendingExecutionLine
         }
+
+        if pendingBreakpointLines != lastAppliedBreakpointLines {
+            let sorted = pendingBreakpointLines.sorted()
+            if let data = try? JSONEncoder().encode(sorted),
+               let json = String(data: data, encoding: .utf8) {
+                webView.evaluateJavaScript("window.basicStudioSetBreakpoints(\(json));")
+                lastAppliedBreakpointLines = pendingBreakpointLines
+            }
+        }
+
+        if pendingIsReadOnly != lastAppliedIsReadOnly {
+            webView.evaluateJavaScript("window.basicStudioSetReadOnly(\(pendingIsReadOnly ? "true" : "false"));")
+            lastAppliedIsReadOnly = pendingIsReadOnly
+        }
+
+        if pendingFontFamily != lastAppliedFontFamily || pendingFontSize != lastAppliedFontSize {
+            webView.evaluateJavaScript("window.basicStudioSetFont(\(json(pendingFontFamily)), \(pendingFontSize));")
+            lastAppliedFontFamily = pendingFontFamily
+            lastAppliedFontSize = pendingFontSize
+        }
+
+        if let pendingFindRequest, pendingFindRequest != lastAppliedFindRequest {
+            if pendingFindRequest > 0 {
+                webView.evaluateJavaScript("window.basicStudioFind(false);")
+            }
+            lastAppliedFindRequest = pendingFindRequest
+        }
+
+        if let pendingReplaceRequest, pendingReplaceRequest != lastAppliedReplaceRequest {
+            if pendingReplaceRequest > 0 {
+                webView.evaluateJavaScript("window.basicStudioFind(true);")
+            }
+            lastAppliedReplaceRequest = pendingReplaceRequest
+        }
+    }
+
+    private func json(_ value: String) -> String {
+        guard let data = try? JSONEncoder().encode(value),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return "\"\""
+        }
+        return encoded
     }
 
     /// One Monarch keyword array, from the shared vocabulary.
@@ -241,7 +226,7 @@ struct MonacoEditor: NSViewRepresentable {
     /// `CONTINUE`, `CONST` and `DECLARE`, none of which this language
     /// implements, while knowing nothing of `ASYNC`, `AWAIT`, `TASK`,
     /// `CANCEL`, `JOIN` or any of the async builtins — so Studio could not
-    /// colour the async features at all. They are generated now, and
+    /// color the async features at all. They are generated now, and
     /// ``BASICKeywords`` is the only place a word is written down.
     ///
     /// Sorted so a diff of the generated page is readable, and quoted through

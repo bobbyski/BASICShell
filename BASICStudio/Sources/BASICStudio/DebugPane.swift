@@ -35,17 +35,7 @@ struct DebugPane: View {
                 VStack(spacing: 0) {
                     MonacoEditor(
                         text: .constant(pane.programText),
-                        showsLineNumbers: true,
-                        theme: model.editorTheme,
-                        errorLine: pane.errorLine,
-                        diagnostics: [],
-                        executionLine: pane.executionLine,
-                        breakpointLines: pane.breakpointLines,
-                        isReadOnly: true,
-                        fontFamily: model.fontFamily,
-                        fontSize: model.fontSize,
-                        findRequest: 0,
-                        replaceRequest: 0,
+                        input: .debugCodeView(model),
                         breakpointToggle: { lineNumber in
                             model.toggleDebuggerBreakpoint(atSourceLine: lineNumber)
                         }

@@ -124,17 +124,7 @@ struct StudioView: View {
             VStack(spacing: 0) {
                 MonacoEditor(
                     text: $model.programText,
-                    showsLineNumbers: model.isEditorGutterVisible,
-                    theme: model.editorTheme,
-                    errorLine: model.editorErrorLine,
-                    diagnostics: model.editorDiagnostics,
-                    executionLine: nil,
-                    breakpointLines: [],
-                    isReadOnly: false,
-                    fontFamily: model.fontFamily,
-                    fontSize: model.fontSize,
-                    findRequest: model.editorFindRequest,
-                    replaceRequest: model.editorReplaceRequest,
+                    input: .mainEditor(model),
                     breakpointToggle: nil
                 )
             }
