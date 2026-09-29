@@ -739,14 +739,10 @@ struct SwiftImportEndToEndTests {
                 "got:\n\(run.stdout)")
     }
 
-    /// The compiler under test, built into this package's scratch path.
+    /// The compiler under test, built into this package's `.build`.
     static var compiler: String {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        for scratch in [".build-claude", ".build"] {
-            let candidate = root.appendingPathComponent("\(scratch)/debug/basicc").path
-            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-        }
         return root.appendingPathComponent(".build/debug/basicc").path
     }
 }
@@ -758,8 +754,7 @@ struct SwiftManglingProbeTests {
 
     /// Where BASICRTSwift's module lives, for the probe's `import`.
     static var searchPaths: [String] {
-        [".build-claude/release/Modules", ".build-claude/debug/Modules",
-         ".build/release/Modules", ".build/debug/Modules"]
+        [".build/release/Modules", ".build/debug/Modules"]
             .map { (root as NSString).appendingPathComponent($0) }
             .filter { FileManager.default.fileExists(atPath: $0) }
     }

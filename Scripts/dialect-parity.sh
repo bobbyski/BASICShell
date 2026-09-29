@@ -3,13 +3,13 @@
 # which produce different bytes. The shell twin of DialectParityTests: faster
 # to iterate on, and it shows the diff.
 #
-#   Scripts/dialect-parity.sh                 # uses .build-claude/debug/basicc
+#   Scripts/dialect-parity.sh                 # uses .build/debug/basicc
 #   BASICC=/path/to/basicc Scripts/dialect-parity.sh
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 pkg="$root/BASICCompiler"
-BASICC=${BASICC:-$pkg/.build-claude/debug/basicc}
-: "${BASICC_RT_LIB:=$pkg/.build-claude/release/libBASICRTHost.a}"
+BASICC=${BASICC:-$pkg/.build/debug/basicc}
+: "${BASICC_RT_LIB:=$pkg/.build/release/libBASICRTHost.a}"
 export BASICC_RT_LIB
 out=${PARITY_OUT:-/tmp/dialect-parity}
 rm -rf "$out"; mkdir -p "$out"

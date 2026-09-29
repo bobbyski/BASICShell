@@ -25,8 +25,7 @@ newest() {
 }
 
 if [ -z "${BASICC:-}" ]; then
-    BASICC=$(newest "$PKG/.build/debug/basicc" "$PKG/.build-claude/debug/basicc" \
-                    "$PKG/.build/release/basicc" "$PKG/.build-claude/release/basicc")
+    BASICC=$(newest "$PKG/.build/debug/basicc" "$PKG/.build/release/basicc")
     if [ -z "$BASICC" ]; then
         BASICC=$(command -v basicc || true)
         [ -n "$BASICC" ] || {
@@ -38,7 +37,7 @@ if [ -z "${BASICC:-}" ]; then
 fi
 
 if [ -z "${BASICC_RT_LIB:-}" ]; then
-    BASICC_RT_LIB=$(newest "$PKG/.build/release/libBASICRTHost.a" "$PKG/.build-claude/release/libBASICRTHost.a")
+    BASICC_RT_LIB=$(newest "$PKG/.build/release/libBASICRTHost.a")
 fi
 export BASICC BASICC_RT_LIB
 

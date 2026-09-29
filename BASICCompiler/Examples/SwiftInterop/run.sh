@@ -42,7 +42,7 @@ echo "==> the Swift program, which subclasses the BASIC class"
 # The runtime archive too: a BASIC class carries the runtime's own printing,
 # defaults and type registration with it, so linking the class means linking
 # the runtime — the same archive `basicc build` links into a program.
-RT=${BASICC_RT_LIB:-$PACKAGE/.build-claude/release/libBASICRTHost.a}
+RT=${BASICC_RT_LIB:-$PACKAGE/.build/release/libBASICRTHost.a}
 if [ ! -f "$RT" ]; then
     echo "run.sh: no runtime archive at $RT — set BASICC_RT_LIB" >&2
     exit 1

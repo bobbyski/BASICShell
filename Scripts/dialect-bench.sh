@@ -14,8 +14,8 @@
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 pkg="$root/BASICCompiler"
-BASICC=${BASICC:-$pkg/.build-claude/debug/basicc}
-: "${BASICC_RT_LIB:=$pkg/.build-claude/release/libBASICRTHost.a}"
+BASICC=${BASICC:-$pkg/.build/debug/basicc}
+: "${BASICC_RT_LIB:=$pkg/.build/release/libBASICRTHost.a}"
 export BASICC_RT_LIB
 MAX_RATIO=${MAX_RATIO:-0}
 REPEATS=${REPEATS:-3}
