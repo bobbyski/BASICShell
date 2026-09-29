@@ -53,6 +53,7 @@
 #   $PREFIX/bin/basiclint                    the linter
 #   $PREFIX/lib/libBASICRTHost.a             the runtime it links
 #   $PREFIX/share/basicc/BASICRT/            runtime sources, the fallback
+#   $PREFIX/share/basicc/BASICSound/         the sound model it compiles with them
 #
 # The shell's JIT finds `basicc` on PATH, so a shell installed without one
 # can interpret and not compile. Installing them together is what keeps
@@ -436,9 +437,11 @@ if [ -n "$COMPILER_BIN" ]; then
     done
     $SUDO cp "$COMPILER_BIN/libBASICRTHost.a" "$PREFIX/lib/libBASICRTHost.a"
     $SUDO chmod 644 "$PREFIX/lib/libBASICRTHost.a"
-    $SUDO rm -rf "$PREFIX/share/basicc/BASICRT" "$PREFIX/share/basicc/BASICRTHostStubs"
+    $SUDO rm -rf "$PREFIX/share/basicc/BASICRT" "$PREFIX/share/basicc/BASICRTHostStubs" "$PREFIX/share/basicc/BASICSound"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRT" "$PREFIX/share/basicc/BASICRT"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRTHostStubs" "$PREFIX/share/basicc/BASICRTHostStubs"
+    # The sound model the runtime shares with the interpreter (RuntimeLibrary.sharedModules).
+    $SUDO cp -R "$COMPILER_DIR/../BASICCore/Sources/BASICSound" "$PREFIX/share/basicc/BASICSound"
     note "basicc, basictest and basiclint installed with their runtime"
 fi
 

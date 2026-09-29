@@ -1,4 +1,8 @@
+// A module under SwiftPM; compiled into the same module as the runtime when
+// basicc builds its runtime from sources (RuntimeLibrary.sharedModules).
+#if canImport(BASICSound)
 import BASICSound
+#endif
 import Foundation
 
 // BASICRT sound — SOUND, PLAY, PLAY(n) and BEEP.

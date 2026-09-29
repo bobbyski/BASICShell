@@ -8,6 +8,7 @@
 #   <prefix>/lib/libBASICRTHost.a        the runtime (core + host half + SDKs)
 #   <prefix>/share/basicc/BASICRT/       runtime sources — the fallback when
 #                                        the archive is absent (host stubbed)
+#   <prefix>/share/basicc/BASICSound/    the sound model compiled with them
 #
 # Usage:  ./buildAndInstall.sh [--prefix DIR] [--uninstall]
 # Default prefix: /usr/local
@@ -46,9 +47,11 @@ install -m 755 "$bin/basicc" "$prefix/bin/basicc"
 install -m 755 "$bin/basictest" "$prefix/bin/basictest"
 install -m 755 "$bin/basiclint" "$prefix/bin/basiclint"
 install -m 644 "$bin/libBASICRTHost.a" "$prefix/lib/libBASICRTHost.a"
-rm -rf "$prefix/share/basicc/BASICRT" "$prefix/share/basicc/BASICRTHostStubs"
+rm -rf "$prefix/share/basicc/BASICRT" "$prefix/share/basicc/BASICRTHostStubs" "$prefix/share/basicc/BASICSound"
 cp -R Sources/BASICRT "$prefix/share/basicc/BASICRT"
 cp -R Sources/BASICRTHostStubs "$prefix/share/basicc/BASICRTHostStubs"
+# The sound model the runtime shares with the interpreter (RuntimeLibrary.sharedModules).
+cp -R ../BASICCore/Sources/BASICSound "$prefix/share/basicc/BASICSound"
 
 # Probe: compile a program with the environment cleared, so the installed
 # compiler is proven to find its own runtime.

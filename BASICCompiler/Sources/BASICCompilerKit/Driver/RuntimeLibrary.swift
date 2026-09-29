@@ -57,7 +57,8 @@ public struct RuntimeLibrary: Sendable {
     }
 
     /// Every `.swift` file in ``sourceDirectory(environment:)``, sorted, plus
-    /// the host stubs beside it (`<name>HostStubs`) when they exist.
+    /// the host stubs beside it (`<name>HostStubs`) when they exist, and the
+    /// BASICCore modules the runtime shares with the interpreter.
     public func sources(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> [String] {
         guard let directory = sourceDirectory(environment: environment) else {
             throw MissingRuntime(name: name)
@@ -68,9 +69,29 @@ public struct RuntimeLibrary: Sendable {
                 .sorted()
                 .map { (directory as NSString).appendingPathComponent($0) }
         }
-        let stubs = ((directory as NSString).deletingLastPathComponent as NSString).appendingPathComponent("\(name)HostStubs")
-        return swiftFiles(in: directory) + swiftFiles(in: stubs)
+        let parent = (directory as NSString).deletingLastPathComponent
+        let stubs = (parent as NSString).appendingPathComponent("\(name)HostStubs")
+        var files = swiftFiles(in: directory) + swiftFiles(in: stubs)
+        for shared in Self.sharedModules {
+            // Beside the runtime's own sources when installed, else in-tree
+            // in BASICCore. Compiled into the same one module, which is why
+            // the runtime imports them only `#if canImport`.
+            let candidates = [
+                (parent as NSString).appendingPathComponent(shared),
+                Self.inTreeSourcesDirectory.appendingPathComponent("../../BASICCore/Sources/\(shared)").standardized.path,
+            ]
+            guard let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                throw MissingRuntime(name: shared)
+            }
+            files += swiftFiles(in: found)
+        }
+        return files
     }
+
+    /// BASICCore targets the runtime is built from as well as its own
+    /// sources: `BASICSound`, the interpreter's sound model, so `SOUND` and
+    /// `PLAY` have one implementation (BBC_ADINS.md A8).
+    public static let sharedModules = ["BASICSound"]
 
     /// The full runtime archive, when one can be had:
     ///
