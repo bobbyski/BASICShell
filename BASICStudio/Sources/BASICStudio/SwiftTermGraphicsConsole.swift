@@ -130,6 +130,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         super.layout()
         applyScreenSize()
         updateMouseTrackingArea()
+        updateScrollerVisibility()
     }
 
     override func updateTrackingAreas() {
@@ -315,6 +316,19 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         terminalView.needsDisplay = true
         terminalView.setNeedsDisplay(terminalView.bounds)
         positionSwiftTermCaret()
+        updateScrollerVisibility()
+    }
+
+    /// Shows the scroller only when there is scrollback to move through.
+    ///
+    /// SwiftTerm's is a bare `NSScroller`, and an overlay style hides itself
+    /// only inside an `NSScrollView`, so on its own it is always drawn. It is
+    /// private to SwiftTerm, hence finding it among the subviews.
+    private func updateScrollerVisibility() {
+        let isHidden = !terminalView.canScroll
+        for case let scroller as NSScroller in terminalView.subviews where scroller.isHidden != isHidden {
+            scroller.isHidden = isHidden
+        }
     }
 
     private func positionSwiftTermCaret() {
