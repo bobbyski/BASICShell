@@ -54,6 +54,7 @@ final class StudioActiveUIShell {
     let layout: InspectorLayout
     let logPane: LogPaneAUI
     let docsPane: DocsPaneAUI
+    let settings: SettingsAUI
 
     let toolbarItems: [StudioShellModel.Command: AUIToolbarItem]
     let themeItem: AUIToolbarItem
@@ -105,7 +106,9 @@ final class StudioActiveUIShell {
         body.minimumSize = StudioShellModel.minimumWindowSize
         root = body
 
-        menuBar = Self.makeMenuBar(model: model)
+        let settings = SettingsAUI(model: model)
+        self.settings = settings
+        menuBar = Self.makeMenuBar(model: model, onSettings: { [weak settings] in settings?.show() })
         let parts = Self.makeToolbar(model: model)
         toolbar = parts.toolbar
         toolbarItems = parts.buttons
@@ -193,6 +196,7 @@ final class StudioActiveUIShell {
         // when nothing changed.
         console.render(ConsoleRenderInput(model))
         editor.sync(.mainEditor(model))
+        settings.refresh()
         // Only the inspector on screen reads the model.
         switch model.inspectorPane {
         case .logs: logPane.refresh()
@@ -328,7 +332,7 @@ final class StudioActiveUIShell {
 
     /// The menu bar, from ``MenuCommandModel``, in the SwiftUI shell's order:
     /// the app, File, Edit, View, Examples, Console, Debug, Window, Help.
-    static func makeMenuBar(model: StudioModel) -> AUIMenuBar {
+    static func makeMenuBar(model: StudioModel, onSettings: (() -> Void)? = nil) -> AUIMenuBar {
         let commands = MenuCommandModel(model)
         let file = AUIMenu("File", items: items(commands.fileOpen + commands.fileSave, model: model) + [
             .separator(),
@@ -345,7 +349,7 @@ final class StudioActiveUIShell {
             .command(.selectAll),
         ] + items(commands.editFind, model: model))
         var menus: [AUIMenu] = [
-            AUIMenu.application(name: "BASICStudio", about: { MenuCommandModel.perform(.about, on: model) }),
+            AUIMenu.application(name: "BASICStudio", about: { MenuCommandModel.perform(.about, on: model) }, settings: onSettings),
             file,
             edit,
             AUIMenu.standardView(),
