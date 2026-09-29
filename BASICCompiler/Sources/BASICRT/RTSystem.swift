@@ -1,5 +1,15 @@
 import Foundation
 
+/// `ENVIRON$(name$)`: the variable's value, or "" when it is not set. The
+/// interpreter's lookup, which tries the name as written and then uppercased.
+/// A compiled program has no `SETENV`, so there is nothing to consult first.
+@_cdecl("basic_rt_environ")
+public func basic_rt_environ(_ name: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    let key = rtText(name)
+    let environment = ProcessInfo.processInfo.environment
+    return rtOwned(environment[key] ?? environment[key.uppercased()] ?? "")
+}
+
 // BASICRT system objects — the interpreter's built-in classes that are
 // implemented by the host rather than by BASIC code: `File` here; the
 // TUI, graphics, timer, and HTTP objects follow with their hosts.
