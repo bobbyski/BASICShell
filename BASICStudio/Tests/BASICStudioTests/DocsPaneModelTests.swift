@@ -66,4 +66,15 @@ struct DocsPaneModelTests {
         #expect(docs.contains { $0.category == .tutorials })
         #expect(docs.contains { $0.category == .reference })
     }
+
+    @Test("O3 · The Documentation opens on the Beginner's Guide, first of every tutorial")
+    func opensOnTheBeginnersGuide() {
+        let docs = UserDoc.loadAll()
+        let pane = DocsPaneModel(docs: docs, selectedID: nil)
+        #expect(pane.selectedDoc?.id == UserDoc.startPageID)
+        #expect(pane.menuTitle == "Beginner's Guide to BASIC")
+        let tutorials = pane.sections.first { $0.title == "Tutorials" }?.items.map(\.title) ?? []
+        #expect(tutorials.first == "Beginner's Guide to BASIC")
+        #expect(tutorials.count == 5, "\(tutorials)")
+    }
 }

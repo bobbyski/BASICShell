@@ -102,6 +102,10 @@ struct UserDoc: Identifiable, Hashable {
     let category: UserDocCategory
     let content: String
 
+    /// The page the Documentation inspector opens on, first in the menu:
+    /// what a newcomer should read before anything else.
+    static let startPageID = "TUTORIAL_BEGINNERS.md"
+
     static func loadAll() -> [UserDoc] {
         guard let library = try? DocumentLibrary(searching: sources(), extension: "md") else {
             return []
@@ -119,6 +123,9 @@ struct UserDoc: Identifiable, Hashable {
                 if left.category != right.category {
                     return UserDocCategory.allCases.firstIndex(of: left.category)!
                         < UserDocCategory.allCases.firstIndex(of: right.category)!
+                }
+                if (left.id == startPageID) != (right.id == startPageID) {
+                    return left.id == startPageID
                 }
                 return left.title.localizedStandardCompare(right.title) == .orderedAscending
             }
