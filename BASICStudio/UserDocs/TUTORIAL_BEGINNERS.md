@@ -177,7 +177,7 @@ next i
 
 Counting starts at 0, so `DIM fruit$(2)` makes three places: 0, 1 and 2. Arrays and `FOR` loops go together well.
 
-## Making Your Own Commands
+## Making Your Own Functions
 
 A function gives a name to some statements so you can use them again. Put functions at the end of the program:
 
