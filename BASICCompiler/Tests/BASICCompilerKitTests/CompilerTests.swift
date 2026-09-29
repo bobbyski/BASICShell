@@ -160,6 +160,27 @@ struct DiagnosticTests {
         _ = try Compilation(dialect: TraditionalDialect()).bir(source: "COMMON A, B$\nPRINT 1", name: "common")
     }
 
+    /// A program's own ActiveUI windows (ACTIVEUI_TRANSITION.md P6) are made
+    /// by BASICStudio's interpreter through its host, which a compiled program
+    /// does not have. Refused by name, in each spelling a program can use,
+    /// rather than reported as an array subscript or an unknown type.
+    @Test func activeUIWindowsAreRefusedByName() throws {
+        let sources = [
+            "LET W = AUIWindow(\"x\")",
+            "LET B = NEW AUIButton(\"Go\")",
+            "DIM L AS AUIList",
+            "FUNCTION Picked(E AS BASICAUIEvent)\nEND FUNCTION",
+        ]
+        for source in sources {
+            do {
+                _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "aui")
+                Issue.record("\(source) compiled")
+            } catch let error as CompileError {
+                #expect(String(describing: error).contains("BASICStudio's interpreter"), "\(source): \(error)")
+            }
+        }
+    }
+
     @Test func mixedTypesAreAnError() {
         #expect(throws: CompileError.self) {
             try Compilation(dialect: TraditionalDialect()).bir(source: "A = 1\nA = \"x\"", name: "bad")
