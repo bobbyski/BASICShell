@@ -68,9 +68,6 @@ final class DocsPaneAUI {
         body.addChild(page)
         root = body
 
-        menu.dynamicItems { [weak self] in
-            MainActor.assumeIsolated { self?.menuItems() ?? [] }
-        }
         refresh()
     }
 
@@ -84,6 +81,11 @@ final class DocsPaneAUI {
     func refresh() {
         let pane = DocsPaneModel(docs: docs, selectedID: selectedID)
         guard pane != drawn else { return }
+        // Built whole, not with `dynamicItems`. A pull-down spends item 0 on
+        // its title, and AUIMenuButton's placeholder for it does not survive
+        // a dynamic menu's rebuild on open: the first section, Tutorials,
+        // became the hidden title and only Reference showed.
+        menuButton.menu = AUIMenu("Documentation", items: menuItems(pane))
         menuButton.title = pane.menuTitle
         fitMenuToTitle()
         menuButton.isHidden = !pane.showsMenu
@@ -103,8 +105,8 @@ final class DocsPaneAUI {
         menuButton.maximumSize.width = min(280, natural)
     }
 
-    private func menuItems() -> [AUIMenuItem] {
-        DocsPaneModel(docs: docs, selectedID: selectedID).sections.map { section in
+    private func menuItems(_ pane: DocsPaneModel) -> [AUIMenuItem] {
+        pane.sections.map { section in
             let items = section.items.map { item in
                 AUIMenuItem(item.title, action: { [weak self] in self?.select(item.id) })
                     .checked { item.isChecked }

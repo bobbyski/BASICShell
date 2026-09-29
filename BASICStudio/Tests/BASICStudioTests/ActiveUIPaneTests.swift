@@ -135,6 +135,23 @@ struct ActiveUIPaneTests {
         #expect(pane.viewer.markdown.contains("Reference"))
     }
 
+    @Test("O2 · The Docs menu lists every section: the pull-down's title does not eat the first")
+    func docsMenuListsEverySection() throws {
+        let pane = DocsPaneAUI(docs: UserDoc.loadAll())
+        func popups(in view: NSView) -> [NSPopUpButton] {
+            (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups(in:))
+        }
+        let menu = try #require(popups(in: pane.menuButton.nativeView).first?.menu)
+        // Opening is when a dynamic menu used to rebuild and lose item 0.
+        menu.delegate?.menuNeedsUpdate?(menu)
+        // Item 0 is the pull-down's own title, which AppKit does not list.
+        let listed = menu.items.dropFirst()
+        #expect(listed.map(\.title) == ["Tutorials", "Reference"])
+        let tutorials = try #require(listed.first?.submenu)
+        tutorials.delegate?.menuNeedsUpdate?(tutorials)
+        #expect(tutorials.items.count == UserDoc.loadAll().filter { $0.category == .tutorials }.count)
+    }
+
     @Test("O5 · The Docs pane with no pages says so, and has no menu")
     func docsPaneEmpty() {
         let pane = DocsPaneAUI(docs: [])
