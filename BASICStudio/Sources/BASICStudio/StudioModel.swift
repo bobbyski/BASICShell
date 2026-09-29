@@ -190,7 +190,12 @@ final class StudioModel: ObservableObject {
         session.prompt
     }
 
-    init() {
+    /// Whether settings are read from and written back to Application Support.
+    /// A headless model (a test's) leaves them alone.
+    private let persistsSettings: Bool
+
+    init(launch: StudioLaunchOptions = .current) {
+        persistsSettings = launch.persistsSettings
         gamepadInputCoordinator.eventHandler = { [weak self] subtype, controller, control, value in
             Task { @MainActor [weak self] in
                 self?.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
@@ -202,7 +207,7 @@ final class StudioModel: ObservableObject {
             text: "discovery active controllers=\(gamepadInputCoordinator.connectedControllerCount())"
         )
         gamepadInputCoordinator.emitConnectedControllers()
-        let settings = StudioSettingsStore.load()
+        let settings = persistsSettings ? StudioSettingsStore.load() : StudioSettings()
         editorTheme = settings.editorTheme
         isEditorGutterVisible = settings.isEditorGutterVisible
         terminalScreenSize = settings.terminalScreenSize
@@ -210,16 +215,19 @@ final class StudioModel: ObservableObject {
         let savedPromptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate
             ? BASICSession.defaultPromptTemplate
             : settings.promptTemplate
-        promptTemplate = BASICPromptTemplateStore.load(default: savedPromptTemplate)
+        promptTemplate = persistsSettings
+            ? BASICPromptTemplateStore.load(default: savedPromptTemplate)
+            : savedPromptTemplate
         fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
         isLoadingSettings = false
-        BASICPromptTemplateStore.save(promptTemplate)
+        if persistsSettings {
+            BASICPromptTemplateStore.save(promptTemplate)
+        }
         replaceConsole(with: session.prompt)
 
-        let arguments = Array(CommandLine.arguments.dropFirst())
-        if let path = arguments.first,
+        if let path = launch.programPath,
            let source = try? String(contentsOfFile: expandedPath(path), encoding: .utf8) {
             programText = source
             currentProgramURL = URL(fileURLWithPath: expandedPath(path))
@@ -1326,6 +1334,7 @@ final class StudioModel: ObservableObject {
     }
 
     private func saveSettings() {
+        guard persistsSettings else { return }
         BASICPromptTemplateStore.save(promptTemplate)
         StudioSettingsStore.save(
             StudioSettings(

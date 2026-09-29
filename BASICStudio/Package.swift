@@ -32,6 +32,11 @@ let package = Package(
                 .copy("Resources/Assets"),
                 .process("Resources/Assets.xcassets")
             ]
+        ),
+        // Headless: the model, the projections, the pages. No window.
+        .testTarget(
+            name: "BASICStudioTests",
+            dependencies: ["BASICStudio"]
         )
     ]
 )
