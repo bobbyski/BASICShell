@@ -445,6 +445,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {
+        // A TUI application has every key, ^C included, as it does in
+        // BASICShell. SwiftTerm turns the event into the bytes a terminal
+        // sends, and `send` hands them to the driver.
+        if model?.activeTUIDriver != nil {
+            return false
+        }
+
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
            event.charactersIgnoringModifiers?.lowercased() == "c",
            model?.shouldProgramStopOnTerminalInterrupt() == true {
@@ -592,6 +599,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        if let driver = model?.activeTUIDriver {
+            driver.incoming.yield(.bytes(Array(data)))
+            return
+        }
+
         var operations: [TerminalInputOperation] = []
         var bytes = Array(data)
         if !pendingEscapeBytes.isEmpty {

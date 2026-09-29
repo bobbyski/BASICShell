@@ -60,6 +60,11 @@ final class StudioModel: ObservableObject {
     }
     private var liveTerminalColumns = 80
     private var liveTerminalRows = 25
+    /// The TUI application drawing in the console, while one is.
+    private(set) var activeTUIDriver: StudioTUIDriver?
+    /// Where the console stood when that session began, so its frames can be
+    /// taken back out.
+    private var tuiSessionStart = 0
     private var liveVTGCanvasSize = BASICVectorTerminalCanvasSnapshot(width: 0, height: 0, source: "VectorTerminalView")
     private var liveVTGCellSize: (width: Double, height: Double)?
     private var vtgHitRegions: [StudioVTGHitRegion] = []
@@ -465,6 +470,7 @@ final class StudioModel: ObservableObject {
     func updateLiveTerminalSize(columns: Int, rows: Int) {
         liveTerminalColumns = max(1, columns)
         liveTerminalRows = max(1, rows)
+        activeTUIDriver?.incoming.yield(.resize(tuiScreenSize))
     }
 
     func updateLiveVTGCanvasSize(width: Int, height: Int) {
@@ -843,6 +849,10 @@ final class StudioModel: ObservableObject {
         activeExecutionControl?.requestBreak()
         inputCoordinator.cancelLineInput()
         inputCoordinator.endRawKeyInput()
+        // A TUI program sits in `app.run` and sees no break until it returns.
+        if activeTUIDriver != nil {
+            BASICTUIApplications.stopAll()
+        }
     }
 
     /// Pause: the running program stops at its next statement, in the
@@ -1773,33 +1783,49 @@ extension StudioModel: StudioDebuggerInterface {}
 
 // MARK: - TUI presentation
 //
-// TUIKIT_PLAN.md phase 5. The binding — controls, event routing, the handle
-// table — is all in BASICCore, so the only thing Studio owes it is a
-// `TerminalDriver`: somewhere for the cells to go.
-//
-// **Not built yet, and this returns nil deliberately.** A TUI program in Studio
-// therefore fails with the binding's own message ("This host has no surface to
-// draw a TUI application on") rather than opening a window that never appears.
-//
-// The seam for the real thing, found and written down so the work is short:
-//
-//   * **Out.** `SwiftTermGraphicsConsole` feeds SwiftTerm by diffing
-//     `consoleText` and calling `terminal.feed(text:)` with what is new, so a
-//     driver's `present` is `ANSIEncoder.encode(buffer)` +
-//     `ANSIEncoder.frame(lines:previous:)` — both public in TUIKit, and exactly
-//     what `ANSIDriver` itself uses — appended through `appendConsole`. No new
-//     encoder, and only diffs go across.
-//   * **In.** `handleProgramKeyEvent` already turns `NSEvent`s into
-//     `TerminalInputOperation`s; `inputStream()` needs those bridged to
-//     `AsyncStream<TerminalInput>`.
-//   * **Size.** `renderedScreenSize` on the console view.
-//
-// What stopped it being written here is that the input half cannot be tested
-// without running the app, and a plausible-but-wrong 200 lines of AppKit glue
-// is worse than an honest nil.
+// TUIKIT_PLAN.md phase 5. The binding (controls, event routing, the handle
+// table) is all in BASICCore, so what Studio owes it is a `TerminalDriver`:
+// `StudioTUIDriver`, which draws in the console pane. A session's output goes
+// through the console buffer like any other, and comes back out at the end.
 extension StudioModel: BASICTUIPresentationHost {
     nonisolated func makeTUIDriver() -> (any TerminalDriver)? {
-        nil
+        StudioTUIDriver(model: self)
+    }
+}
+
+extension StudioModel {
+    /// The size a TUI application gets: the console's, in cells.
+    var tuiScreenSize: TUIKit.Size {
+        TUIKit.Size(
+            width: terminalScreenSize.dimensions?.cols ?? liveTerminalColumns,
+            height: terminalScreenSize.dimensions?.rows ?? liveTerminalRows
+        )
+    }
+
+    /// Gives the console to `driver`: from now on its keys go there.
+    func beginTUISession(_ driver: StudioTUIDriver) -> TUIKit.Size {
+        activeTUIDriver = driver
+        tuiSessionStart = consoleTrimmedCharacters + consoleText.count
+        return tuiScreenSize
+    }
+
+    /// What a TUI application draws, as the terminal's own bytes.
+    func appendTUIOutput(_ text: String) {
+        appendConsole(text)
+    }
+
+    /// Takes the console back from `driver`.
+    ///
+    /// Everything the session wrote comes out again. The console view sees
+    /// the buffer shrink, resets its terminal and feeds it what came before,
+    /// which is the main screen as the program left it; and a session's
+    /// frames, which carry no newlines for the scrollback cap to count, do
+    /// not pile up.
+    func endTUISession(_ driver: StudioTUIDriver) {
+        guard activeTUIDriver === driver else { return }
+        activeTUIDriver = nil
+        let written = consoleTrimmedCharacters + consoleText.count - tuiSessionStart
+        removeConsoleSuffix(min(max(written, 0), consoleText.count))
     }
 }
 

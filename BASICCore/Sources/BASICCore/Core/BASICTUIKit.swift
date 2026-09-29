@@ -46,6 +46,23 @@ public protocol BASICTUIPresentationHost: BASICHost {
     func makeTUIDriver() -> (any TerminalDriver)?
 }
 
+/// The running TUI applications, as a host with a Stop of its own sees them.
+///
+/// A program sits in `app.run` for as long as its application is up, and a
+/// break request is only noticed between statements. TUIKit gives ^C to the
+/// application (it is a control's copy key), so in BASICShell the program
+/// ends when it says so; a host with a Stop button needs a way in.
+@MainActor
+public enum BASICTUIApplications {
+    /// Stops every running application, so the `run` its program is sitting
+    /// on returns.
+    public static func stopAll() {
+        for app in BASICTUIRegistry.shared.apps.values {
+            app.stop()
+        }
+    }
+}
+
 // MARK: - The registry
 
 /// The live TUIKit objects, by handle.
