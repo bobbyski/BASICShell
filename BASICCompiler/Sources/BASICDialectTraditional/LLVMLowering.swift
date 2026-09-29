@@ -694,6 +694,9 @@ struct LLVMLowering {
     declare void @basic_rt_play_bind_number(ptr, double)
     declare void @basic_rt_play_bind_text(ptr, ptr)
     declare double @basic_rt_play_count(double)
+    declare void @basic_rt_envelope(double, double, double, double, double, double, double, double, double, double, double, double, double, double)
+    declare void @basic_rt_play_midi(ptr)
+    declare void @basic_rt_stop_midi()
     """
 }
 

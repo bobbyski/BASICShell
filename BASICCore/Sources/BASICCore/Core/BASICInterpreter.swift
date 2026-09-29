@@ -1172,6 +1172,28 @@ public final class BASICInterpreter {
                 }
             }
             return .next
+        case .envelope(let parameters):
+            let values = try parameters.map { try numeric(evaluate($0)) }
+            try withSoundErrors { try soundSession().defineEnvelope(values) }
+            return .next
+        case .playMIDI(let expression):
+            guard let path = try evaluate(expression).string?.description else {
+                throw BASICError.runtime("Type mismatch")
+            }
+            guard let fileHost = host as? BASICFileHost else {
+                throw BASICError.runtime("PLAY MIDI is not supported by this host")
+            }
+            // Asked first, so every host words a missing song the same way,
+            // and the same way a compiled program does.
+            guard (try? fileHost.fileExists(path: path)) == true,
+                  let data = try? fileHost.loadFileData(path: path) else {
+                throw BASICError.runtime("File not found: \(path)")
+            }
+            try withSoundErrors { try soundSession().playMIDI(data: data, name: path) }
+            return .next
+        case .stopMIDI:
+            soundSession().stopMIDI()
+            return .next
         case .play(let expression):
             guard let macro = try evaluate(expression).string else {
                 throw BASICError.runtime("Type mismatch")
@@ -3928,6 +3950,12 @@ public final class BASICInterpreter {
             return "sound " + arguments.map(traceText(for:)).joined(separator: ", ")
         case .play(let expression):
             return "play \(traceText(for: expression))"
+        case .envelope(let parameters):
+            return "envelope " + parameters.map(traceText(for:)).joined(separator: ", ")
+        case .playMIDI(let expression):
+            return "play midi \(traceText(for: expression))"
+        case .stopMIDI:
+            return "play midi stop"
         case .color(let values):
             return "color " + values.map(traceText(for:)).joined(separator: ", ")
         case .cls:
@@ -4415,6 +4443,10 @@ public final class BASICInterpreter {
         if let sound = runtime.sound { return sound }
         let soundHost = host as? BASICSoundHost
         let sound = BASICSoundSession.forProgram(output: soundHost?.soundOutput, clock: soundHost?.soundClock)
+        // A foreground song can last minutes; a break has to reach it.
+        sound.interrupted = { [weak executionControl, weak task] in
+            executionControl?.isBreakRequested == true || task?.isCancellationRequested == true
+        }
         runtime.sound = sound
         return sound
     }
@@ -4424,6 +4456,11 @@ public final class BASICInterpreter {
         do {
             try body()
         } catch let error as BASICSoundError {
+            if error == .interrupted {
+                // Taken as the break it is, where the program stood.
+                try checkExecutionBreak()
+                throw BASICError.breakRequested(parsedLines[safe: pc]?.displayLineNumber)
+            }
             throw BASICError.runtime(error.message)
         }
     }
@@ -6383,9 +6420,9 @@ public final class BASICInterpreter {
             case .setFieldString(let target, let value, _):
                 visit(target, capturesBase: false)
                 visit(value)
-            case .sound(let arguments):
+            case .sound(let arguments), .envelope(let arguments):
                 arguments.forEach(visit)
-            case .play(let expression):
+            case .play(let expression), .playMIDI(let expression):
                 visit(expression)
             case .chain(let file, let start, _):
                 visit(file)

@@ -310,6 +310,49 @@ struct SoundParityTests {
         #expect(compiled.trace.split(separator: "\n").count == 42)
         #expect(compiled.trace == interpreted.trace)
     }
+
+    /// `ENVELOPE`, a release cut short by the next note, and `PLAY MIDI`,
+    /// played from the program's own directory by both engines.
+    @Test func envelopesAndSongsMatch() throws {
+        guard let interpreter = TestBuild.interpreter else { return }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-envelope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Format 0, one track at 120 BPM: a quarter note, half a second.
+        let song: [UInt8] = [
+            0x4D, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96,
+            0x4D, 0x54, 0x72, 0x6B, 0, 0, 0, 12,
+            0x00, 0x90, 0x3C, 0x40, 0x60, 0x80, 0x3C, 0x00, 0x00, 0xFF, 0x2F, 0x00,
+        ]
+        try Data(song).write(to: directory.appendingPathComponent("tune.mid"))
+        let source = directory.appendingPathComponent("envelope.bas").path
+        try """
+            ENVELOPE 1, 2, 0, 0, 0, 0, 0, 0, 63, -4, 0, -8, 126, 80
+            SOUND 1, 1, 53, 10
+            SOUND 1, 1, 69, 10
+            ENVELOPE 2, 1, 1, -1, 1, 2, 4, 2, 126, 0, 0, -126, 126, 126
+            SOUND 2, 2, 81, 20
+            PLAY MIDI "tune.mid"
+            PRINT "done"
+            """.write(toFile: source, atomically: true, encoding: .utf8)
+        let binary = directory.appendingPathComponent("envelope").path
+        try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: binary) }
+
+        func traced(_ executable: String, _ arguments: [String], into name: String) throws -> (stdout: String, trace: String) {
+            let trace = directory.appendingPathComponent(name).path
+            var environment = ProcessInfo.processInfo.environment
+            environment["BASIC_SOUND_TRACE"] = trace
+            let result = try ProcessRunner.run(executable, arguments, environment: environment, workingDirectory: directory.path)
+            return (result.stdout, try String(contentsOfFile: trace, encoding: .utf8))
+        }
+        let compiled = try traced(binary, [], into: "compiled.trace")
+        let interpreted = try traced(interpreter, [source], into: "interpreted.trace")
+        #expect(compiled.stdout == "done\n")
+        #expect(compiled.stdout == interpreted.stdout)
+        #expect(compiled.trace.contains("voice 1: cut at 0.5000"))
+        #expect(compiled.trace.contains("voice 16 at 0.0000: MIDI tune.mid (34 bytes) for 0.5000 s"))
+        #expect(compiled.trace == interpreted.trace)
+    }
 }
 
 /// `swift build` compiles BASIC through BASICBuildPlugin — held by building

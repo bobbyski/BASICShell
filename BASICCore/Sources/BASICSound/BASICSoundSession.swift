@@ -20,6 +20,13 @@ public protocol BASICSoundOutput: AnyObject {
     func silence(voice: Int)
     /// Silences everything.
     func stopAll()
+    /// Cuts `voice` short at `time`, dropping whatever it had scheduled from
+    /// then on: the next note on a channel ends the last one's release.
+    func cut(voice: Int, at time: TimeInterval)
+}
+
+extension BASICSoundOutput {
+    public func cut(voice: Int, at time: TimeInterval) {}
 }
 
 /// The time sound is measured against, and a way to wait on it.
@@ -63,8 +70,10 @@ public final class BASICVirtualSoundClock: BASICSoundClock {
 /// GW's statements play on voice 1, in the foreground unless a `PLAY` has
 /// said `MB`, with up to 32 notes queued in the background. BBC's `SOUND`
 /// plays on its own channel, always queued, four notes deep, as on a BBC
-/// Micro. A program waits only when a queue is full, or for a foreground
-/// note to finish.
+/// Micro, shaped by its `ENVELOPE` when it names one. `PLAY MIDI` has a voice
+/// of its own, so a song plays alongside everything else. A program waits
+/// only when a queue is full, or for a foreground note or song to finish, and
+/// a break request interrupts the wait.
 ///
 /// Set `BASIC_SOUND_TRACE` to a file path and every event is written there,
 /// one line each, on a virtual clock. The interpreter and a compiled program
@@ -74,15 +83,28 @@ public final class BASICSoundSession {
     public static let backgroundCapacity = 32
     /// A BBC Micro channel's queue.
     public static let channelCapacity = 4
+    /// The voice `PLAY MIDI` songs play on, clear of GW's voice 1 and BBC's
+    /// channels 0–3.
+    public static let midiVoice = 16
 
     /// PLAY's octave, tempo and the rest, carried from string to string.
     public var music = BASICMusicState()
+
+    /// Asked while waiting for sound: true stops the sound and ends the
+    /// wait with `BASICSoundError.interrupted`. The interpreter answers
+    /// with its break request.
+    public var interrupted: () -> Bool = { false }
 
     private let output: BASICSoundOutput?
     private let clock: BASICSoundClock
     /// When each voice's queued notes end, oldest first. One entry a note,
     /// however many events the note takes.
     private var pending: [Int: [TimeInterval]] = [:]
+    /// When the release still sounding on a voice ends, so the next note can
+    /// cut it short.
+    private var releaseEnds: [Int: TimeInterval] = [:]
+    /// `ENVELOPE` 1–16, as defined; an undefined one is silent, as on a BBC.
+    private var envelopes: [Int: BASICEnvelope] = [:]
 
     /// A session for a program's run, playing through `output` on `clock`
     /// (the system clock when nil) — or, when `BASIC_SOUND_TRACE` names a
@@ -116,7 +138,36 @@ public final class BASICSoundSession {
     public func sound(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws {
         let note = try BASICSoundCommand.bbc(channel: channel, amplitude: amplitude, pitch: pitch, duration: duration)
         if note.flushes { silence(voice: note.channel) }
-        try enqueue([[note.event]], voice: note.channel, capacity: Self.channelCapacity, waits: false)
+        if let event = note.event {
+            try enqueue([[event]], voice: note.channel, capacity: Self.channelCapacity, waits: false)
+            return
+        }
+        guard case .envelope(let number) = note.loudness else { return }
+        let shaped = envelopes[number].map {
+            $0.shape(pitch: note.pitch, duration: note.duration, isNoise: note.channel == 0)
+        } ?? (body: [.rest(duration: note.duration)], release: [])
+        try enqueue([shaped.body], voice: note.channel, capacity: Self.channelCapacity, waits: false, release: shaped.release)
+    }
+
+    /// BBC's `ENVELOPE N, T, PI1, PI2, PI3, PN1, PN2, PN3, AA, AD, AS, AR, ALA, ALD`.
+    public func defineEnvelope(_ parameters: [Double]) throws {
+        guard parameters.count == 14, (1...16).contains(parameters[0].rounded()) else {
+            throw BASICSoundError.illegalFunctionCall
+        }
+        envelopes[Int(parameters[0].rounded())] = try BASICEnvelope(parameters: Array(parameters.dropFirst()))
+    }
+
+    /// `PLAY MIDI`: a Standard MIDI File on its own voice, in the foreground
+    /// or background as the last `MF`/`MB` said.
+    public func playMIDI(data: Data, name: String) throws {
+        let song = try BASICMIDIFile(data: data)
+        let event = BASICSoundEvent.song(data: data, name: name, duration: song.duration)
+        try enqueue([[event]], voice: Self.midiVoice, capacity: Self.backgroundCapacity, waits: !music.isBackground)
+    }
+
+    /// `PLAY MIDI STOP`: stops the song, and any queued behind it.
+    public func stopMIDI() {
+        silence(voice: Self.midiVoice)
     }
 
     /// `BEEP`, timed like any other GW note.
@@ -143,18 +194,28 @@ public final class BASICSoundSession {
     /// command has no prompt to go back to, only an exit that would cut the
     /// music short, so both engines wait here instead.
     public func finish() {
-        let ends = pending.values.flatMap { $0 }.filter(\.isFinite)
-        if let last = ends.max() { clock.wait(until: last) }
+        let ends = (pending.values.flatMap { $0 } + releaseEnds.values).filter(\.isFinite)
+        if let last = ends.max() {
+            do {
+                try wait(until: last)
+            } catch {
+                return
+            }
+        }
         // A note played "indefinitely" stops with the program.
-        for (voice, notes) in pending where notes.contains(where: { !$0.isFinite }) {
+        let endless = Set(pending.filter { $0.value.contains { !$0.isFinite } }.keys)
+            .union(releaseEnds.filter { !$0.value.isFinite }.keys)
+        for voice in endless.sorted() {
             output?.silence(voice: voice)
         }
         pending.removeAll()
+        releaseEnds.removeAll()
     }
 
     /// Stops everything, as a fresh `RUN` does.
     public func stop() {
         pending.removeAll()
+        releaseEnds.removeAll()
         output?.stopAll()
     }
 
@@ -164,7 +225,16 @@ public final class BASICSoundSession {
         try enqueue(notes, voice: 1, capacity: Self.backgroundCapacity, waits: !music.isBackground)
     }
 
-    private func enqueue(_ notes: [[BASICSoundEvent]], voice: Int, capacity: Int, waits: Bool) throws {
+    /// Queues `notes` on `voice`. A note's `release`, when it has one, sounds
+    /// after it without holding up the queue: the next note starts when the
+    /// duration ends, and cuts the release short.
+    private func enqueue(
+        _ notes: [[BASICSoundEvent]],
+        voice: Int,
+        capacity: Int,
+        waits: Bool,
+        release: [BASICSoundEvent] = []
+    ) throws {
         for note in notes {
             // A full queue makes the program wait for its oldest note — unless
             // that note never ends, when a BBC Micro would wait forever.
@@ -172,22 +242,49 @@ public final class BASICSoundSession {
                 guard oldest.isFinite else {
                     throw BASICSoundError("SOUND's queue is full behind a note that never ends")
                 }
-                clock.wait(until: oldest)
+                try wait(until: oldest)
             }
             var time = max(clock.now, pending[voice]?.last ?? 0)
+            if let releaseEnd = releaseEnds.removeValue(forKey: voice), time < releaseEnd {
+                output?.cut(voice: voice, at: time)
+            }
             for event in note {
                 output?.play(event, voice: voice, at: time)
                 time += event.duration
             }
             pending[voice, default: []].append(time)
         }
+        if !release.isEmpty, var time = pending[voice]?.last, time.isFinite {
+            for event in release {
+                output?.play(event, voice: voice, at: time)
+                time += event.duration
+            }
+            releaseEnds[voice] = time
+        }
         if waits, let end = pending[voice]?.last, end.isFinite {
-            clock.wait(until: end)
+            try wait(until: end)
+        }
+    }
+
+    /// Waits for the clock to reach `time`, a slice at a time on a real clock
+    /// so a break request is noticed; a virtual clock simply jumps.
+    private func wait(until time: TimeInterval) throws {
+        guard !(clock is BASICVirtualSoundClock) else {
+            clock.wait(until: time)
+            return
+        }
+        while clock.now < time {
+            if interrupted() {
+                stop()
+                throw BASICSoundError.interrupted
+            }
+            clock.wait(until: min(time, clock.now + 0.05))
         }
     }
 
     private func silence(voice: Int) {
         pending[voice] = nil
+        releaseEnds[voice] = nil
         output?.silence(voice: voice)
     }
 
@@ -222,8 +319,14 @@ final class BASICSoundTrace: BASICSoundOutput {
             text = String(format: "voice %d at %.4f: noise for %.4f s, volume %.4f", voice, time, duration, volume)
         case .rest(let duration):
             text = String(format: "voice %d at %.4f: rest for %.4f s", voice, time, duration)
+        case .song(let data, let name, let duration):
+            text = String(format: "voice %d at %.4f: MIDI %@ (%d bytes) for %.4f s", voice, time, name, data.count, duration)
         }
         write(text)
+    }
+
+    func cut(voice: Int, at time: TimeInterval) {
+        write(String(format: "voice %d: cut at %.4f", voice, time))
     }
 
     func silence(voice: Int) {

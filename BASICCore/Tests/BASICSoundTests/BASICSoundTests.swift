@@ -6,6 +6,7 @@ import Testing
 final class RecordingOutput: BASICSoundOutput {
     var played: [(event: BASICSoundEvent, voice: Int, time: TimeInterval)] = []
     var silenced: [Int] = []
+    var cuts: [(voice: Int, time: TimeInterval)] = []
 
     func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval) {
         played.append((event, voice, time))
@@ -14,6 +15,8 @@ final class RecordingOutput: BASICSoundOutput {
     func silence(voice: Int) { silenced.append(voice) }
 
     func stopAll() {}
+
+    func cut(voice: Int, at time: TimeInterval) { cuts.append((voice, time)) }
 
     var tones: [Double] {
         played.compactMap { if case .tone(let frequency, _, _) = $0.event { return frequency } else { return nil } }
@@ -38,17 +41,18 @@ struct BASICSoundCommandTests {
     func bbcSound() throws {
         let middleC = try BASICSoundCommand.bbc(channel: 1, amplitude: -15, pitch: 53, duration: 20)
         #expect(middleC.channel == 1 && !middleC.flushes)
-        guard case .tone(let c, let seconds, let loud) = middleC.event else { Issue.record("not a tone"); return }
+        guard case .tone(let c, let seconds, let loud)? = middleC.event else { Issue.record("not a tone"); return }
         #expect(close(c, 261.63) && seconds == 1 && loud == 1)
         let a440 = try BASICSoundCommand.bbc(channel: 17, amplitude: -3, pitch: 89, duration: 10)
         #expect(a440.channel == 1 && a440.flushes)
-        guard case .tone(let a, _, let quiet) = a440.event else { Issue.record("not a tone"); return }
+        guard case .tone(let a, _, let quiet)? = a440.event else { Issue.record("not a tone"); return }
         #expect(close(a, 440) && close(quiet, 0.2))
+        #expect(try BASICSoundCommand.bbc(channel: 1, amplitude: 5, pitch: 53, duration: 20).loudness == .envelope(5))
         #expect(try BASICSoundCommand.bbc(channel: 0, amplitude: -15, pitch: 4, duration: 5).event == .noise(duration: 0.25, volume: 1))
         #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 4, amplitude: 0, pitch: 0, duration: 1) }
         #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 1, amplitude: -16, pitch: 0, duration: 1) }
         #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICSoundCommand.bbc(channel: 1, amplitude: 0, pitch: 0, duration: 255) }
-        #expect(try BASICSoundCommand.bbc(channel: 1, amplitude: 0, pitch: 53, duration: -1).event.duration == .infinity)
+        #expect(try BASICSoundCommand.bbc(channel: 1, amplitude: 0, pitch: 53, duration: -1).event?.duration == .infinity)
     }
 
     @Test("BEEP is 800 Hz for a quarter second")
@@ -211,5 +215,142 @@ struct BASICSoundSessionTests {
         try sound.sound(frequency: 32767, ticks: 18.2)
         #expect(clock.now == 1)
         #expect(!sound.isAudible)
+    }
+}
+
+@Suite("ENVELOPE")
+struct BASICEnvelopeTests {
+    /// `ENVELOPE`'s thirteen numbers after N.
+    private func envelope(_ parameters: [Double]) throws -> BASICEnvelope {
+        try BASICEnvelope(parameters: parameters)
+    }
+
+    private func volumes(_ events: [BASICSoundEvent]) -> [Double] {
+        events.map {
+            switch $0 {
+            case .tone(_, _, let volume), .noise(_, let volume): return volume
+            default: return 0
+            }
+        }
+    }
+
+    @Test("attack climbs to ALA, decay falls to ALD, sustain drifts, release falls to nothing")
+    func loudness() throws {
+        // A step of 1/100 s; AA 63 to 126, AD -23 to 80, AS -1, AR -40.
+        let shaped = try envelope([1, 0, 0, 0, 0, 0, 0, 63, -23, -1, -40, 126, 80])
+            .shape(pitch: 53, duration: 0.1, isNoise: false)
+        let levels = volumes(shaped.body).map { Int(($0 * 126).rounded()) }
+        #expect(levels == [63, 126, 103, 80, 79, 78, 77, 76, 75, 74])
+        #expect(volumes(shaped.release).map { Int(($0 * 126).rounded()) } == [34])
+    }
+
+    @Test("pitch runs through its sections and round again, unless T's bit 7 holds it")
+    func pitchSections() throws {
+        func pitches(_ t: Double) throws -> [Double] {
+            try envelope([t, 4, -4, 0, 2, 2, 0, 126, 0, 0, -126, 126, 126])
+                .shape(pitch: 53, duration: 0.06, isNoise: false).body
+                .compactMap { if case .tone(let f, _, _) = $0 { return f } else { return nil } }
+        }
+        let f = { BASICSoundCommand.frequency(ofPitch: $0) }
+        #expect(try pitches(1) == [f(53), f(57), f(61), f(57), f(53), f(57)])
+        #expect(try pitches(129) == [f(53), f(57), f(61), f(57), f(53)])
+    }
+
+    @Test("every parameter is range-checked, as BB4W's manual gives them")
+    func ranges() {
+        for bad in [[0.0], [128.0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 0]] {
+            #expect(throws: BASICSoundError.illegalFunctionCall) { try BASICEnvelope(parameters: bad) }
+        }
+    }
+}
+
+@Suite("Enveloped notes and songs")
+struct BASICEnvelopedSessionTests {
+    private func session(clock: BASICSoundClock = BASICVirtualSoundClock()) -> (BASICSoundSession, RecordingOutput) {
+        let output = RecordingOutput()
+        return (BASICSoundSession(output: output, clock: clock), output)
+    }
+
+    @Test("the next note on a channel cuts the last one's release short")
+    func releaseIsCut() throws {
+        let (sound, output) = session()
+        try sound.defineEnvelope([1, 1, 0, 0, 0, 0, 0, 0, 126, 0, 0, -1, 126, 126])
+        try sound.sound(channel: 1, amplitude: 1, pitch: 53, duration: 2)
+        try sound.sound(channel: 1, amplitude: 1, pitch: 69, duration: 2)
+        #expect(output.cuts.count == 1)
+        #expect(output.cuts.first?.voice == 1 && output.cuts.first?.time == 0.1)
+    }
+
+    @Test("an envelope never defined is silent, as on a BBC Micro")
+    func undefinedEnvelope() throws {
+        let (sound, output) = session()
+        try sound.sound(channel: 1, amplitude: 9, pitch: 53, duration: 20)
+        #expect(output.played.map(\.event) == [.rest(duration: 1)])
+        #expect(throws: BASICSoundError.illegalFunctionCall) { try sound.defineEnvelope([17] + Array(repeating: 0, count: 13)) }
+    }
+
+    @Test("PLAY MIDI plays on its own voice, waiting for the song in the foreground")
+    func songs() throws {
+        let clock = BASICVirtualSoundClock()
+        let (sound, output) = session(clock: clock)
+        try sound.playMIDI(data: MIDIFixture.twoTempos, name: "song.mid")
+        #expect(clock.now == 0.75)
+        #expect(output.played.last?.voice == BASICSoundSession.midiVoice)
+        try sound.play("MB")
+        try sound.playMIDI(data: MIDIFixture.twoTempos, name: "song.mid")
+        #expect(clock.now == 0.75)
+        sound.stopMIDI()
+        #expect(output.silenced == [BASICSoundSession.midiVoice])
+    }
+
+    @Test("a break request ends a long wait at once, and silences the sound")
+    func interruptedWait() throws {
+        let (sound, _) = session(clock: BASICSystemSoundClock())
+        sound.interrupted = { true }
+        let started = Date()
+        #expect(throws: BASICSoundError.interrupted) { try sound.sound(frequency: 32767, ticks: 182) }
+        #expect(Date().timeIntervalSince(started) < 1)
+    }
+}
+
+/// Standard MIDI Files built byte by byte, so the reader is tested against
+/// what the format says rather than against itself.
+enum MIDIFixture {
+    static func file(format: UInt16 = 1, division: UInt16 = 96, tracks: [[UInt8]]) -> Data {
+        var bytes: [UInt8] = Array("MThd".utf8) + [0, 0, 0, 6]
+        for value in [format, UInt16(tracks.count), division] { bytes += [UInt8(value >> 8), UInt8(value & 0xFF)] }
+        for track in tracks {
+            let length = UInt32(track.count)
+            bytes += Array("MTrk".utf8) + [24, 16, 8, 0].map { UInt8((length >> UInt32($0)) & 0xFF) } + track
+        }
+        return Data(bytes)
+    }
+
+    /// Two quarter notes' worth: the first at 120 BPM, the second at 240,
+    /// so 0.5 s + 0.25 s. Two notes, the second in running status.
+    static let twoTempos = file(tracks: [
+        [0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20,
+         0x60, 0xFF, 0x51, 0x03, 0x03, 0xD0, 0x90,
+         0x00, 0xFF, 0x2F, 0x00],
+        [0x00, 0x90, 0x3C, 0x40,
+         0x10, 0x40, 0x40,
+         0x81, 0x30, 0x80, 0x3C, 0x00,
+         0x00, 0xFF, 0x2F, 0x00],
+    ])
+}
+
+@Suite("MIDI files")
+struct BASICMIDIFileTests {
+    @Test("the length follows the tempo map, and notes are counted through running status")
+    func lengthAndNotes() throws {
+        let song = try BASICMIDIFile(data: MIDIFixture.twoTempos)
+        #expect(abs(song.duration - 0.75) < 1e-9)
+        #expect(song.noteCount == 2)
+    }
+
+    @Test("anything that isn't a MIDI file is refused, truncated ones included")
+    func refusals() {
+        #expect(throws: BASICSoundError.self) { try BASICMIDIFile(data: Data("not midi at all".utf8)) }
+        #expect(throws: BASICSoundError.self) { try BASICMIDIFile(data: MIDIFixture.twoTempos.prefix(30)) }
     }
 }

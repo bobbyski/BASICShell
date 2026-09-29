@@ -42,6 +42,14 @@ public final class BASICExecutionControl: @unchecked Sendable {
     }
 
     /// Requests a cooperative break on the execution thread.
+    /// Whether a break is waiting to be taken, without taking it — for a wait
+    /// that has to notice one, such as a foreground song.
+    var isBreakRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return breakRequested
+    }
+
     public func requestBreak() {
         lock.lock()
         breakRequested = true

@@ -87,6 +87,36 @@ struct BASICSoundStatementTests {
         #expect(run("PLAY ON").lines.joined().contains("PLAY ON, OFF and STOP are not supported yet"))
     }
 
+    @Test("ENVELOPE shapes a BBC SOUND, and takes exactly fourteen numbers")
+    func envelopeShapesSound() {
+        let recorder = NoteRecorder()
+        _ = run("ENVELOPE 1, 1, 0, 0, 0, 0, 0, 0, 63, -23, -1, -40, 126, 80\nSOUND 1, 1, 53, 2", output: recorder)
+        #expect(recorder.played.count > 2)
+        #expect(recorder.played.first?.event == .tone(frequency: BASICSoundCommand.frequency(ofPitch: 53), duration: 0.01, volume: 0.5))
+        #expect(run("ENVELOPE 1, 2").lines.joined().contains("ENVELOPE takes fourteen numbers"))
+    }
+
+    @Test("PLAY MIDI plays a file on its own voice, and names one that isn't there")
+    func playMIDI() {
+        let host = TestHost()
+        let recorder = NoteRecorder()
+        let clock = BASICVirtualSoundClock()
+        host.soundOutput = recorder
+        host.soundClock = clock
+        // Format 0, one track at 120 BPM: a quarter note, half a second.
+        host.fileData["song.mid"] = Data([
+            0x4D, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96,
+            0x4D, 0x54, 0x72, 0x6B, 0, 0, 0, 12,
+            0x00, 0x90, 0x3C, 0x40, 0x60, 0x80, 0x3C, 0x00, 0x00, 0xFF, 0x2F, 0x00,
+        ])
+        let session = BASICSession(host: host)
+        session.program.loadSource("PLAY MIDI \"song.mid\"\nPLAY MIDI STOP\nPLAY MIDI \"absent.mid\"")
+        session.submit("RUN")
+        #expect(recorder.played.first?.voice == BASICSoundSession.midiVoice)
+        #expect(clock.now == 0.5)
+        #expect(host.output.joined().contains("File not found: absent.mid"))
+    }
+
     @Test("background music plays out when the program ends")
     func backgroundFinishes() {
         #expect(run("PLAY \"MB CDEF\"", output: NoteRecorder()).clock.now == 2)

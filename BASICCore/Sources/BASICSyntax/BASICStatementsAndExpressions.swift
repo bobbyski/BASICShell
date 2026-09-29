@@ -89,6 +89,14 @@ public indirect enum Statement: Equatable {
     case sound([Expression])
     /// `PLAY macro$` — GW-BASIC's music macro language.
     case play(Expression)
+    /// `ENVELOPE N, T, PI1, PI2, PI3, PN1, PN2, PN3, AA, AD, AS, AR, ALA, ALD` —
+    /// BBC BASIC's sound envelope, exactly fourteen numbers.
+    case envelope([Expression])
+    /// `PLAY MIDI file$` — a Standard MIDI File, through General MIDI
+    /// instruments, in the foreground or background as `PLAY`'s MF/MB says.
+    case playMIDI(Expression)
+    /// `PLAY MIDI STOP`.
+    case stopMIDI
     case cls
     case locate(row: Expression, column: Expression)
     case pset(GraphicsPoint, Expression?)

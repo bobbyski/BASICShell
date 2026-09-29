@@ -113,7 +113,7 @@ public enum BASICKeywords {
         "BEEP", "CD", "CLOSE", "DIRS", "EXEC", "EXPORT", "FILES", "GET", "INPUT",
         "INPUT#", "LINE", "LOAD", "LOG", "LSET", "OPEN", "PIPE", "POPD",
         "PLAY", "PRINT", "PRINT#", "PUSHD", "PUT", "PWD", "RANDOMIZE", "RESET", "RSET", "RUN",
-        "SOUND",
+        "SOUND", "ENVELOPE",
         "SAVE", "SETENV", "SHELL", "SYSTEM", "UNSETENV", "WHICH", "WRITE",
         "WRITE#",
     ]
@@ -216,7 +216,7 @@ public enum BASICKeywords {
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
         "AIBASIC", "ALL", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
-        "GAMEPAD", "IBM", "KEYS", "LENGTH", "MAX", "MODE", "MOUSE", "OFF",
+        "GAMEPAD", "IBM", "KEYS", "LENGTH", "MAX", "MIDI", "MODE", "MOUSE", "OFF",
         "ONLY", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT", "TROFF", "TRON",
         "TTY", "USING",
     ]

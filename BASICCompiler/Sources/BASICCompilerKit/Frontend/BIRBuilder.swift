@@ -921,6 +921,13 @@ final class FunctionBuilder {
         case .sound(let arguments):
             let values = try arguments.map { try lowerExpression($0, expecting: .number, context: "SOUND") }
             emit(.discard(.hostCall(values.count == 2 ? "basic_rt_sound" : "basic_rt_sound_bbc", values, returns: .void)))
+        case .envelope(let parameters):
+            let values = try parameters.map { try lowerExpression($0, expecting: .number, context: "ENVELOPE") }
+            emit(.discard(.hostCall("basic_rt_envelope", values, returns: .void)))
+        case .playMIDI(let expression):
+            emit(.discard(.hostCall("basic_rt_play_midi", [try lowerExpression(expression, expecting: .string, context: "PLAY MIDI")], returns: .void)))
+        case .stopMIDI:
+            emit(.discard(.hostCall("basic_rt_stop_midi", [], returns: .void)))
         case .play(let expression):
             // The string first, as the interpreter evaluates it first; then
             // the variables its `=name;` and `X name;` may read.

@@ -511,9 +511,9 @@ struct SemanticAnalyzer {
             try noteReferences(in: mode, at: line, in: function, changed: &changed)
         case .color(let colors):
             for color in colors { try noteReferences(in: color, at: line, in: function, changed: &changed) }
-        case .sound(let arguments):
+        case .sound(let arguments), .envelope(let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
-        case .play(let macro):
+        case .play(let macro), .playMIDI(let macro):
             try noteReferences(in: macro, at: line, in: function, changed: &changed)
         case .pset(let point, let color), .preset(let point, let color):
             for expression in [point.x, point.y] + (color.map { [$0] } ?? []) { try noteReferences(in: expression, at: line, in: function, changed: &changed) }

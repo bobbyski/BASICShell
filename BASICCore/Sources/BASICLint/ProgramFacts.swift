@@ -217,9 +217,9 @@ public struct ProgramFacts: Sendable {
                 assign(target, range)
             case .inputFile(_, let targets), .getFile(_, let targets):
                 for target in targets { assign(target, range) }
-            case .sound(let arguments):
+            case .sound(let arguments), .envelope(let arguments):
                 arguments.forEach { note($0, range) }
-            case .play(let expression):
+            case .play(let expression), .playMIDI(let expression):
                 note(expression, range)
             case .chain(let file, let start, _):
                 note(file, range)

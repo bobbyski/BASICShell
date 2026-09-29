@@ -20,11 +20,14 @@ public enum BASICSoundEvent: Equatable, Sendable {
     case noise(duration: TimeInterval, volume: Double)
     /// Silence that still takes its time.
     case rest(duration: TimeInterval)
+    /// A Standard MIDI File, played through General MIDI instruments.
+    /// `name` is what the program called it, for the trace.
+    case song(data: Data, name: String, duration: TimeInterval)
 
     /// How long the event lasts, in seconds.
     public var duration: TimeInterval {
         switch self {
-        case .tone(_, let duration, _), .noise(let duration, _), .rest(let duration):
+        case .tone(_, let duration, _), .noise(let duration, _), .rest(let duration), .song(_, _, let duration):
             return duration
         }
     }
@@ -43,6 +46,32 @@ public struct BASICSoundError: Error, Equatable, Sendable {
 
     /// GW-BASIC's answer to an argument out of range.
     public static let illegalFunctionCall = BASICSoundError("Illegal function call")
+
+    /// A wait for sound that the user broke into. The engines turn it into
+    /// their own break, not a runtime error.
+    public static let interrupted = BASICSoundError("Break")
+}
+
+/// A BBC `SOUND`, before its envelope — if it has one — shapes it.
+public struct BASICBBCNote: Equatable, Sendable {
+    /// How loud a BBC note is: a fixed volume, or an `ENVELOPE` by number.
+    public enum Loudness: Equatable, Sendable {
+        case volume(Double)
+        case envelope(Int)
+    }
+
+    public let channel: Int
+    public let flushes: Bool
+    public let pitch: Double
+    public let duration: TimeInterval
+    public let loudness: Loudness
+
+    /// The note's one event, when it has a fixed volume.
+    public var event: BASICSoundEvent? {
+        guard case .volume(let volume) = loudness else { return nil }
+        if channel == 0 { return .noise(duration: duration, volume: volume) }
+        return .tone(frequency: BASICSoundCommand.frequency(ofPitch: pitch), duration: duration, volume: volume)
+    }
 }
 
 /// The two `SOUND` statements and `BEEP`, as events.
@@ -88,10 +117,9 @@ public enum BASICSoundCommand {
     /// the flush digit, the amplitudes, twentieths of a second, and -1 for
     /// "play indefinitely".
     ///
-    /// Not modeled: the sync and hold digits, and envelopes. `ENVELOPE`
-    /// itself does not parse, and an envelope number plays at full volume.
-    public static func bbc(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws
-        -> (channel: Int, flushes: Bool, event: BASICSoundEvent) {
+    /// An amplitude of 1–16 names an `ENVELOPE`, which the session applies.
+    /// Not modeled: the sync and hold digits.
+    public static func bbc(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws -> BASICBBCNote {
         guard channel == channel.rounded(), (0...0xFFFF).contains(channel),
               (-15...16).contains(amplitude), (0...255).contains(pitch), (-1...254).contains(duration) else {
             throw BASICSoundError.illegalFunctionCall
@@ -100,13 +128,16 @@ public enum BASICSoundCommand {
         let voice = code & 0xF
         guard voice <= 3 else { throw BASICSoundError.illegalFunctionCall }
         let flushes = (code >> 4) & 0xF != 0
-        let volume = amplitude <= 0 ? -amplitude / 15 : 1
+        let loudness: BASICBBCNote.Loudness = amplitude <= 0
+            ? .volume(-amplitude / 15)
+            : .envelope(Int(amplitude.rounded()))
         let seconds = duration == -1 ? TimeInterval.infinity : duration / 20
-        if voice == 0 {
-            return (voice, flushes, .noise(duration: seconds, volume: volume))
-        }
-        let frequency = 261.6255653005986 * pow(2, (pitch - 53) / 48)
-        return (voice, flushes, .tone(frequency: frequency, duration: seconds, volume: volume))
+        return BASICBBCNote(channel: voice, flushes: flushes, pitch: pitch, duration: seconds, loudness: loudness)
+    }
+
+    /// A BBC pitch in hertz: quarter semitones, with 53 as middle C.
+    public static func frequency(ofPitch pitch: Double) -> Double {
+        261.6255653005986 * pow(2, (pitch - 53) / 48)
     }
 
     /// `BEEP`: GW's 800 Hz for a quarter of a second.

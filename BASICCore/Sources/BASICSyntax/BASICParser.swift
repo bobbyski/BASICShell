@@ -368,7 +368,20 @@ public struct Parser {
             }
             return .sound(arguments)
         }
+        if matchIdentifier("ENVELOPE") {
+            var parameters = [try parseExpression()]
+            while match(.comma) {
+                parameters.append(try parseExpression())
+            }
+            guard parameters.count == 14 else {
+                throw syntax("ENVELOPE takes fourteen numbers: N, T, PI1, PI2, PI3, PN1, PN2, PN3, AA, AD, AS, AR, ALA, ALD")
+            }
+            return .envelope(parameters)
+        }
         if matchIdentifier("PLAY") {
+            if matchIdentifier("MIDI") {
+                return matchIdentifier("STOP") ? .stopMIDI : .playMIDI(try parseExpression())
+            }
             // GW's PLAY ON/OFF/STOP arm ON PLAY events, which are not built.
             if isWord("ON") || isWord("OFF") || isWord("STOP") {
                 throw syntax("PLAY ON, OFF and STOP are not supported yet")
@@ -2228,7 +2241,7 @@ public struct Parser {
         "IMPORT", "TYPE", "INTERFACE", "CLASS", "IMPLEMENTS", "INHERITS", "PUBLIC", "PRIVATE", "PROTECTED", "OVERRIDES", "VIRTUAL",
         "FUNCTION", "DEF", "VOID", "VARIANT", "NEW", "ME", "FOR", "TO", "STEP", "NEXT", "WHILE", "WEND", "SELECT", "CASE", "ELSEIF", "ELSE", "EXIT", "END", "STOP", "PAUSE",
         // BBC add-ins: without these, `BEEP: PRINT "x"` reads as a label.
-        "BEEP", "SOUND", "PLAY", "CHAIN", "COMMON", "RUN"
+        "BEEP", "SOUND", "PLAY", "CHAIN", "COMMON", "RUN", "ENVELOPE"
     ]
 }
 

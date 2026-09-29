@@ -110,6 +110,34 @@ public func basic_rt_play(_ macro: UnsafeMutableRawPointer?) {
     RTSound.checked { try RTSound.session.play(text, variables: RTSound.variables) }
 }
 
+/// BBC's `ENVELOPE`, fourteen numbers.
+@_cdecl("basic_rt_envelope")
+public func basic_rt_envelope(
+    _ n: Double, _ t: Double, _ pi1: Double, _ pi2: Double, _ pi3: Double, _ pn1: Double, _ pn2: Double,
+    _ pn3: Double, _ aa: Double, _ ad: Double, _ sustain: Double, _ ar: Double, _ ala: Double, _ ald: Double
+) {
+    RTSound.checked {
+        try RTSound.session.defineEnvelope([n, t, pi1, pi2, pi3, pn1, pn2, pn3, aa, ad, sustain, ar, ala, ald])
+    }
+}
+
+/// `PLAY MIDI file$`: the file read as the interpreter reads it, relative
+/// to the working directory, and refused with the interpreter's words.
+@_cdecl("basic_rt_play_midi")
+public func basic_rt_play_midi(_ path: UnsafeMutableRawPointer?) {
+    let name = rtText(path)
+    guard let data = FileManager.default.contents(atPath: name) else {
+        basic_rt_fail("File not found: \(name)")
+    }
+    RTSound.checked { try RTSound.session.playMIDI(data: data, name: name) }
+}
+
+/// `PLAY MIDI STOP`.
+@_cdecl("basic_rt_stop_midi")
+public func basic_rt_stop_midi() {
+    RTSound.session.stopMIDI()
+}
+
 /// `PLAY(n)`: notes left in the background queue.
 @_cdecl("basic_rt_play_count")
 public func basic_rt_play_count(_ dummy: Double) -> Double {
