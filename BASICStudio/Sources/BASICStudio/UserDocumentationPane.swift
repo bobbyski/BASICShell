@@ -14,36 +14,27 @@ struct UserDocumentationPane: View {
     @State private var docs = UserDoc.loadAll()
     @State private var selectedDocID: UserDoc.ID?
 
-    private var selectedDoc: UserDoc? {
-        let id = selectedDocID ?? docs.first?.id
-        return docs.first { $0.id == id }
-    }
-
-    private func docs(in category: UserDocCategory) -> [UserDoc] {
-        docs.filter { $0.category == category }
-    }
-
     var body: some View {
+        // What is drawn comes from the projection, which the ActiveUI pane
+        // reads too. The pages and the choice stay this view's state.
+        let pane = DocsPaneModel(docs: docs, selectedID: selectedDocID)
         VStack(spacing: 0) {
             HStack {
-                Text("Documentation")
+                Text(DocsPaneModel.heading)
                     .font(.headline)
                 Spacer()
-                if !docs.isEmpty {
+                if pane.showsMenu {
                     Menu {
-                        ForEach(UserDocCategory.allCases) { category in
-                            let sectionDocs = docs(in: category)
-                            if !sectionDocs.isEmpty {
-                                Menu(category.title) {
-                                    ForEach(sectionDocs) { doc in
-                                        Button {
-                                            selectedDocID = doc.id
-                                        } label: {
-                                            HStack {
-                                                Text(doc.title)
-                                                if selectedDocID == doc.id || (selectedDocID == nil && docs.first?.id == doc.id) {
-                                                    Image(systemName: "checkmark")
-                                                }
+                        ForEach(pane.sections, id: \.title) { section in
+                            Menu(section.title) {
+                                ForEach(section.items, id: \.id) { item in
+                                    Button {
+                                        selectedDocID = item.id
+                                    } label: {
+                                        HStack {
+                                            Text(item.title)
+                                            if item.isChecked {
+                                                Image(systemName: "checkmark")
                                             }
                                         }
                                     }
@@ -53,7 +44,7 @@ struct UserDocumentationPane: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "book")
-                            Text(selectedDoc?.title ?? "Documentation Menu")
+                            Text(pane.menuTitle)
                             Image(systemName: "chevron.down")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -70,13 +61,13 @@ struct UserDocumentationPane: View {
             Divider()
 
             ScrollView {
-                if let selectedDoc {
+                if let selectedDoc = pane.selectedDoc {
                     Markdown(selectedDoc.content)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(18)
                 } else {
-                    Text("No documentation found.")
+                    Text(DocsPaneModel.emptyText)
                         .foregroundStyle(.secondary)
                         .padding()
                 }
