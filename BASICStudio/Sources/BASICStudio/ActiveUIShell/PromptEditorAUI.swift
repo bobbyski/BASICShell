@@ -41,6 +41,9 @@ final class PromptEditorAUI {
     @MainActor
     private final class SegmentStore {
         var segments: [NerdPromptSegment] = []
+        /// A row's Edit and Delete menu items, wired once the pane exists.
+        var onEdit: ((NerdPromptSegment.ID) -> Void)?
+        var onDelete: ((NerdPromptSegment.ID) -> Void)?
     }
 
     init(model: StudioModel) {
@@ -56,7 +59,13 @@ final class PromptEditorAUI {
 
         let segments = segments
         segmentTable = AUITable(rowCount: { segments.segments.count }) { index in
-            Self.segmentRow(segments.segments[index])
+            let segment = segments.segments[index]
+            let row = Self.segmentRow(segment)
+            row.contextMenu = AUIMenu("", items: [
+                AUIMenuItem("Edit", action: { segments.onEdit?(segment.id) }),
+                AUIMenuItem("Delete", action: { segments.onDelete?(segment.id) }),
+            ])
+            return row
         }
         segmentTable.minimumSize = CGSize(width: 260, height: 180)
         segmentTable.allowsReordering = true
@@ -114,6 +123,11 @@ final class PromptEditorAUI {
             // offset before the move, as SwiftUI's onMove does.
             self?.commit { $0.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to) }
         }
+        segments.onEdit = { [weak self] id in
+            self?.editor.select(id)
+            self?.refresh()
+        }
+        segments.onDelete = { [weak self] id in self?.commit { $0.delete(id) } }
         newSegment.onClick = { [weak self] in self?.deselect() }
         done.onClick = { [weak self] in self?.deselect() }
         duplicate.onClick = { [weak self] in self?.commit { $0.duplicateSelected() } }

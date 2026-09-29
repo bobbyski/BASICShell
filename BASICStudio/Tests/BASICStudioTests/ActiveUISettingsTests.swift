@@ -77,6 +77,22 @@ struct ActiveUISettingsTests {
         #expect(model.promptTemplate == pane.editor.template)
     }
 
+    @Test("N1 · A row's right-click menu: Edit selects it, Delete removes it")
+    func rowMenu() throws {
+        let model = StudioHarness().model
+        let pane = PromptEditorAUI(model: model)
+        let second = pane.editor.segments[2].id
+        let row = pane.segmentTable.rowContent(2)
+        let menu = try #require(row.contextMenu)
+        #expect(menu.items.map(\.title) == ["Edit", "Delete"])
+        menu.items[0].perform()
+        #expect(pane.editor.selectedSegmentID == second)
+        menu.items[1].perform()
+        #expect(pane.editor.segments.count == 4)
+        #expect(!pane.editor.segments.contains { $0.id == second })
+        #expect(model.promptTemplate == pane.editor.template)
+    }
+
     @Test("N3 · Add appends from the form and selects it")
     func add() {
         let model = StudioHarness().model
