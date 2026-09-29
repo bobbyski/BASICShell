@@ -11,33 +11,36 @@ import WebKit
 
 struct DebugPane: View {
     @ObservedObject var model: StudioModel
-    @State private var isTasksExpanded = true
-    @State private var isCallStackExpanded = true
-    @State private var isLocalsExpanded = false
-    @State private var isGlobalsExpanded = false
-    @State private var isFilesExpanded = true
+    @State private var isTasksExpanded = DebugPaneModel.sections[0].isExpandedByDefault
+    @State private var isCallStackExpanded = DebugPaneModel.sections[1].isExpandedByDefault
+    @State private var isLocalsExpanded = DebugPaneModel.sections[2].isExpandedByDefault
+    @State private var isGlobalsExpanded = DebugPaneModel.sections[3].isExpandedByDefault
+    @State private var isFilesExpanded = DebugPaneModel.sections[4].isExpandedByDefault
     @State private var codePaneHeight: CGFloat?
     @State private var dragStartCodePaneHeight: CGFloat?
 
     var body: some View {
+        // Everything drawn comes from the projection the ActiveUI pane reads
+        // too; the expansion and the divider are this view's own state.
+        let pane = DebugPaneModel(model)
         VStack(spacing: 0) {
-            debuggerControls
+            debuggerControls(pane)
                 .padding(10)
 
             Divider()
 
             GeometryReader { geometry in
-                let codeHeight = resolvedCodePaneHeight(totalHeight: geometry.size.height)
+                let codeHeight = DebugPaneModel.resolvedCodePaneHeight(totalHeight: geometry.size.height, dragged: codePaneHeight)
 
                 VStack(spacing: 0) {
                     MonacoEditor(
-                        text: .constant(model.programText),
+                        text: .constant(pane.programText),
                         showsLineNumbers: true,
                         theme: model.editorTheme,
-                        errorLine: model.editorErrorLine,
+                        errorLine: pane.errorLine,
                         diagnostics: [],
-                        executionLine: model.debuggerExecutionLine,
-                        breakpointLines: model.debuggerBreakpointLines,
+                        executionLine: pane.executionLine,
+                        breakpointLines: pane.breakpointLines,
                         isReadOnly: true,
                         fontFamily: model.fontFamily,
                         fontSize: model.fontSize,
@@ -54,42 +57,32 @@ struct DebugPane: View {
                     DebugHorizontalDivider(
                         codePaneHeight: $codePaneHeight,
                         dragStartHeight: $dragStartCodePaneHeight,
-                        availableHeight: geometry.size.height,
-                        minimumCodeHeight: 160,
-                        minimumVariablesHeight: 140
+                        availableHeight: geometry.size.height
                     )
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 10) {
-                            DisclosureGroup("Tasks", isExpanded: $isTasksExpanded) {
-                                taskList(
-                                    model.debuggerTasks,
-                                    selectedTaskID: model.debuggerSelectedTaskID,
-                                    selectTask: model.selectDebuggerTask
-                                )
-                                if let selectedTask = model.debuggerSelectedTask {
+                            DisclosureGroup(DebugPaneModel.sections[0].title, isExpanded: $isTasksExpanded) {
+                                taskList(pane.tasks)
+                                if let selectedTask = pane.selectedTask {
                                     selectedTaskDetail(selectedTask)
                                 }
                             }
 
-                            DisclosureGroup("Call Stack", isExpanded: $isCallStackExpanded) {
-                                callStackList(
-                                    model.debuggerCallStack,
-                                    selectedIndex: model.debuggerSelectedCallStackFrameIndex,
-                                    selectFrame: model.selectDebuggerCallStackFrame
-                                )
+                            DisclosureGroup(DebugPaneModel.sections[1].title, isExpanded: $isCallStackExpanded) {
+                                callStackList(pane.callStack)
                             }
 
-                            DisclosureGroup("Local Variables", isExpanded: $isLocalsExpanded) {
-                                variableList(model.debuggerSelectedLocalVariables, emptyText: "No local variables are available.")
+                            DisclosureGroup(DebugPaneModel.sections[2].title, isExpanded: $isLocalsExpanded) {
+                                variableList(pane.locals, emptyText: DebugPaneModel.noLocalsText)
                             }
 
-                            DisclosureGroup("Globals", isExpanded: $isGlobalsExpanded) {
-                                variableList(model.debuggerGlobalVariables, emptyText: "No globals are available.")
+                            DisclosureGroup(DebugPaneModel.sections[3].title, isExpanded: $isGlobalsExpanded) {
+                                variableList(pane.globals, emptyText: DebugPaneModel.noGlobalsText)
                             }
 
-                            DisclosureGroup("Files", isExpanded: $isFilesExpanded) {
-                                fileList(model.debuggerFiles)
+                            DisclosureGroup(DebugPaneModel.sections[4].title, isExpanded: $isFilesExpanded) {
+                                fileList(pane.files)
                             }
                         }
                         .padding([.horizontal, .bottom], 12)
@@ -103,70 +96,37 @@ struct DebugPane: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private var debuggerControls: some View {
+    private func debuggerControls(_ pane: DebugPaneModel) -> some View {
         HStack(spacing: 10) {
-            debugButton("Run", systemImage: "play.fill", isEnabled: !model.isProgramRunning) {
-                model.runEditorProgram()
+            ForEach(pane.buttons, id: \.command) { button in
+                debugButton(button)
             }
-            debugButton("Continue", systemImage: "forward.frame.fill", isEnabled: model.isProgramPaused && !model.isProgramRunning) {
-                model.continueDebugging()
-            }
-            debugButton("Pause", systemImage: "pause.fill", isEnabled: model.isProgramRunning) {
-                model.stopProgram()
-            }
-            debugButton("Step", systemImage: "arrow.down.to.line", isEnabled: !model.isProgramRunning) {
-                model.stepDebugging()
-            }
-            debugButton("Step Over", systemImage: "arrow.turn.down.right", isEnabled: !model.isProgramRunning) {
-                model.stepOverDebugging()
-            }
-            debugButton("Step Out", systemImage: "arrow.up.to.line", isEnabled: model.isProgramPaused && !model.isProgramRunning) {
-                model.stepOutDebugging()
-            }
-            debugButton("Cancel Task", systemImage: "xmark.circle", isEnabled: canCancelSelectedTask) {
-                model.cancelSelectedDebuggerTask()
-            }
-            Toggle("Live Line", isOn: $model.showsLiveExecutionLine)
+            Toggle(DebugPaneModel.liveLineTitle, isOn: $model.showsLiveExecutionLine)
                 .toggleStyle(.checkbox)
                 .font(.caption)
-                .help("Show the current execution line while the program is running.")
+                .help(DebugPaneModel.liveLineHelp)
 
             Spacer(minLength: 0)
         }
     }
 
-    private var canCancelSelectedTask: Bool {
-        guard let task = model.debuggerSelectedTask else { return false }
-        return task.state == .ready || task.state == .running || task.state == .suspended
-    }
-
-    private func debugButton(_ title: String, systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
+    private func debugButton(_ button: DebugPaneModel.Button) -> some View {
+        Button {
+            DebugPaneModel.perform(button.command, on: model)
+        } label: {
+            Image(systemName: button.symbol)
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.borderless)
-        .disabled(!isEnabled)
-        .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
-        .help(title)
-    }
-
-    private func resolvedCodePaneHeight(totalHeight: CGFloat) -> CGFloat {
-        let minimumCodeHeight: CGFloat = 160
-        let minimumVariablesHeight: CGFloat = 140
-        let maximumCodeHeight = max(minimumCodeHeight, totalHeight - minimumVariablesHeight)
-        let preferredHeight = codePaneHeight ?? max(260, totalHeight * 0.62)
-        return min(max(preferredHeight, minimumCodeHeight), maximumCodeHeight)
+        .disabled(!button.isEnabled)
+        .foregroundStyle(button.isEnabled ? Color.primary : Color.secondary)
+        .help(button.title)
     }
 
     @ViewBuilder
-    private func taskList(
-        _ tasks: [BASICTaskSnapshot],
-        selectedTaskID: Int?,
-        selectTask: @escaping (BASICTaskSnapshot) -> Void
-    ) -> some View {
+    private func taskList(_ tasks: [DebugPaneModel.TaskRow]) -> some View {
         if tasks.isEmpty {
-            Text("No tasks are available.")
+            Text(DebugPaneModel.noTasksText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -175,9 +135,9 @@ struct DebugPane: View {
             VStack(spacing: 0) {
                 ForEach(tasks) { task in
                     Button {
-                        selectTask(task)
+                        DebugPaneModel.selectTask(id: task.id, on: model)
                     } label: {
-                        taskRow(task, isSelected: task.id == selectedTaskID)
+                        taskRow(task)
                     }
                     .buttonStyle(.plain)
                     Divider()
@@ -187,10 +147,10 @@ struct DebugPane: View {
         }
     }
 
-    private func taskRow(_ task: BASICTaskSnapshot, isSelected: Bool) -> some View {
+    private func taskRow(_ task: DebugPaneModel.TaskRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text("#\(task.id)")
+                Text(task.idText)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(width: 34, alignment: .leading)
@@ -198,45 +158,33 @@ struct DebugPane: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(task.state.rawValue.uppercased())
+                Text(task.stateText)
                     .font(.caption2.weight(.bold))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(taskStateColor(task.state).opacity(0.18), in: Capsule())
-                    .foregroundStyle(taskStateColor(task.state))
+                    .background(stateColor(task.stateKind).opacity(0.18), in: Capsule())
+                    .foregroundStyle(stateColor(task.stateKind))
             }
 
             HStack(spacing: 10) {
-                if let parentID = task.parentID {
-                    taskMetadata("parent #\(parentID)")
-                }
-                if task.childCount > 0 {
-                    taskMetadata("\(task.childCount) child\(task.childCount == 1 ? "" : "ren")")
-                }
-                if task.waiterCount > 0 {
-                    taskMetadata("\(task.waiterCount) waiter\(task.waiterCount == 1 ? "" : "s")")
-                }
-                if task.yieldCount > 0 {
-                    taskMetadata("yields \(task.yieldCount)")
-                }
-                if let location = task.location {
-                    taskMetadata("line \(location.lineNumber)")
+                ForEach(task.metadata, id: \.self) { fact in
+                    taskMetadata(fact)
                 }
             }
 
-            if let reason = taskSuspensionText(task.suspensionReason) {
+            if let reason = task.suspensionText {
                 Text(reason)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            if let result = task.resultDescription, !result.isEmpty {
-                Text("result: \(result)")
+            if let result = task.resultText {
+                Text(result)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if let error = task.errorDescription, !error.isEmpty {
+            if let error = task.errorText {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.red)
@@ -249,38 +197,45 @@ struct DebugPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 5)
-                .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                .fill(task.isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         )
     }
 
-    private func selectedTaskDetail(_ task: BASICTaskSnapshot) -> some View {
+    private func selectedTaskDetail(_ task: DebugPaneModel.TaskDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("Selected Task")
                     .fontWeight(.semibold)
                 Spacer(minLength: 0)
-                Text("#\(task.id)")
+                Text(task.idText)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            taskDetailGrid(task)
-            if !task.suspendedFrames.isEmpty {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                ForEach(task.fields, id: \.label) { field in
+                    GridRow {
+                        taskDetailLabel(field.label)
+                        taskDetailValue(field.value, color: field.isError ? .red : .primary)
+                    }
+                }
+            }
+            if !task.frames.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Suspended Frames")
                         .font(.caption.weight(.semibold))
-                    ForEach(Array(task.suspendedFrames.enumerated()), id: \.offset) { index, frame in
-                        suspendedFrameRow(frame, index: index)
+                    ForEach(task.frames, id: \.index) { frame in
+                        suspendedFrameRow(frame)
                     }
                 }
             } else {
-                Text("No suspended frames are captured for this task.")
+                Text(DebugPaneModel.noSuspendedFramesText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            if !task.suspendedGlobalVariables.isEmpty {
+            if !task.capturedGlobals.isEmpty {
                 DisclosureGroup("Captured Globals") {
                     VStack(spacing: 0) {
-                        ForEach(task.suspendedGlobalVariables) { variable in
+                        ForEach(task.capturedGlobals) { variable in
                             variableNode(variable, indent: 12)
                             Divider()
                         }
@@ -303,65 +258,10 @@ struct DebugPane: View {
         .padding(.top, 4)
     }
 
-    private func taskDetailGrid(_ task: BASICTaskSnapshot) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-            GridRow {
-                taskDetailLabel("Name")
-                taskDetailValue(task.name)
-            }
-            GridRow {
-                taskDetailLabel("State")
-                taskDetailValue(task.state.rawValue.uppercased())
-            }
-            if let parentID = task.parentID {
-                GridRow {
-                    taskDetailLabel("Parent")
-                    taskDetailValue("#\(parentID)")
-                }
-            }
-            GridRow {
-                taskDetailLabel("Children")
-                taskDetailValue("\(task.childCount)")
-            }
-            GridRow {
-                taskDetailLabel("Waiters")
-                taskDetailValue("\(task.waiterCount)")
-            }
-            GridRow {
-                taskDetailLabel("Yields")
-                taskDetailValue("\(task.yieldCount)")
-            }
-            if let location = task.location {
-                GridRow {
-                    taskDetailLabel("Location")
-                    taskDetailValue(taskLocationText(location))
-                }
-            }
-            if let reason = taskSuspensionText(task.suspensionReason) {
-                GridRow {
-                    taskDetailLabel("Waiting")
-                    taskDetailValue(reason)
-                }
-            }
-            if let result = task.resultDescription, !result.isEmpty {
-                GridRow {
-                    taskDetailLabel("Result")
-                    taskDetailValue(result)
-                }
-            }
-            if let error = task.errorDescription, !error.isEmpty {
-                GridRow {
-                    taskDetailLabel("Error")
-                    taskDetailValue(error, color: .red)
-                }
-            }
-        }
-    }
-
-    private func suspendedFrameRow(_ frame: BASICSuspendedFrame, index: Int) -> some View {
+    private func suspendedFrameRow(_ frame: DebugPaneModel.SuspendedFrameRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text("\(index)")
+                Text("\(frame.index)")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(width: 18, alignment: .leading)
@@ -371,16 +271,16 @@ struct DebugPane: View {
                 Text(frame.name)
                     .fontWeight(.medium)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if let location = frame.resumeLocation {
-                    Text(taskLocationText(location))
+                if let location = frame.locationText {
+                    Text(location)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
-            if !frame.localVariables.isEmpty {
+            if !frame.locals.isEmpty {
                 DisclosureGroup("Locals") {
                     VStack(spacing: 0) {
-                        ForEach(frame.localVariables) { variable in
+                        ForEach(frame.locals) { variable in
                             variableNode(variable, indent: 12)
                             Divider()
                         }
@@ -408,18 +308,6 @@ struct DebugPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func taskLocationText(_ location: BASICBreakpointLocation) -> String {
-        var text = "line \(location.lineNumber)"
-        if location.statementNumber > 0 {
-            text += " stmt \(location.statementNumber)"
-        }
-        if let fileName = location.fileName,
-           !fileName.isEmpty {
-            text += " \(URL(fileURLWithPath: fileName).lastPathComponent)"
-        }
-        return text
-    }
-
     private func taskMetadata(_ text: String) -> some View {
         Text(text)
             .font(.caption2)
@@ -427,43 +315,21 @@ struct DebugPane: View {
             .lineLimit(1)
     }
 
-    private func taskStateColor(_ state: BASICTaskState) -> SwiftUI.Color {
-        switch state {
-        case .ready:
-            return .yellow
-        case .running:
-            return .accentColor
-        case .suspended:
-            return .orange
-        case .completed:
-            return .green
-        case .cancelled:
-            return .secondary
-        case .failed:
-            return .red
-        }
-    }
-
-    private func taskSuspensionText(_ reason: BASICTaskSuspensionReason?) -> String? {
-        guard let reason else { return nil }
-        switch reason {
-        case .debugger:
-            return "paused in debugger"
-        case .hostOperation(let operation):
-            return "waiting for host operation: \(operation)"
-        case .join(let taskID):
-            return "waiting for task #\(taskID)"
+    private func stateColor(_ kind: DebugPaneModel.StateKind) -> SwiftUI.Color {
+        switch kind {
+        case .ready: return .yellow
+        case .running: return .accentColor
+        case .suspended: return .orange
+        case .completed: return .green
+        case .cancelled: return .secondary
+        case .failed: return .red
         }
     }
 
     @ViewBuilder
-    private func callStackList(
-        _ frames: [BASICCallStackFrame],
-        selectedIndex: Int?,
-        selectFrame: @escaping (BASICCallStackFrame) -> Void
-    ) -> some View {
+    private func callStackList(_ frames: [DebugPaneModel.FrameRow]) -> some View {
         if frames.isEmpty {
-            Text("No active stack frames.")
+            Text(DebugPaneModel.noFramesText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -472,7 +338,7 @@ struct DebugPane: View {
             VStack(spacing: 0) {
                 ForEach(frames) { frame in
                     Button {
-                        selectFrame(frame)
+                        DebugPaneModel.selectFrame(index: frame.index, on: model)
                     } label: {
                         HStack(spacing: 8) {
                             Text(frame.kind)
@@ -481,13 +347,13 @@ struct DebugPane: View {
                             Text(frame.name)
                                 .fontWeight(.medium)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            if let metadata = callStackMetadata(for: frame) {
+                            if let metadata = frame.metadata {
                                 Text(metadata)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
-                            if let location = frame.location {
-                                Text("\(location.lineNumber)")
+                            if let line = frame.lineText {
+                                Text(line)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             }
@@ -498,7 +364,7 @@ struct DebugPane: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(frame.index == selectedIndex ? Color.accentColor.opacity(0.18) : Color.clear)
+                                .fill(frame.isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
                         )
                     }
                     .buttonStyle(.plain)
@@ -508,19 +374,6 @@ struct DebugPane: View {
             }
             .padding(.vertical, 4)
         }
-    }
-
-    private func callStackMetadata(for frame: BASICCallStackFrame) -> String? {
-        var parts: [String] = []
-        if frame.isOverride {
-            parts.append("override")
-        }
-        if let receiverClassName = frame.receiverClassName,
-           let declaringClassName = frame.declaringClassName,
-           receiverClassName.caseInsensitiveCompare(declaringClassName) != .orderedSame {
-            parts.append("on \(receiverClassName)")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -543,9 +396,9 @@ struct DebugPane: View {
     }
 
     @ViewBuilder
-    private func fileList(_ files: [BASICFileSnapshot]) -> some View {
+    private func fileList(_ files: [DebugPaneModel.FileRow]) -> some View {
         if files.isEmpty {
-            Text("No file handles are available.")
+            Text(DebugPaneModel.noFilesText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -557,29 +410,26 @@ struct DebugPane: View {
                         HStack(spacing: 8) {
                             Text(file.reference)
                                 .font(.system(.callout, design: .monospaced).weight(.semibold))
-                            Text(file.isOpen ? "Open" : "Closed")
+                            Text(file.statusText)
                                 .font(.caption)
                                 .foregroundStyle(file.isOpen ? Color.green : Color.secondary)
-                            Text([file.access, file.type].filter { !$0.isEmpty }.joined(separator: " / "))
+                            Text(file.accessText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer(minLength: 0)
-                            Text("\(file.position) / \(file.size)")
+                            Text(file.positionText)
                                 .font(.system(.caption, design: .monospaced))
                         }
-                        Text(file.path.isEmpty ? "No path" : file.path)
+                        Text(file.pathText)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(file.path.isEmpty ? Color.secondary : Color.primary)
+                            .foregroundStyle(file.hasPath ? Color.primary : Color.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         HStack(spacing: 8) {
-                            if file.isAtEOF {
-                                Text("EOF")
+                            ForEach(file.flags, id: \.self) { flag in
+                                Text(flag)
                             }
-                            if let recordLength = file.recordLength {
-                                Text("Record length \(recordLength)")
-                            }
-                            if let error = file.lastError, !error.isEmpty {
+                            if let error = file.errorText {
                                 Text(error)
                                     .foregroundStyle(.red)
                             }
@@ -636,8 +486,6 @@ struct DebugHorizontalDivider: View {
     @Binding var codePaneHeight: CGFloat?
     @Binding var dragStartHeight: CGFloat?
     let availableHeight: CGFloat
-    let minimumCodeHeight: CGFloat
-    let minimumVariablesHeight: CGFloat
 
     var body: some View {
         ZStack {
@@ -658,9 +506,11 @@ struct DebugHorizontalDivider: View {
                     if dragStartHeight == nil {
                         dragStartHeight = codePaneHeight ?? defaultCodeHeight
                     }
-                    let maximumHeight = max(minimumCodeHeight, availableHeight - minimumVariablesHeight)
-                    let proposedHeight = (dragStartHeight ?? defaultCodeHeight) + value.translation.height
-                    codePaneHeight = min(max(proposedHeight, minimumCodeHeight), maximumHeight)
+                    codePaneHeight = DebugPaneModel.draggedCodePaneHeight(
+                        startHeight: dragStartHeight ?? defaultCodeHeight,
+                        translation: value.translation.height,
+                        availableHeight: availableHeight
+                    )
                 }
                 .onEnded { _ in
                     dragStartHeight = nil
@@ -670,6 +520,6 @@ struct DebugHorizontalDivider: View {
     }
 
     private var defaultCodeHeight: CGFloat {
-        min(max(max(260, availableHeight * 0.62), minimumCodeHeight), max(minimumCodeHeight, availableHeight - minimumVariablesHeight))
+        DebugPaneModel.resolvedCodePaneHeight(totalHeight: availableHeight, dragged: nil)
     }
 }
