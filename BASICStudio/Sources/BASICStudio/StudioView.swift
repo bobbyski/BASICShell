@@ -12,6 +12,7 @@ import WebKit
 struct StudioView: View {
     @ObservedObject var model: StudioModel
     @State private var inspectorWidth: CGFloat = StudioShellModel.defaultInspectorWidth
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // The chrome's state comes from the projection the ActiveUI shell
@@ -62,6 +63,10 @@ struct StudioView: View {
         }
         .onAppear {
             model.runStartupProgramIfNeeded()
+            // The parity walk's --settings: open Settings on the asked tab.
+            if StudioLaunchOptions.current.walk?.settingsTab != nil {
+                openSettings()
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

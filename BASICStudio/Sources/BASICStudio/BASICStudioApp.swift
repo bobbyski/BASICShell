@@ -143,12 +143,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let previous = NSWorkspace.shared.frontmostApplication
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
-        if walk.settingsTab != nil {
-            // Opened while the app is still active; an inactive one ignores it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                NSApplication.shared.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             if let previous, previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {
                 previous.activate()
