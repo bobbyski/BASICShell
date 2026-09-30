@@ -42,6 +42,44 @@ struct ActiveUISettingsTests {
         #expect(SettingsAUI.snapped(262, step: 100, from: 200) == 300)
     }
 
+    @Test("S1 · Settings is the modern, resizable window: a sidebar of four pages, Editor among them")
+    func modernWindow() {
+        let settings = SettingsAUI(model: StudioHarness().model, installedFamilies: [])
+        let window = AUIPreferencesWindow.shared
+        settings.install(in: window)
+        #expect(window.style == .modern)
+        #expect(window.allowsResizing == true)
+        #expect(window.pages.map(\.title) == ["General", "Editor", "Font", "Console"])
+        // Wide enough that the prompt editor, which needs a page's full
+        // width, opens unclipped beside the widest sidebar.
+        #expect(window.contentSize.width >= SettingsAUI.pageWidth + 2 * 16 + 280)
+    }
+
+    @Test("S7 · The Editor page sets the model, and follows changes made elsewhere")
+    func editorPage() {
+        let model = StudioHarness().model
+        let settings = SettingsAUI(model: model, installedFamilies: [])
+        #expect(settings.tabIndentSwitch.isOn && settings.newLineIndentSwitch.isOn)
+        #expect(settings.indentPicker.selectedIndex == 2, "four spaces, as the demos are written")
+
+        settings.tabIndentSwitch.onChange?(false)
+        settings.newLineIndentSwitch.onChange?(false)
+        settings.indentPicker.onSelectionChange?(0)
+        settings.lineNumbersSwitch.onChange?(true)
+        settings.themePicker.onSelectionChange?(EditorTheme.allCases.firstIndex(of: .light)!)
+        #expect(!model.editorIndentsSelectionWithTab && !model.editorIndentsNewLines)
+        #expect(model.editorIndentUnit == "\t" && model.isEditorGutterVisible && model.editorTheme == .light)
+        let input = EditorRenderInput.mainEditor(model)
+        #expect(!input.indentsSelectionWithTab && !input.indentsNewLines && input.indentUnit == "\t")
+
+        // The toolbar changes them too; the page shows it.
+        model.isEditorGutterVisible = false
+        model.editorTheme = .highContrast
+        settings.refresh()
+        #expect(!settings.lineNumbersSwitch.isOn)
+        #expect(settings.themePicker.selectedIndex == EditorTheme.allCases.firstIndex(of: .highContrast))
+    }
+
     @Test("S4 · The Console page's note wraps inside the page, and the value sits before its stepper")
     func consolePageFits() {
         let settings = SettingsAUI(model: StudioHarness().model, installedFamilies: [])

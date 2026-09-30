@@ -9,12 +9,15 @@ import ActiveUI
 import AppKit
 import Foundation
 
-/// The Settings window for the ActiveUI shell: three pages in
-/// `AUIPreferencesWindow`, from ``SettingsViewModel``'s tabs, ranges, steps and
-/// notes, the same ones the SwiftUI `SettingsView` shows.
+/// The Settings window for the ActiveUI shell: `AUIPreferencesWindow` in its
+/// modern chrome, a sidebar of pages beside a resizable page. General, Font
+/// and Console are ``SettingsViewModel``'s tabs, ranges, steps and notes, the
+/// same ones the SwiftUI `SettingsView` shows. Editor is this shell's own.
 ///
 /// ```text
 ///   General   the prompt editor (PromptEditorAUI)
+///   Editor    Typing: Tab indents, new-line indent, indent width
+///             Display: theme, line numbers
 ///   Font      Font ▾ (preferred first)   Size ──●── 13
 ///   Console   Lines ──●── [−|+] 10000    the scrollback note
 /// ```
@@ -24,8 +27,14 @@ import Foundation
 final class SettingsAUI {
     let model: StudioModel
     let promptEditor: PromptEditorAUI
+    let editorPage: AUIView
     let fontPage: AUIView
     let consolePage: AUIView
+    let tabIndentSwitch: AUISwitch
+    let newLineIndentSwitch: AUISwitch
+    let indentPicker: AUIPicker
+    let themePicker: AUIPicker
+    let lineNumbersSwitch: AUISwitch
     let fontPicker: AUIPicker
     let sizeSlider: AUISlider
     let sizeLabel: AUILabel
@@ -49,12 +58,10 @@ final class SettingsAUI {
         sizeLabel.usesMonospacedDigits = true
         sizeLabel.minimumSize = CGSize(width: 32, height: 0)
         sizeLabel.alignment = .trailing
-        let fontForm = AUIForm()
-        fontForm.addSection(SettingsViewModel.fontSectionTitle, isFirst: true)
-        fontForm.addRow("Font", fontPicker)
-        fontForm.addRow("Size", LogPaneAUI.row([sizeSlider.stretches(), sizeLabel]))
-        fontPage = PromptEditorAUI.column([fontForm, Self.note(SettingsViewModel.fontNote)])
-        fontPage.padding = .zero
+        let fontGroup = AUISettingsGroup(title: SettingsViewModel.fontSectionTitle)
+        fontGroup.addRow("Font", accessory: fontPicker)
+        fontGroup.addRow(Self.row("Size", [sizeSlider.stretches(), sizeLabel]))
+        fontPage = Self.page([fontGroup, Self.note(SettingsViewModel.fontNote)])
 
         let range = SettingsViewModel.scrollbackRange
         let bounds = Double(range.lowerBound)...Double(range.upperBound)
@@ -67,12 +74,43 @@ final class SettingsAUI {
         scrollbackLabel.usesMonospacedDigits = true
         scrollbackLabel.minimumSize = CGSize(width: 56, height: 0)
         scrollbackLabel.alignment = .trailing
-        let consoleForm = AUIForm()
-        consoleForm.addSection(SettingsViewModel.scrollbackSectionTitle, isFirst: true)
+        let scrollbackGroup = AUISettingsGroup(title: SettingsViewModel.scrollbackSectionTitle)
         // The value, then its stepper: a SwiftUI Stepper draws its label first.
-        consoleForm.addRow("Lines", LogPaneAUI.row([scrollbackSlider.stretches(), scrollbackLabel, scrollbackStepper]))
-        consolePage = PromptEditorAUI.column([consoleForm, Self.note(SettingsViewModel.scrollbackNote)])
-        consolePage.padding = .zero
+        scrollbackGroup.addRow(Self.row("Lines", [scrollbackSlider.stretches(), scrollbackLabel, scrollbackStepper]))
+        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote)])
+
+        // Editor: what Studio takes from FreebirdStudio's Editing and Display
+        // pages, which drive the same SwiftyCodeEditor. What it leaves out,
+        // and why, is on `SourceEditorAUI.behavior(_:)`.
+        tabIndentSwitch = AUISwitch(isOn: model.editorIndentsSelectionWithTab) { [weak model] in
+            model?.editorIndentsSelectionWithTab = $0
+        }
+        newLineIndentSwitch = AUISwitch(isOn: model.editorIndentsNewLines) { [weak model] in
+            model?.editorIndentsNewLines = $0
+        }
+        indentPicker = AUIPicker(Self.indentUnits.map(\.title))
+        let typing = AUISettingsGroup(title: "Typing")
+        typing.addRow("Indent selection with Tab",
+                      description: "Tab and Shift-Tab indent or outdent the selected lines instead of replacing them.",
+                      accessory: tabIndentSwitch)
+        typing.addRow("Indent new lines",
+                      description: "Return starts the new line at the same indentation as the line before it.",
+                      accessory: newLineIndentSwitch)
+        typing.addRow("Indent with",
+                      description: "One level of indentation, for Tab and for new lines.",
+                      accessory: indentPicker)
+        themePicker = AUIPicker(EditorTheme.allCases.map(\.label))
+        lineNumbersSwitch = AUISwitch(isOn: model.isEditorGutterVisible) { [weak model] in
+            model?.isEditorGutterVisible = $0
+        }
+        let display = AUISettingsGroup(title: "Display")
+        display.addRow("Theme",
+                       description: "The editor's colors. The toolbar's palette menu chooses it too.",
+                       accessory: themePicker)
+        display.addRow("Show line numbers",
+                       description: "Numbers each line in the editor's gutter. The toolbar's line-number button sets it too.",
+                       accessory: lineNumbersSwitch)
+        editorPage = Self.page([typing, display])
 
         fontPicker.onSelectionChange = { [weak self] index in
             guard let self else { return }
@@ -87,29 +125,55 @@ final class SettingsAUI {
         scrollbackStepper.onChange = { [weak model] value in
             model?.consoleScrollbackLines = Int(value.rounded())
         }
+        indentPicker.onSelectionChange = { [weak model] index in
+            model?.editorIndentUnit = Self.indentUnits[index].unit
+        }
+        themePicker.onSelectionChange = { [weak model] index in
+            model?.editorTheme = EditorTheme.allCases[index]
+        }
         refresh()
     }
 
-    /// How far the Settings window insets a page on each side: its 20-point
-    /// window margin, then 16 around the page's scroll view. A page adds no
-    /// padding of its own; SwiftUI's Settings pads by 16 in all.
+    /// How far the SwiftUI Settings window insets a page on each side.
     static let pageInset: CGFloat = 36
 
-    /// How much shorter than its page the legacy Settings window comes out.
-    ///
-    /// ActiveUI's legacy resize sets the window's height to the page's plus
-    /// the icon strip's, but the window then insets its root by the 20-point
-    /// window margin, top and bottom, and the page loses those 40 points to
-    /// clipping. Padding the page's foot by as much gives them back. Remove
-    /// it once `resizeForPaneIfLegacy` counts the margin.
-    static let legacyResizeShortfall: CGFloat = 40
-
-    /// A page's width inside the Settings window.
+    /// The width a page is designed for: the SwiftUI Settings window's page.
+    /// The prompt editor needs all of it, so it is the prompt editor's
+    /// minimum, and the window opens wide enough to give it.
     static var pageWidth: CGFloat { SettingsViewModel.windowSize.width - 2 * pageInset }
 
-    /// A page's explanation, under its form. `AUIForm.addFooter` would span
-    /// the form's two columns, and a spanning label is measured unwrapped,
-    /// so a long note ran off the page; the page's column wraps it.
+    /// The window as it first opens: the sidebar at its widest, the page at
+    /// ``pageWidth`` with the modern chrome's 16 points either side, and a
+    /// margin. The user can make it any size from there.
+    static let windowSize = CGSize(width: pageWidth + 2 * 16 + 280 + 20, height: 620)
+
+    /// Settings ▸ Editor ▸ Indent with.
+    static let indentUnits: [(title: String, unit: String)] = [
+        ("Tab", "\t"), ("2 spaces", "  "), ("4 spaces", "    "),
+    ]
+
+    /// A page: its groups and notes stacked, no wider than reads well. No
+    /// scroll view and no padding, as the window gives every page both.
+    static func page(_ parts: [AUIView]) -> AUIView {
+        let column = AUIStack(.vertical, spacing: 18, alignment: .fill)
+        column.wraps = false
+        column.maximumSize = CGSize(width: 640, height: CGFloat.greatestFiniteMagnitude)
+        for part in parts {
+            column.addChild(part)
+        }
+        return column
+    }
+
+    /// A settings row with a title and controls of its own, padded as a
+    /// group's standard rows are.
+    static func row(_ title: String, _ controls: [AUIView]) -> AUIView {
+        let row = LogPaneAUI.row([AUILabel(title)] + controls)
+        row.padding = AUIEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+        return row
+    }
+
+    /// A page's explanation, under its group. A label of the page's own, so
+    /// the page's column wraps it at the page's width.
     static func note(_ text: String) -> AUILabel {
         let label = PromptEditorAUI.caption(text)
         label.wraps = true
@@ -130,25 +194,32 @@ final class SettingsAUI {
         AUIPreferencesWindow.shared.show()
     }
 
-    /// Adds the three pages to `window`, replacing any there.
+    /// Adds the four pages to `window`, replacing any there.
     func install(in window: AUIPreferencesWindow = .shared) {
         window.removeAllPages()
-        // The icon strip across the top, as SwiftUI's Settings scene draws
-        // it; it also sizes the window to each page, so none is clipped.
-        window.style = .legacy
+        // The sidebar at the leading edge, as System Settings and
+        // FreebirdStudio draw it, in a window the user can resize.
+        window.style = .modern
+        window.allowsResizing = true
         window.title = "Settings"
-        window.contentSize = CGSize(width: SettingsViewModel.windowSize.width, height: SettingsViewModel.windowSize.height)
+        window.contentSize = Self.windowSize
         let tabs = SettingsViewModel.tabs
-        let pages = [promptEditor.root, fontPage, consolePage]
-        for (tab, page) in zip(tabs, pages) {
-            page.padding = AUIEdgeInsets(top: 0, leading: 0, bottom: Self.legacyResizeShortfall, trailing: 0)
-            window.addPage(tab.title, symbol: tab.symbol) { page }
+        let pages: [(title: String, symbol: String, page: AUIView)] = [
+            (tabs[0].title, tabs[0].symbol, promptEditor.root),
+            ("Editor", "square.and.pencil", editorPage),
+            (tabs[1].title, tabs[1].symbol, fontPage),
+            (tabs[2].title, tabs[2].symbol, consolePage),
+        ]
+        for entry in pages {
+            let page = entry.page
+            window.addPage(entry.title, symbol: entry.symbol) { page }
         }
     }
 
     /// Brings the pages up to the model; nothing happens if nothing changed.
     func refresh() {
         promptEditor.refresh()
+        refreshEditorPage()
         let settings = SettingsViewModel(model)
         guard settings != drawn else { return }
         fontPicker.selectedIndex = families.firstIndex(of: settings.fontFamily)
@@ -158,6 +229,28 @@ final class SettingsAUI {
         scrollbackStepper.value = Double(settings.scrollbackLines)
         scrollbackLabel.text = settings.scrollbackText
         drawn = settings
+    }
+
+    /// The Editor page's controls, set only where they differ, so a change
+    /// made elsewhere (the toolbar's theme or line-number button) shows here.
+    private func refreshEditorPage() {
+        if tabIndentSwitch.isOn != model.editorIndentsSelectionWithTab {
+            tabIndentSwitch.isOn = model.editorIndentsSelectionWithTab
+        }
+        if newLineIndentSwitch.isOn != model.editorIndentsNewLines {
+            newLineIndentSwitch.isOn = model.editorIndentsNewLines
+        }
+        if lineNumbersSwitch.isOn != model.isEditorGutterVisible {
+            lineNumbersSwitch.isOn = model.isEditorGutterVisible
+        }
+        let indent = Self.indentUnits.firstIndex { $0.unit == model.editorIndentUnit }
+        if indentPicker.selectedIndex != indent {
+            indentPicker.selectedIndex = indent
+        }
+        let theme = EditorTheme.allCases.firstIndex(of: model.editorTheme)
+        if themePicker.selectedIndex != theme {
+            themePicker.selectedIndex = theme
+        }
     }
 
     /// `value` on the nearest step up from `origin`, as a stepped slider gives.
