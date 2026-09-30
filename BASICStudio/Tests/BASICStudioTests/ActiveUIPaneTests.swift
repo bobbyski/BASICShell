@@ -152,6 +152,22 @@ struct ActiveUIPaneTests {
         #expect(tutorials.items.count == UserDoc.loadAll().filter { $0.category == .tutorials }.count)
     }
 
+    @Test("The toolbar's Examples menu lists the programs, then a submenu per folder")
+    func examplesMenu() {
+        let model = StudioHarness().model
+        let menu = StudioActiveUIShell.examplesMenu(model: model)
+        let paths = model.bundledExamples.map { $0.path.split(separator: "/").map(String.init) }
+        let programs = paths.filter { $0.count == 1 }.map { BundledExample(path: $0[0]).menuTitle }
+        var folders: [String] = []
+        for path in paths where path.count > 1 {
+            let title = BundledExample(path: path[0]).menuTitle
+            if !folders.contains(title) { folders.append(title) }
+        }
+        #expect(!programs.isEmpty && !folders.isEmpty)
+        #expect(menu.items.map(\.title) == programs + [""] + folders)
+        #expect(programs.contains("Hello"))
+    }
+
     @Test("O5 · The Docs pane with no pages says so, and has no menu")
     func docsPaneEmpty() {
         let pane = DocsPaneAUI(docs: [])

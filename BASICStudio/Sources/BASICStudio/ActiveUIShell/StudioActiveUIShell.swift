@@ -377,9 +377,45 @@ final class StudioActiveUIShell {
             (StudioShellModel($0).screenSizeMenu, StudioShellModel.chooseScreenSize)
         })
         screenSize.tooltip = shell.screenSizeMenu.help
-        let toolbar = AUIToolbar(items: [.toggleSidebar(), .sidebarTrackingSeparator()] + items + [theme, screenSize])
+        let examples = AUIToolbarItem(label: "Examples", systemSymbol: "text.book.closed", menu: examplesMenu(model: model))
+        examples.tooltip = "Open an example program"
+        let toolbar = AUIToolbar(items: [.toggleSidebar(), .sidebarTrackingSeparator()] + items + [examples, theme, screenSize])
         toolbar.displayMode = .iconOnly
         return (toolbar, buttons, theme, screenSize)
+    }
+
+    /// The bundled examples, as the Examples menu has them: the programs at
+    /// the top first, then a submenu per folder. They do not change while
+    /// Studio runs, so the menu is built once.
+    static func examplesMenu(model: StudioModel) -> AUIMenu {
+        var top: [AUIMenuItem] = []
+        var folders: [(title: String, items: [AUIMenuItem])] = []
+        for example in model.bundledExamples {
+            let parts = example.path.split(separator: "/", maxSplits: 1).map(String.init)
+            let title = BundledExample(path: parts.last ?? example.path).menuTitle
+            let item = AUIMenuItem(title) { [weak model] in model?.loadBundledExample(example) }
+            guard parts.count == 2 else {
+                top.append(item)
+                continue
+            }
+            let folder = BundledExample(path: parts[0]).menuTitle
+            if let index = folders.firstIndex(where: { $0.title == folder }) {
+                folders[index].items.append(item)
+            } else {
+                folders.append((folder, [item]))
+            }
+        }
+        var items = top
+        if !top.isEmpty, !folders.isEmpty {
+            items.append(.separator())
+        }
+        items += folders.map { AUIMenuItem($0.title, submenu: AUIMenu($0.title, items: $0.items)) }
+        if items.isEmpty {
+            let none = AUIMenuItem("No Examples Found") {}
+            none.isEnabled = false
+            items = [none]
+        }
+        return AUIMenu("Examples", items: items)
     }
 
     /// A toolbar pull-down whose items are rebuilt each time it opens, from
