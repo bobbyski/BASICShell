@@ -1,0 +1,39 @@
+/* Light — white paper, near-black ink, one blue accent. The system's light
+ * look as a theme, for someone who wants it whatever the system is set to.
+ *
+ *   #ffffff  the window
+ *   #f5f5f7  panels, a half-step down
+ *   #d9d9de  hairlines
+ *   #1f1f1f  text — not pure black, which is harsh on white
+ *   #6e6e73  quiet text
+ *   #005fb8  the accent
+ *
+ * A white `.window` is what tells the window chrome to go light: the chrome
+ * reads its appearance from this rule's luminance.
+ */
+
+.window  { background: #ffffff; color: #1f1f1f; }
+.surface { background: #f5f5f7; border: 1px solid #d9d9de; }
+.alert   { color: #c42b1c; }
+.muted, .quiet { color: #6e6e73; }
+
+/* Native fields stay native: fill and text only, no border to swap them for
+   their drawn twins. */
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField { background: #ffffff; color: #1f1f1f; }
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #f5f5f7; color: #1f1f1f; }
+
+/* Tables theme too; fields inside a row shed their bezel so they read as
+   table content, not standalone fields. */
+AUITable, AUIOutlineView { background: #ffffff; border: 1px solid #d9d9de; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; color: #1f1f1f;
+}
+
+AUIFolderRibbon { color: #1f1f1f; -aui-tint-color: #005fb8; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #ffffff; color: #1f1f1f; }

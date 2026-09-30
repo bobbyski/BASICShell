@@ -1,0 +1,37 @@
+/* Dark — neutral graphite, soft white text, one blue accent. The system's dark
+ * look as a theme, for someone who wants it whatever the system is set to.
+ *
+ *   #1e1e1e  the window
+ *   #252526  panels, a step up
+ *   #2d2d30  fields
+ *   #3c3c3c  hairlines
+ *   #d4d4d4  text — not pure white, which glares on near-black
+ *   #9d9d9d  quiet text
+ *   #0a84ff  the accent
+ */
+
+.window  { background: #1e1e1e; color: #d4d4d4; }
+.surface { background: #252526; border: 1px solid #3c3c3c; }
+.alert   { color: #f48771; }
+.muted, .quiet { color: #9d9d9d; }
+
+/* Native fields stay native: fill and text only, no border to swap them for
+   their drawn twins. */
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField { background: #2d2d30; color: #d4d4d4; }
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #252526; color: #d4d4d4; }
+
+/* Tables theme too; fields inside a row shed their bezel so they read as
+   table content, not standalone fields. */
+AUITable, AUIOutlineView { background: #252526; border: 1px solid #3c3c3c; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; color: #d4d4d4;
+}
+
+AUIFolderRibbon { color: #d4d4d4; -aui-tint-color: #0a84ff; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #1e1e1e; color: #d4d4d4; }

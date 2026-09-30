@@ -13,7 +13,7 @@ import Foundation
 ///   BASICStudio [--activeui | --swiftui] [program.bas]
 ///   BASICStudio --walk [--pane console|editor] [--inspector debug|docs|logs]
 ///               [--command-bar] [--breakpoint N]… [--settings general|font|console]
-///               [--project DIR] [program.bas]
+///               [--project DIR] [--theme NAME] [program.bas]
 /// ```
 ///
 /// `--walk` is for the side-by-side parity walk (STUDIO_FEATURES.md, Level 4):
@@ -58,6 +58,8 @@ struct StudioLaunchOptions: Equatable, Sendable {
         /// A Settings tab to open: general, font or console.
         var settingsTab: String?
         var projectPath: String?
+        /// An app theme for the ActiveUI shell (`StudioAppTheme`), by name.
+        var theme: String?
 
         /// The Settings tab's position: general 0, font 1, console 2.
         var settingsTabIndex: Int? {
@@ -117,6 +119,7 @@ struct StudioLaunchOptions: Equatable, Sendable {
             case "--breakpoint": if let line = value().flatMap(Int.init) { walk.breakpoints.append(line) }
             case "--settings": walk.settingsTab = value()?.lowercased()
             case "--project": walk.projectPath = value()
+            case "--theme": walk.theme = value()
             default: remaining.append(argument)
             }
             index += 1

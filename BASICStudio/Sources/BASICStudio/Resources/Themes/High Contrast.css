@@ -1,0 +1,47 @@
+/* High Contrast — white on black, every edge drawn, focus in yellow.
+ *
+ *   #000000  every fill: window, panels, controls
+ *   #ffffff  text and every border
+ *   #ffd200  focus and the accent: the one color that is not black or white
+ *
+ * THE RULE IS NO GRAYS. Contrast comes from edges, not from shades: a panel is
+ * not a lighter black but the same black inside a white line, and quiet text
+ * is not dimmed, because dim text is the first thing this theme exists to
+ * remove. Controls ask for `border` + `border-radius`, which a native control
+ * cannot draw, so they swap to their drawn twins — on purpose, since the
+ * outline is the point.
+ */
+
+.window  { background: #000000; color: #ffffff; }
+.surface { background: #000000; border: 1px solid #ffffff; }
+.alert   { color: #ffd200; }
+.muted, .quiet { color: #ffffff; }
+
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField,
+AUIPicker, AUIColorWell, AUIBox, AUIButton {
+    background: #000000; color: #ffffff;
+    border: 1px solid #ffffff; border-radius: 4px;
+}
+
+/* Focus is the thick yellow edge, so it can never be mistaken for the white
+   one every control already has. */
+AUITextField:focus, AUIComboBox:focus, AUISearchField:focus,
+AUIDatePicker:focus, AUITokenField:focus,
+AUIPicker:focus, AUIColorWell:focus {
+    border: 2px solid #ffd200;
+}
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #000000; color: #ffffff; }
+
+AUITable, AUIOutlineView { background: #000000; border: 1px solid #ffffff; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; border-radius: 0; color: #ffffff;
+}
+
+AUIFolderRibbon { color: #ffffff; -aui-tint-color: #ffd200; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #000000; color: #ffffff; }

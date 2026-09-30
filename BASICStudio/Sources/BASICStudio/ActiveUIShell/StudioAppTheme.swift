@@ -13,16 +13,17 @@ import Foundation
 /// the ActiveUI catalog offer, applied to the whole window.
 ///
 /// A theme is a file, `Resources/Themes/<name>.css`, as in each of those apps.
-/// Native is no file at all: the system's own look. Every other theme is dark.
+/// Native is no file at all: the system's own look. Light is light; every
+/// other theme is dark.
 ///
-/// The editor follows: dark under every theme but Native, and the system's
-/// light or dark under Native. The SwiftUI shell keeps its own Dark, Light
-/// and High Contrast for Monaco (`EditorTheme`).
+/// The editor follows: its light colors under Light, its high-contrast ones
+/// under High Contrast, the system's light or dark under Native, and dark
+/// otherwise. The SwiftUI shell keeps `EditorTheme` for Monaco alone.
 enum StudioAppTheme {
     /// The system look: no stylesheet.
     static let native = "Native"
     /// The themes on offer, in menu order.
-    static let names = [native, "NC State", "Blue", "moneyBags", "Slate", "Freebird"]
+    static let names = [native, "Light", "Dark", "High Contrast", "NC State", "Blue", "moneyBags", "Slate", "Freebird"]
     /// Themes whose file is not simply the theme's name.
     private static let resourceNames = ["Freebird": "freebird"]
 
@@ -36,7 +37,11 @@ enum StudioAppTheme {
     @MainActor
     static func install(_ name: String) {
         let theme = validated(name)
-        AUIApplication.appearance = theme == native ? .system : .dark
+        switch theme {
+        case native: AUIApplication.appearance = .system
+        case "Light": AUIApplication.appearance = .light
+        default: AUIApplication.appearance = .dark
+        }
         AUITheme.install(stylesheet(for: theme))
     }
 
@@ -63,10 +68,15 @@ enum StudioAppTheme {
         return nil
     }
 
-    /// The editor's colors under a theme: dark, or under Native, the system's.
+    /// The editor's colors under a theme.
     @MainActor
     static func editorTheme(for name: String) -> EditorTheme {
-        guard validated(name) == native else { return .dark }
+        switch validated(name) {
+        case "Light": return .light
+        case "High Contrast": return .highContrast
+        case native: break
+        default: return .dark
+        }
         let appearance = NSApp?.effectiveAppearance ?? NSAppearance.currentDrawing()
         return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
     }

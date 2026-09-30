@@ -301,6 +301,7 @@ final class StudioModel: ObservableObject {
         self.walk = nil
         if let inspector = walk.inspector { inspectorPane = inspector }
         if walk.showsCommandBar { isCommandBarVisible = true }
+        if let theme = walk.theme { appTheme = theme }
         for line in walk.breakpoints { toggleDebuggerBreakpoint(atSourceLine: line) }
         if let path = walk.projectPath {
             openProject(at: URL(fileURLWithPath: expandedPath(path), isDirectory: true))
