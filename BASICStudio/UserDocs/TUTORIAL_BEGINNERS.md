@@ -259,3 +259,5 @@ If a program seems stuck, click **Stop**. The debugger (the bug button) lets you
 - [BASICrc Tutorial](TUTORIAL_BASICRC.md): set BASICShell up the way you like it.
 
 The Reference section of this menu has a page for every statement. [PRINT](PRINT.md), [INPUT](INPUT.md), [FOR...NEXT](FOR_NEXT.md) and [FUNCTION](FUNCTION.md) are good ones to read next. The Examples menu has finished programs to run and take apart.
+
+If you like programming in BASIC, give [Xojo](https://xojo.com/) a try. Xojo is a company committed to a modern BASIC dialect, and you can use it to build desktop, web and mobile apps.
