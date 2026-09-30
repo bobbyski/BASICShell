@@ -89,7 +89,110 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
+  # BASICStudio on iPhone and iPad: the ActiveUI shell (iOS/BASICStudioiOS.swift),
+  # over the Mac target's own sources less the SwiftUI shell, which is
+  # macOS-only. The spec is set up the way ActiveUI's iOS apps are
+  # (ActiveUITestApp-iOS/project.yml). It does not build yet: BASICCore and
+  # TUIKit use Process, the pinned SwiftTerm has no iOS VectorTerminalView, and
+  # the console and a few panes are AppKit. Documents/BASICSTUDIO_IOS.md lists
+  # what stands in the way.
+  BASICStudio-iOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/BASICStudio
+        excludes:
+          - Resources
+          - BASICStudio.swift
+          - BASICStudioApp.swift
+          - StudioView.swift
+          - DebugPane.swift
+          - LogPane.swift
+          - MonacoEditor.swift
+          - StudioAbout.swift
+          - NerdPromptEditorView
+      - path: iOS
+        excludes:
+          - Info.plist
+      - path: Sources/BASICStudio/Resources/Demos
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Fonts
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Assets
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Themes
+        buildPhase: resources
+        type: folder
+      - path: Sources/BASICStudio/Resources/Assets.xcassets
+        buildPhase: resources
+      - path: Sources/BASICStudio/Resources/UserDocs.zip
+        buildPhase: resources
+    dependencies:
+      - package: BASICCore
+        product: BASICCore
+      - package: SwiftTerm
+        product: SwiftTerm
+      - package: VectorTerminalSDK
+        product: VectorTerminalSDK
+      - package: MarkdownUI
+        product: MarkdownUI
+      - package: DocumentArchive
+        product: DocumentArchive
+      - package: ActiveUI
+        product: ActiveUI
+      - package: ActiveUIMarkdown
+        product: ActiveUIMarkdown
+      - package: ActiveUICode
+        product: ActiveUICode
+    info:
+      path: iOS/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: BASICStudio
+        ITSAppUsesNonExemptEncryption: false
+        # Without the scene manifest the first touch aborts on iOS 26; the
+        # delegate lives in ActiveUI (ActiveUITestApp-iOS/project.yml).
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: ActiveUI.AUIUIKitSceneDelegate
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Programs saved on the iPad show in Files, to read back on the Mac.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    settings:
+      base:
+        # One bundle ID with the Mac app, as a universal purchase needs.
+        PRODUCT_BUNDLE_IDENTIFIER: com.aibasic.BASICStudio
+        DEVELOPMENT_TEAM: 4G3PGPSVTU
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
 schemes:
+  BASICStudio-iOS:
+    build:
+      targets:
+        BASICStudio-iOS: all
+    run:
+      config: Debug
   BASICStudio:
     build:
       targets:
