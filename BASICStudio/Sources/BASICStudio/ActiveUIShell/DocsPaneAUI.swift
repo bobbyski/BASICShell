@@ -124,6 +124,7 @@ final class DocsPaneAUI {
 }
 
 #if os(iOS)
+import ActiveUICoreEditor
 import MarkdownUI
 import SwiftUI
 
@@ -198,6 +199,7 @@ struct DocsMarkdownView: View {
         ScrollView {
             Markdown(model.markdown)
                 .markdownTheme(Self.theme(model.colors))
+                .markdownCodeSyntaxHighlighter(DocsCodeHighlighter(ink: model.colors.text ?? .primary))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
@@ -266,6 +268,36 @@ struct DocsMarkdownView: View {
                     .markdownTableBackgroundStyle(.alternatingRows(Color.clear, shade))
                     .markdownMargin(top: 0, bottom: 16)
             }
+    }
+}
+/// Code blocks in the source editor's colors.
+///
+/// The Mac's markdown engine colors a ```` ```basic ```` fence with its own
+/// highlighter; MarkdownUI draws every code block in one color unless it is
+/// given one. This is the iOS editor's: its grammars and its palette, through
+/// `AUICodeHighlight`. Plain code stays in the page's ink, and comments are
+/// that ink dimmed, as the editor draws them.
+struct DocsCodeHighlighter: CodeSyntaxHighlighter {
+    /// The page's text color.
+    let ink: Color
+
+    func highlightCode(_ code: String, language: String?) -> Text {
+        guard let language, !language.isEmpty else { return Text(code) }
+        var text = AttributedString()
+        for run in AUICodeHighlight.runs(code, language: language) {
+            var piece = AttributedString(run.text)
+            if let color = run.color {
+                piece.foregroundColor = Color(uiColor: (run.isDim ? color.opacity(0.6) : color).native)
+            } else if run.isDim {
+                piece.foregroundColor = ink.opacity(0.6)
+            }
+            var intent: InlinePresentationIntent = []
+            if run.isBold { intent.insert(.stronglyEmphasized) }
+            if run.isItalic { intent.insert(.emphasized) }
+            if !intent.isEmpty { piece.inlinePresentationIntent = intent }
+            text += piece
+        }
+        return Text(text)
     }
 }
 #else
