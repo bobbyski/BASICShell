@@ -1,0 +1,24 @@
+/* Blue — deep navy, white text. */
+
+.window  { background: #003087; color: #ffffff; }
+.surface { background: #001d55; }
+.alert   { color: #ff6b6b; }
+
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField { background: #001d55; color: #ffffff; }
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #001640; color: #ffffff; }
+
+/* Tables theme too; fields inside a row shed their bezel so they read as
+   table content, not standalone fields. */
+AUITable, AUIOutlineView { background: #001d55; border: 1px solid #26417a; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; color: #ffffff;
+}
+
+AUIFolderRibbon { color: #ffffff; -aui-tint-color: #b9cdf5; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #003087; color: #ffffff; }

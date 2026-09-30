@@ -76,7 +76,7 @@ struct ActiveUIShellTests {
         #expect(studio.toolbarItems[.run]?.isEnabled == true)
         #expect(studio.toolbarItems[.stop]?.isEnabled == false)
         #expect(studio.toolbarItems[.graphics]?.image != nil)
-        #expect(studio.themeItem.label == studio.model.editorTheme.label)
+        #expect(studio.themeItem.label == StudioAppTheme.validated(studio.model.appTheme))
     }
 
     @Test("P2.4 · The console fills its pane: the Auto Layout hand-off does not leave an empty box")

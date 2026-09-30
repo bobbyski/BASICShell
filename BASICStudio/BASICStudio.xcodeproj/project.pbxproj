@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0057004C4A2148E02E99D2A2 /* LogPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6405A0933EA2491CDDF863 /* LogPane.swift */; };
+		02730A16BBF74C260858CABD /* StudioAppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */; };
 		091E1770B6363E5775960262 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 5AAB125FD1626D4E8281F069 /* DocumentArchive */; };
 		093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
 		123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */; };
@@ -48,6 +49,7 @@
 		ADA6A24313C5FC396E1ADBE5 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
 		AE5E41C53A99364CDA4C82E6 /* Demos in Resources */ = {isa = PBXBuildFile; fileRef = 96CA444014E259C30BE4F365 /* Demos */; };
 		B0B26D83A69449507033F56B /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = 9C9B2EE479C7AD1539AEB20B /* Assets */; };
+		B1D4EE89EC954CE224038E7F /* Themes in Resources */ = {isa = PBXBuildFile; fileRef = 6338F8D64F595F8A442DCB46 /* Themes */; };
 		B621B0BD8B331CA053F4D096 /* StudioTUIDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */; };
 		B7922A21D2E5A7B60E0CDF0D /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D23305654DCC7C771397BA /* SettingsViewModel.swift */; };
 		BF42A79B77B89643F0C31695 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = EF38E292B830FC5A0F76CE1D /* MarkdownUI */; };
@@ -85,6 +87,7 @@
 		5472221B9FB79FDAA9BB355A /* StudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioSettings.swift; sourceTree = "<group>"; };
 		5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioShellModel.swift; sourceTree = "<group>"; };
 		5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTUIDriver.swift; sourceTree = "<group>"; };
+		6338F8D64F595F8A442DCB46 /* Themes */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Themes; path = Sources/BASICStudio/Resources/Themes; sourceTree = SOURCE_ROOT; };
 		66762CB96B98F1DE50DFCE7D /* ActiveUIMarkdown */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUIMarkdown; path = ../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown; sourceTree = SOURCE_ROOT; };
 		689A82CD724959C8AA8FE537 /* LogPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPaneModel.swift; sourceTree = "<group>"; };
 		6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModel.swift; sourceTree = "<group>"; };
@@ -115,6 +118,7 @@
 		E01D1E66A75BA2495AEA6493 /* ActiveUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUI; path = ../../../../AIResearch/ActiveUI/Code/ActiveUI; sourceTree = SOURCE_ROOT; };
 		E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioView.swift; sourceTree = "<group>"; };
 		ED3E736836021C24D244390D /* DebugPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPaneModel.swift; sourceTree = "<group>"; };
+		EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAppTheme.swift; sourceTree = "<group>"; };
 		F768CDEF475FDA4603BD917D /* DebugPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPane.swift; sourceTree = "<group>"; };
 		FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuCommandModel.swift; sourceTree = "<group>"; };
 		FDA023CFFFD1F535E44E65FD /* SwiftyCodeEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftyCodeEditor; path = ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor; sourceTree = SOURCE_ROOT; };
@@ -155,6 +159,7 @@
 				3F0871282F50834880A591A8 /* Assets.xcassets */,
 				96CA444014E259C30BE4F365 /* Demos */,
 				B28A38404D59414EADD295C5 /* Fonts */,
+				6338F8D64F595F8A442DCB46 /* Themes */,
 				345DA55E34BEF73307F59C60 /* UserDocs.zip */,
 			);
 			path = Resources;
@@ -171,6 +176,7 @@
 				474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */,
 				72D0EF453B77151D2563402A /* SourceEditorAUI.swift */,
 				978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */,
+				EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */,
 				4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */,
 			);
 			path = ActiveUIShell;
@@ -348,6 +354,7 @@
 				55AA22B456CC0B14F3F85659 /* Assets.xcassets in Resources */,
 				AE5E41C53A99364CDA4C82E6 /* Demos in Resources */,
 				7091141BEB6366B0BF388EC6 /* Fonts in Resources */,
+				B1D4EE89EC954CE224038E7F /* Themes in Resources */,
 				9DB0288E1B8117B54E524CB2 /* UserDocs.zip in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -385,6 +392,7 @@
 				9F2A3BF20C0C0DDB72F667F5 /* StudioAUIBridge.swift in Sources */,
 				A1432993494F6BA04B2BAD6C /* StudioAbout.swift in Sources */,
 				D05ADC8871BB376F69B2C843 /* StudioActiveUIShell.swift in Sources */,
+				02730A16BBF74C260858CABD /* StudioAppTheme.swift in Sources */,
 				2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */,
 				2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */,
 				4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */,

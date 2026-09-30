@@ -16,8 +16,9 @@ import Foundation
 ///
 /// ```text
 ///   General   the prompt editor (PromptEditorAUI)
-///   Editor    Typing: Tab indents, new-line indent, indent width
-///             Display: theme, line numbers
+///   Editor    Appearance: the app theme
+///             Typing: Tab indents, new-line indent, indent width
+///             Display: line numbers
 ///   Font      Font ▾ (preferred first)   Size ──●── 13
 ///   Console   Lines ──●── [−|+] 10000    the scrollback note
 /// ```
@@ -99,18 +100,19 @@ final class SettingsAUI {
         typing.addRow("Indent with",
                       description: "One level of indentation, for Tab and for new lines.",
                       accessory: indentPicker)
-        themePicker = AUIPicker(EditorTheme.allCases.map(\.label))
+        themePicker = AUIPicker(StudioAppTheme.names)
+        let appearance = AUISettingsGroup(title: "Appearance")
+        appearance.addRow("Theme",
+                          description: "Restyles the whole window. Native follows the system; the others are dark, and the editor follows. The toolbar's palette menu chooses it too.",
+                          accessory: themePicker)
         lineNumbersSwitch = AUISwitch(isOn: model.isEditorGutterVisible) { [weak model] in
             model?.isEditorGutterVisible = $0
         }
         let display = AUISettingsGroup(title: "Display")
-        display.addRow("Theme",
-                       description: "The editor's colors. The toolbar's palette menu chooses it too.",
-                       accessory: themePicker)
         display.addRow("Show line numbers",
                        description: "Numbers each line in the editor's gutter. The toolbar's line-number button sets it too.",
                        accessory: lineNumbersSwitch)
-        editorPage = Self.page([typing, display])
+        editorPage = Self.page([appearance, typing, display])
 
         fontPicker.onSelectionChange = { [weak self] index in
             guard let self else { return }
@@ -129,7 +131,8 @@ final class SettingsAUI {
             model?.editorIndentUnit = Self.indentUnits[index].unit
         }
         themePicker.onSelectionChange = { [weak model] index in
-            model?.editorTheme = EditorTheme.allCases[index]
+            guard let model else { return }
+            StudioAppTheme.choose(index, on: model)
         }
         refresh()
     }
@@ -247,7 +250,7 @@ final class SettingsAUI {
         if indentPicker.selectedIndex != indent {
             indentPicker.selectedIndex = indent
         }
-        let theme = EditorTheme.allCases.firstIndex(of: model.editorTheme)
+        let theme = StudioAppTheme.names.firstIndex(of: StudioAppTheme.validated(model.appTheme))
         if themePicker.selectedIndex != theme {
             themePicker.selectedIndex = theme
         }

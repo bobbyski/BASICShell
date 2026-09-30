@@ -1,0 +1,26 @@
+/* moneyBags — green and gold. */
+
+.window  { background: #0b6b3a; color: #ffffff; }
+.surface { background: #054023; }
+.alert   { color: #ffd400; }
+
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField { background: #054023; color: #ffffff; }
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #04331c; color: #ffffff; }
+
+/* Tables theme too; fields inside a row shed their bezel so they read as
+   table content, not standalone fields. */
+AUITable, AUIOutlineView { background: #054023; border: 1px solid #1d6b41; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; color: #ffffff;
+}
+
+/* The gold is the point of this theme, so the icons take it rather than the
+   white the labels use. */
+AUIFolderRibbon { color: #ffffff; -aui-tint-color: #ffd400; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #0b6b3a; color: #ffd400; }

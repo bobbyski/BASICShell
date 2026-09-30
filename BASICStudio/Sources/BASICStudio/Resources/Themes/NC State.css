@@ -1,0 +1,32 @@
+/* NC State — red on red. */
+
+.window  { background: #cc0000; color: #ffffff; }
+.surface { background: #7a0000; }
+.alert   { color: #000000; }
+
+/* Whole-app: native text/field controls honor bg+text color directly; date
+   picker and token field have no drawn twin, so they honor these on the
+   native control too. */
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField { background: #7a0000; color: #ffffff; }
+
+/* The ring is one control: style it, not the field inside it. */
+AUIGradientRing, AUIPromptField { background: #5c0000; color: #ffffff; }
+
+/* Tables theme too; fields inside a row shed their bezel so they read as
+   table content, not standalone fields. */
+AUITable, AUIOutlineView { background: #7a0000; border: 1px solid #a33; }
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; color: #ffffff;
+}
+
+/* No `background` on purpose: a ribbon's strip defaults to clear, so the run
+   past the last folder shows the window through it. `color` gives the labels,
+   the selected folder takes the page's own colour, and the rest are derived.
+   `-aui-tint-color` is separate from `color` because an icon at label
+   brightness disappears into a busy strip. */
+AUIFolderRibbon { color: #ffffff; -aui-tint-color: #ffd7d7; }
+
+/* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
+AUIMenu { background: #cc0000; color: #ffffff; }

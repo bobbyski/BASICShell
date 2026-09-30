@@ -50,6 +50,9 @@ targets:
       - path: Sources/BASICStudio/Resources/Assets
         buildPhase: resources
         type: folder
+      - path: Sources/BASICStudio/Resources/Themes
+        buildPhase: resources
+        type: folder
       - path: Sources/BASICStudio/Resources/Assets.xcassets
         buildPhase: resources
       - path: Sources/BASICStudio/Resources/UserDocs.zip

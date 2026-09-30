@@ -49,6 +49,10 @@ final class StudioModel: ObservableObject {
     @Published var editorTheme: EditorTheme = .dark {
         didSet { saveSettings() }
     }
+    /// The ActiveUI shell's theme (`StudioAppTheme`), by name.
+    @Published var appTheme = StudioSettings.defaultAppTheme {
+        didSet { saveSettings() }
+    }
     @Published var editorErrorLine: Int?
     @Published var editorDiagnostics: [BASICDiagnostic] = []
     @Published var editorFindRequest = 0
@@ -236,6 +240,7 @@ final class StudioModel: ObservableObject {
         gamepadInputCoordinator.emitConnectedControllers()
         let settings = persistsSettings ? StudioSettingsStore.load() : StudioSettings()
         editorTheme = settings.editorTheme
+        appTheme = settings.appTheme
         isEditorGutterVisible = settings.isEditorGutterVisible
         editorIndentsSelectionWithTab = settings.editorIndentsSelectionWithTab
         editorIndentsNewLines = settings.editorIndentsNewLines
@@ -1543,6 +1548,7 @@ final class StudioModel: ObservableObject {
         StudioSettingsStore.save(
             StudioSettings(
                 editorTheme: editorTheme,
+                appTheme: appTheme,
                 isEditorGutterVisible: isEditorGutterVisible,
                 editorIndentsSelectionWithTab: editorIndentsSelectionWithTab,
                 editorIndentsNewLines: editorIndentsNewLines,

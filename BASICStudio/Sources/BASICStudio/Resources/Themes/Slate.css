@@ -1,0 +1,71 @@
+/* Slate — a production-candidate look: dark navy window, softly rounded
+ * blue-bordered fields.
+ *
+ * Fields ask for `border` + `border-radius`, which a native field cannot
+ * render, so they transparently swap to their drawn twins. Native controls
+ * with no drawn twin (date picker, token field) honor the navy fill and white
+ * text natively.
+ */
+
+.window  { background: #0e1a2d; color: #eaf1fb; }
+
+/* Cards and panels carry the same hairline as the controls, so a card reads
+   as one surface rather than a floating fill. */
+.surface { background: #16273f; border: 1px solid #223757; }
+.alert   { color: #ffd76a; }
+
+/* Resting: a thin, quiet hairline. Focused: the same border goes bold and
+   bright, so the focus ring is the control's own outline — see the :focus
+   rule below. Popups, color wells, group boxes and buttons take the same
+   treatment: in this theme everything interactive is outlined. */
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField,
+AUIPicker, AUIColorWell, AUIBox, AUIButton {
+    background: #16273f; color: #eaf1fb;
+    border: 1px solid #35507d; border-radius: 6px;
+}
+
+/* Search fields round harder than the other controls — the capsule is what
+   makes them read as search. */
+AUISearchField { border-radius: 18px; }
+
+AUITextField:focus, AUIComboBox:focus, AUISearchField:focus,
+AUIDatePicker:focus, AUITokenField:focus,
+AUIPicker:focus, AUIColorWell:focus {
+    border: 2px solid #4f8ff7;
+}
+
+/* The ring is one control — style the ring, not its interior. The control
+   seals its content off from the cascade, so this one declaration is the
+   whole story. */
+AUIGradientRing { background: #16273f; color: #eaf1fb; }
+
+/* Tables are themeable too — the surrounding list gets the panel fill and a
+   soft outline of its own. */
+AUITable, AUIOutlineView {
+    background: #16273f; border: 1px solid #223757; border-radius: 8px;
+}
+
+/* A field INSIDE a table is part of the row, not a standalone field: it sheds
+   the bezel and fill so it reads as table content. A descendant selector
+   out-specifies the type rule above, and `none` clears what that rule set. */
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; border-radius: 0;
+    color: #eaf1fb;
+}
+
+/* The one control in this theme deliberately *not* outlined, so the rule is
+   the same two declarations as every other theme's. Slate boxes everything
+   interactive because a field or a button is a thing you act on, standing on
+   the surface. Folders are the edge of the page itself, folded up: a box
+   around the strip frames the empty run past the last folder, and a border
+   between the selected folder and its page contradicts the one thing the
+   control exists to say. */
+AUIFolderRibbon { color: #eaf1fb; -aui-tint-color: #7fb0ff; }
+
+/* ── Menus ─────────────────────────────────────────────────────────────── */
+
+/* `background` picks dark vs light rather than filling — AppKit owns the menu
+   panel. See Documents/MENU_THEMING.md for what that does and does not reach. */
+AUIMenu { background: #0e1a2d; color: #eaf1fb; }

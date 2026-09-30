@@ -66,18 +66,18 @@ struct ActiveUISettingsTests {
         settings.newLineIndentSwitch.onChange?(false)
         settings.indentPicker.onSelectionChange?(0)
         settings.lineNumbersSwitch.onChange?(true)
-        settings.themePicker.onSelectionChange?(EditorTheme.allCases.firstIndex(of: .light)!)
+        settings.themePicker.onSelectionChange?(StudioAppTheme.names.firstIndex(of: "Blue")!)
         #expect(!model.editorIndentsSelectionWithTab && !model.editorIndentsNewLines)
-        #expect(model.editorIndentUnit == "\t" && model.isEditorGutterVisible && model.editorTheme == .light)
+        #expect(model.editorIndentUnit == "\t" && model.isEditorGutterVisible && model.appTheme == "Blue")
         let input = EditorRenderInput.mainEditor(model)
         #expect(!input.indentsSelectionWithTab && !input.indentsNewLines && input.indentUnit == "\t")
 
         // The toolbar changes them too; the page shows it.
         model.isEditorGutterVisible = false
-        model.editorTheme = .highContrast
+        model.appTheme = "Slate"
         settings.refresh()
         #expect(!settings.lineNumbersSwitch.isOn)
-        #expect(settings.themePicker.selectedIndex == EditorTheme.allCases.firstIndex(of: .highContrast))
+        #expect(settings.themePicker.selectedIndex == StudioAppTheme.names.firstIndex(of: "Slate"))
     }
 
     @Test("S4 · The Console page's note wraps inside the page, and the value sits before its stepper")

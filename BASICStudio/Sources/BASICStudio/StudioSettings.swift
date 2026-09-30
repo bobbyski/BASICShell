@@ -73,6 +73,9 @@ struct StudioSettings: Codable {
     static let defaultConsoleScrollbackLines = 5000
     static let consoleScrollbackRange = 200...50_000
 
+    /// The system's own look.
+    static let defaultAppTheme = "Native"
+
     /// Four spaces, as the demos are written.
     static let defaultIndentUnit = "    "
 
@@ -81,6 +84,8 @@ struct StudioSettings: Codable {
     }
 
     var editorTheme: EditorTheme = .dark
+    /// The ActiveUI shell's theme, by name: Native, NC State, Blue, …
+    var appTheme = StudioSettings.defaultAppTheme
     var isEditorGutterVisible = false
     /// Tab and Shift-Tab indent or outdent the selected lines.
     var editorIndentsSelectionWithTab = true
@@ -99,6 +104,7 @@ struct StudioSettings: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case editorTheme
+        case appTheme
         case isEditorGutterVisible
         case editorIndentsSelectionWithTab
         case editorIndentsNewLines
@@ -114,6 +120,7 @@ struct StudioSettings: Codable {
 
     init(
         editorTheme: EditorTheme = .dark,
+        appTheme: String = StudioSettings.defaultAppTheme,
         isEditorGutterVisible: Bool = false,
         editorIndentsSelectionWithTab: Bool = true,
         editorIndentsNewLines: Bool = true,
@@ -127,6 +134,7 @@ struct StudioSettings: Codable {
         projectDirectoryPath: String? = nil
     ) {
         self.editorTheme = editorTheme
+        self.appTheme = appTheme
         self.isEditorGutterVisible = isEditorGutterVisible
         self.editorIndentsSelectionWithTab = editorIndentsSelectionWithTab
         self.editorIndentsNewLines = editorIndentsNewLines
@@ -143,6 +151,7 @@ struct StudioSettings: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         editorTheme = try container.decodeIfPresent(EditorTheme.self, forKey: .editorTheme) ?? .dark
+        appTheme = try container.decodeIfPresent(String.self, forKey: .appTheme) ?? Self.defaultAppTheme
         isEditorGutterVisible = try container.decodeIfPresent(Bool.self, forKey: .isEditorGutterVisible) ?? false
         editorIndentsSelectionWithTab = try container.decodeIfPresent(Bool.self, forKey: .editorIndentsSelectionWithTab) ?? true
         editorIndentsNewLines = try container.decodeIfPresent(Bool.self, forKey: .editorIndentsNewLines) ?? true

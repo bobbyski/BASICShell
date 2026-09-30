@@ -86,7 +86,7 @@ final class DebugPaneAUI {
 
     /// Brings the pane up to the model; parts that did not change are left alone.
     func refresh() {
-        codeView.sync(.debugCodeView(model))
+        codeView.sync(StudioAppTheme.themed(.debugCodeView(model), model))
         let pane = DebugPaneModel(model)
         guard pane != drawn else { return }
         for button in pane.buttons where drawn?.button(button.command) != button {

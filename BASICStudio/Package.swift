@@ -43,6 +43,7 @@ let package = Package(
                 .copy("Resources/UserDocs.zip"),
                 .copy("Resources/Fonts"),
                 .copy("Resources/Assets"),
+                .copy("Resources/Themes"),
                 .process("Resources/Assets.xcassets")
             ]
         ),

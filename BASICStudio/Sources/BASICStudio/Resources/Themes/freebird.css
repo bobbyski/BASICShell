@@ -1,0 +1,198 @@
+/* freebird — the neon badge: glowing amber outlines on near-black.
+ *
+ * Taken from the Freebird mark: a hexagon drawn in light rather than filled,
+ * a terminal window, circuit traces, all in a narrow band of orange running
+ * from a deep ember through to a hot amber highlight.
+ *
+ *   #080809  the badge's black — not pure #000, which reads as a hole
+ *   #E2560A  the outer glow, deepest of the oranges
+ *   #FF7A18  the primary neon stroke
+ *   #FFA51F  bright amber, the inner line
+ *   #FFC942  the hot highlight where two strokes cross
+ *
+ * THE LOOK IS OUTLINE, NOT FILL. Every lit thing in the badge is a line with
+ * darkness inside it, so this theme borders controls rather than filling them,
+ * and reserves fill for the one control that is *selected*. A neon sign that
+ * filled its letters would just be a lamp.
+ *
+ * Two consequences worth knowing:
+ *
+ * 1. Controls asking for `border` + `border-radius` cannot be drawn by native
+ *    chrome, so they swap to their drawn twins. That is the intent here rather
+ *    than a side effect — the whole theme is outlines.
+ * 2. `box-shadow` is the only glow available, and it is doing real work: a
+ *    neon stroke without a halo reads as a plain orange line. Every lit border
+ *    carries one.
+ */
+
+.window  { background: #080809; color: #f7e6cf; }
+
+/* Panels are barely lifted — the badge has almost no tonal range, and a
+   surface that stood out would look like a different material rather than the
+   same black under a different light. The hairline does the separating. */
+.surface {
+    background: #101012;
+    border: 1px solid #3a2410;
+    border-radius: 10px;
+}
+
+/* Warnings borrow the hot highlight rather than inventing a red: the badge has
+   exactly one hue family, and a red alert would be the only thing on screen
+   that came from outside it. */
+.alert   { color: #ffc942; }
+
+/* Quiet text: the window colour, dimmed toward the ember rather than toward
+   grey, so secondary text still belongs to the palette. */
+.muted, .quiet { color: #a88a68; }
+
+/* ── Interactive controls: outlined, never filled ───────────────────────── */
+
+AUITextField, AUIComboBox, AUISearchField,
+AUIDatePicker, AUITokenField,
+AUIPicker, AUIColorWell, AUIBox, AUIButton {
+    background: #0d0d0f;
+    color: #ffb95e;
+    border: 1px solid #a04a08;
+    border-radius: 8px;
+}
+
+/* The capsule is what makes a search field read as search — and the badge's
+   hexagon is all long soft curves, so this one rounds hard. */
+AUISearchField { border-radius: 18px; }
+
+/* Focus is the stroke going hot, not a ring added around it. The badge has no
+   second outline anywhere; adding one for focus would be the one shape in the
+   theme that the mark does not contain. */
+AUITextField:focus, AUIComboBox:focus, AUISearchField:focus,
+AUIDatePicker:focus, AUITokenField:focus,
+AUIPicker:focus, AUIColorWell:focus, AUIButton:focus {
+    border: 2px solid #ffa51f;
+    box-shadow: 0 0 10px rgba(255, 122, 24, 0.55);
+}
+
+/* Hover warms the outline one step — the sign flickering up before it lights.
+   Cheaper than a fill and it keeps the control an outline throughout. */
+AUIButton:hover {
+    border: 1px solid #ff7a18;
+    box-shadow: 0 0 8px rgba(255, 122, 24, 0.35);
+}
+
+/* Pressed is the only fill in the theme, and it is deliberate: a press is the
+   moment the stroke *is* the light rather than describing it. */
+AUIButton:active {
+    background: #ff7a18;
+    color: #080809;
+    box-shadow: 0 0 14px rgba(255, 165, 31, 0.7);
+}
+
+/* ── Lists and tables ──────────────────────────────────────────────────── */
+
+AUITable, AUIOutlineView {
+    background: #0d0d0f;
+    border: 1px solid #3a2410;
+    border-radius: 10px;
+    -aui-selection-color: #b35406;
+}
+
+/* A field inside a table is row content, not a standalone control: it sheds
+   the outline and the fill so the row reads as one thing. A descendant
+   selector out-specifies the type rule above, and `none` clears it. */
+AUITable AUITextField, AUIOutlineView AUITextField,
+AUITable AUIComboBox {
+    background: none; border: none; border-radius: 0;
+    color: #f7e6cf;
+}
+
+/* ── Selection: the accent is the badge's orange, never the system blue ──── */
+
+/* A segmented control's selected segment, a toggle's "on" fill, a radio's dot
+ * and a rating's filled stars all take the **system accent** by default — and
+ * on this theme that is a blue island in an orange window, which is the one
+ * thing a single-hue palette cannot absorb.
+ *
+ * `background` + `color` is what swaps each for its drawn twin, and `color` is
+ * the fill the twin uses for the selected part. Naming the type rather than a
+ * class means every one of them in the app is covered, not just the ones an
+ * author remembered to tag.
+ */
+
+AUISegmentedControl {
+    background: #0d0d0f;
+    color: #ff7a18;
+    border: 1px solid #a04a08;
+    border-radius: 8px;
+}
+
+/* `background` is what asks for the drawn twin; `color` is the fill that twin
+   paints the selected part with. Both are needed — `color` alone restyles the
+   text and leaves the mark blue. */
+AUIToggle, AUISwitch, AUIRadioGroup, AUIStepper {
+    background: #1a1206;
+    color: #ff7a18;
+}
+
+/* Grid and gallery selection is a colour, not a shape, so these take
+   `-aui-selection-color` rather than swapping. */
+AUIMatrix, AUICollectionView, AUIBrowser {
+    -aui-selection-color: #b35406;
+}
+
+/* Completion popovers highlight the active row the same way a list does. */
+AUICompletionList {
+    background: #0d0d0f;
+    color: #f7e6cf;
+    -aui-selection-color: #b35406;
+}
+
+/* A gauge's needle and fill are the trace, drawn in the neon rather than in
+   whatever the surrounding text colour happens to be. */
+AUIGauge { color: #ff9500; }
+
+/* An accordion is a stack of headers with one lit. The open header takes the
+   ember fill — the same one a selected row takes — because it *is* a
+   selection: which section you are reading. */
+AUIAccordion { color: #f7e6cf; -aui-selection-color: #b35406; }
+AUIAccordionHeader { background: #0d0d0f; color: #f7e6cf; }
+
+/* ── Chrome ────────────────────────────────────────────────────────────── */
+
+/* The sidebar is the darkest surface — in the badge the hexagon's interior is
+   the black the strokes are drawn on, and the sidebar plays that part. */
+AUISidebar {
+    background: #060607;
+    color: #f7e6cf;
+    -aui-selection-color: #b35406;
+}
+
+/* The pane selector takes the amber tint for its icons and its selected cell,
+   which is the badge's own relationship between the traces and the terminal
+   they run into. */
+AUIIconStrip {
+    background: #0a0a0c;
+    color: #d9b98d;
+    -aui-tint-color: #ff9500;
+}
+
+/* Folders are the page folded up, so — as in Slate — no box around the strip
+   and no border between the selected folder and its page. Tint only. */
+AUIFolderRibbon { color: #f7e6cf; -aui-tint-color: #ff9500; }
+
+/* The ring is one control; style the ring, not its interior. */
+AUIGradientRing { background: #101012; color: #ff9500; }
+
+/* Progress and level indicators read as lit traces: the track is the dark the
+   badge draws on, the fill is the stroke. */
+AUIProgressBar, AUILevelIndicator, AUISlider {
+    background: #1a1206;
+    color: #ff9500;
+}
+
+/* ── Menus ─────────────────────────────────────────────────────────────── */
+
+/* AppKit draws the menu panel itself and lets nothing reach it, so `background`
+   here picks **dark vs light**, not a fill — see AUIMenuStyle. The item text is
+   the one colour a stylesheet really sets, and on this theme that is the neon:
+   an orange list on AppKit's own dark panel is as close as a native menu gets
+   to the badge. The highlight stays the system accent; closing that last gap
+   needs a drawn menu (Documents/MENU_THEMING.md). */
+AUIMenu { background: #0d0d0f; color: #ffb95e; }

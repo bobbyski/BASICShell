@@ -71,6 +71,10 @@ final class StudioActiveUIShell {
     private var drawnTitle: String?
     private(set) var drawnProject: ProjectModel?
     private var observation: AnyCancellable?
+    /// Under Native, the editor's colors follow the system's appearance.
+    private var appearanceObservation: NSKeyValueObservation?
+    /// The app theme last installed.
+    private var drawnAppTheme: String?
     private var isRefreshScheduled = false
     /// How many refreshes have run; tests watch it.
     private(set) var refreshCount = 0
@@ -166,7 +170,10 @@ final class StudioActiveUIShell {
         // subscription that refreshes them. `run` does not return, so a
         // local alone could be released as soon as it starts.
         running = shell
+        // Before the window, so it opens in its theme.
+        StudioAppTheme.install(shell.model.appTheme)
         AUIApplication.onLaunch = {
+            shell.observeSystemAppearance()
             shell.refresh()
             shell.model.runStartupProgramIfNeeded()
             if let tab = launch.walk?.settingsTab {
@@ -205,6 +212,14 @@ final class StudioActiveUIShell {
 
     // MARK: Refreshing
 
+    /// Refreshes when the system's appearance changes, so under Native the
+    /// editor turns light or dark with it.
+    func observeSystemAppearance() {
+        appearanceObservation = NSApp?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.scheduleRefresh() }
+        }
+    }
+
     /// Asks for one refresh on the next turn of the main queue, however many
     /// changes arrive before then. The next turn is when a change announced by
     /// `objectWillChange` has actually landed.
@@ -231,7 +246,12 @@ final class StudioActiveUIShell {
         // Both views compare with what they last drew, so these are cheap
         // when nothing changed.
         console.render(ConsoleRenderInput(model))
-        editor.sync(.mainEditor(model))
+        if model.appTheme != drawnAppTheme {
+            StudioAppTheme.install(model.appTheme)
+            themeItem.label = StudioAppTheme.validated(model.appTheme)
+            drawnAppTheme = model.appTheme
+        }
+        editor.sync(StudioAppTheme.themed(.mainEditor(model), model))
         settings.refresh()
         // Only the inspector on screen reads the model.
         switch model.inspectorPane {
@@ -266,9 +286,6 @@ final class StudioActiveUIShell {
             item.isEnabled = button.isEnabled
             item.tooltip = button.help
             item.image = Self.glyph(button.symbol, tint: button.tint)
-        }
-        if shell.themeMenu.label != old?.themeMenu.label {
-            themeItem.label = shell.themeMenu.label
         }
         if shell.screenSizeMenu.label != old?.screenSizeMenu.label {
             screenSizeItem.label = shell.screenSizeMenu.label
@@ -309,10 +326,12 @@ final class StudioActiveUIShell {
                 items.append(.space())
             }
         }
-        let theme = AUIToolbarItem(label: shell.themeMenu.label, systemSymbol: shell.themeMenu.symbol, menu: pullDown(model: model) {
-            (StudioShellModel($0).themeMenu, StudioShellModel.chooseTheme)
+        // The app's themes, not the SwiftUI shell's editor themes.
+        let themeMenu = StudioAppTheme.menu(model)
+        let theme = AUIToolbarItem(label: themeMenu.label, systemSymbol: themeMenu.symbol, menu: pullDown(model: model) {
+            (StudioAppTheme.menu($0), StudioAppTheme.choose)
         })
-        theme.tooltip = shell.themeMenu.help
+        theme.tooltip = themeMenu.help
         let screenSize = AUIToolbarItem(label: shell.screenSizeMenu.label, systemSymbol: shell.screenSizeMenu.symbol, menu: pullDown(model: model) {
             (StudioShellModel($0).screenSizeMenu, StudioShellModel.chooseScreenSize)
         })
