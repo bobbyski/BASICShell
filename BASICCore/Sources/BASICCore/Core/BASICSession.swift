@@ -77,8 +77,17 @@ private final class BASICTimerControlBlock: @unchecked Sendable {
 }
 
 public final class BASICSession: BASICTimerHost, @unchecked Sendable {
-    /// Default graphical prompt template used by BASICStudio.
-    public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    /// Default graphical prompt template used by BASICStudio. The git branch
+    /// and changes segments drop out where there is no git to show.
+    public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m ${gitchanges} \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    /// The default before 2026-09-29, whose status segment was the literal
+    /// sample `!1`; a saved copy of it is moved to ``defaultPromptTemplate``.
+    public static let legacyDefaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+
+    /// `template`, or the current default if it is the old one.
+    public static func migratedPromptTemplate(_ template: String) -> String {
+        template == legacyDefaultPromptTemplate ? defaultPromptTemplate : template
+    }
     /// Plain text prompt template for hosts without powerline glyph support.
     public static let plainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "
     /// Classic READY prompt template.
@@ -2430,13 +2439,15 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
 
     private func renderedPrompt() -> String {
         let cwd = currentWorkingDirectoryForPrompt()
-        var rendered = promptTemplate
+        let git = promptGitState(for: cwd)
+        var rendered = Self.droppingEmptyGitSegments(from: promptTemplate, git: git)
         rendered = rendered.replacingOccurrences(of: "${currentdir}", with: abbreviatedPath(cwd))
-        rendered = rendered.replacingOccurrences(of: "${gitstatus}", with: gitPrompt(for: cwd))
+        rendered = rendered.replacingOccurrences(of: "${gitstatus}", with: git.branch)
+        rendered = rendered.replacingOccurrences(of: "${gitchanges}", with: git.changes)
         rendered = rendered.replacingOccurrences(of: "${user}", with: NSUserName())
         rendered = rendered.replacingOccurrences(of: "%cwd", with: abbreviatedPath(cwd))
-        rendered = rendered.replacingOccurrences(of: "%gitSegment", with: gitSegment(for: cwd))
-        rendered = rendered.replacingOccurrences(of: "%git", with: gitPrompt(for: cwd))
+        rendered = rendered.replacingOccurrences(of: "%gitSegment", with: git.branch.isEmpty ? "" : "   \(git.branch) ")
+        rendered = rendered.replacingOccurrences(of: "%git", with: git.branch)
         rendered = rendered.replacingOccurrences(of: "%nl", with: "\n")
         rendered = rendered.replacingOccurrences(of: "%%", with: "%")
         return rendered
@@ -2465,30 +2476,174 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return path
     }
 
-    private func gitSegment(for path: String) -> String {
-        let git = gitPrompt(for: path)
-        guard !git.isEmpty else { return "" }
-        return "   \(git) "
+    /// What the prompt shows of git. Both parts are empty outside a
+    /// repository, where git is not installed, and on iOS.
+    struct PromptGitState: Equatable {
+        /// The branch, with how far it is ahead ⇡ and behind ⇣.
+        var branch = ""
+        /// `!N`, N files changed, or empty when the tree is clean.
+        var changes = ""
     }
 
-    private func gitPrompt(for path: String) -> String {
-        guard let branch = Self.gitOutput(arguments: ["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !branch.isEmpty,
-              branch != "HEAD" else { return "" }
+    /// One `git status` for the whole prompt.
+    private func promptGitState(for path: String) -> PromptGitState {
+        guard let status = Self.gitOutput(arguments: ["-C", path, "status", "--porcelain=v2", "--branch"]) else {
+            return PromptGitState()
+        }
+        return Self.promptGitState(fromPorcelain: status)
+    }
 
-        let status = Self.gitOutput(arguments: ["-C", path, "status", "--porcelain=v2", "--branch"]) ?? ""
+    /// Reads `git status --porcelain=v2 --branch`.
+    static func promptGitState(fromPorcelain status: String) -> PromptGitState {
+        var branch = ""
         var suffix = ""
-        for line in status.split(separator: "\n") where line.hasPrefix("# branch.ab ") {
-            let pieces = line.split(separator: " ")
-            for piece in pieces {
-                if piece.hasPrefix("+"), piece.count > 1, piece != "+0" {
-                    suffix += " ⇡\(piece.dropFirst())"
-                } else if piece.hasPrefix("-"), piece.count > 1, piece != "-0" {
-                    suffix += " ⇣\(piece.dropFirst())"
+        var changed = 0
+        for line in status.split(separator: "\n") {
+            if line.hasPrefix("# branch.head ") {
+                let head = String(line.dropFirst("# branch.head ".count))
+                branch = head == "(detached)" ? "" : head
+            } else if line.hasPrefix("# branch.ab ") {
+                for piece in line.split(separator: " ") {
+                    if piece.hasPrefix("+"), piece.count > 1, piece != "+0" {
+                        suffix += " ⇡\(piece.dropFirst())"
+                    } else if piece.hasPrefix("-"), piece.count > 1, piece != "-0" {
+                        suffix += " ⇣\(piece.dropFirst())"
+                    }
                 }
+            } else if !line.hasPrefix("#"), !line.isEmpty {
+                changed += 1
             }
         }
-        return branch + suffix
+        guard !branch.isEmpty else { return PromptGitState() }
+        return PromptGitState(branch: branch + suffix, changes: changed > 0 ? "!\(changed)" : "")
+    }
+
+    // MARK: Dropping the git segments
+
+    /// `template` without its git segments where they would show nothing.
+    ///
+    /// A powerline prompt is runs of color: segments, each with its text, and
+    /// between them a one-glyph arrow colored from the segment before to the
+    /// segment after. A segment whose git tokens all come out empty is taken
+    /// out with the arrow before it, and the arrow after it is recolored from
+    /// the segment before, so the line still joins up. Text that is not a
+    /// powerline segment, or that shows something besides git, stays.
+    static func droppingEmptyGitSegments(from template: String, git: PromptGitState) -> String {
+        var runs = promptRuns(template)
+        var index = 0
+        while index < runs.count {
+            let run = runs[index]
+            guard !isPowerlineArrow(run.text), gitTokensRenderEmpty(in: run.text, git: git) else {
+                index += 1
+                continue
+            }
+            let before = index > 0 && isPowerlineArrow(runs[index - 1].text) ? index - 1 : nil
+            let after = index + 1 < runs.count && isPowerlineArrow(runs[index + 1].text) ? index + 1 : nil
+            switch (before, after) {
+            case let (before?, after?):
+                if let from = sgrColors(runs[before].escape), let to = sgrColors(runs[after].escape) {
+                    runs[after].escape = sgr(foreground: from.foreground, background: to.background)
+                }
+                runs.remove(at: index)
+                runs.remove(at: before)
+                index = before
+            case let (before?, nil):
+                // The last segment: the arrow before it now ends the line.
+                if let from = sgrColors(runs[before].escape) {
+                    runs[before].escape = sgr(foreground: from.foreground, background: "49")
+                }
+                runs.remove(at: index)
+            case let (nil, after?):
+                runs.remove(at: after)
+                runs.remove(at: index)
+            case (nil, nil):
+                // Not a powerline segment: only the tokens go, as text.
+                index += 1
+            }
+        }
+        return runs.map { $0.escape + $0.text }.joined()
+    }
+
+    /// A stretch of the template: an escape, then the text it colors.
+    struct PromptRun {
+        var escape: String
+        var text: String
+    }
+
+    static func promptRuns(_ template: String) -> [PromptRun] {
+        var runs: [PromptRun] = []
+        var current = PromptRun(escape: "", text: "")
+        var index = template.startIndex
+        while index < template.endIndex {
+            let next = template.index(after: index)
+            if template[index] == "\u{1B}", next < template.endIndex, template[next] == "[",
+               let end = template[next...].firstIndex(of: "m") {
+                if !current.escape.isEmpty || !current.text.isEmpty { runs.append(current) }
+                current = PromptRun(escape: String(template[index...end]), text: "")
+                index = template.index(after: end)
+            } else {
+                current.text.append(template[index])
+                index = next
+            }
+        }
+        if !current.escape.isEmpty || !current.text.isEmpty { runs.append(current) }
+        return runs
+    }
+
+    /// A powerline arrow: one glyph from the private-use block Powerline and
+    /// Nerd Fonts draw them in.
+    static func isPowerlineArrow(_ text: String) -> Bool {
+        guard text.unicodeScalars.count == 1, let scalar = text.unicodeScalars.first else { return false }
+        return (0xE0A0...0xE0D7).contains(scalar.value)
+    }
+
+    /// Whether `text` has a git token, every git token in it is empty, and
+    /// it has no other token that would still show something.
+    static func gitTokensRenderEmpty(in text: String, git: PromptGitState) -> Bool {
+        // `%gitSegment` already vanishes by itself; only a bare `%git` counts.
+        let withoutSegment = text.replacingOccurrences(of: "%gitSegment", with: "")
+        let bareGit = withoutSegment.contains("%git")
+        let others = withoutSegment
+            .replacingOccurrences(of: "${gitstatus}", with: "")
+            .replacingOccurrences(of: "${gitchanges}", with: "")
+            .replacingOccurrences(of: "%git", with: "")
+        guard !others.contains("${"), !others.contains("%cwd"), !others.contains("%nl") else { return false }
+        let tokens: [(present: Bool, value: String)] = [
+            (text.contains("${gitstatus}"), git.branch),
+            (text.contains("${gitchanges}"), git.changes),
+            (bareGit, git.branch),
+        ]
+        let present = tokens.filter(\.present)
+        return !present.isEmpty && present.allSatisfy { $0.value.isEmpty }
+    }
+
+    /// An escape's 256-color foreground and background (`49` is none).
+    static func sgrColors(_ escape: String) -> (foreground: String, background: String)? {
+        guard escape.hasPrefix("\u{1B}["), escape.hasSuffix("m") else { return nil }
+        let parts = escape.dropFirst(2).dropLast().split(separator: ";").map(String.init)
+        var foreground: String?
+        var background: String?
+        var index = 0
+        while index < parts.count {
+            if parts[index] == "38", index + 2 < parts.count, parts[index + 1] == "5" {
+                foreground = parts[index + 2]
+                index += 3
+            } else if parts[index] == "48", index + 2 < parts.count, parts[index + 1] == "5" {
+                background = parts[index + 2]
+                index += 3
+            } else {
+                if parts[index] == "49" { background = "49" }
+                index += 1
+            }
+        }
+        guard let foreground, let background else { return nil }
+        return (foreground, background)
+    }
+
+    static func sgr(foreground: String, background: String) -> String {
+        background == "49"
+            ? "\u{1B}[38;5;\(foreground);49m"
+            : "\u{1B}[38;5;\(foreground);48;5;\(background)m"
     }
 
     private static func gitOutput(arguments: [String]) -> String? {
@@ -2496,10 +2651,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         // No git to run on iOS; the prompt shows no git segment.
         return nil
         #else
+        guard let git = gitExecutable else { return nil }
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git"] + arguments
+        process.executableURL = git
+        process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = Pipe()
 
@@ -2514,6 +2670,42 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         return String(decoding: data, as: UTF8.self)
         #endif
     }
+
+    #if !os(iOS)
+    /// The git on the path, found once, or nil where there is none. A Mac
+    /// without the developer tools has only a stub `/usr/bin/git` that asks
+    /// to install them, a dialog at every prompt, so that counts as none.
+    private static let gitExecutable: URL? = {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        for directory in path.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent("git")
+            guard FileManager.default.isExecutableFile(atPath: candidate.path) else { continue }
+            #if os(macOS)
+            if candidate.path == "/usr/bin/git", !developerToolsInstalled() { continue }
+            #endif
+            return candidate
+        }
+        return nil
+    }()
+
+    #if os(macOS)
+    /// `xcode-select -p` fails, without a dialog, when there are no tools.
+    private static func developerToolsInstalled() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+    #endif
+    #endif
 }
 
 /// Low-level interpreter for a prepared `BASICProgram`.

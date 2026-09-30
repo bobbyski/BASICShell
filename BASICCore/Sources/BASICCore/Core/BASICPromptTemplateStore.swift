@@ -32,7 +32,7 @@ public enum BASICPromptTemplateStore {
               !payload.promptTemplate.isEmpty else {
             return defaultTemplate
         }
-        return payload.promptTemplate
+        return BASICSession.migratedPromptTemplate(payload.promptTemplate)
     }
 
     /// Saves the shared prompt template for all AIBasic hosts.
