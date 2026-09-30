@@ -13,8 +13,13 @@ public enum BASICPromptTemplateStore {
     /// Location of the shared prompt settings file.
     public static var settingsURL: URL {
         let fileManager = FileManager.default
+        #if os(iOS)
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #else
+        let home = fileManager.homeDirectoryForCurrentUser
+        #endif
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+            ?? home.appendingPathComponent("Library/Application Support")
         return base
             .appendingPathComponent("AIBasic", isDirectory: true)
             .appendingPathComponent(fileName)

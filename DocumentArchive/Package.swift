@@ -12,7 +12,7 @@ import PackageDescription
 // where it is the right answer — is neither of those things.
 let package = Package(
     name: "DocumentArchive",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS(.v17)],
     products: [
         .library(name: "DocumentArchive", targets: ["DocumentArchive"])
     ],

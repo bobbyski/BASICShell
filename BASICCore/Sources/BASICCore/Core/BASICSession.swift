@@ -2451,7 +2451,11 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private func abbreviatedPath(_ path: String) -> String {
+        #if os(iOS)
+        let home = NSHomeDirectory()
+        #else
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        #endif
         if path == home {
             return "~"
         }
@@ -2488,6 +2492,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     private static func gitOutput(arguments: [String]) -> String? {
+        #if os(iOS)
+        // No git to run on iOS; the prompt shows no git segment.
+        return nil
+        #else
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -2504,6 +2512,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self)
+        #endif
     }
 }
 

@@ -85,6 +85,10 @@ public enum BASICJIT {
         dialect: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Outcome {
+        #if os(iOS)
+        // No child processes on iOS, so no compiler to run.
+        return .unavailable(reason: "JIT is not available on iPhone and iPad; RUN still interprets")
+        #else
         guard let compiler = compilerPath(environment: environment) else {
             return .unavailable(reason: "basicc is not installed; RUN still interprets")
         }
@@ -132,6 +136,7 @@ public enum BASICJIT {
             return .refused(diagnostics: lines.isEmpty ? ["basicc failed with no message"] : lines)
         }
         return .built(binary: binary)
+        #endif
     }
 
     /// The text of a program, as a file the compiler can read.
@@ -163,6 +168,10 @@ public enum BASICJIT {
     /// returned to its prompt with echo off would look broken.
     @discardableResult
     public static func run(binary: String, arguments: [String] = []) -> Int32 {
+        #if os(iOS)
+        // Never reached: `compile` builds nothing on iOS.
+        return -1
+        #else
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
@@ -200,6 +209,7 @@ public enum BASICJIT {
             _ = tcsetattr(terminal, TCSADRAIN, &savedTermios)
         }
         return process.terminationStatus
+        #endif
     }
 
     /// `tcsetpgrp` from a background process group signals `SIGTTOU` at the

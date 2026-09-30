@@ -1140,6 +1140,7 @@ public extension BASICProcessHost {
     }
 }
 
+#if !os(iOS)
 /// Helper for running shell commands for hosts that allow SYSTEM support.
 public enum BASICSystemCommand {
     /// Runs a command through `/bin/sh -lc` and returns combined stdout/stderr text.
@@ -1618,3 +1619,45 @@ public enum BASICSystemCommand {
         return patch.applying(to: environment)
     }
 }
+#else
+/// iOS runs no child processes, so SYSTEM, SHELL, PIPE and running an
+/// executable say so rather than failing somewhere deeper.
+public enum BASICSystemCommand {
+    static var unavailable: BASICError {
+        .runtime("Running other programs is not available on iPhone and iPad")
+    }
+
+    public static func run(
+        _ command: String,
+        workingDirectory: URL? = nil,
+        columns: Int? = nil,
+        rows: Int? = nil
+    ) throws -> String {
+        throw unavailable
+    }
+
+    public static func runResult(
+        _ command: String,
+        workingDirectory: URL? = nil,
+        columns: Int? = nil,
+        rows: Int? = nil,
+        environment: BASICEnvironmentPatch = .empty
+    ) throws -> BASICSystemCommandResult {
+        throw unavailable
+    }
+
+    public static func runProcess(
+        _ request: BASICProcessRequest,
+        observer: BASICForegroundProcessObserver? = nil
+    ) throws -> BASICProcessResult {
+        throw unavailable
+    }
+
+    public static func runPipeline(
+        _ requests: [BASICProcessRequest],
+        observer: BASICForegroundProcessObserver? = nil
+    ) throws -> BASICProcessResult {
+        throw unavailable
+    }
+}
+#endif
