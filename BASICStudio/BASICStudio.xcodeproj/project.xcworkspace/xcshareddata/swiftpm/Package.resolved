@@ -1,5 +1,4 @@
 {
-  "originHash" : "cdbb994763a5850bed9ee488e157e9db5d1d5956a4a0135ca5a2a4aa63a25485",
   "pins" : [
     {
       "identity" : "bson",
@@ -83,6 +82,24 @@
       }
     },
     {
+      "identity" : "swift-docc-plugin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-docc-plugin",
+      "state" : {
+        "revision" : "647c708be89f834fa6a6d4945442793a77ddf5b6",
+        "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "swift-docc-symbolkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-symbolkit",
+      "state" : {
+        "revision" : "b45d1f2ed151d057b54504d653e0da5552844e34",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "swift-log",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
@@ -162,16 +179,7 @@
         "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
         "version" : "1.8.1"
       }
-    },
-    {
-      "identity" : "swiftterm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bobbyski/SwiftTerm.git",
-      "state" : {
-        "revision" : "3deddef3e6c5a46ef924505aeba304972e0fe3cc",
-        "version" : "1.5.6"
-      }
     }
   ],
-  "version" : 3
+  "version" : 2
 }

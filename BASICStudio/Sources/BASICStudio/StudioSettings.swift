@@ -1,5 +1,9 @@
 import BASICCore
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import CoreText
 import GameController
 import MarkdownUI
@@ -168,13 +172,25 @@ struct StudioSettings: Codable {
     }
 }
 
+/// The user's home on the Mac; the app's own on iPhone and iPad, where there
+/// is no other to reach.
+enum StudioHome {
+    static var url: URL {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser
+        #else
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        #endif
+    }
+}
+
 struct StudioSettingsStore {
     private static let fileName = "StudioSettings.json"
 
     static var settingsURL: URL {
         let fileManager = FileManager.default
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+            ?? StudioHome.url.appendingPathComponent("Library/Application Support")
         return base
             .appendingPathComponent("AIBasic", isDirectory: true)
             .appendingPathComponent(fileName)
@@ -209,6 +225,8 @@ private extension JSONEncoder {
     }
 }
 
+#if os(macOS)
+// The SwiftUI shell's Settings, which is macOS-only.
 struct SettingsView: View {
     @ObservedObject var model: StudioModel
     /// General at first, or the tab the parity walk asked for.
@@ -309,3 +327,4 @@ struct SettingsView: View {
         SettingsViewModel.fontFamilies(installed: NSFontManager.shared.availableFontFamilies)
     }
 }
+#endif

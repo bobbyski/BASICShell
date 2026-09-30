@@ -1,7 +1,21 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import CoreText
 
 enum StudioFonts {
+    /// Every font family installed, for the font pickers.
+    @MainActor
+    static var installedFamilies: [String] {
+        #if canImport(AppKit)
+        NSFontManager.shared.availableFontFamilies
+        #else
+        UIFont.familyNames
+        #endif
+    }
+
     static let defaultFamily = "MesloLGS NF"
     static let legacyDefaultFamily = "SF Mono"
     static let legacyPlainPromptTemplate = "${user}:${currentdir} ${gitstatus}> "

@@ -18,6 +18,7 @@
 		093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
 		0B5521E79B9FA05A08A81339 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
 		0F1F3E09500DA103690EB456 /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
+		11F34446FB037BBC10B313CF /* ActiveUICoreEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; };
 		123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */; };
 		196B696B2A6B42F526ECD7AC /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
 		1AEDBCF61A189708EB2AF9A6 /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 717CF46DC0F9232475AACCEA /* ActiveUI */; };
@@ -116,9 +117,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		01076CFFB99EF0CDC95B7827 /* ActiveUICoreEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICoreEditor; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor; sourceTree = SOURCE_ROOT; };
 		011AFAC86C3D24E2C652443E /* ActiveUICode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICode; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICode; sourceTree = SOURCE_ROOT; };
 		0CB8284FB31709C1BD017047 /* MonacoEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonacoEditor.swift; sourceTree = "<group>"; };
 		1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioHostFlags.swift; sourceTree = "<group>"; };
+		1EB2534D1B03D7BFF565C132 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm; sourceTree = SOURCE_ROOT; };
 		1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudioApp.swift; sourceTree = "<group>"; };
 		20D23305654DCC7C771397BA /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDocumentationPane.swift; sourceTree = "<group>"; };
@@ -204,6 +207,7 @@
 				FBC538EBADE880382929DBAA /* ActiveUI in Frameworks */,
 				063B309AF05262967DF8B5E6 /* ActiveUIMarkdown in Frameworks */,
 				01FA6E3FA7FDA58495D32DED /* ActiveUICode in Frameworks */,
+				11F34446FB037BBC10B313CF /* ActiveUICoreEditor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -262,9 +266,11 @@
 			children = (
 				E01D1E66A75BA2495AEA6493 /* ActiveUI */,
 				011AFAC86C3D24E2C652443E /* ActiveUICode */,
+				01076CFFB99EF0CDC95B7827 /* ActiveUICoreEditor */,
 				66762CB96B98F1DE50DFCE7D /* ActiveUIMarkdown */,
 				2F75838E7973F9367D5B0837 /* BASICCore */,
 				9B36187CAF5A2F8FF3127D1A /* DocumentArchive */,
+				1EB2534D1B03D7BFF565C132 /* SwiftTerm */,
 				FDA023CFFFD1F535E44E65FD /* SwiftyCodeEditor */,
 			);
 			name = Packages;
@@ -398,6 +404,7 @@
 				631B95E6F76EB92AAB7792ED /* ActiveUI */,
 				D9A4F83464CADD0769EA55F8 /* ActiveUIMarkdown */,
 				6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */,
+				2BE869386D81B9149D57D58B /* ActiveUICoreEditor */,
 			);
 			productName = "BASICStudio-iOS";
 			productReference = AF1AA5671B54AAC04C197A6E /* BASICStudio-iOS.app */;
@@ -433,13 +440,14 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
-				22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 				F766C66770B99FFD0D86DFFE /* XCRemoteSwiftPackageReference "VectorTerminalSDK" */,
 				E88FD3C083EEDDCE90DCC798 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUI" */,
 				4AE31DEFF35EF04327D7CE47 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICode" */,
+				356F9274F60157ABCA4D3A05 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor" */,
 				BAA134AC8186EEF8E6B53498 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown" */,
 				51196CCCA29E213E68ADF750 /* XCLocalSwiftPackageReference "../BASICCore" */,
 				530285D0FF39F32DD8A80DC9 /* XCLocalSwiftPackageReference "../DocumentArchive" */,
+				D3BAD6ABFA4C7A521086FE97 /* XCLocalSwiftPackageReference "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm" */,
 				25EFF9CF2C51DE9F3649914D /* XCLocalSwiftPackageReference "../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -823,6 +831,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor;
 		};
+		356F9274F60157ABCA4D3A05 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor;
+		};
 		4AE31DEFF35EF04327D7CE47 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUICode" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../AIResearch/ActiveUI/Code/ActiveUICode;
@@ -839,6 +851,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown;
 		};
+		D3BAD6ABFA4C7A521086FE97 /* XCLocalSwiftPackageReference "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm;
+		};
 		E88FD3C083EEDDCE90DCC798 /* XCLocalSwiftPackageReference "../../../../AIResearch/ActiveUI/Code/ActiveUI" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../../AIResearch/ActiveUI/Code/ActiveUI;
@@ -846,14 +862,6 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/bobbyski/SwiftTerm.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.5.6;
-			};
-		};
 		C29EBCC0C6B0AAF73AA789AB /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
@@ -879,7 +887,6 @@
 		};
 		130A03B0A453DD5074363E15 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
 		};
 		21507555AB51C2FBB797BF22 /* VectorTerminalSDK */ = {
@@ -887,9 +894,12 @@
 			package = F766C66770B99FFD0D86DFFE /* XCRemoteSwiftPackageReference "VectorTerminalSDK" */;
 			productName = VectorTerminalSDK;
 		};
+		2BE869386D81B9149D57D58B /* ActiveUICoreEditor */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ActiveUICoreEditor;
+		};
 		4FCF7AE734FDC4B7B917BBD7 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 22A0F3B194C757563E83E5F7 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
 		};
 		50B80D301CFFA94A39A1AF20 /* DocumentArchive */ = {

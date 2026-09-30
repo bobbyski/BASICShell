@@ -52,10 +52,13 @@ extension StudioModel {
 
     /// Stops a compiled run, as Stop does an interpreted one.
     func stopJITProgram() {
+        #if os(macOS)
         jitProcess?.terminate()
+        #endif
     }
 
     private func start(binary: String) {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         let output = Pipe()
@@ -92,6 +95,11 @@ extension StudioModel {
         jitProcess = process
         jitInput = input
         isJITRunning = true
+        #else
+        // Unreachable: `BASICJIT.compile` builds nothing on iOS.
+        appendJITOutput("JIT: not available on iPhone and iPad\n")
+        appendJITOutput(prompt)
+        #endif
     }
 
     private func finishJITRun(status: Int32, binary: String) {

@@ -1,5 +1,9 @@
 import BASICCore
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import GameController
 import MarkdownUI
 import SwiftUI

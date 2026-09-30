@@ -6,7 +6,11 @@
 //  (TUIKIT_PLAN.md §7, option A).
 //
 
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import TUIKit
 
 /// Runs a TUIKit application in the console pane.
@@ -114,8 +118,12 @@ actor StudioTUIDriver: TerminalDriver {
     /// the pasteboard is in reach.
     func setClipboard(_ text: String) async {
         await MainActor.run {
+            #if canImport(AppKit)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+            #else
+            UIPasteboard.general.string = text
+            #endif
         }
     }
 

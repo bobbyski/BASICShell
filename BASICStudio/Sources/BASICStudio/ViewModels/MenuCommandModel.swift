@@ -137,7 +137,10 @@ struct MenuCommandModel: Equatable {
     @MainActor
     static func perform(_ action: Action, on model: StudioModel) {
         switch action {
-        case .about: StudioAbout.show()
+        case .about:
+            #if canImport(AppKit)
+            StudioAbout.show()
+            #endif
         case .newProgram: model.newProgramFromMenu()
         case .newProject: model.newProjectFromMenu()
         case .load: model.loadProgramFromMenu()

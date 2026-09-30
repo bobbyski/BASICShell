@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 
 /// The themes the ActiveUI shell offers: the ones FreebirdStudio, VGTerm and
@@ -77,8 +81,12 @@ enum StudioAppTheme {
         case native: break
         default: return .dark
         }
+        #if canImport(AppKit)
         let appearance = NSApp?.effectiveAppearance ?? NSAppearance.currentDrawing()
         return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+        #else
+        return UITraitCollection.current.userInterfaceStyle == .dark ? .dark : .light
+        #endif
     }
 
     /// `input` with the editor's colors taken from the app theme.

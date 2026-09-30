@@ -3,9 +3,12 @@
 //  BASICStudio
 //
 //  The program editor in the ActiveUI shell: ActiveUI's own source editor
-//  over SwiftyCodeEditor, where the SwiftUI shell has Monaco.
+//  over SwiftyCodeEditor on the Mac, where the SwiftUI shell has Monaco, and
+//  ActiveUI's canvas editor on iPhone and iPad, where SwiftyCodeEditor's
+//  AppKit text engine does not run.
 //
 
+#if canImport(SwiftyCodeEditor)
 import ActiveUI
 import ActiveUICode
 import AppKit
@@ -254,3 +257,56 @@ final class SourceEditorAUI {
         )
     }
 }
+
+#else
+import ActiveUI
+import ActiveUICoreEditor
+import BASICCore
+import CoreGraphics
+
+/// The program editor on iPhone and iPad: `AUICoreSourceEditor`, which draws
+/// through ActiveUI's canvas and so runs where SwiftyCodeEditor's AppKit text
+/// engine cannot. Driven by the same ``EditorRenderInput``.
+///
+/// BASIC is colored by CodeEditorCore's `basic` grammar. Not yet here, and on
+/// the Mac: find, and the breakpoint gutter.
+@MainActor
+final class SourceEditorAUI {
+    /// The editor, to put in a layout.
+    let editor: AUICoreSourceEditor
+    /// Called with the whole text after each edit.
+    var onTextChange: ((String) -> Void)?
+    /// Called with a 1-based line when its gutter is clicked; not yet wired
+    /// on iOS.
+    var onToggleBreakpoint: ((Int) -> Void)?
+    /// What was last drawn.
+    private(set) var drawn: EditorRenderInput?
+
+    init() {
+        editor = AUICoreSourceEditor(text: "", language: "basic")
+        editor.onChange = { [weak self] text in self?.onTextChange?(text) }
+    }
+
+    /// Brings the editor up to `input`, changing only what differs.
+    func sync(_ input: EditorRenderInput) {
+        let old = drawn
+        // Against the editor's own text, which typing changes without a sync.
+        if editor.text != input.text {
+            editor.text = input.text
+        }
+        if input.isReadOnly != old?.isReadOnly {
+            editor.isEditable = !input.isReadOnly
+        }
+        if input.showsLineNumbers != old?.showsLineNumbers {
+            editor.showsLineNumbers = input.showsLineNumbers
+        }
+        if input.fontSize != old?.fontSize {
+            editor.fontSize = CGFloat(input.fontSize)
+        }
+        if input.executionLine != old?.executionLine, let line = input.executionLine {
+            editor.scroll(toLine: line)
+        }
+        drawn = input
+    }
+}
+#endif

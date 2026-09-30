@@ -7,9 +7,10 @@ options:
 packages:
   BASICCore:
     path: ../BASICCore
+  # The local checkout, on develop: the only SwiftTerm with an iOS
+  # VectorTerminalView (merged 96c3973, in no tag yet).
   SwiftTerm:
-    url: https://github.com/bobbyski/SwiftTerm.git
-    from: 1.5.6
+    path: ../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm
   VectorTerminalSDK:
     url: https://github.com/bobbyski/VectorTerminalSDK.git
     from: 1.5.6
@@ -29,6 +30,9 @@ packages:
     path: ../../../../AIResearch/ActiveUI/Code/ActiveUICode
   SwiftyCodeEditor:
     path: ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor
+  # The editor on iPhone and iPad, where SwiftyCodeEditor does not run.
+  ActiveUICoreEditor:
+    path: ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -148,6 +152,8 @@ targets:
         product: ActiveUIMarkdown
       - package: ActiveUICode
         product: ActiveUICode
+      - package: ActiveUICoreEditor
+        product: ActiveUICoreEditor
     info:
       path: iOS/Info.plist
       properties:

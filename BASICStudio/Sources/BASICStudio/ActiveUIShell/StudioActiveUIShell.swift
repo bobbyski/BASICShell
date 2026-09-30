@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import Combine
 import Foundation
 
@@ -160,6 +164,9 @@ final class StudioActiveUIShell {
     /// Puts up the window and runs the app. Returns only when the app quits.
     static func run(launch: StudioLaunchOptions) {
         StudioFonts.registerBundledFonts()
+        #if os(iOS)
+        runOnUIKit(launch: launch)
+        #else
         if launch.walk != nil {
             // The parity walk photographs the window; it must not take the
             // focus from whoever is at the keyboard.
@@ -189,7 +196,39 @@ final class StudioActiveUIShell {
             title: shell.model.windowTitle,
             contentSize: CGSize(width: 1100, height: 720)
         )
+        #endif
     }
+
+    #if os(iOS)
+    /// iPhone and iPad. A view built before `UIApplicationMain` looks right
+    /// until the first touch reaches it, and then the app aborts (ActiveUI's
+    /// rule), so only the model and the menus exist before launch; the shell
+    /// is built on first use, inside the closures `run` calls once the app
+    /// is running.
+    private static func runOnUIKit(launch: StudioLaunchOptions) {
+        let model = StudioModel(launch: launch)
+        let shell: @MainActor () -> StudioActiveUIShell = {
+            if let running { return running }
+            let built = StudioActiveUIShell(model: model)
+            running = built
+            return built
+        }
+        AUIApplication.onLaunch = {
+            StudioAppTheme.install(model.appTheme)
+            shell().refresh()
+            model.runStartupProgramIfNeeded()
+        }
+        let menus = makeMenuBar(model: model, onSettings: { shell().settings.show() }).menus
+        _ = AUIApplication.run(
+            placement: .fill,
+            menu: menus,
+            title: model.windowTitle,
+            toolbar: { shell().toolbar }
+        ) {
+            shell().root
+        }
+    }
+    #endif
 
     /// The shell `run` started, for the life of the process.
     private(set) static var running: StudioActiveUIShell?
@@ -215,9 +254,11 @@ final class StudioActiveUIShell {
     /// Refreshes when the system's appearance changes, so under Native the
     /// editor turns light or dark with it.
     func observeSystemAppearance() {
+        #if canImport(AppKit)
         appearanceObservation = NSApp?.observe(\.effectiveAppearance) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
         }
+        #endif
     }
 
     /// Asks for one refresh on the next turn of the main queue, however many
@@ -384,7 +425,8 @@ final class StudioActiveUIShell {
     }
 
     /// An SF Symbol drawn in the tint's color, as the SwiftUI toolbar does.
-    static func glyph(_ symbol: String, tint: StudioShellModel.Tint) -> NSImage? {
+    static func glyph(_ symbol: String, tint: StudioShellModel.Tint) -> AUIImage? {
+        #if canImport(AppKit)
         let color: NSColor = switch tint {
         case .normal: .labelColor
         case .dimmed: .secondaryLabelColor
@@ -398,6 +440,16 @@ final class StudioActiveUIShell {
         // its own gray; the tint shows only once it is not one.
         image?.isTemplate = false
         return image
+        #else
+        let color: UIColor = switch tint {
+        case .normal: .label
+        case .dimmed: .secondaryLabel
+        case .selected: .systemBlue
+        case .alert: .systemRed
+        case .on: .systemGreen
+        }
+        return UIImage(systemName: symbol)?.withTintColor(color, renderingMode: .alwaysOriginal)
+        #endif
     }
 
     // MARK: The menu bar

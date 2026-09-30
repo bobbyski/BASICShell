@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 
 /// The window's body in the ActiveUI shell: the main pane on the left, the
@@ -90,6 +94,7 @@ final class InspectorLayout: AUIView {
     }
 }
 
+#if canImport(AppKit)
 /// A divider that drags: a one-point rule with a small grip, reporting how
 /// far the pointer has moved since the drag began. Used across the window
 /// (the inspector's width) and down the Debug pane (the code view's height).
@@ -154,3 +159,55 @@ final class DragHandleView: NSView {
         onDrag?(0, .ended)
     }
 }
+#else
+/// The same divider on iPhone and iPad, dragged by a pan instead of a pointer.
+final class DragHandleView: UIView {
+    enum Axis { case horizontal, vertical }
+    enum Phase { case began, changed, ended }
+
+    /// Called with the finger's travel along the axis since it went down:
+    /// rightward or downward is positive.
+    var onDrag: ((CGFloat, Phase) -> Void)?
+    let axis: Axis
+    /// The Mac's tooltip; kept so a caller sets it the same way on both.
+    var toolTip: String?
+
+    init(axis: Axis) {
+        self.axis = axis
+        super.init(frame: .zero)
+        isOpaque = false
+        backgroundColor = .clear
+        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(panned(_:))))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("DragHandleView is built in code")
+    }
+
+    override func draw(_ rect: CGRect) {
+        UIColor.separator.setFill()
+        let grip: CGRect
+        switch axis {
+        case .horizontal:
+            UIRectFill(CGRect(x: bounds.midX - 0.5, y: 0, width: 1, height: bounds.height))
+            grip = CGRect(x: bounds.midX - 1.5, y: bounds.midY - 22, width: 3, height: 44)
+        case .vertical:
+            UIRectFill(CGRect(x: 0, y: bounds.midY - 0.5, width: bounds.width, height: 1))
+            grip = CGRect(x: bounds.midX - 22, y: bounds.midY - 1.5, width: 44, height: 3)
+        }
+        UIColor.tertiaryLabel.setFill()
+        UIBezierPath(roundedRect: grip, cornerRadius: 2).fill()
+    }
+
+    // UIKit's y already runs downward, so a downward drag is positive as is.
+    @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        let travel = pan.translation(in: self)
+        switch pan.state {
+        case .began: onDrag?(0, .began)
+        case .changed: onDrag?(axis == .horizontal ? travel.x : travel.y, .changed)
+        default: onDrag?(0, .ended)
+        }
+    }
+}
+#endif

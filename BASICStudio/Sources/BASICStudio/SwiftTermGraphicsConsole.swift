@@ -1,5 +1,9 @@
 import BASICCore
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import CoreText
 import GameController
 import MarkdownUI
@@ -9,6 +13,7 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
+#if os(macOS)
 struct SwiftTermGraphicsConsole: NSViewRepresentable {
     @ObservedObject var model: StudioModel
 
@@ -23,12 +28,23 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
         nsView.render(ConsoleRenderInput(model))
     }
 }
+#endif
+
+#if os(macOS)
+/// The console's base view and font: AppKit's on the Mac, UIKit's on iPhone
+/// and iPad, where SwiftTerm's VectorTerminalView is a UIKit view.
+typealias ConsoleBaseView = NSView
+typealias ConsoleFont = NSFont
+#else
+typealias ConsoleBaseView = UIView
+typealias ConsoleFont = UIFont
+#endif
 
 @MainActor
-final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDelegate {
+final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency TerminalViewDelegate {
     weak var model: StudioModel?
 
-    private let terminalView = VectorTerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular))
+    private let terminalView = VectorTerminalView(frame: .zero, font: ConsoleFont.monospacedSystemFont(ofSize: 13, weight: .regular))
     private var renderedCharacterCount = 0
     private var renderedScrollbackLines: Int?
     private var renderedScreenSize: TerminalScreenSize?
@@ -48,13 +64,16 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private var mouseUpMonitor: Any?
     private var pendingEscapeBytes: [UInt8] = []
     private var pendingEscapeFlushID = 0
+    #if os(macOS)
     private var mouseTrackingArea: NSTrackingArea?
+    #endif
     private var lastMouseEventTimestamp: TimeInterval?
     private var lastMouseMovePostTimestamp: TimeInterval?
     private var lastPostedVTGCanvasSize: (width: Int, height: Int)?
     private var isVTGDisplayInvalidationScheduled = false
 
     deinit {
+        #if os(macOS)
         MainActor.assumeIsolated {
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
@@ -66,9 +85,10 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             removeTrackingArea(mouseTrackingArea)
         }
         }
+        #endif
     }
 
-    override init(frame frameRect: NSRect) {
+    override init(frame frameRect: CGRect) {
         super.init(frame: frameRect)
         setup()
     }
@@ -79,19 +99,30 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     }
 
     private func setup() {
+        #if os(macOS)
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        #else
+        backgroundColor = .systemBackground
+        #endif
 
         terminalView.terminalDelegate = self
+        #if os(macOS)
         terminalView.configureNativeColors()
+        #endif
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
+        #if os(macOS)
+        // On iPhone and iPad the terminal view takes the keyboard itself and
+        // hands its bytes to `send`.
         installKeyMonitor()
         installMouseUpMonitor()
+        #endif
 
         addSubview(terminalView)
     }
 
+    #if os(macOS)
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -111,15 +142,17 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             return event
         }
     }
+    #endif
 
     private func applyFont(family: String, size: Double) {
-        let font = NSFont(name: family, size: CGFloat(size))
-            ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+        let font = ConsoleFont(name: family, size: CGFloat(size))
+            ?? ConsoleFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
         terminalView.font = font
         applyScreenSize()
         refreshTerminalDisplay()
     }
 
+    #if os(macOS)
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(terminalView)
@@ -187,6 +220,19 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         )
         super.scrollWheel(with: event)
     }
+    #else
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            _ = terminalView.becomeFirstResponder()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        applyScreenSize()
+    }
+    #endif
 
     /// Points this view at `model`: its input goes there, and the model's
     /// VTG drawing comes here. Safe to call on every update.
@@ -284,7 +330,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
             updateLiveVTGCellSize()
             postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
-            terminalView.needsDisplay = true
+            redisplay(terminalView)
             return
         }
 
@@ -302,7 +348,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.updateLiveVTGCanvasSize(width: canvas.width, height: canvas.height)
         updateLiveVTGCellSize()
         postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
-        terminalView.needsDisplay = true
+        redisplay(terminalView)
     }
 
     private func feedTerminal(_ text: String) {
@@ -313,7 +359,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private func refreshTerminalDisplay() {
         let terminal = terminalView.getTerminal()
         terminal.refresh(startRow: 0, endRow: max(0, terminal.rows - 1))
-        terminalView.needsDisplay = true
+        redisplay(terminalView)
         terminalView.setNeedsDisplay(terminalView.bounds)
         positionSwiftTermCaret()
         updateScrollerVisibility()
@@ -325,13 +371,25 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     /// only inside an `NSScrollView`, so on its own it is always drawn. It is
     /// private to SwiftTerm, hence finding it among the subviews.
     private func updateScrollerVisibility() {
+        #if os(macOS)
         let isHidden = !terminalView.canScroll
         for case let scroller as NSScroller in terminalView.subviews where scroller.isHidden != isHidden {
             scroller.isHidden = isHidden
         }
+        #endif
+    }
+
+    /// Marks `view` for drawing, in whichever framework draws it.
+    private func redisplay(_ view: ConsoleBaseView) {
+        #if os(macOS)
+        view.needsDisplay = true
+        #else
+        view.setNeedsDisplay()
+        #endif
     }
 
     private func positionSwiftTermCaret() {
+        #if os(macOS)
         guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
 
         let terminal = terminalView.getTerminal()
@@ -344,6 +402,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         for subview in terminalView.subviews where String(describing: type(of: subview)).contains("CaretView") {
             subview.frame.origin = CGPoint(x: x, y: y)
         }
+        #endif
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
@@ -379,13 +438,13 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             guard let self else { return }
             self.isVTGDisplayInvalidationScheduled = false
 
-            self.terminalView.vtgOverlayView.needsDisplay = true
+            self.redisplay(self.terminalView.vtgOverlayView)
             self.terminalView.vtgOverlayView.setNeedsDisplay(self.terminalView.vtgOverlayView.bounds)
 
-            self.terminalView.needsDisplay = true
+            self.redisplay(self.terminalView)
             self.terminalView.setNeedsDisplay(self.terminalView.bounds)
 
-            self.needsDisplay = true
+            self.redisplay(self)
             self.setNeedsDisplay(self.bounds)
         }
     }
@@ -395,6 +454,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.updateLiveVTGCellSize(width: cellSize.width, height: cellSize.height)
     }
 
+    #if os(macOS)
     private func updateMouseTrackingArea() {
         if let mouseTrackingArea {
             removeTrackingArea(mouseTrackingArea)
@@ -408,6 +468,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         mouseTrackingArea = area
         addTrackingArea(area)
     }
+    #endif
 
     private func postResizeEventIfNeeded(width: Int, height: Int) {
         let normalized = (width: max(1, width), height: max(1, height))
@@ -420,6 +481,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         model?.postVTGResizeEvent(width: normalized.width, height: normalized.height)
     }
 
+    #if os(macOS)
     private func postMouseEvent(
         from event: NSEvent,
         subtype: String,
@@ -611,6 +673,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         case (true, true, true): return 12
         }
     }
+    #endif
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         if let driver = model?.activeTUIDriver {
@@ -935,11 +998,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
             return model?.consoleCompletionWorkingDirectoryPath() ?? FileManager.default.currentDirectoryPath
         }
         if visibleDirectory == "~/" {
-            return FileManager.default.homeDirectoryForCurrentUser.path
+            return StudioHome.url.path
         }
         if visibleDirectory.hasPrefix("~/") {
             let rest = visibleDirectory.dropFirst(2)
-            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(rest)).path
+            return StudioHome.url.appendingPathComponent(String(rest)).path
         }
         if visibleDirectory.hasPrefix("/") {
             return NSString(string: visibleDirectory).expandingTildeInPath
@@ -1145,7 +1208,7 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
     private static let maxCommandHistoryEntries = 500
     private static let commandHistoryURL: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+            ?? StudioHome.url.appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("AIBasic", isDirectory: true).appendingPathComponent("BASICShellHistory.txt")
     }()
 
@@ -1225,6 +1288,11 @@ final class AIBasicTerminalContainerView: NSView, @preconcurrency TerminalViewDe
         return start..<end
     }
     func scrolled(source: TerminalView, position: Double) {}
+    #if !os(macOS)
+    /// SwiftTerm defaults this on the Mac and not on iOS. Links open nothing
+    /// here: `linkReporting` is off.
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
+    #endif
     func bell(source: TerminalView) {}
     func clipboardCopy(source: TerminalView, content: Data) {}
 

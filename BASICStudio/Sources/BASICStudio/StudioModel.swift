@@ -1,10 +1,17 @@
 import BASICCore
 import TUIKit
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import CoreText
 import GameController
 import MarkdownUI
 import SwiftUI
+#if os(iOS)
+import ActiveUI
+#endif
 import SwiftTerm
 import UniformTypeIdentifiers
 import VectorTerminalSDK
@@ -64,7 +71,12 @@ final class StudioModel: ObservableObject {
     /// the second.
     @Published var isJITRunning = false
     /// The compiled program's process and its standard input, while it runs.
+    #if os(macOS)
     var jitProcess: Process?
+    #else
+    /// iOS runs no child processes; JIT stops at `BASICJIT.compile`.
+    var jitProcess: Never?
+    #endif
     var jitInput: Pipe?
     @Published var isConsoleOverwriteMode = false
     @Published var areGraphicsLayersVisible = true
@@ -583,20 +595,17 @@ final class StudioModel: ObservableObject {
     }
 
     func loadProgramFromMenu() {
-        let panel = NSOpenPanel()
-        panel.title = "Load BASIC Program"
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = Self.basicProgramContentTypes
-        panel.directoryURL = currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        do {
-            try loadProgram(from: url)
-        } catch {
-            presentFileError("Unable to load \(url.lastPathComponent).", error: error)
+        chooseFile(FileRequest(
+            kind: .openProgram,
+            title: "Load BASIC Program",
+            directory: currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
+        )) { [weak self] url in
+            guard let self else { return }
+            do {
+                try loadProgram(from: url)
+            } catch {
+                presentFileError("Unable to load \(url.lastPathComponent).", error: error)
+            }
         }
     }
 
@@ -637,16 +646,17 @@ final class StudioModel: ObservableObject {
     /// File ▸ New (⌘N): a new BASIC program in the current directory, named
     /// in a save panel that starts there, then opened in the editor.
     func newProgramFromMenu() {
-        let panel = NSSavePanel()
-        panel.title = "New BASIC Program"
-        panel.directoryURL = currentDirectoryURL
-        panel.nameFieldStringValue = Self.untitledName(in: currentDirectoryURL)
-        panel.allowedContentTypes = Self.basicProgramContentTypes
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try createProgram(at: url)
-        } catch {
-            presentFileError("Unable to create \(url.lastPathComponent).", error: error)
+        chooseFile(FileRequest(
+            kind: .saveProgram(name: Self.untitledName(in: currentDirectoryURL)),
+            title: "New BASIC Program",
+            directory: currentDirectoryURL
+        )) { [weak self] url in
+            guard let self else { return }
+            do {
+                try createProgram(at: url)
+            } catch {
+                presentFileError("Unable to create \(url.lastPathComponent).", error: error)
+            }
         }
     }
 
@@ -664,17 +674,17 @@ final class StudioModel: ObservableObject {
     /// a main.bas in it; the folder opens as the project and main.bas in the
     /// editor.
     func newProjectFromMenu() {
-        let panel = NSSavePanel()
-        panel.title = "New Project"
-        panel.prompt = "Create"
-        panel.canCreateDirectories = true
-        panel.directoryURL = currentDirectoryURL
-        panel.nameFieldStringValue = Self.untitledName(in: currentDirectoryURL, base: "Untitled Project", extension: nil)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try createProject(at: url)
-        } catch {
-            presentFileError("Unable to create the project \(url.lastPathComponent).", error: error)
+        chooseFile(FileRequest(
+            kind: .newFolder(name: Self.untitledName(in: currentDirectoryURL, base: "Untitled Project", extension: nil)),
+            title: "New Project",
+            directory: currentDirectoryURL
+        )) { [weak self] url in
+            guard let self else { return }
+            do {
+                try createProject(at: url)
+            } catch {
+                presentFileError("Unable to create the project \(url.lastPathComponent).", error: error)
+            }
         }
     }
 
@@ -705,14 +715,13 @@ final class StudioModel: ObservableObject {
 
     /// File ▸ Open Project…: choose a folder.
     func openProjectFromMenu() {
-        let panel = NSOpenPanel()
-        panel.title = ProjectModel.openProjectTitle
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = projectDirectoryURL ?? workingDirectoryURL
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        openProject(at: url)
+        chooseFile(FileRequest(
+            kind: .openFolder,
+            title: ProjectModel.openProjectTitle,
+            directory: projectDirectoryURL ?? workingDirectoryURL
+        )) { [weak self] url in
+            self?.openProject(at: url)
+        }
     }
 
     /// Lists the project's programs again, for files added or removed
@@ -735,11 +744,7 @@ final class StudioModel: ObservableObject {
 
     func loadBundledExample(_ example: BundledExample) {
         guard let source = Self.bundledDemoSource(named: example.path) else {
-            let alert = NSAlert()
-            alert.messageText = "Unable to load \(example.menuTitle)."
-            alert.informativeText = "The bundled example could not be found."
-            alert.alertStyle = .warning
-            alert.runModal()
+            showWarning("Unable to load \(example.menuTitle).", message: "The bundled example could not be found.")
             return
         }
 
@@ -763,26 +768,97 @@ final class StudioModel: ObservableObject {
     }
 
     func saveProgramAsFromMenu() {
-        let panel = NSSavePanel()
-        panel.title = "Save BASIC Program"
-        panel.allowedContentTypes = Self.basicProgramContentTypes
-        panel.nameFieldStringValue = currentProgramURL?.lastPathComponent ?? "Untitled.bas"
-        panel.directoryURL = currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        saveProgram(to: url)
+        chooseFile(FileRequest(
+            kind: .saveProgram(name: currentProgramURL?.lastPathComponent ?? "Untitled.bas"),
+            title: "Save BASIC Program",
+            directory: currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
+        )) { [weak self] url in
+            self?.saveProgram(to: url)
+        }
     }
 
     func setWorkingDirectoryFromMenu() {
-        let panel = NSOpenPanel()
-        panel.title = "Set BASIC Working Directory"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = workingDirectoryURL
+        chooseFile(FileRequest(
+            kind: .openFolder,
+            title: "Set BASIC Working Directory",
+            directory: workingDirectoryURL
+        )) { [weak self] url in
+            self?.workingDirectoryURL = url.standardizedFileURL
+        }
+    }
 
+    // MARK: - Panels and alerts, on either platform
+
+    /// What a file panel is asked for.
+    struct FileRequest {
+        enum Kind {
+            /// A BASIC program to open.
+            case openProgram
+            /// A folder to open.
+            case openFolder
+            /// Where to save a BASIC program, starting from `name`.
+            case saveProgram(name: String)
+            /// Where to create a folder, starting from `name`.
+            case newFolder(name: String)
+        }
+        let kind: Kind
+        let title: String
+        let directory: URL?
+    }
+
+    /// Asks for a file or folder, then calls `then` with it; Cancel calls
+    /// nothing. The Mac's modal panel, which answers before this returns;
+    /// on iPhone and iPad ActiveUI's document picker, which answers later.
+    func chooseFile(_ request: FileRequest, then: @escaping @MainActor (URL) -> Void) {
+        #if os(macOS)
+        let panel: NSSavePanel
+        switch request.kind {
+        case .openProgram, .openFolder:
+            let open = NSOpenPanel()
+            let wantsFolder = if case .openFolder = request.kind { true } else { false }
+            open.canChooseDirectories = wantsFolder
+            open.canChooseFiles = !wantsFolder
+            open.allowsMultipleSelection = false
+            if !wantsFolder { open.allowedContentTypes = Self.basicProgramContentTypes }
+            panel = open
+        case .saveProgram(let name):
+            panel = NSSavePanel()
+            panel.nameFieldStringValue = name
+            panel.allowedContentTypes = Self.basicProgramContentTypes
+        case .newFolder(let name):
+            panel = NSSavePanel()
+            panel.prompt = "Create"
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = name
+        }
+        panel.title = request.title
+        panel.directoryURL = request.directory
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        workingDirectoryURL = url.standardizedFileURL
+        then(url)
+        #else
+        Task { @MainActor in
+            let url: URL? = switch request.kind {
+            case .openProgram: await AUIOpenPanel.show(fileTypes: ["bas"]).first
+            case .openFolder: await AUIOpenPanel.show(directories: true).first
+            case .saveProgram(let name): await AUISavePanel.show(suggestedName: name, fileTypes: ["bas"], directory: request.directory)
+            case .newFolder(let name): await AUISavePanel.show(suggestedName: name, directory: request.directory)
+            }
+            if let url { then(url) }
+        }
+        #endif
+    }
+
+    /// A warning with one OK: the Mac's modal alert, or ActiveUI's.
+    func showWarning(_ title: String, message: String) {
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
+        #else
+        Task { @MainActor in _ = await AUIAlert.show(title: title, message: message) }
+        #endif
     }
 
     func runEditorProgram() {
@@ -1053,11 +1129,7 @@ final class StudioModel: ObservableObject {
     }
 
     private func presentFileError(_ message: String, error: Error) {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.runModal()
+        showWarning(message, message: error.localizedDescription)
     }
 
     /// The console append a compiled run uses. Same buffer, same trimming;
@@ -1566,7 +1638,7 @@ final class StudioModel: ObservableObject {
     }
 
     private static func defaultWorkingDirectoryURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        StudioHome.url
     }
 
     private static func validWorkingDirectory(from path: String?) -> URL {
@@ -1596,7 +1668,7 @@ final class StudioModel: ObservableObject {
 
     nonisolated private func expandedPath(_ path: String) -> String {
         if path == "~" || path.hasPrefix("~/") {
-            return FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst())
+            return StudioHome.url.path + String(path.dropFirst())
         }
         if path.hasPrefix("/") {
             return path

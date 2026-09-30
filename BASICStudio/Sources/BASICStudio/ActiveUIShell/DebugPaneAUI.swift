@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import BASICCore
 import Foundation
 
@@ -91,7 +95,7 @@ final class DebugPaneAUI {
         guard pane != drawn else { return }
         for button in pane.buttons where drawn?.button(button.command) != button {
             guard let view = buttons[button.command] else { continue }
-            view.image = NSImage(systemSymbolName: button.symbol, accessibilityDescription: button.title)
+            view.image = AUIImage(systemSymbolName: button.symbol, accessibilityDescription: button.title)
             view.tooltip = button.title
             view.isEnabled = button.isEnabled
         }
@@ -375,9 +379,13 @@ final class DisclosureSection {
     }
 
     /// The chevron a `DisclosureGroup` draws before its title.
-    static func chevron(isOpen: Bool) -> NSImage? {
-        NSImage(systemSymbolName: chevronSymbol(isOpen: isOpen), accessibilityDescription: isOpen ? "Collapse" : "Expand")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+    static func chevron(isOpen: Bool) -> AUIImage? {
+        let image = AUIImage(systemSymbolName: chevronSymbol(isOpen: isOpen), accessibilityDescription: isOpen ? "Collapse" : "Expand")
+        #if canImport(AppKit)
+        return image?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+        #else
+        return image?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+        #endif
     }
 
     static func chevronSymbol(isOpen: Bool) -> String {
@@ -453,16 +461,36 @@ enum Click {
     /// the view.
     static func on(_ view: AUIView, _ action: @escaping @MainActor () -> Void) {
         let target = Target(action)
+        #if canImport(AppKit)
         view.nativeView.addGestureRecognizer(NSClickGestureRecognizer(target: target, action: #selector(Target.clicked)))
+        #else
+        let tap = TapRecognizer(target: target, action: #selector(Target.clicked))
+        tap.clickTarget = target
+        view.nativeView.addGestureRecognizer(tap)
+        #endif
         view.retainCancellation { _ = target }
     }
 
     /// Clicks `view` as the user would, for a test.
     static func simulate(_ view: AUIView) {
+        #if canImport(AppKit)
         for recognizer in view.nativeView.gestureRecognizers {
             (recognizer.target as? Target)?.clicked()
         }
+        #else
+        for recognizer in view.nativeView.gestureRecognizers ?? [] {
+            (recognizer as? TapRecognizer)?.clickTarget?.clicked()
+        }
+        #endif
     }
+
+    #if !canImport(AppKit)
+    /// A tap that remembers its target, as AppKit's recognizers do and
+    /// UIKit's do not.
+    final class TapRecognizer: UITapGestureRecognizer {
+        weak var clickTarget: Target?
+    }
+    #endif
 
     /// The recognizer's target. A gesture recognizer fires on the main
     /// thread, so the target lives on the main actor.

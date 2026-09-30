@@ -1,5 +1,9 @@
 import BASICCore
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import DocumentArchive
 import CoreText
 import GameController
@@ -10,6 +14,9 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
+#if os(macOS)
+// The SwiftUI shell's Documentation pane, which is macOS-only. `UserDoc`
+// below is shared with the ActiveUI shell's DocsPaneAUI.
 struct UserDocumentationPane: View {
     @State private var docs = UserDoc.loadAll()
     @State private var selectedDocID: UserDoc.ID?
@@ -79,6 +86,7 @@ struct UserDocumentationPane: View {
         }
     }
 }
+#endif
 
 enum UserDocCategory: String, CaseIterable, Identifiable {
     case tutorials

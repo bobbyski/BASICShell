@@ -1,5 +1,5 @@
 {
-  "originHash" : "1322f778ca75529b026154b97edf345ef9ac94945fd1c984ef76ee034794bbf9",
+  "originHash" : "a33b389d48495a70ce464bad4d750c9561c9f9fa328c1bb43654ccebde24e2d9",
   "pins" : [
     {
       "identity" : "bson",
@@ -161,15 +161,6 @@
       "state" : {
         "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
         "version" : "1.8.1"
-      }
-    },
-    {
-      "identity" : "swiftterm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bobbyski/SwiftTerm.git",
-      "state" : {
-        "revision" : "3deddef3e6c5a46ef924505aeba304972e0fe3cc",
-        "version" : "1.5.6"
       }
     }
   ],

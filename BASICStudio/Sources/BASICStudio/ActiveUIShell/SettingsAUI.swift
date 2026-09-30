@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 
 /// The Settings window for the ActiveUI shell: `AUIPreferencesWindow` in its
@@ -45,7 +49,7 @@ final class SettingsAUI {
     let families: [String]
     private var drawn: SettingsViewModel?
 
-    init(model: StudioModel, installedFamilies: [String] = NSFontManager.shared.availableFontFamilies) {
+    init(model: StudioModel, installedFamilies: [String] = StudioFonts.installedFamilies) {
         self.model = model
         promptEditor = PromptEditorAUI(model: model)
         families = SettingsViewModel.fontFamilies(installed: installedFamilies)

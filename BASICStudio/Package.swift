@@ -9,7 +9,9 @@ let package = Package(
         .package(path: "../BASICCore"),
         .package(path: "../DocumentArchive"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
-        .package(url: "https://github.com/bobbyski/SwiftTerm.git", from: "1.5.6"),
+        // The local checkout, on develop: the only SwiftTerm with an iOS
+        // VectorTerminalView (merged 96c3973, in no tag yet).
+        .package(path: "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm"),
         .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6"),
         // The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md).
         // A sibling checkout, as FreebirdStudio took it before it moved to

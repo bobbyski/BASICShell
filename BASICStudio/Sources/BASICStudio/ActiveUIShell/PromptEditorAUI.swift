@@ -6,7 +6,11 @@
 //
 
 import ActiveUI
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 
 /// The prompt editor for the ActiveUI shell. It holds a ``PromptEditorModel``
@@ -85,10 +89,15 @@ final class PromptEditorAUI {
         // table's selection fill draws with.
         segmentTable.rowHorizontalPadding = 0
         segmentTable.rowInsets = AUIEdgeInsets(top: 4, leading: 12, bottom: 0, trailing: 12)
-        segmentTable.selectionColor = AUIColor(NSColor.controlAccentColor.withAlphaComponent(0.18))
+        #if canImport(AppKit)
+        let accent = NSColor.controlAccentColor
+        #else
+        let accent = UIColor.tintColor
+        #endif
+        segmentTable.selectionColor = AUIColor(accent.withAlphaComponent(0.18))
         segmentTable.allowsReordering = true
         let newSegment = AUIButton("New Segment")
-        newSegment.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        newSegment.image = AUIImage(systemSymbolName: "plus", accessibilityDescription: nil)
         // Its own width, not the column's, as SwiftUI's bordered button.
         newSegment.alignSelf = .leading
         let tokenHelp = Self.caption(PromptEditorModel.tokenHelp)
@@ -102,11 +111,11 @@ final class PromptEditorAUI {
         editForm = SegmentForm(title: "Edit Segment", editsSelection: true)
         noSelectionLabel = Self.caption(PromptEditorModel.noSelectionHelp)
         let done = AUIButton("Done")
-        done.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+        done.image = AUIImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
         let duplicate = AUIButton("Duplicate")
-        duplicate.image = NSImage(systemSymbolName: "plus.square.on.square", accessibilityDescription: nil)
+        duplicate.image = AUIImage(systemSymbolName: "plus.square.on.square", accessibilityDescription: nil)
         let delete = AUIButton("Delete")
-        delete.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        delete.image = AUIImage(systemSymbolName: "trash", accessibilityDescription: nil)
         editButtons = LogPaneAUI.row([done, duplicate, delete])
 
         let shellStyle = AUIButton("Shell Style")
@@ -116,15 +125,19 @@ final class PromptEditorAUI {
         templateField.maximumNumberOfLines = 7
         templateField.holdsCode = true
         // AUITextField has no font of its own; the template reads best monospaced.
+        #if canImport(AppKit)
         (templateField.nativeView as? NSTextField)?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        #endif
         templateField.flexibility = .horizontal()
         // Seven lines, the most SwiftUI's lineLimit(4...7) field grows to.
         templateField.minimumSize = CGSize(width: 0, height: 108)
+        #if canImport(AppKit)
         if let field = templateField.nativeView as? NSTextField {
             field.usesSingleLineMode = false
             field.cell?.wraps = true
             field.cell?.isScrollable = false
         }
+        #endif
 
         let left = Self.column([
             Self.caption("Segments", bold: true), segmentTable, newSegment, segmentHelp,
@@ -288,8 +301,14 @@ final class PromptEditorAUI {
     }
 
     static func promptFont(size: CGFloat, bold: Bool) -> AUIFont {
+        #if canImport(AppKit)
         let base = NSFont(name: StudioFonts.defaultFamily, size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
         return AUIFont(bold ? NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask) : base)
+        #else
+        let base = UIFont(name: StudioFonts.defaultFamily, size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        guard bold, let descriptor = base.fontDescriptor.withSymbolicTraits(.traitBold) else { return AUIFont(base) }
+        return AUIFont(UIFont(descriptor: descriptor, size: size))
+        #endif
     }
 
     /// One row of the segment list: icon, title over template source, color
@@ -365,11 +384,13 @@ final class SegmentForm {
         // Each type's symbol beside its name, as SwiftUI's Label items show.
         // AUIPicker takes titles only; its options never change here, so the
         // native items it made keep the images.
+        #if canImport(AppKit)
         if let popup = kind.nativeView as? NSPopUpButton {
             for (item, kind) in zip(popup.itemArray, NerdPromptSegment.Kind.allCases) {
-                item.image = NSImage(systemSymbolName: kind.systemImage, accessibilityDescription: nil)
+                item.image = AUIImage(systemSymbolName: kind.systemImage, accessibilityDescription: nil)
             }
         }
+        #endif
         literalRow = LogPaneAUI.row(labeled("Text", literal.stretches()))
         let rows: [AUIView] = [
             LogPaneAUI.row(labeled("Type", kind)),
@@ -379,7 +400,7 @@ final class SegmentForm {
         ]
         var views: [AUIView] = [PromptEditorAUI.caption(title, bold: true)] + rows
         if !editsSelection {
-            add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+            add.image = AUIImage(systemSymbolName: "plus", accessibilityDescription: nil)
             views.append(add)
         }
         root = PromptEditorAUI.column(views)
