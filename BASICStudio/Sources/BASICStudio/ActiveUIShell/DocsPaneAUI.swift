@@ -50,19 +50,18 @@ final class DocsPaneAUI {
         let header = LogPaneAUI.card(headerRow, color: .controlBackground)
 
         viewer = DocsViewer()
-        #if os(iOS)
-        let viewerView = viewer.host
-        #else
+        #if !os(iOS)
         viewer.isReadOnly = true
         viewer.isSourceHidden = true
         viewer.isRibbonHidden = true
-        let viewerView: AUIView = viewer
         #endif
-        viewerView.minimumSize = CGSize(width: 220, height: 200)
+        // The theme's `.markdown` rule colors the page on both platforms.
+        viewer.themeClasses = "markdown"
+        viewer.minimumSize = CGSize(width: 220, height: 200)
         emptyLabel = AUILabel(DocsPaneModel.emptyText)
         emptyLabel.textColor = .secondary
         let page = AUIZStack(alignment: .fill)
-        page.addChild(viewerView)
+        page.addChild(viewer)
         page.addChild(emptyLabel)
         page.flexibility = .both()
 
@@ -100,11 +99,7 @@ final class DocsPaneAUI {
         if pane.selectedDoc != drawn?.selectedDoc {
             viewer.load(markdown: pane.selectedDoc?.content ?? "")
         }
-        #if os(iOS)
-        viewer.host.isHidden = pane.selectedDoc == nil
-        #else
         viewer.isHidden = pane.selectedDoc == nil
-        #endif
         emptyLabel.isHidden = pane.selectedDoc != nil
         drawn = pane
     }
@@ -134,22 +129,26 @@ import SwiftUI
 
 typealias DocsViewer = DocsMarkdownPage
 
-/// The Documentation page on iPhone and iPad: MarkdownUI in GitHub's style
-/// (code blocks, lists, tables), as the SwiftUI shell draws these pages on
-/// the Mac. ActiveUIMarkdown's iOS preview is still a line-by-line stand-in
-/// (its AUI-IOS-STUB(P10)), with none of that.
+/// The Documentation page on iPhone and iPad: MarkdownUI, laid out in
+/// GitHub's style (code blocks, lists, tables) as the SwiftUI shell draws
+/// these pages on the Mac. ActiveUIMarkdown's iOS preview is still a
+/// line-by-line stand-in (its AUI-IOS-STUB(P10)), with none of that.
+///
+/// The colors are the stylesheet's, not GitHub's: `color` is the ink,
+/// `background` the paper and `-aui-tint-color` the links, as the Mac's
+/// markdown editor takes them. Without a theme they are the system's.
 @MainActor
-final class DocsMarkdownPage {
+final class DocsMarkdownPage: AUIView {
     final class Model: ObservableObject {
         @Published var markdown = ""
+        @Published var colors = DocsMarkdownColors()
         /// Called with a page's file name when a link to it is followed.
         var onOpenPage: ((String) -> Void)?
     }
 
     let model = Model()
-    /// The page, to put in a layout.
-    let host: AUINativeHost
     private let controller: UIHostingController<DocsMarkdownView>
+    private let host: AUINativeHost
 
     var markdown: String { model.markdown }
 
@@ -157,11 +156,39 @@ final class DocsMarkdownPage {
         controller = UIHostingController(rootView: DocsMarkdownView(model: model))
         controller.view.backgroundColor = .clear
         host = AUINativeHost(controller.view)
+        super.init(nativeView: AUIView.makeContainerBacking())
+        addChild(host)
     }
 
     func load(markdown: String) {
         model.markdown = markdown
     }
+
+    override func layoutChildren(in bounds: CGRect) {
+        host.place(in: bounds)
+    }
+
+    override func applyForegroundColor(_ color: AUIColor?) {
+        super.applyForegroundColor(color)
+        model.colors.text = color.map { Color(uiColor: $0.native) }
+    }
+
+    override func applyThemeBackground(_ color: AUIColor?) {
+        super.applyThemeBackground(color)
+        model.colors.background = color.map { Color(uiColor: $0.native) }
+    }
+
+    override func applyTintColor(_ color: AUIColor?) {
+        super.applyTintColor(color)
+        model.colors.link = color.map { Color(uiColor: $0.native) }
+    }
+}
+
+/// The page's three colors, each nil for the system's own.
+struct DocsMarkdownColors: Equatable {
+    var text: Color?
+    var background: Color?
+    var link: Color?
 }
 
 struct DocsMarkdownView: View {
@@ -170,11 +197,12 @@ struct DocsMarkdownView: View {
     var body: some View {
         ScrollView {
             Markdown(model.markdown)
-                .markdownTheme(.gitHub)
+                .markdownTheme(Self.theme(model.colors))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
         }
+        .background(model.colors.background ?? .clear)
         // A link to another page (`[IF THEN](IF_THEN.md)`) opens that page
         // here; anything else goes where the system sends it.
         .environment(\.openURL, OpenURLAction { url in
@@ -182,6 +210,62 @@ struct DocsMarkdownView: View {
             model.onOpenPage?(url.lastPathComponent)
             return .handled
         })
+    }
+
+    /// GitHub's layout in the page's colors. GitHub's own theme paints its
+    /// text, code and table rows in fixed grays of its own, which show as
+    /// dark blocks on a red or navy page; here the paper shows through, and
+    /// the shading is the ink at low strength, so it follows any theme.
+    static func theme(_ colors: DocsMarkdownColors) -> Theme {
+        let ink = colors.text ?? .primary
+        let shade = ink.opacity(0.1)
+        let rule = ink.opacity(0.25)
+        return Theme.gitHub
+            .text {
+                ForegroundColor(ink)
+                FontSize(16)
+            }
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontSize(.em(0.85))
+                BackgroundColor(shade)
+            }
+            .link {
+                ForegroundColor(colors.link ?? .accentColor)
+            }
+            .blockquote { configuration in
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(rule)
+                        .relativeFrame(width: .em(0.2))
+                    configuration.label
+                        .markdownTextStyle { ForegroundColor(ink.opacity(0.75)) }
+                        .relativePadding(.horizontal, length: .em(1))
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .codeBlock { configuration in
+                ScrollView(.horizontal) {
+                    configuration.label
+                        .fixedSize(horizontal: false, vertical: true)
+                        .relativeLineSpacing(.em(0.225))
+                        .markdownTextStyle {
+                            FontFamilyVariant(.monospaced)
+                            FontSize(.em(0.85))
+                        }
+                        .padding(16)
+                }
+                .background(shade)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .markdownMargin(top: 0, bottom: 16)
+            }
+            .table { configuration in
+                configuration.label
+                    .fixedSize(horizontal: false, vertical: true)
+                    .markdownTableBorderStyle(.init(color: rule))
+                    .markdownTableBackgroundStyle(.alternatingRows(Color.clear, shade))
+                    .markdownMargin(top: 0, bottom: 16)
+            }
     }
 }
 #else

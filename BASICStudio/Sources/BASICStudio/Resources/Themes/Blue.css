@@ -22,3 +22,8 @@ AUIFolderRibbon { color: #ffffff; -aui-tint-color: #b9cdf5; }
 
 /* Menus: `background` picks dark vs light, not a fill — AppKit owns the panel. */
 AUIMenu { background: #003087; color: #ffffff; }
+
+/* Markdown pages, the Documentation among them: `color` is the ink,
+   `background` the paper, `-aui-tint-color` the links. Code and table shading
+   come from the ink, so they follow it. */
+.markdown { background: #001d55; color: #ffffff; -aui-tint-color: #b9cdf5; }

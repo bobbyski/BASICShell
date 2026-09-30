@@ -379,6 +379,10 @@ final class StudioActiveUIShell {
         screenSize.tooltip = shell.screenSizeMenu.help
         let examples = AUIToolbarItem(label: "Examples", systemSymbol: "text.book.closed", menu: examplesMenu(model: model))
         examples.tooltip = "Open an example program"
+        // Drawn as the buttons' glyphs are, not in the toolbar's tint.
+        for (item, symbol) in [(examples, "text.book.closed"), (theme, themeMenu.symbol), (screenSize, shell.screenSizeMenu.symbol)] {
+            item.image = glyph(symbol, tint: .normal)
+        }
         let toolbar = AUIToolbar(items: [.toggleSidebar(), .sidebarTrackingSeparator()] + items + [examples, theme, screenSize])
         toolbar.displayMode = .iconOnly
         return (toolbar, buttons, theme, screenSize)

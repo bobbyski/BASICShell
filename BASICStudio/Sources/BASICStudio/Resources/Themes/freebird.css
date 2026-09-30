@@ -196,3 +196,8 @@ AUIProgressBar, AUILevelIndicator, AUISlider {
    to the badge. The highlight stays the system accent; closing that last gap
    needs a drawn menu (Documents/MENU_THEMING.md). */
 AUIMenu { background: #0d0d0f; color: #ffb95e; }
+
+/* Markdown pages, the Documentation among them: `color` is the ink,
+   `background` the paper, `-aui-tint-color` the links. Code and table shading
+   come from the ink, so they follow it. */
+.markdown { background: #101012; color: #f7e6cf; -aui-tint-color: #ff9500; }
