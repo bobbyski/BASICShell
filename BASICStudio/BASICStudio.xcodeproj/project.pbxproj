@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00313CDE213272C3CF69652A /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
 		0057004C4A2148E02E99D2A2 /* LogPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6405A0933EA2491CDDF863 /* LogPane.swift */; };
 		00924436B19B72D30F51108C /* SwiftTermGraphicsConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */; };
 		01FA6E3FA7FDA58495D32DED /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */; };
@@ -17,6 +18,7 @@
 		091E1770B6363E5775960262 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 5AAB125FD1626D4E8281F069 /* DocumentArchive */; };
 		093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
 		0B5521E79B9FA05A08A81339 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
+		0EDCB465925D41E190F9B928 /* ConsoleTerminalView+iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 930F78E43D7F9EB5D43A5589 /* ConsoleTerminalView+iOS.swift */; };
 		0F1F3E09500DA103690EB456 /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
 		11F34446FB037BBC10B313CF /* ActiveUICoreEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; };
 		123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */; };
@@ -85,6 +87,7 @@
 		A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */; };
 		A9C6CFD8E69D5E5DFC3ADA85 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AC284E6E044D7E8065A2092A /* ActiveUIMarkdown in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		AD23BF58DDFC26EE1A8F0272 /* ConsoleTerminalView+iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 930F78E43D7F9EB5D43A5589 /* ConsoleTerminalView+iOS.swift */; };
 		ADA6A24313C5FC396E1ADBE5 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
 		ADDFE6A9D2FDACA2F68836A8 /* StudioAUIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */; };
 		AE5E41C53A99364CDA4C82E6 /* Demos in Resources */ = {isa = PBXBuildFile; fileRef = 96CA444014E259C30BE4F365 /* Demos */; };
@@ -118,6 +121,7 @@
 		E2BB610C9A6139F7AE4A8034 /* DebugPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3E736836021C24D244390D /* DebugPaneModel.swift */; };
 		EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
 		EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
+		F0E7956231640CDEC7C34663 /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
 		FBC538EBADE880382929DBAA /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; };
 		FC80337FBB3440DB92ED692B /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; };
 		FD6F88DDA2245FADC64D7A83 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
@@ -189,6 +193,7 @@
 		7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermGraphicsConsole.swift; sourceTree = "<group>"; };
 		8A5D3DAABA1BA032F3E7B507 /* NerdPromptEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdPromptEditorView.swift; sourceTree = "<group>"; };
 		9028AD794558129FE62B1489 /* RenderInputs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderInputs.swift; sourceTree = "<group>"; };
+		930F78E43D7F9EB5D43A5589 /* ConsoleTerminalView+iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConsoleTerminalView+iOS.swift"; sourceTree = "<group>"; };
 		944D27C4D351F1DFFC50FE6D /* StudioAbout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAbout.swift; sourceTree = "<group>"; };
 		96CA444014E259C30BE4F365 /* Demos */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Demos; path = Sources/BASICStudio/Resources/Demos; sourceTree = SOURCE_ROOT; };
 		978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioActiveUIShell.swift; sourceTree = "<group>"; };
@@ -204,6 +209,7 @@
 		AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsPaneAUI.swift; sourceTree = "<group>"; };
 		AF1AA5671B54AAC04C197A6E /* BASICStudio-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "BASICStudio-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B28A38404D59414EADD295C5 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Sources/BASICStudio/Resources/Fonts; sourceTree = SOURCE_ROOT; };
+		C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleKeyPress.swift; sourceTree = "<group>"; };
 		C5330F694E45075A8E70C411 /* StudioSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioSound.swift; sourceTree = "<group>"; };
 		C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEditorAUI.swift; sourceTree = "<group>"; };
 		C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioInputCoordinator.swift; sourceTree = "<group>"; };
@@ -340,6 +346,8 @@
 			children = (
 				97D345D0E032E06BB808DA86 /* BASICStudio.swift */,
 				1F6A9B51D88CAE3608DEFB6C /* BASICStudioApp.swift */,
+				C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */,
+				930F78E43D7F9EB5D43A5589 /* ConsoleTerminalView+iOS.swift */,
 				F768CDEF475FDA4603BD917D /* DebugPane.swift */,
 				9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */,
 				DB6405A0933EA2491CDDF863 /* LogPane.swift */,
@@ -540,6 +548,8 @@
 			files = (
 				9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */,
 				C08D96C34D79759D44AF4197 /* BASICStudioApp.swift in Sources */,
+				00313CDE213272C3CF69652A /* ConsoleKeyPress.swift in Sources */,
+				AD23BF58DDFC26EE1A8F0272 /* ConsoleTerminalView+iOS.swift in Sources */,
 				43F22C7C5E351E6D8886C112 /* DebugPane.swift in Sources */,
 				26AFE5ECDC44878B0F8A5621 /* DebugPaneAUI.swift in Sources */,
 				E2BB610C9A6139F7AE4A8034 /* DebugPaneModel.swift in Sources */,
@@ -588,6 +598,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				47A9857814619923594CCAC8 /* BASICStudioiOS.swift in Sources */,
+				F0E7956231640CDEC7C34663 /* ConsoleKeyPress.swift in Sources */,
+				0EDCB465925D41E190F9B928 /* ConsoleTerminalView+iOS.swift in Sources */,
 				D89B3A1B19327DD802493E7D /* DebugPaneAUI.swift in Sources */,
 				59F09F7AB9E4050D8FE43FC8 /* DebugPaneModel.swift in Sources */,
 				C9D09F3FC54365D4E62BAC0F /* DocsPaneAUI.swift in Sources */,

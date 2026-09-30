@@ -35,16 +35,19 @@ struct SwiftTermGraphicsConsole: NSViewRepresentable {
 /// and iPad, where SwiftTerm's VectorTerminalView is a UIKit view.
 typealias ConsoleBaseView = NSView
 typealias ConsoleFont = NSFont
+typealias ConsoleTerminal = VectorTerminalView
 #else
 typealias ConsoleBaseView = UIView
 typealias ConsoleFont = UIFont
+/// SwiftTerm's view with the console asked about hardware keys first.
+typealias ConsoleTerminal = ConsoleTerminalView
 #endif
 
 @MainActor
 final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency TerminalViewDelegate {
     weak var model: StudioModel?
 
-    private let terminalView = VectorTerminalView(frame: .zero, font: ConsoleFont.monospacedSystemFont(ofSize: 13, weight: .regular))
+    private let terminalView = ConsoleTerminal(frame: .zero, font: ConsoleFont.monospacedSystemFont(ofSize: 13, weight: .regular))
     private var renderedCharacterCount = 0
     private var renderedScrollbackLines: Int?
     private var renderedScreenSize: TerminalScreenSize?
@@ -66,6 +69,10 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     private var pendingEscapeFlushID = 0
     #if os(macOS)
     private var mouseTrackingArea: NSTrackingArea?
+    #else
+    /// The button a touch or pointer press went down with, for its moves and
+    /// its release: 0 for a finger or a primary click, 1 for a secondary one.
+    private var touchMouseButton = 0
     #endif
     private var lastMouseEventTimestamp: TimeInterval?
     private var lastMouseMovePostTimestamp: TimeInterval?
@@ -118,10 +125,16 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
         #if os(macOS)
-        // On iPhone and iPad the terminal view takes the keyboard itself and
-        // hands its bytes to `send`.
         installKeyMonitor()
         installMouseUpMonitor()
+        #else
+        // On iPhone and iPad the terminal view takes the keyboard itself and
+        // hands its bytes to `send`; it asks here first about each hardware
+        // key, as the Mac's key monitor does.
+        terminalView.pressInterceptor = { [weak self] press in
+            self?.handleProgramKey(press) ?? false
+        }
+        installTouchMouse()
         #endif
 
         addSubview(terminalView)
@@ -248,6 +261,81 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     override func layoutSubviews() {
         super.layoutSubviews()
         applyScreenSize()
+    }
+
+    /// Touch as the mouse, for VTG programs: a finger is the left button, and
+    /// an iPad's pointer adds hovering, the secondary click and scrolling. A
+    /// TUI program's mouse reporting is SwiftTerm's, from the same touches.
+    private func installTouchMouse() {
+        let touches = ConsoleTouchMouseRecognizer()
+        touches.onTouch = { [weak self] phase, touch, event in
+            self?.postTouch(phase, touch, event)
+        }
+        terminalView.addGestureRecognizer(touches)
+
+        terminalView.addGestureRecognizer(
+            UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered(_:)))
+        )
+
+        // Scroll events only — a trackpad or wheel. A finger's pan stays
+        // SwiftTerm's, and so does the scrolling itself, as on the Mac.
+        let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled(_:)))
+        scroll.allowedScrollTypesMask = .all
+        scroll.allowedTouchTypes = []
+        scroll.cancelsTouchesInView = false
+        scroll.delegate = self
+        terminalView.addGestureRecognizer(scroll)
+    }
+
+    /// Where `location` (in this view) falls in the terminal's visible area.
+    /// The terminal is a scroll view, so its own coordinates move with its
+    /// scrollback; the canvas does not.
+    private func terminalPoint(_ location: CGPoint) -> CGPoint {
+        CGPoint(x: location.x - terminalView.frame.minX, y: location.y - terminalView.frame.minY)
+    }
+
+    private func postTouch(_ phase: ConsoleTouchMouseRecognizer.Phase, _ touch: UITouch, _ event: UIEvent) {
+        let location = touch.location(in: self)
+        switch phase {
+        case .down:
+            touchMouseButton = event.buttonMask.contains(.secondary) ? 1 : 0
+            postVTGMouseEvent(atTerminalPoint: terminalPoint(location), subtype: "DOWN",
+                              button: touchMouseButton, buttons: 1 << touchMouseButton,
+                              timestamp: touch.timestamp)
+        case .move:
+            // As on the Mac, a drag reports only while it is over the terminal.
+            guard terminalView.frame.contains(location) else { return }
+            postVTGMouseEvent(atTerminalPoint: terminalPoint(location), subtype: "MOVE",
+                              button: touchMouseButton, buttons: 1 << touchMouseButton,
+                              timestamp: touch.timestamp)
+        case .up:
+            // Always sent, clamped to the edge: a program must not be left
+            // holding a button because the finger lifted outside.
+            postVTGMouseEvent(atTerminalPoint: terminalPoint(location), subtype: "UP",
+                              button: touchMouseButton, buttons: 0,
+                              timestamp: touch.timestamp)
+        }
+    }
+
+    @objc private func pointerHovered(_ hover: UIHoverGestureRecognizer) {
+        guard hover.state == .began || hover.state == .changed else { return }
+        let location = hover.location(in: self)
+        guard terminalView.frame.contains(location) else { return }
+        postVTGMouseEvent(atTerminalPoint: terminalPoint(location), subtype: "MOVE",
+                          button: 0, buttons: 0,
+                          timestamp: ProcessInfo.processInfo.systemUptime)
+    }
+
+    @objc private func pointerScrolled(_ scroll: UIPanGestureRecognizer) {
+        guard scroll.state == .began || scroll.state == .changed else { return }
+        let location = scroll.location(in: self)
+        let delta = scroll.translation(in: terminalView)
+        scroll.setTranslation(.zero, in: terminalView)
+        guard terminalView.frame.contains(location), delta != .zero else { return }
+        postVTGMouseEvent(atTerminalPoint: terminalPoint(location), subtype: "SCROLL",
+                          button: 0, buttons: 0,
+                          timestamp: ProcessInfo.processInfo.systemUptime,
+                          deltaX: Double(delta.x), deltaY: Double(delta.y))
     }
     #endif
 
@@ -498,38 +586,43 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         model?.postVTGResizeEvent(width: normalized.width, height: normalized.height)
     }
 
-    #if os(macOS)
-    private func postMouseEvent(
-        from event: NSEvent,
+    /// Posts one mouse event to a VTG program. `point` is in the terminal
+    /// view's visible area, from its top-left corner; the program gets it in
+    /// its canvas. The Mac's mouse and iOS's touches and pointer both come
+    /// here.
+    private func postVTGMouseEvent(
+        atTerminalPoint point: CGPoint,
         subtype: String,
+        button: Int,
+        buttons: Int,
+        timestamp: TimeInterval,
         deltaX: Double = 0,
         deltaY: Double = 0
     ) {
-        guard terminalView.frame.width > 0, terminalView.frame.height > 0 else { return }
+        let width = terminalView.bounds.width
+        let height = terminalView.bounds.height
+        guard width > 0, height > 0 else { return }
         if subtype == "MOVE" {
             let previousMove = lastMouseMovePostTimestamp ?? 0
-            guard event.timestamp - previousMove >= 1.0 / 30.0 else { return }
-            lastMouseMovePostTimestamp = event.timestamp
+            guard timestamp - previousMove >= 1.0 / 30.0 else { return }
+            lastMouseMovePostTimestamp = timestamp
         }
-        let pointInSelf = convert(event.locationInWindow, from: nil)
-        guard terminalView.frame.contains(pointInSelf) else { return }
 
-        let point = terminalView.convert(pointInSelf, from: self)
         let canvas = terminalView.currentVTGCanvas()
         let canvasWidth = max(1, canvas.width)
         let canvasHeight = max(1, canvas.height)
-        let x = min(max(Double(point.x / terminalView.bounds.width) * Double(canvasWidth), 0), Double(canvasWidth))
-        let y = min(max(Double((terminalView.bounds.height - point.y) / terminalView.bounds.height) * Double(canvasHeight), 0), Double(canvasHeight))
-        let previousTimestamp = lastMouseEventTimestamp ?? event.timestamp
-        lastMouseEventTimestamp = event.timestamp
+        let x = min(max(Double(point.x / width) * Double(canvasWidth), 0), Double(canvasWidth))
+        let y = min(max(Double(point.y / height) * Double(canvasHeight), 0), Double(canvasHeight))
+        let previousTimestamp = lastMouseEventTimestamp ?? timestamp
+        lastMouseEventTimestamp = timestamp
         let hit = model?.hitRegion(atX: x, y: y)
         model?.postVTGMouseEvent(
             subtype: subtype,
             x: x,
             y: y,
-            button: max(0, event.buttonNumber),
-            buttons: Int(NSEvent.pressedMouseButtons),
-            duration: max(0, event.timestamp - previousTimestamp),
+            button: button,
+            buttons: buttons,
+            duration: max(0, timestamp - previousTimestamp),
             deltaX: deltaX,
             deltaY: deltaY,
             hitID: hit?.id ?? "",
@@ -537,24 +630,84 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         )
     }
 
+    #if os(macOS)
+    private func postMouseEvent(
+        from event: NSEvent,
+        subtype: String,
+        deltaX: Double = 0,
+        deltaY: Double = 0
+    ) {
+        let pointInSelf = convert(event.locationInWindow, from: nil)
+        guard terminalView.frame.contains(pointInSelf) else { return }
+
+        // AppKit counts up from the bottom; a VTG canvas counts down from the top.
+        let point = terminalView.convert(pointInSelf, from: self)
+        postVTGMouseEvent(
+            atTerminalPoint: CGPoint(x: point.x, y: terminalView.bounds.height - point.y),
+            subtype: subtype,
+            button: max(0, event.buttonNumber),
+            buttons: Int(NSEvent.pressedMouseButtons),
+            timestamp: event.timestamp,
+            deltaX: deltaX,
+            deltaY: deltaY
+        )
+    }
+
     private func handleProgramKeyEvent(_ event: NSEvent) -> Bool {
+        handleProgramKey(Self.consoleKeyPress(from: event))
+    }
+
+    private static func consoleKeyPress(from event: NSEvent) -> ConsoleKeyPress {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        var modifiers: ConsoleKeyModifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        let characters = event.charactersIgnoringModifiers ?? ""
+        return ConsoleKeyPress(
+            special: characters.unicodeScalars.first.flatMap { consoleSpecialKey(for: Int($0.value)) },
+            charactersIgnoringModifiers: characters,
+            modifiers: modifiers
+        )
+    }
+
+    private static func consoleSpecialKey(for key: Int) -> ConsoleSpecialKey? {
+        switch key {
+        case 10, 13, NSCarriageReturnCharacter, NSEnterCharacter: return .returnKey
+        case NSUpArrowFunctionKey: return .up
+        case NSDownArrowFunctionKey: return .down
+        case NSRightArrowFunctionKey: return .right
+        case NSLeftArrowFunctionKey: return .left
+        case NSHomeFunctionKey: return .home
+        case NSEndFunctionKey: return .end
+        case NSInsertFunctionKey: return .insert
+        case NSDeleteFunctionKey: return .forwardDelete
+        case NSPageUpFunctionKey: return .pageUp
+        case NSPageDownFunctionKey: return .pageDown
+        case NSF1FunctionKey...NSF35FunctionKey: return .function(key - NSF1FunctionKey + 1)
+        default: return nil
+        }
+    }
+    #endif
+
+    /// A hardware key press, before SwiftTerm sees it: the Mac's key monitor
+    /// and the iOS terminal view's presses both come here. Returns whether the
+    /// console took the key; one it leaves goes on to SwiftTerm as usual.
+    private func handleProgramKey(_ press: ConsoleKeyPress) -> Bool {
         // A TUI application has every key, ^C included, as it does in
-        // BASICShell. SwiftTerm turns the event into the bytes a terminal
+        // BASICShell. SwiftTerm turns the key into the bytes a terminal
         // sends, and `send` hands them to the driver.
         if model?.activeTUIDriver != nil {
             return false
         }
 
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
-           event.charactersIgnoringModifiers?.lowercased() == "c",
-           model?.shouldProgramStopOnTerminalInterrupt() == true {
+        if press.isInterrupt, model?.shouldProgramStopOnTerminalInterrupt() == true {
             model?.stopProgram()
             return true
         }
 
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.control),
-           event.charactersIgnoringModifiers?.lowercased() == "i",
-           model?.shouldCaptureTerminalKeyOnly() != true {
+        if press.isOverwriteToggle, model?.shouldCaptureTerminalKeyOnly() != true {
             _ = model?.toggleConsoleOverwriteModeFromTerminal()
             return true
         }
@@ -562,7 +715,7 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         let shouldCaptureProgramKey = model?.shouldCaptureTerminalKeyOnly() == true
         let shouldExitLineInput = model?.shouldExitLineInputOnSpecialKey() == true
         guard shouldCaptureProgramKey || shouldExitLineInput,
-              let rawKey = Self.rawSpecialKeySequence(from: event)
+              let rawKey = press.rawSequence
         else {
             return false
         }
@@ -575,122 +728,6 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         }
         return true
     }
-
-    private static func rawSpecialKeySequence(from event: NSEvent) -> String? {
-        guard let characters = event.charactersIgnoringModifiers,
-              let scalar = characters.unicodeScalars.first
-        else {
-            return nil
-        }
-
-        let key = Int(scalar.value)
-        let modifier = modifierParameter(for: event)
-        let escape = "\u{1B}"
-
-        if key == 10 || key == 13 || key == NSCarriageReturnCharacter || key == NSEnterCharacter {
-            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift) else {
-                return nil
-            }
-            return "\(escape)[!M"
-        }
-
-        if let modifiedCharacter = modifiedPrintableCharacter(from: event, modifier: modifier) {
-            return "\(escape)[\(modifiedCharacter)"
-        }
-
-        func csi(_ base: String, final: String) -> String {
-            if let modifier {
-                return "\(escape)[\(base);\(modifier)\(final)"
-            }
-            return "\(escape)[\(base)\(final)"
-        }
-
-        func csiFinal(_ final: String) -> String {
-            if let modifier {
-                return "\(escape)[1;\(modifier)\(final)"
-            }
-            return "\(escape)[\(final)"
-        }
-
-        func ss3OrCsi(_ final: String) -> String {
-            if let modifier {
-                return "\(escape)[1;\(modifier)\(final)"
-            }
-            return "\(escape)O\(final)"
-        }
-
-        switch key {
-        case NSUpArrowFunctionKey: return csiFinal("A")
-        case NSDownArrowFunctionKey: return csiFinal("B")
-        case NSRightArrowFunctionKey: return csiFinal("C")
-        case NSLeftArrowFunctionKey: return csiFinal("D")
-        case NSHomeFunctionKey: return csiFinal("H")
-        case NSEndFunctionKey: return csiFinal("F")
-        case NSInsertFunctionKey: return csi("2", final: "~")
-        case NSDeleteFunctionKey: return csi("3", final: "~")
-        case NSPageUpFunctionKey: return csi("5", final: "~")
-        case NSPageDownFunctionKey: return csi("6", final: "~")
-        case NSF1FunctionKey: return ss3OrCsi("P")
-        case NSF2FunctionKey: return ss3OrCsi("Q")
-        case NSF3FunctionKey: return ss3OrCsi("R")
-        case NSF4FunctionKey: return ss3OrCsi("S")
-        case NSF5FunctionKey: return csi("15", final: "~")
-        case NSF6FunctionKey: return csi("17", final: "~")
-        case NSF7FunctionKey: return csi("18", final: "~")
-        case NSF8FunctionKey: return csi("19", final: "~")
-        case NSF9FunctionKey: return csi("20", final: "~")
-        case NSF10FunctionKey: return csi("21", final: "~")
-        case NSF11FunctionKey: return csi("23", final: "~")
-        case NSF12FunctionKey: return csi("24", final: "~")
-        case NSF13FunctionKey: return csi("25", final: "~")
-        case NSF14FunctionKey: return csi("26", final: "~")
-        case NSF15FunctionKey: return csi("28", final: "~")
-        case NSF16FunctionKey: return csi("29", final: "~")
-        case NSF17FunctionKey: return csi("31", final: "~")
-        case NSF18FunctionKey: return csi("32", final: "~")
-        case NSF19FunctionKey: return csi("33", final: "~")
-        case NSF20FunctionKey: return csi("34", final: "~")
-        case NSF21FunctionKey: return csi("35", final: "~")
-        case NSF22FunctionKey: return csi("36", final: "~")
-        default: return nil
-        }
-    }
-
-    private static func modifiedPrintableCharacter(from event: NSEvent, modifier: Int?) -> String? {
-        guard let modifier,
-              let characters = event.charactersIgnoringModifiers,
-              characters.count == 1,
-              let character = characters.first,
-              character.unicodeScalars.allSatisfy({ (32...126).contains(Int($0.value)) })
-        else {
-            return nil
-        }
-
-        switch modifier {
-        case 3: return "#\(character)"
-        case 4: return "!#\(character)"
-        default: return nil
-        }
-    }
-
-    private static func modifierParameter(for event: NSEvent) -> Int? {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let shift = flags.contains(.shift)
-        let option = flags.contains(.option)
-        let command = flags.contains(.command)
-
-        switch (shift, option, command) {
-        case (false, false, false): return nil
-        case (true, false, false): return 2
-        case (false, true, false): return 3
-        case (true, true, false): return 4
-        case (false, false, true): return 9
-        case (true, false, true): return 10
-        case (false, true, true): return 11
-        case (true, true, true): return 12
-        }
-    }
-    #endif
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         if let driver = model?.activeTUIDriver {
@@ -1330,3 +1367,16 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
+
+#if os(iOS)
+extension AIBasicTerminalContainerView: UIGestureRecognizerDelegate {
+    /// The pointer-scroll recognizer reports alongside SwiftTerm's own
+    /// scrolling rather than instead of it.
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
+#endif
