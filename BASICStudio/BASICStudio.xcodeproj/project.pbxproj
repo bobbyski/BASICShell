@@ -59,18 +59,22 @@
 		61DE84050C4B38D3C1D1A9EB /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
 		62C6EF49F258F42796EE77C4 /* RenderInputs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9028AD794558129FE62B1489 /* RenderInputs.swift */; };
 		693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
+		6994D287C86117622D27544E /* ActiveUICode in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6BABADE2659A798EF66D0DF8 /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; };
 		6D2FB1742917B29C49D194C4 /* SourceEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D0EF453B77151D2563402A /* SourceEditorAUI.swift */; };
 		7091141BEB6366B0BF388EC6 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = B28A38404D59414EADD295C5 /* Fonts */; };
 		74D0835107EBA56BF18A331D /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; };
 		74E30F5278F0970FD4856435 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
+		75807C1C239BCC9BECB786B7 /* ActiveUICode in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		797CEBCC3F1A3E1385DF48F0 /* DocsPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786414E68D08A63E6898020E /* DocsPaneModel.swift */; };
 		8274C17D24F7C4BE5D62A5B3 /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01D222A22E3CB0848365480 /* ProjectModel.swift */; };
 		8491C77AAFE0684FB7E5BD47 /* SourceEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D0EF453B77151D2563402A /* SourceEditorAUI.swift */; };
+		878DB6E7730BBCFAC631A5E0 /* ActiveUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CB8284FB31709C1BD017047 /* MonacoEditor.swift */; };
 		9606D359B9EB6DF218563A37 /* DocsPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */; };
 		986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
+		9C87713C17B0ED518CCEB3AD /* ActiveUIMarkdown in Embed Frameworks */ = {isa = PBXBuildFile; productRef = D9A4F83464CADD0769EA55F8 /* ActiveUIMarkdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9DB0288E1B8117B54E524CB2 /* UserDocs.zip in Resources */ = {isa = PBXBuildFile; fileRef = 345DA55E34BEF73307F59C60 /* UserDocs.zip */; };
 		9F2A3BF20C0C0DDB72F667F5 /* StudioAUIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */; };
 		A1432993494F6BA04B2BAD6C /* StudioAbout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944D27C4D351F1DFFC50FE6D /* StudioAbout.swift */; };
@@ -79,6 +83,8 @@
 		A701F0C2F75FDF8FEA13549B /* MenuCommandModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */; };
 		A84D9C63ACA6E0B650C89872 /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
 		A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */; };
+		A9C6CFD8E69D5E5DFC3ADA85 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		AC284E6E044D7E8065A2092A /* ActiveUIMarkdown in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		ADA6A24313C5FC396E1ADBE5 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
 		ADDFE6A9D2FDACA2F68836A8 /* StudioAUIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */; };
 		AE5E41C53A99364CDA4C82E6 /* Demos in Resources */ = {isa = PBXBuildFile; fileRef = 96CA444014E259C30BE4F365 /* Demos */; };
@@ -88,6 +94,7 @@
 		B5D8E5F67FE6BFC73DEF3F6C /* UserDocs.zip in Resources */ = {isa = PBXBuildFile; fileRef = 345DA55E34BEF73307F59C60 /* UserDocs.zip */; };
 		B5FF04765A7317D31E6841C6 /* LogPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 274E10BC1DC8322BB117728E /* LogPaneAUI.swift */; };
 		B621B0BD8B331CA053F4D096 /* StudioTUIDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */; };
+		B728AC62D8694DFDF483881F /* ActiveUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 717CF46DC0F9232475AACCEA /* ActiveUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B7922A21D2E5A7B60E0CDF0D /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D23305654DCC7C771397BA /* SettingsViewModel.swift */; };
 		B8DAF256B206B91A26B38239 /* StudioTUIDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */; };
 		BF42A79B77B89643F0C31695 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = EF38E292B830FC5A0F76CE1D /* MarkdownUI */; };
@@ -102,9 +109,11 @@
 		CB4C8857336B27C3D4574089 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
 		CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
 		D05ADC8871BB376F69B2C843 /* StudioActiveUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */; };
+		D60301CFCC610C463AA3FFFE /* ActiveUICoreEditor in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D89B3A1B19327DD802493E7D /* DebugPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB11C8419064B3C77C66BF2 /* DebugPaneAUI.swift */; };
 		DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */ = {isa = PBXBuildFile; productRef = A5E611364F88C87B9EAAD4AF /* BASICCore */; };
 		DA93E2AA79828870737D4009 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
+		DF215486A6205E5F919022F0 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E0B7DE9AA99281653B58BED4 /* StudioJITRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADBF639C0AF1EFB97031FC3 /* StudioJITRun.swift */; };
 		E2BB610C9A6139F7AE4A8034 /* DebugPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3E736836021C24D244390D /* DebugPaneModel.swift */; };
 		EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
@@ -115,6 +124,38 @@
 		FDA5882F3E2AC819D4E29C7C /* Themes in Resources */ = {isa = PBXBuildFile; fileRef = 6338F8D64F595F8A442DCB46 /* Themes */; };
 		FFB04B116964DB84B8244602 /* GraphicsFramebuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		38CCCDA3FF24CF2F7BA2C087 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				DF215486A6205E5F919022F0 /* VectorTerminalSDK in Embed Frameworks */,
+				878DB6E7730BBCFAC631A5E0 /* ActiveUI in Embed Frameworks */,
+				9C87713C17B0ED518CCEB3AD /* ActiveUIMarkdown in Embed Frameworks */,
+				75807C1C239BCC9BECB786B7 /* ActiveUICode in Embed Frameworks */,
+				D60301CFCC610C463AA3FFFE /* ActiveUICoreEditor in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8BD1208B9E0DCAA7D9AC1A20 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A9C6CFD8E69D5E5DFC3ADA85 /* VectorTerminalSDK in Embed Frameworks */,
+				B728AC62D8694DFDF483881F /* ActiveUI in Embed Frameworks */,
+				AC284E6E044D7E8065A2092A /* ActiveUIMarkdown in Embed Frameworks */,
+				6994D287C86117622D27544E /* ActiveUICode in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		01076CFFB99EF0CDC95B7827 /* ActiveUICoreEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICoreEditor; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor; sourceTree = SOURCE_ROOT; };
@@ -361,6 +402,7 @@
 				77AECDD00CF9988949BD91C8 /* Sources */,
 				F1646155685F33C904BB9409 /* Resources */,
 				26883428C25C965E16812B4B /* Frameworks */,
+				8BD1208B9E0DCAA7D9AC1A20 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -389,6 +431,7 @@
 				7EDB58C327E3CECC164E5533 /* Sources */,
 				C4BE2DDD7677AFC4F070BF93 /* Resources */,
 				6055D2B8BA12A0C755A660CB /* Frameworks */,
+				38CCCDA3FF24CF2F7BA2C087 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);

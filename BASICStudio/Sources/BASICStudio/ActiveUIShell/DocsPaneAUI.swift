@@ -26,7 +26,7 @@ import Foundation
 final class DocsPaneAUI {
     let root: AUIView
     let menuButton: AUIMenuButton
-    let viewer: AUIMarkdownEditor
+    let viewer: DocsViewer
     let emptyLabel: AUILabel
     private let docs: [UserDoc]
     private(set) var selectedID: UserDoc.ID?
@@ -49,15 +49,20 @@ final class DocsPaneAUI {
         headerRow.padding = AUIEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
         let header = LogPaneAUI.card(headerRow, color: .controlBackground)
 
-        viewer = AUIMarkdownEditor()
+        viewer = DocsViewer()
+        #if os(iOS)
+        let viewerView = viewer.host
+        #else
         viewer.isReadOnly = true
         viewer.isSourceHidden = true
         viewer.isRibbonHidden = true
-        viewer.minimumSize = CGSize(width: 220, height: 200)
+        let viewerView: AUIView = viewer
+        #endif
+        viewerView.minimumSize = CGSize(width: 220, height: 200)
         emptyLabel = AUILabel(DocsPaneModel.emptyText)
         emptyLabel.textColor = .secondary
         let page = AUIZStack(alignment: .fill)
-        page.addChild(viewer)
+        page.addChild(viewerView)
         page.addChild(emptyLabel)
         page.flexibility = .both()
 
@@ -68,6 +73,9 @@ final class DocsPaneAUI {
         body.addChild(page)
         root = body
 
+        #if os(iOS)
+        viewer.model.onOpenPage = { [weak self] name in self?.select(name) }
+        #endif
         refresh()
     }
 
@@ -92,7 +100,11 @@ final class DocsPaneAUI {
         if pane.selectedDoc != drawn?.selectedDoc {
             viewer.load(markdown: pane.selectedDoc?.content ?? "")
         }
+        #if os(iOS)
+        viewer.host.isHidden = pane.selectedDoc == nil
+        #else
         viewer.isHidden = pane.selectedDoc == nil
+        #endif
         emptyLabel.isHidden = pane.selectedDoc != nil
         drawn = pane
     }
@@ -115,3 +127,63 @@ final class DocsPaneAUI {
         }
     }
 }
+
+#if os(iOS)
+import MarkdownUI
+import SwiftUI
+
+typealias DocsViewer = DocsMarkdownPage
+
+/// The Documentation page on iPhone and iPad: MarkdownUI in GitHub's style
+/// (code blocks, lists, tables), as the SwiftUI shell draws these pages on
+/// the Mac. ActiveUIMarkdown's iOS preview is still a line-by-line stand-in
+/// (its AUI-IOS-STUB(P10)), with none of that.
+@MainActor
+final class DocsMarkdownPage {
+    final class Model: ObservableObject {
+        @Published var markdown = ""
+        /// Called with a page's file name when a link to it is followed.
+        var onOpenPage: ((String) -> Void)?
+    }
+
+    let model = Model()
+    /// The page, to put in a layout.
+    let host: AUINativeHost
+    private let controller: UIHostingController<DocsMarkdownView>
+
+    var markdown: String { model.markdown }
+
+    init() {
+        controller = UIHostingController(rootView: DocsMarkdownView(model: model))
+        controller.view.backgroundColor = .clear
+        host = AUINativeHost(controller.view)
+    }
+
+    func load(markdown: String) {
+        model.markdown = markdown
+    }
+}
+
+struct DocsMarkdownView: View {
+    @ObservedObject var model: DocsMarkdownPage.Model
+
+    var body: some View {
+        ScrollView {
+            Markdown(model.markdown)
+                .markdownTheme(.gitHub)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+        }
+        // A link to another page (`[IF THEN](IF_THEN.md)`) opens that page
+        // here; anything else goes where the system sends it.
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == nil, url.pathExtension.lowercased() == "md" else { return .systemAction }
+            model.onOpenPage?(url.lastPathComponent)
+            return .handled
+        })
+    }
+}
+#else
+typealias DocsViewer = AUIMarkdownEditor
+#endif

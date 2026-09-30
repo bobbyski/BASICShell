@@ -109,6 +109,11 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         terminalView.terminalDelegate = self
         #if os(macOS)
         terminalView.configureNativeColors()
+        #else
+        applyNativeColors()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (console: Self, _: UITraitCollection) in
+            console.applyNativeColors()
+        }
         #endif
         terminalView.linkReporting = .none
         terminalView.getTerminal().resize(cols: 80, rows: 25)
@@ -224,8 +229,20 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
+            applyNativeColors()
             _ = terminalView.becomeFirstResponder()
         }
+    }
+
+    /// The colors the Mac's `configureNativeColors` sets, for this view's
+    /// appearance. SwiftTerm's iOS view starts with a clear background, and
+    /// its draw fills with it before each redraw, so a clear one erased
+    /// nothing: rows that scrolled away stayed under the new ones. The
+    /// terminal takes the colors resolved, so they are set again when the
+    /// appearance changes.
+    private func applyNativeColors() {
+        terminalView.nativeForegroundColor = UIColor.label.resolvedColor(with: traitCollection)
+        terminalView.nativeBackgroundColor = UIColor.systemBackground.resolvedColor(with: traitCollection)
     }
 
     override func layoutSubviews() {

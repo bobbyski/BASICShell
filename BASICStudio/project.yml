@@ -61,6 +61,8 @@ targets:
         buildPhase: resources
       - path: Sources/BASICStudio/Resources/UserDocs.zip
         buildPhase: resources
+    # Dynamic package frameworks are embedded, or the app runs only where
+    # it was built (it loads them from the build folder) and not on a device.
     dependencies:
       - package: BASICCore
         product: BASICCore
@@ -68,16 +70,20 @@ targets:
         product: SwiftTerm
       - package: VectorTerminalSDK
         product: VectorTerminalSDK
+        embed: true
       - package: MarkdownUI
         product: MarkdownUI
       - package: DocumentArchive
         product: DocumentArchive
       - package: ActiveUI
         product: ActiveUI
+        embed: true
       - package: ActiveUIMarkdown
         product: ActiveUIMarkdown
+        embed: true
       - package: ActiveUICode
         product: ActiveUICode
+        embed: true
       - package: SwiftyCodeEditor
         product: SwiftyCodeEditor
     settings:
@@ -135,6 +141,8 @@ targets:
         buildPhase: resources
       - path: Sources/BASICStudio/Resources/UserDocs.zip
         buildPhase: resources
+    # Dynamic package frameworks are embedded, or the app runs only where
+    # it was built (it loads them from the build folder) and not on a device.
     dependencies:
       - package: BASICCore
         product: BASICCore
@@ -142,18 +150,23 @@ targets:
         product: SwiftTerm
       - package: VectorTerminalSDK
         product: VectorTerminalSDK
+        embed: true
       - package: MarkdownUI
         product: MarkdownUI
       - package: DocumentArchive
         product: DocumentArchive
       - package: ActiveUI
         product: ActiveUI
+        embed: true
       - package: ActiveUIMarkdown
         product: ActiveUIMarkdown
+        embed: true
       - package: ActiveUICode
         product: ActiveUICode
+        embed: true
       - package: ActiveUICoreEditor
         product: ActiveUICoreEditor
+        embed: true
     info:
       path: iOS/Info.plist
       properties:
