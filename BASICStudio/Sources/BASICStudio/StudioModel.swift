@@ -37,6 +37,15 @@ final class StudioModel: ObservableObject {
     @Published var isEditorGutterVisible = false {
         didSet { saveSettings() }
     }
+    @Published var editorIndentsSelectionWithTab = true {
+        didSet { saveSettings() }
+    }
+    @Published var editorIndentsNewLines = true {
+        didSet { saveSettings() }
+    }
+    @Published var editorIndentUnit = StudioSettings.defaultIndentUnit {
+        didSet { saveSettings() }
+    }
     @Published var editorTheme: EditorTheme = .dark {
         didSet { saveSettings() }
     }
@@ -228,6 +237,9 @@ final class StudioModel: ObservableObject {
         let settings = persistsSettings ? StudioSettingsStore.load() : StudioSettings()
         editorTheme = settings.editorTheme
         isEditorGutterVisible = settings.isEditorGutterVisible
+        editorIndentsSelectionWithTab = settings.editorIndentsSelectionWithTab
+        editorIndentsNewLines = settings.editorIndentsNewLines
+        editorIndentUnit = settings.editorIndentUnit
         terminalScreenSize = settings.terminalScreenSize
         workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
         let savedPromptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate
@@ -1532,6 +1544,9 @@ final class StudioModel: ObservableObject {
             StudioSettings(
                 editorTheme: editorTheme,
                 isEditorGutterVisible: isEditorGutterVisible,
+                editorIndentsSelectionWithTab: editorIndentsSelectionWithTab,
+                editorIndentsNewLines: editorIndentsNewLines,
+                editorIndentUnit: editorIndentUnit,
                 terminalScreenSize: terminalScreenSize,
                 workingDirectoryPath: workingDirectoryURL.path,
                 promptTemplate: promptTemplate,

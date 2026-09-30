@@ -74,6 +74,23 @@ struct ActiveUISourceEditorTests {
         #expect(typed == "PRINT 1")
     }
 
+    @Test("E12 · Typing is set for BASIC: Settings' indenting on; no auto-closed ' or HTML tags")
+    func typingBehavior() {
+        let model = StudioHarness().model
+        let source = SourceEditorAUI()
+        source.sync(.mainEditor(model))
+        let behavior = source.editor.editorBehavior
+        #expect(behavior.indentsSelectionWithTab && behavior.indentsNewLines && behavior.indentUnit == "    ")
+        // `'` starts a comment and `y>z` is a comparison, so nothing pairs.
+        #expect(!behavior.closesPairsAutomatically && !behavior.synchronizesClosingTag && !behavior.expandsPairsOnReturn)
+        #expect(!behavior.showsFoldingRibbon && !behavior.showsGitChangeGutter)
+
+        model.editorIndentUnit = "\t"
+        model.editorIndentsNewLines = false
+        source.sync(.mainEditor(model))
+        #expect(source.editor.editorBehavior.indentUnit == "\t" && !source.editor.editorBehavior.indentsNewLines)
+    }
+
     @Test("D5 D6 · The debug code view: read-only, the paused line and the breakpoints")
     func debugCodeView() async throws {
         let studio = StudioHarness(program: """

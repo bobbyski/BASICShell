@@ -24,6 +24,7 @@ import SwiftyCodeEditor
 /// | Dark, Light, High Contrast | ``theme(for:)``, in Monaco's own colors |
 /// | the line-number toggle | the gutter's ruler, shown or hidden |
 /// | find and replace | the text view's find bar |
+/// | (new) indenting | ``behavior(_:)``, from Settings ▸ Editor |
 /// | errors, diagnostics | `EditorDiagnostic`s |
 /// | the paused line, breakpoints | `stoppedLine`, `breakpoints` |
 @MainActor
@@ -87,10 +88,36 @@ final class SourceEditorAUI {
         if input.replaceRequest > (old?.replaceRequest ?? 0) {
             showFind(replacing: true)
         }
+        let behavior = Self.behavior(input)
+        if behavior != editor.editorBehavior {
+            editor.editorBehavior = behavior
+        }
         // Every change above re-renders the surface, and a render turns the
         // gutter back on, so the setting is applied after them, every time.
         showLineNumbers(input.showsLineNumbers)
         drawn = input
+    }
+
+    // MARK: Typing
+
+    /// The typing conveniences Studio offers, and the ones it turns off.
+    ///
+    /// SwiftyCodeEditor's defaults are for brace languages and HTML. Its
+    /// auto-close pairs `'`, which starts a BASIC comment, and completes a
+    /// "tag" on `>`, which in `IF x<y AND y>z` is a comparison; the tag sync,
+    /// the Return expansion and the folding ribbon work on braces and tags
+    /// BASIC does not have; and Studio keeps no git baseline for the gutter.
+    static func behavior(_ input: EditorRenderInput) -> EditorBehaviorPreferences {
+        EditorBehaviorPreferences(
+            indentsSelectionWithTab: input.indentsSelectionWithTab,
+            closesPairsAutomatically: false,
+            synchronizesClosingTag: false,
+            expandsPairsOnReturn: false,
+            indentsNewLines: input.indentsNewLines,
+            showsFoldingRibbon: false,
+            showsGitChangeGutter: false,
+            indentUnit: input.indentUnit
+        )
     }
 
     // MARK: The gutter and find

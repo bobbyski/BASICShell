@@ -29,6 +29,12 @@ struct EditorRenderInput: Equatable {
     var findRequest: Int
     /// Bumped to open find with replace; 0 never opens it.
     var replaceRequest: Int
+    /// Tab and Shift-Tab indent the selected lines.
+    var indentsSelectionWithTab = true
+    /// Return keeps the line's indentation.
+    var indentsNewLines = true
+    /// One level of indentation.
+    var indentUnit = StudioSettings.defaultIndentUnit
 
     /// The main editor: editable, with the gutter as set, the diagnostics and
     /// find requests, and no debugger marks.
@@ -46,7 +52,10 @@ struct EditorRenderInput: Equatable {
             fontFamily: model.fontFamily,
             fontSize: model.fontSize,
             findRequest: model.editorFindRequest,
-            replaceRequest: model.editorReplaceRequest
+            replaceRequest: model.editorReplaceRequest,
+            indentsSelectionWithTab: model.editorIndentsSelectionWithTab,
+            indentsNewLines: model.editorIndentsNewLines,
+            indentUnit: model.editorIndentUnit
         )
     }
 

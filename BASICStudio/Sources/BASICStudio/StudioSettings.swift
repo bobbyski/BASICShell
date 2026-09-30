@@ -73,12 +73,21 @@ struct StudioSettings: Codable {
     static let defaultConsoleScrollbackLines = 5000
     static let consoleScrollbackRange = 200...50_000
 
+    /// Four spaces, as the demos are written.
+    static let defaultIndentUnit = "    "
+
     static func clampedConsoleScrollbackLines(_ lines: Int) -> Int {
         min(max(lines, consoleScrollbackRange.lowerBound), consoleScrollbackRange.upperBound)
     }
 
     var editorTheme: EditorTheme = .dark
     var isEditorGutterVisible = false
+    /// Tab and Shift-Tab indent or outdent the selected lines.
+    var editorIndentsSelectionWithTab = true
+    /// Return keeps the line's indentation.
+    var editorIndentsNewLines = true
+    /// One level of indentation: a tab, or spaces.
+    var editorIndentUnit: String = StudioSettings.defaultIndentUnit
     var terminalScreenSize: TerminalScreenSize = .flexible
     var workingDirectoryPath: String?
     var promptTemplate: String = BASICSession.defaultPromptTemplate
@@ -91,6 +100,9 @@ struct StudioSettings: Codable {
     private enum CodingKeys: String, CodingKey {
         case editorTheme
         case isEditorGutterVisible
+        case editorIndentsSelectionWithTab
+        case editorIndentsNewLines
+        case editorIndentUnit
         case terminalScreenSize
         case workingDirectoryPath
         case promptTemplate
@@ -103,6 +115,9 @@ struct StudioSettings: Codable {
     init(
         editorTheme: EditorTheme = .dark,
         isEditorGutterVisible: Bool = false,
+        editorIndentsSelectionWithTab: Bool = true,
+        editorIndentsNewLines: Bool = true,
+        editorIndentUnit: String = StudioSettings.defaultIndentUnit,
         terminalScreenSize: TerminalScreenSize = .flexible,
         workingDirectoryPath: String? = nil,
         promptTemplate: String = BASICSession.defaultPromptTemplate,
@@ -113,6 +128,9 @@ struct StudioSettings: Codable {
     ) {
         self.editorTheme = editorTheme
         self.isEditorGutterVisible = isEditorGutterVisible
+        self.editorIndentsSelectionWithTab = editorIndentsSelectionWithTab
+        self.editorIndentsNewLines = editorIndentsNewLines
+        self.editorIndentUnit = editorIndentUnit
         self.terminalScreenSize = terminalScreenSize
         self.workingDirectoryPath = workingDirectoryPath
         self.promptTemplate = promptTemplate
@@ -126,6 +144,9 @@ struct StudioSettings: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         editorTheme = try container.decodeIfPresent(EditorTheme.self, forKey: .editorTheme) ?? .dark
         isEditorGutterVisible = try container.decodeIfPresent(Bool.self, forKey: .isEditorGutterVisible) ?? false
+        editorIndentsSelectionWithTab = try container.decodeIfPresent(Bool.self, forKey: .editorIndentsSelectionWithTab) ?? true
+        editorIndentsNewLines = try container.decodeIfPresent(Bool.self, forKey: .editorIndentsNewLines) ?? true
+        editorIndentUnit = try container.decodeIfPresent(String.self, forKey: .editorIndentUnit) ?? Self.defaultIndentUnit
         terminalScreenSize = try container.decodeIfPresent(TerminalScreenSize.self, forKey: .terminalScreenSize) ?? .flexible
         workingDirectoryPath = try container.decodeIfPresent(String.self, forKey: .workingDirectoryPath)
         promptTemplate = try container.decodeIfPresent(String.self, forKey: .promptTemplate) ?? BASICSession.defaultPromptTemplate
