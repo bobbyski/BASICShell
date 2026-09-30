@@ -38,7 +38,7 @@ struct PromptEditorModel: Equatable {
 
     static let plainDefaultTemplate = BASICSession.plainPromptTemplate
     static let classicBASICTemplate = "READY%nl> "
-    static let tokenHelp = "Tokens: ${user}, ${currentdir}, ${gitstatus}, %cwd, %git, %gitSegment, %nl"
+    static let tokenHelp = "Tokens: ${user}, ${currentdir}, ${gitstatus}, ${gitchanges}, %cwd, %git, %gitSegment, %nl"
     static let segmentListHelp = "Select a segment to edit it. Select it again or use New Segment to return to adding. Drag to reorder."
     static let noSelectionHelp = "Select a segment on the left to edit its type, text, and colors."
 

@@ -78,8 +78,8 @@ struct NerdPromptSegment: Identifiable, Equatable {
         case .os: return ""
         case .home: return " ~"
         case .currentDirectory: return " ~/src/AIBasic/Code"
-        case .gitBranch: return "git  feature/classes"
-        case .gitStatus: return "!1 ⇡2"
+        case .gitBranch: return "git  feature/classes ⇡2"
+        case .gitStatus: return "!1"
         case .user: return "bobby"
         case .literal: return literal.isEmpty ? "Text" : literal
         case .newline: return "↵"
@@ -92,7 +92,7 @@ struct NerdPromptSegment: Identifiable, Equatable {
         case .home: return " ~"
         case .currentDirectory: return " ${currentdir}"
         case .gitBranch: return "git  ${gitstatus}"
-        case .gitStatus: return "!1"
+        case .gitStatus: return "${gitchanges}"
         case .user: return "${user}"
         case .literal: return literal
         case .newline: return "%nl"
@@ -103,7 +103,7 @@ struct NerdPromptSegment: Identifiable, Equatable {
         NerdPromptSegment(kind: .os, foreground: .black, background: .silver),
         NerdPromptSegment(kind: .currentDirectory, foreground: .white, background: .purple),
         NerdPromptSegment(kind: .gitBranch, foreground: .black, background: .gold),
-        NerdPromptSegment(kind: .gitStatus, literal: "!1", foreground: .black, background: .gold),
+        NerdPromptSegment(kind: .gitStatus, foreground: .black, background: .gold),
         NerdPromptSegment(kind: .literal, literal: "Ready", foreground: .black, background: .green)
     ]
 }

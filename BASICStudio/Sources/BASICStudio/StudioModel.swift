@@ -261,7 +261,7 @@ final class StudioModel: ObservableObject {
         workingDirectoryURL = Self.validWorkingDirectory(from: settings.workingDirectoryPath)
         let savedPromptTemplate = settings.promptTemplate == StudioFonts.legacyPlainPromptTemplate
             ? BASICSession.defaultPromptTemplate
-            : settings.promptTemplate
+            : BASICSession.migratedPromptTemplate(settings.promptTemplate)
         promptTemplate = persistsSettings
             ? BASICPromptTemplateStore.load(default: savedPromptTemplate)
             : savedPromptTemplate
