@@ -105,6 +105,19 @@ struct StudioSettings: Codable {
     var consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines
     /// The folder open as a project, reopened at launch (P3.7).
     var projectDirectoryPath: String?
+    /// Programs are kept in iCloud Drive (``StudioCloudStorage``).
+    var keepsProgramsInICloud = StudioSettings.defaultKeepsProgramsInICloud
+
+    /// On by default on iPad and iPhone, where the app's own folder is
+    /// otherwise the only place a program can be; off on the Mac, where
+    /// people already keep their programs where they want them.
+    static var defaultKeepsProgramsInICloud: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
 
     private enum CodingKeys: String, CodingKey {
         case editorTheme
@@ -120,6 +133,7 @@ struct StudioSettings: Codable {
         case fontSize
         case consoleScrollbackLines
         case projectDirectoryPath
+        case keepsProgramsInICloud
     }
 
     init(
@@ -135,7 +149,8 @@ struct StudioSettings: Codable {
         fontFamily: String = StudioFonts.defaultFamily,
         fontSize: Double = 13,
         consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines,
-        projectDirectoryPath: String? = nil
+        projectDirectoryPath: String? = nil,
+        keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -150,6 +165,7 @@ struct StudioSettings: Codable {
         self.fontSize = fontSize
         self.consoleScrollbackLines = Self.clampedConsoleScrollbackLines(consoleScrollbackLines)
         self.projectDirectoryPath = projectDirectoryPath
+        self.keepsProgramsInICloud = keepsProgramsInICloud
     }
 
     init(from decoder: Decoder) throws {
@@ -169,6 +185,8 @@ struct StudioSettings: Codable {
             try container.decodeIfPresent(Int.self, forKey: .consoleScrollbackLines) ?? Self.defaultConsoleScrollbackLines
         )
         projectDirectoryPath = try container.decodeIfPresent(String.self, forKey: .projectDirectoryPath)
+        keepsProgramsInICloud = try container.decodeIfPresent(Bool.self, forKey: .keepsProgramsInICloud)
+            ?? Self.defaultKeepsProgramsInICloud
     }
 }
 

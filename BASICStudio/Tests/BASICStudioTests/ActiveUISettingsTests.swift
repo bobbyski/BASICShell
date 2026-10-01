@@ -49,7 +49,7 @@ struct ActiveUISettingsTests {
         settings.install(in: window)
         #expect(window.style == .modern)
         #expect(window.allowsResizing == true)
-        #expect(window.pages.map(\.title) == ["General", "Editor", "Font", "Console"])
+        #expect(window.pages.map(\.title) == ["General", "Editor", "Font", "Console", "Storage"])
         // Wide enough that the prompt editor, which needs a page's full
         // width, opens unclipped beside the widest sidebar.
         #expect(window.contentSize.width >= SettingsAUI.pageWidth + 2 * 16 + 280)

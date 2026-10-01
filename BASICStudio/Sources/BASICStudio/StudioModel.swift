@@ -96,6 +96,17 @@ final class StudioModel: ObservableObject {
     @Published private var workingDirectoryURL = StudioModel.defaultWorkingDirectoryURL() {
         didSet { saveSettings() }
     }
+    /// Programs are kept in iCloud Drive: the working folder moves to the
+    /// app's iCloud folder while this is on (``StudioCloudStorage``).
+    @Published var keepsProgramsInICloud = StudioSettings.defaultKeepsProgramsInICloud {
+        didSet {
+            guard keepsProgramsInICloud != oldValue, !isLoadingSettings else { return }
+            saveSettings()
+            applyCloudStorage(movesWorkingDirectory: true)
+        }
+    }
+    /// What iCloud Drive is doing, for Settings.
+    @Published private(set) var cloudStatus: StudioCloudStorage.Status = .off
     /// The folder open as a project, and the programs in it (P3.7).
     @Published private(set) var projectDirectoryURL: URL? {
         didSet { saveSettings() }
@@ -268,6 +279,7 @@ final class StudioModel: ObservableObject {
         fontFamily = settings.fontFamily == StudioFonts.legacyDefaultFamily ? StudioFonts.defaultFamily : settings.fontFamily
         fontSize = min(max(settings.fontSize, 10), 24)
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
+        keepsProgramsInICloud = settings.keepsProgramsInICloud
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
             let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
             projectDirectoryURL = directory
@@ -292,6 +304,45 @@ final class StudioModel: ObservableObject {
         saveSettings()
         refreshHostFlags()
         updateEditorDiagnostics()
+        // A program named at launch keeps its own folder.
+        applyCloudStorage(movesWorkingDirectory: launch.programPath == nil)
+    }
+
+    /// Finds the iCloud folder off the main thread, then works there: the
+    /// working folder moves to it, and what other devices saved starts
+    /// downloading. Turned off, a working folder that was the iCloud one
+    /// goes back to the default.
+    func applyCloudStorage(movesWorkingDirectory: Bool) {
+        guard keepsProgramsInICloud else {
+            if case .on(let folder) = cloudStatus, workingDirectoryURL == folder.standardizedFileURL {
+                workingDirectoryURL = Self.defaultWorkingDirectoryURL()
+            }
+            cloudStatus = .off
+            return
+        }
+        guard persistsSettings else {
+            // Headless (tests): no iCloud lookups.
+            cloudStatus = .unavailable
+            return
+        }
+        cloudStatus = .checking
+        Task { @MainActor [weak self] in
+            let folder = await Self.findCloudFolder()
+            guard let self, self.keepsProgramsInICloud else { return }
+            guard let folder else {
+                self.cloudStatus = .unavailable
+                return
+            }
+            self.cloudStatus = .on(folder)
+            if movesWorkingDirectory {
+                self.workingDirectoryURL = folder.standardizedFileURL
+            }
+            StudioCloudStorage.downloadMissing(in: folder)
+        }
+    }
+
+    nonisolated private static func findCloudFolder() async -> URL? {
+        await Task.detached(priority: .utility) { StudioCloudStorage.documentsFolder() }.value
     }
 
     func runStartupProgramIfNeeded() {
@@ -1102,7 +1153,7 @@ final class StudioModel: ObservableObject {
 
     private func saveProgram(to url: URL) {
         do {
-            try programText.write(to: url, atomically: true, encoding: .utf8)
+            try StudioCloudStorage.write(programText, to: url)
             currentProgramURL = url
             currentProgramFileName = url.path
             workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
@@ -1632,7 +1683,8 @@ final class StudioModel: ObservableObject {
                 fontFamily: fontFamily,
                 fontSize: fontSize,
                 consoleScrollbackLines: consoleScrollbackLines,
-                projectDirectoryPath: projectDirectoryURL?.path
+                projectDirectoryPath: projectDirectoryURL?.path,
+                keepsProgramsInICloud: keepsProgramsInICloud
             )
         )
     }

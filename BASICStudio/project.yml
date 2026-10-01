@@ -125,6 +125,7 @@ targets:
       - path: iOS
         excludes:
           - Info.plist
+          - "*.entitlements"
       - path: Sources/BASICStudio/Resources/Demos
         buildPhase: resources
         type: folder
@@ -193,6 +194,24 @@ targets:
         # Programs saved on the iPad show in Files, to read back on the Mac.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # The app's iCloud folder, shown in Files and Finder as BASICStudio
+        # (StudioCloudStorage).
+        NSUbiquitousContainers:
+          iCloud.com.aibasic.BASICStudio:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: BASICStudio
+            NSUbiquitousContainerSupportedFolderLevels: Any
+    # iCloud Drive for programs. The Mac app runs outside the sandbox and
+    # uses the same folder on disk, so it needs none of this.
+    entitlements:
+      path: iOS/BASICStudio-iOS.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.aibasic.BASICStudio
+        com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.com.aibasic.BASICStudio
+        com.apple.developer.icloud-services:
+          - CloudDocuments
     settings:
       base:
         # One bundle ID with the Mac app, as a universal purchase needs.

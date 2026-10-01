@@ -45,11 +45,13 @@
 		47044532FD916CF337D08BFE /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 6794AFCFED8BF24845F1D2D0 /* MarkdownUI */; };
 		47A9857814619923594CCAC8 /* BASICStudioiOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEA0F4A6FF62DCB06D74711 /* BASICStudioiOS.swift */; };
 		48D9ACA2F311AA58216CF400 /* PromptEditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48FFDD9C956077CA2BBAB7D6 /* PromptEditorModel.swift */; };
+		4D39721266645D3B20EF7B08 /* StudioCloudStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */; };
 		4D62081D908243760D673386 /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
 		4D7FD52C1482075CEA7484E4 /* LogPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 274E10BC1DC8322BB117728E /* LogPaneAUI.swift */; };
 		4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
 		4EE020915A73D66E6029DFA2 /* DocsPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786414E68D08A63E6898020E /* DocsPaneModel.swift */; };
 		4F380BBEF0DDB5FAEC79AF58 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		51E1C10EE3CCEC9CA04F32D7 /* StudioCloudStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */; };
 		542CEC2112B196DDB36AD540 /* StudioHostFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */; };
 		543916F96C24C380A7DEF63E /* SwiftyCodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 955277B154524A585B8D179D /* SwiftyCodeEditor */; };
 		54B1B557BF391D0C0593720C /* NerdPromptSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD856E6A67B449DF70D14B01 /* NerdPromptSegments.swift */; };
@@ -171,6 +173,7 @@
 		20D23305654DCC7C771397BA /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDocumentationPane.swift; sourceTree = "<group>"; };
 		274E10BC1DC8322BB117728E /* LogPaneAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPaneAUI.swift; sourceTree = "<group>"; };
+		2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioCloudStorage.swift; sourceTree = "<group>"; };
 		2F75838E7973F9367D5B0837 /* BASICCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCore; path = ../BASICCore; sourceTree = SOURCE_ROOT; };
 		338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModelHostConformance.swift; sourceTree = "<group>"; };
 		345DA55E34BEF73307F59C60 /* UserDocs.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; path = UserDocs.zip; sourceTree = "<group>"; };
@@ -353,6 +356,7 @@
 				DB6405A0933EA2491CDDF863 /* LogPane.swift */,
 				0CB8284FB31709C1BD017047 /* MonacoEditor.swift */,
 				944D27C4D351F1DFFC50FE6D /* StudioAbout.swift */,
+				2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */,
 				A38AB3D82C7A880B72971A1D /* StudioFonts.swift */,
 				1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */,
 				C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */,
@@ -575,6 +579,7 @@
 				A1432993494F6BA04B2BAD6C /* StudioAbout.swift in Sources */,
 				D05ADC8871BB376F69B2C843 /* StudioActiveUIShell.swift in Sources */,
 				02730A16BBF74C260858CABD /* StudioAppTheme.swift in Sources */,
+				4D39721266645D3B20EF7B08 /* StudioCloudStorage.swift in Sources */,
 				2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */,
 				2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */,
 				4E55CE31851BF0FD6FFCB6D1 /* StudioInputCoordinator.swift in Sources */,
@@ -620,6 +625,7 @@
 				ADDFE6A9D2FDACA2F68836A8 /* StudioAUIBridge.swift in Sources */,
 				2F5264978E8C6E2913DD8B8D /* StudioActiveUIShell.swift in Sources */,
 				BFE2A211DF479CB39770D73E /* StudioAppTheme.swift in Sources */,
+				51E1C10EE3CCEC9CA04F32D7 /* StudioCloudStorage.swift in Sources */,
 				A2B52125DD80C4AB8C550CAF /* StudioFonts.swift in Sources */,
 				542CEC2112B196DDB36AD540 /* StudioHostFlags.swift in Sources */,
 				0B5521E79B9FA05A08A81339 /* StudioInputCoordinator.swift in Sources */,
@@ -761,6 +767,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "iOS/BASICStudio-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -784,6 +791,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "iOS/BASICStudio-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

@@ -25,6 +25,7 @@ import Foundation
 ///             Display: line numbers
 ///   Font      Font ▾ (preferred first)   Size ──●── 13
 ///   Console   Lines ──●── [−|+] 10000    the scrollback note
+///   Storage   iCloud Drive: keep programs there, and whether it is
 /// ```
 ///
 /// A slider snaps to its step when moved, as SwiftUI's `step:` does.
@@ -35,6 +36,9 @@ final class SettingsAUI {
     let editorPage: AUIView
     let fontPage: AUIView
     let consolePage: AUIView
+    let storagePage: AUIView
+    let cloudSwitch: AUISwitch
+    let cloudStatusLabel: AUILabel
     let tabIndentSwitch: AUISwitch
     let newLineIndentSwitch: AUISwitch
     let indentPicker: AUIPicker
@@ -117,6 +121,16 @@ final class SettingsAUI {
                        description: "Numbers each line in the editor's gutter, except in a program that numbers its own lines (10 PRINT …). The toolbar's line-number button sets it too.",
                        accessory: lineNumbersSwitch)
         editorPage = Self.page([appearance, typing, display])
+
+        cloudSwitch = AUISwitch(isOn: model.keepsProgramsInICloud) { [weak model] in
+            model?.keepsProgramsInICloud = $0
+        }
+        let cloud = AUISettingsGroup(title: "iCloud Drive")
+        cloud.addRow("Keep programs in iCloud Drive",
+                     description: "Programs are saved and opened in iCloud Drive's BASICStudio folder, the same folder on iPad, iPhone and Mac. The working folder moves there while this is on. Not available on Windows or Linux.",
+                     accessory: cloudSwitch)
+        cloudStatusLabel = Self.note("")
+        storagePage = Self.page([cloud, cloudStatusLabel])
 
         fontPicker.onSelectionChange = { [weak self] index in
             guard let self else { return }
@@ -216,6 +230,7 @@ final class SettingsAUI {
             ("Editor", "square.and.pencil", editorPage),
             (tabs[1].title, tabs[1].symbol, fontPage),
             (tabs[2].title, tabs[2].symbol, consolePage),
+            ("Storage", "icloud", storagePage),
         ]
         for entry in pages {
             let page = entry.page
@@ -227,6 +242,7 @@ final class SettingsAUI {
     func refresh() {
         promptEditor.refresh()
         refreshEditorPage()
+        refreshStoragePage()
         let settings = SettingsViewModel(model)
         guard settings != drawn else { return }
         fontPicker.selectedIndex = families.firstIndex(of: settings.fontFamily)
@@ -257,6 +273,27 @@ final class SettingsAUI {
         let theme = StudioAppTheme.names.firstIndex(of: StudioAppTheme.validated(model.appTheme))
         if themePicker.selectedIndex != theme {
             themePicker.selectedIndex = theme
+        }
+    }
+
+    /// The Storage page: the switch, and what iCloud Drive is doing.
+    private func refreshStoragePage() {
+        if cloudSwitch.isOn != model.keepsProgramsInICloud {
+            cloudSwitch.isOn = model.keepsProgramsInICloud
+        }
+        let status = Self.cloudStatusText(model.cloudStatus)
+        if cloudStatusLabel.text != status {
+            cloudStatusLabel.text = status
+        }
+    }
+
+    /// What the Storage page says about iCloud Drive.
+    static func cloudStatusText(_ status: StudioCloudStorage.Status) -> String {
+        switch status {
+        case .on(let folder): "Programs are in iCloud Drive ▸ BASICStudio (\(folder.path))."
+        case .off: "Programs stay in the working folder you choose."
+        case .unavailable: "iCloud Drive is off, or no one is signed in to iCloud on this device, so programs stay on this device."
+        case .checking: "Looking for iCloud Drive…"
         }
     }
 
