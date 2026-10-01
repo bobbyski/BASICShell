@@ -35,6 +35,11 @@ extension StudioModel {
         rebuildProgramFromEditor()
         selectedPane = .console
         echoConsoleCommandForJIT()
+        guard BASICPlatform.runsOtherPrograms else {
+            appendJITOutput(BASICPlatform.notAvailableMessage("JIT") + "; RUN still interprets\n")
+            appendJITOutput(prompt)
+            return
+        }
 
         let source = BASICJIT.text(of: session.program)
         let path = currentProgramURL?.path
@@ -97,7 +102,7 @@ extension StudioModel {
         isJITRunning = true
         #else
         // Unreachable: `BASICJIT.compile` builds nothing on iOS.
-        appendJITOutput("JIT: not available on iPhone and iPad\n")
+        appendJITOutput(BASICPlatform.notAvailableMessage("JIT") + "\n")
         appendJITOutput(prompt)
         #endif
     }

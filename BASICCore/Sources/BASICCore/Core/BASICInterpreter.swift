@@ -1554,7 +1554,7 @@ public final class BASICInterpreter {
             try printDirectoryStack()
             return .next
         case .system(let command):
-            let output = try runSystemCommand(command)
+            let output = try runSystemCommand(command, feature: "SYSTEM")
             if !output.isEmpty {
                 outputCoordinator.print(output, terminator: "")
                 updateOutputColumn(text: output, terminator: "")
@@ -5316,7 +5316,8 @@ public final class BASICInterpreter {
         return path
     }
 
-    private func runSystemCommand(_ expression: Expression) throws -> String {
+    private func runSystemCommand(_ expression: Expression, feature: String) throws -> String {
+        guard BASICPlatform.runsOtherPrograms else { throw BASICPlatform.notAvailable(feature) }
         guard let systemHost = host as? BASICSystemHost else {
             throw BASICError.runtime("SYSTEM is not supported by this host")
         }
@@ -5333,6 +5334,7 @@ public final class BASICInterpreter {
         tty: Bool,
         timeout: Expression?
     ) throws -> BASICProcessResult {
+        guard BASICPlatform.runsOtherPrograms else { throw BASICPlatform.notAvailable("EXEC") }
         guard let processHost = host as? BASICProcessHost else {
             throw BASICError.runtime("EXEC is not supported by this host")
         }
@@ -5375,6 +5377,7 @@ public final class BASICInterpreter {
     }
 
     private func runStructuredPipeline(input: Expression?, stages: [BASICPipelineStage]) throws -> BASICProcessResult {
+        guard BASICPlatform.runsOtherPrograms else { throw BASICPlatform.notAvailable("PIPE") }
         guard input != nil || stages.count > 1 else {
             throw BASICError.runtime("PIPE expects at least two commands")
         }
@@ -5408,6 +5411,7 @@ public final class BASICInterpreter {
     }
 
     private func printExecutablePath(command: String) throws {
+        guard BASICPlatform.runsOtherPrograms else { throw BASICPlatform.notAvailable("WHICH") }
         guard let resolver = host as? BASICExecutableResolverHost else {
             throw BASICError.runtime("WHICH is not supported by this host")
         }
@@ -6087,7 +6091,7 @@ public final class BASICInterpreter {
             }
             return .string(BASICString(try fileHost.currentDirectoryPath()))
         case .systemFunction(let expression):
-            return .string(BASICString(try runSystemCommand(expression)))
+            return .string(BASICString(try runSystemCommand(expression, feature: "SYSTEM$")))
         }
     }
 

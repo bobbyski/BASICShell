@@ -1624,7 +1624,7 @@ public enum BASICSystemCommand {
 /// executable say so rather than failing somewhere deeper.
 public enum BASICSystemCommand {
     static var unavailable: BASICError {
-        .runtime("Running other programs is not available on iPhone and iPad")
+        BASICPlatform.notAvailable("Running other programs")
     }
 
     public static func run(

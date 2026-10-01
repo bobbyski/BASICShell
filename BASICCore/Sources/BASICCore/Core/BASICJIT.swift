@@ -87,7 +87,7 @@ public enum BASICJIT {
     ) -> Outcome {
         #if os(iOS)
         // No child processes on iOS, so no compiler to run.
-        return .unavailable(reason: "JIT is not available on iPhone and iPad; RUN still interprets")
+        return .unavailable(reason: BASICPlatform.notAvailableMessage("JIT") + "; RUN still interprets")
         #else
         guard let compiler = compilerPath(environment: environment) else {
             return .unavailable(reason: "basicc is not installed; RUN still interprets")
