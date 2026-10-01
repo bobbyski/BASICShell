@@ -38,11 +38,15 @@ struct EditorRenderInput: Equatable {
 
     /// The main editor: editable, with the gutter as set, the diagnostics and
     /// find requests, and no debugger marks.
+    ///
+    /// The gutter's numbers show when the setting is on and the program does
+    /// not number its own lines: beside `10 PRINT` they would be a second,
+    /// different number on every line.
     @MainActor
     static func mainEditor(_ model: StudioModel) -> EditorRenderInput {
         EditorRenderInput(
             text: model.programText,
-            showsLineNumbers: model.isEditorGutterVisible,
+            showsLineNumbers: model.isEditorGutterVisible && !hasBASICLineNumbers(model.programText),
             theme: model.editorTheme,
             errorLine: model.editorErrorLine,
             diagnostics: model.editorDiagnostics,
@@ -57,6 +61,21 @@ struct EditorRenderInput: Equatable {
             indentsNewLines: model.editorIndentsNewLines,
             indentUnit: model.editorIndentUnit
         )
+    }
+
+    /// Whether a program numbers its own lines, as `10 PRINT` does: at least
+    /// half its code lines start with a number. Blank lines and `'` comments
+    /// do not count either way.
+    static func hasBASICLineNumbers(_ text: String) -> Bool {
+        var code = 0
+        var numbered = 0
+        for line in text.split(separator: "\n") {
+            let trimmed = line.drop { $0 == " " || $0 == "\t" }
+            guard let first = trimmed.first, first != "'" else { continue }
+            code += 1
+            if first.isASCII, first.isNumber { numbered += 1 }
+        }
+        return code > 0 && numbered * 2 >= code
     }
 
     /// The Debug inspector's code view: read-only and always numbered, with the

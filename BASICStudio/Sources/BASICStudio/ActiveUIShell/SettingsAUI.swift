@@ -114,7 +114,7 @@ final class SettingsAUI {
         }
         let display = AUISettingsGroup(title: "Display")
         display.addRow("Show line numbers",
-                       description: "Numbers each line in the editor's gutter. The toolbar's line-number button sets it too.",
+                       description: "Numbers each line in the editor's gutter, except in a program that numbers its own lines (10 PRINT …). The toolbar's line-number button sets it too.",
                        accessory: lineNumbersSwitch)
         editorPage = Self.page([appearance, typing, display])
 

@@ -28,6 +28,28 @@ struct RenderInputTests {
         #expect(input.fontFamily == model.fontFamily && input.fontSize == model.fontSize && input.theme == model.editorTheme)
     }
 
+    @Test("A program that numbers its own lines gets no gutter numbers beside them")
+    func numberedProgramsKeepTheirOwnNumbers() {
+        let model = StudioHarness(program: "10 PRINT \"HI\"\n20 GOTO 10\n").model
+        model.isEditorGutterVisible = true
+        #expect(!EditorRenderInput.mainEditor(model).showsLineNumbers)
+
+        model.programText = "' greet\nPRINT \"HI\"\nEND\n"
+        #expect(EditorRenderInput.mainEditor(model).showsLineNumbers)
+
+        // The setting still decides for everything else.
+        model.isEditorGutterVisible = false
+        #expect(!EditorRenderInput.mainEditor(model).showsLineNumbers)
+    }
+
+    @Test("Line numbers are counted on code lines: comments and blanks do not count")
+    func countingNumberedLines() {
+        #expect(EditorRenderInput.hasBASICLineNumbers("10 REM\n\n  20 PRINT 1\n30 END"))
+        #expect(EditorRenderInput.hasBASICLineNumbers("' header\n' more\n10 PRINT 1"))
+        #expect(!EditorRenderInput.hasBASICLineNumbers("PRINT 1\nPRINT 2\n10 PRINT 3"))
+        #expect(!EditorRenderInput.hasBASICLineNumbers(""))
+    }
+
     @Test("D5 D6 · The debug code view: read-only, numbered, the paused line and the breakpoints")
     func debugCodeView() async throws {
         let studio = StudioHarness(program: """
