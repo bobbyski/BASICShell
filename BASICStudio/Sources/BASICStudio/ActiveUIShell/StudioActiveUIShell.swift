@@ -136,6 +136,9 @@ final class StudioActiveUIShell {
             },
         ]
         root = sidebar
+        // The theme's `.window` rule: the wash and the ink of the whole
+        // window, as the ActiveUI apps' roots carry it.
+        root.themeClasses = "window"
 
         let settings = SettingsAUI(model: model)
         self.settings = settings
@@ -288,7 +291,7 @@ final class StudioActiveUIShell {
         // when nothing changed.
         console.render(ConsoleRenderInput(model))
         if model.appTheme != drawnAppTheme {
-            StudioAppTheme.install(model.appTheme)
+            StudioAppTheme.install(model.appTheme, root: root)
             themeItem.label = StudioAppTheme.validated(model.appTheme)
             drawnAppTheme = model.appTheme
         }

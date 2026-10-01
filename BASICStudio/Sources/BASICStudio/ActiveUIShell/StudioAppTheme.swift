@@ -38,15 +38,24 @@ enum StudioAppTheme {
 
     /// Applies a theme to the app: its stylesheet, and the system appearance
     /// it is drawn for, so native popups match the cards around them.
+    ///
+    /// With `root`, the window around it takes the theme's `.window` wash
+    /// too: behind the toolbar, the title bar and the margins, which the
+    /// platform draws and the stylesheet alone cannot reach. Without it the
+    /// themed panes sat in a plain window, on iPad most visibly.
     @MainActor
-    static func install(_ name: String) {
+    static func install(_ name: String, root: AUIView? = nil) {
         let theme = validated(name)
         switch theme {
         case native: AUIApplication.appearance = .system
         case "Light": AUIApplication.appearance = .light
         default: AUIApplication.appearance = .dark
         }
-        AUITheme.install(stylesheet(for: theme))
+        let sheet = stylesheet(for: theme)
+        AUITheme.install(sheet)
+        if let root {
+            AUIWindowChrome.apply(background: AUITheme.windowBackground(in: sheet), to: root)
+        }
     }
 
     /// A theme's stylesheet, or nil for Native.
