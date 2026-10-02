@@ -10,11 +10,16 @@ import Foundation
 /// The command line, read once.
 ///
 /// ```text
-///   BASICStudio [--activeui | --swiftui] [program.bas]
+///   BASICStudio [--swiftui-reference] [program.bas]
 ///   BASICStudio --walk [--pane console|editor] [--inspector debug|docs|logs]
 ///               [--command-bar] [--breakpoint N]… [--settings general|font|console]
 ///               [--project DIR] [--theme NAME] [program.bas]
 /// ```
+///
+/// The ActiveUI shell is Studio. The SwiftUI shell is kept only as a
+/// reference to compare against, so it takes a flag that says so,
+/// `--swiftui-reference`, and has no scheme of its own. `--activeui` is still
+/// read, and asks for the default.
 ///
 /// `--walk` is for the side-by-side parity walk (STUDIO_FEATURES.md, Level 4):
 /// it opens either shell in a stated state, on default settings, saving
@@ -40,7 +45,7 @@ struct StudioLaunchOptions: Equatable, Sendable {
     }
 
     /// Which front end to put up.
-    var shell: Shell = .swiftUI
+    var shell: Shell = .activeUI
     /// A program to load into the editor and run once the window is up.
     var programPath: String?
     /// Whether settings come from, and go back to, Application Support.
@@ -72,10 +77,10 @@ struct StudioLaunchOptions: Equatable, Sendable {
         }
     }
 
-    /// Selects the ActiveUI shell.
+    /// Selects the ActiveUI shell, which is also the default.
     static let activeUIFlag = "--activeui"
-    /// Selects the SwiftUI shell, which is also the default.
-    static let swiftUIFlag = "--swiftui"
+    /// Selects the SwiftUI shell, kept for reference only.
+    static let swiftUIReferenceFlag = "--swiftui-reference"
 
     /// This process's options.
     static let current = parse(Array(CommandLine.arguments.dropFirst()), environment: ProcessInfo.processInfo.environment)
@@ -100,7 +105,7 @@ struct StudioLaunchOptions: Equatable, Sendable {
             let argument = arguments[index]
             switch argument {
             case activeUIFlag: options.shell = .activeUI
-            case swiftUIFlag: options.shell = .swiftUI
+            case swiftUIReferenceFlag: options.shell = .swiftUI
             case "--walk": isWalking = true
             case "--pane":
                 switch value()?.lowercased() {

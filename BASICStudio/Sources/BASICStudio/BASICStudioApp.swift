@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
 
-/// The SwiftUI shell. ``StudioMain`` starts it unless `--activeui` is given.
+/// The SwiftUI shell, kept as a reference only. ``StudioMain`` starts it
+/// when `--swiftui-reference` is given.
 struct BASICStudioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = StudioModel()

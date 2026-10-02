@@ -19,8 +19,8 @@ packages:
     from: 2.4.1
   DocumentArchive:
     path: ../DocumentArchive
-  # The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md): the
-  # sibling ActiveUI checkout, as Package.swift takes it.
+  # The ActiveUI shell, which is Studio (Documents/ACTIVEUI_TRANSITION.md):
+  # the sibling ActiveUI checkout, as Package.swift takes it.
   ActiveUI:
     path: ../../../../AIResearch/ActiveUI/Code/ActiveUI
   ActiveUIMarkdown:
@@ -239,12 +239,3 @@ schemes:
       config: Debug
     test:
       config: Debug
-  # The same app in the ActiveUI shell.
-  BASICStudio-ActiveUI:
-    build:
-      targets:
-        BASICStudio: all
-    run:
-      config: Debug
-      commandLineArguments:
-        "--activeui": true

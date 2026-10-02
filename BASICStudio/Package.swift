@@ -13,7 +13,7 @@ let package = Package(
         // VectorTerminalView (merged 96c3973, in no tag yet).
         .package(path: "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm"),
         .package(url: "https://github.com/bobbyski/VectorTerminalSDK.git", from: "1.5.6"),
-        // The second shell (`--activeui`, Documents/ACTIVEUI_TRANSITION.md).
+        // The ActiveUI shell, which is Studio (Documents/ACTIVEUI_TRANSITION.md).
         // A sibling checkout, as FreebirdStudio took it before it moved to
         // prebuilt frameworks.
         .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI"),

@@ -2,7 +2,7 @@
 //  StudioActiveUIShell.swift
 //  BASICStudio
 //
-//  The ActiveUI front end: `BASICStudio --activeui`.
+//  The ActiveUI front end: Studio, by default.
 //
 
 import ActiveUI

@@ -60,7 +60,7 @@ struct StudioLaunchOptionsTests {
     func program() {
         let options = StudioLaunchOptions.parse(["~/demo.bas", "ignored"])
         #expect(options.programPath == "~/demo.bas")
-        #expect(options.shell == .swiftUI)
+        #expect(options.shell == .activeUI)
     }
 
     @Test("--activeui picks the ActiveUI shell wherever it appears, and is not a path")
@@ -72,9 +72,11 @@ struct StudioLaunchOptionsTests {
         #expect(after == before)
     }
 
-    @Test("The last shell flag wins")
+    @Test("The SwiftUI shell takes its reference flag; the last shell flag wins")
     func lastFlagWins() {
-        #expect(StudioLaunchOptions.parse(["--activeui", "--swiftui"]).shell == .swiftUI)
+        #expect(StudioLaunchOptions.parse(["--swiftui-reference"]).shell == .swiftUI)
+        #expect(StudioLaunchOptions.parse(["--activeui", "--swiftui-reference"]).shell == .swiftUI)
+        #expect(StudioLaunchOptions.parse(["--swiftui-reference", "--activeui"]).shell == .activeUI)
     }
 
     @Test("Xcode's own arguments are passed through untouched, as before")
