@@ -2727,7 +2727,24 @@ public final class BASICInterpreter {
             let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
             try checkExecutionBreak()
             let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
-            return .string(BASICString(BASICKeyNormalizer.normalize(rawKey, encoding: encoding)))
+            let key = BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
+            if let held = BASICKeyName.canonical(key) {
+                runtime.heldKeys.saw(held, at: ProcessInfo.processInfo.systemUptime)
+            }
+            return .string(BASICString(key))
+        case "KEYDOWN":
+            // Whether a key is held now: the host's answer where it has one,
+            // and otherwise what INKEY$ has been seeing (BASICHeldKeyEstimate).
+            try requireArgumentCount(name.name, arguments, 1)
+            let key = try rawString(arguments[0])
+            guard let keyName = BASICKeyName.canonical(key) else {
+                throw BASICError.runtime("KEYDOWN does not know the key \"\(key)\"")
+            }
+            try checkExecutionBreak()
+            if let held = (host as? BASICKeyStateHost)?.isKeyDown(keyName) {
+                return .number(held ? 1 : 0)
+            }
+            return .number(runtime.heldKeys.isDown(keyName, at: ProcessInfo.processInfo.systemUptime) ? 1 : 0)
         case "INPUT$":
             return try intrinsicInputString(name: name.name, arguments: arguments)
         case "INSTR":

@@ -28,6 +28,8 @@ final class BASICRuntime {
     var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
     var letMode: LetMode = .global
     var keyMode: BASICKeyMode = .aibasic
+    /// What INKEY$ has seen, for KEYDOWN where the host cannot say.
+    var heldKeys = BASICHeldKeyEstimate()
     var mouseEventMode: BASICEventInputMode = .auto
     var gamepadEventMode: BASICEventInputMode = .auto
     var shellModeEnabled = false
@@ -110,6 +112,7 @@ final class BASICRuntime {
         resetForRun()
         letMode = .global
         keyMode = .aibasic
+        heldKeys = BASICHeldKeyEstimate()
         mouseEventMode = .auto
         gamepadEventMode = .auto
         environmentValues.removeAll()

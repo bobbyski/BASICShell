@@ -614,6 +614,7 @@ struct LLVMLowering {
     declare void @basic_rt_task_boundary_push(ptr)
     declare void @basic_rt_task_boundary_pop()
     declare ptr @basic_rt_inkey()
+    declare double @basic_rt_keydown(ptr)
     declare void @basic_rt_files_list()
     declare ptr @basic_rt_system(ptr)
     declare void @basic_rt_gfx_screen(double)

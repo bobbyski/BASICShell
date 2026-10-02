@@ -370,7 +370,99 @@ enum RTKeys {
                 return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(byte))
             }
         }
-        return normalize(raw ?? "", encoding: encoding)
+        let key = normalize(raw ?? "", encoding: encoding)
+        if let name = keyName(key) { sawKey(name) }
+        return key
+    }
+
+    // MARK: - KEYDOWN
+
+    // The interpreter's `BASICKeyName` and `BASICHeldKeyEstimate`, ported.
+    // A compiled program reads a terminal, which never says a key came up,
+    // so a key counts as held while INKEY$ keeps seeing it: half a second
+    // for one press, to bridge the terminal's repeat delay, and a moment
+    // after the last repeat once it is repeating.
+
+    static let pressWindow = 0.5
+    static let repeatWindow = 0.15
+    nonisolated(unsafe) static var lastSeen: [String: Double] = [:]
+    nonisolated(unsafe) static var repeating: Set<String> = []
+
+    static func sawKey(_ name: String, at time: Double = ProcessInfo.processInfo.systemUptime) {
+        if let previous = lastSeen[name], time - previous <= pressWindow {
+            repeating.insert(name)
+        } else {
+            repeating.remove(name)
+        }
+        lastSeen[name] = time
+    }
+
+    static func isKeyDown(_ name: String, at time: Double = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let seen = lastSeen[name] else { return false }
+        return time - seen <= (repeating.contains(name) ? repeatWindow : pressWindow)
+    }
+
+    /// A key's canonical name: `LEFT` for "LEFT", "[K", CHR$(0)+"K" or ESC [ D;
+    /// a letter in uppercase; nil for no key.
+    static func keyName(_ key: String) -> String? {
+        guard !key.isEmpty else { return nil }
+        if key.count == 1 {
+            switch key {
+            case " ": return "SPACE"
+            case "\r", "\n": return "ENTER"
+            case "\t": return "TAB"
+            case "\u{1B}": return "ESCAPE"
+            case "\u{8}", "\u{7F}": return "BACKSPACE"
+            default:
+                guard let scalar = key.unicodeScalars.first, scalar.value >= 32 else { return nil }
+                return key.uppercased()
+            }
+        }
+        if key.first == "[" {
+            let code = String(key.dropFirst()).drop { "!$#".contains($0) }
+            if code.first == "F", let number = Int(code.dropFirst()), (1...24).contains(number) { return "F\(number)" }
+            guard code.count == 1, let scalar = code.unicodeScalars.first else { return nil }
+            return code == "T" ? "TAB" : scanCodeName(Int(scalar.value))
+        }
+        if key.unicodeScalars.first == "\u{0}", key.unicodeScalars.count == 2, let code = key.unicodeScalars.last?.value {
+            return scanCodeName(Int(code))
+        }
+        if key.first == "\u{1B}" {
+            let normalized = normalize(key, encoding: .aibasic)
+            return normalized == key ? nil : keyName(normalized)
+        }
+        let word = key.uppercased().filter { $0 != " " && $0 != "_" && $0 != "-" }
+        let names = [
+            "LEFT": "LEFT", "RIGHT": "RIGHT", "UP": "UP", "DOWN": "DOWN",
+            "SPACE": "SPACE", "ENTER": "ENTER", "RETURN": "ENTER", "TAB": "TAB",
+            "ESC": "ESCAPE", "ESCAPE": "ESCAPE", "BACKSPACE": "BACKSPACE",
+            "DELETE": "DELETE", "DEL": "DELETE", "INSERT": "INSERT",
+            "HOME": "HOME", "END": "END", "PAGEUP": "PAGEUP", "PAGEDOWN": "PAGEDOWN",
+            "SHIFT": "SHIFT", "CONTROL": "CONTROL", "CTRL": "CONTROL",
+            "OPTION": "OPTION", "ALT": "OPTION", "COMMAND": "COMMAND", "CMD": "COMMAND",
+        ]
+        if let name = names[word] { return name }
+        if word.first == "F", let number = Int(word.dropFirst()), (1...24).contains(number) { return "F\(number)" }
+        return nil
+    }
+
+    private static func scanCodeName(_ code: Int) -> String? {
+        switch code {
+        case 71: return "HOME"
+        case 72: return "UP"
+        case 73: return "PAGEUP"
+        case 75: return "LEFT"
+        case 77: return "RIGHT"
+        case 79: return "END"
+        case 80: return "DOWN"
+        case 81: return "PAGEDOWN"
+        case 82: return "INSERT"
+        case 83: return "DELETE"
+        case 59...68: return "F\(code - 58)"
+        case 133: return "F11"
+        case 134: return "F12"
+        default: return nil
+        }
     }
 
     // MARK: - LINE INPUT with options (the Shell's field editor)
@@ -566,6 +658,14 @@ public func basic_rt_current_dir() -> UnsafeMutableRawPointer {
 @_cdecl("basic_rt_inkey")
 public func basic_rt_inkey() -> UnsafeMutableRawPointer {
     rtOwned(RTKeys.inkey())
+}
+
+/// `KEYDOWN(key$)`: 1 while the key counts as held, else 0.
+@_cdecl("basic_rt_keydown")
+public func basic_rt_keydown(_ pointer: UnsafeMutableRawPointer?) -> Double {
+    let key = rtText(pointer)
+    guard let name = RTKeys.keyName(key) else { basic_rt_fail("KEYDOWN does not know the key \"\(key)\"") }
+    return RTKeys.isKeyDown(name) ? 1 : 0
 }
 
 /// `OPTION AIBASIC-KEYS` (0) / `OPTION IBM-KEYS` (1).

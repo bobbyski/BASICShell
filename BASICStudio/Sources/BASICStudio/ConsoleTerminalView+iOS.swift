@@ -15,6 +15,9 @@ import UIKit.UIGestureRecognizerSubclass
 final class ConsoleTerminalView: VectorTerminalView {
     /// Asked first about each key press. True means the console took it.
     var pressInterceptor: ((ConsoleKeyPress) -> Bool)?
+    /// Told of every hardware key going down (true) or up (false), by its
+    /// KEYDOWN name, whoever takes the key.
+    var onKeyHeld: ((String, Bool) -> Void)?
 
     /// Presses the console took, so their end is not handed to SwiftTerm
     /// either — it never saw them begin.
@@ -23,6 +26,7 @@ final class ConsoleTerminalView: VectorTerminalView {
     private var repeatTimer: Timer?
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        reportHeld(presses, down: true)
         var forwarded: Set<UIPress> = []
         for press in presses {
             guard let key = press.key, let pressInterceptor else {
@@ -43,6 +47,7 @@ final class ConsoleTerminalView: VectorTerminalView {
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        reportHeld(presses, down: false)
         let forwarded = release(presses)
         if !forwarded.isEmpty {
             super.pressesEnded(forwarded, with: event)
@@ -50,9 +55,31 @@ final class ConsoleTerminalView: VectorTerminalView {
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        reportHeld(presses, down: false)
         let forwarded = release(presses)
         if !forwarded.isEmpty {
             super.pressesCancelled(forwarded, with: event)
+        }
+    }
+
+    private func reportHeld(_ presses: Set<UIPress>, down: Bool) {
+        guard let onKeyHeld else { return }
+        for press in presses {
+            if let key = press.key, let name = Self.heldKeyName(for: key) {
+                onKeyHeld(name, down)
+            }
+        }
+    }
+
+    /// A key's KEYDOWN name. The modifiers arrive as presses of their own
+    /// here, where AppKit reports them as flag changes.
+    static func heldKeyName(for key: UIKey) -> String? {
+        switch key.keyCode {
+        case .keyboardLeftShift, .keyboardRightShift: return "SHIFT"
+        case .keyboardLeftControl, .keyboardRightControl: return "CONTROL"
+        case .keyboardLeftAlt, .keyboardRightAlt: return "OPTION"
+        case .keyboardLeftGUI, .keyboardRightGUI: return "COMMAND"
+        default: return ConsoleKeyPress(key).heldKeyName
         }
     }
 

@@ -1,3 +1,4 @@
+import BASICCore
 import Foundation
 
 /// A key the console turns into its own escape sequence rather than leaving to
@@ -141,6 +142,30 @@ struct ConsoleKeyPress: Equatable {
         case 3: return "#\(character)"
         case 4: return "!#\(character)"
         default: return nil
+        }
+    }
+}
+
+extension ConsoleKeyPress {
+    /// The key's name for KEYDOWN (`BASICKeyName`), or nil for one it has
+    /// no name for.
+    var heldKeyName: String? {
+        guard let special else {
+            return BASICKeyName.canonical(charactersIgnoringModifiers)
+        }
+        switch special {
+        case .up: return "UP"
+        case .down: return "DOWN"
+        case .left: return "LEFT"
+        case .right: return "RIGHT"
+        case .home: return "HOME"
+        case .end: return "END"
+        case .insert: return "INSERT"
+        case .forwardDelete: return "DELETE"
+        case .pageUp: return "PAGEUP"
+        case .pageDown: return "PAGEDOWN"
+        case .function(let number): return "F\(number)"
+        case .returnKey: return "ENTER"
         }
     }
 }

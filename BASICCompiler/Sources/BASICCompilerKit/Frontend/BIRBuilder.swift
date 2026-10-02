@@ -2540,6 +2540,9 @@ final class FunctionBuilder {
         case "INKEY$":
             try count(0...0)
             return .hostCall("basic_rt_inkey", [], returns: .string)
+        case "KEYDOWN":
+            try count(1...1)
+            return .hostCall("basic_rt_keydown", [try argument(0, .string, default: .string(""))], returns: .number)
         case "ASYNCVALUE":
             try count(1...1)
             return .hostCall("basic_rt_task_value", [boxed(try lowerExpression(arguments[0]))], returns: .variant)

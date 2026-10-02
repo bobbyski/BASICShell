@@ -65,6 +65,9 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     private var completionMenu: CompletionMenu?
     private var keyMonitor: Any?
     private var mouseUpMonitor: Any?
+    /// Key-ups and modifier changes, for KEYDOWN (``StudioHeldKeys``).
+    private var heldKeyMonitor: Any?
+    private var heldKeyObservers: [NSObjectProtocol] = []
     private var pendingEscapeBytes: [UInt8] = []
     private var pendingEscapeFlushID = 0
     #if os(macOS)
@@ -88,9 +91,17 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         if let mouseUpMonitor {
             NSEvent.removeMonitor(mouseUpMonitor)
         }
+        if let heldKeyMonitor {
+            NSEvent.removeMonitor(heldKeyMonitor)
+        }
+        heldKeyObservers.forEach(NotificationCenter.default.removeObserver)
         if let mouseTrackingArea {
             removeTrackingArea(mouseTrackingArea)
         }
+        }
+        #else
+        MainActor.assumeIsolated {
+            heldKeyObservers.forEach(NotificationCenter.default.removeObserver)
         }
         #endif
     }
@@ -126,6 +137,7 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         terminalView.getTerminal().resize(cols: 80, rows: 25)
         #if os(macOS)
         installKeyMonitor()
+        installHeldKeyMonitor()
         installMouseUpMonitor()
         #else
         // On iPhone and iPad the terminal view takes the keyboard itself and
@@ -134,6 +146,15 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         terminalView.pressInterceptor = { [weak self] press in
             self?.handleProgramKey(press) ?? false
         }
+        terminalView.onKeyHeld = { [weak self] name, down in
+            self?.model?.heldKeys.set(name, down: down)
+        }
+        // Away from the app, no key-up arrives for what is held.
+        heldKeyObservers = [
+            NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model?.heldKeys.releaseAll() }
+            },
+        ]
         installTouchMouse()
         #endif
 
@@ -146,9 +167,43 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             guard event.window === self.window else { return event }
+            // Held, whoever takes the key: KEYDOWN sees it either way.
+            if let name = Self.consoleKeyPress(from: event).heldKeyName {
+                self.model?.heldKeys.set(name, down: true)
+            }
             guard self.handleProgramKeyEvent(event) else { return event }
             return nil
         }
+    }
+
+    /// The other half of a held key: its key-up, and the modifiers, which
+    /// AppKit reports as flag changes rather than as keys. When the window
+    /// or the app loses the keyboard no key-up will come, so everything
+    /// counts as released.
+    private func installHeldKeyMonitor() {
+        guard heldKeyMonitor == nil else { return }
+        heldKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyUp, .flagsChanged]) { [weak self] event in
+            guard let self, event.window === self.window, let held = self.model?.heldKeys else { return event }
+            if event.type == .keyUp {
+                if let name = Self.consoleKeyPress(from: event).heldKeyName {
+                    held.set(name, down: false)
+                }
+            } else {
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                held.set("SHIFT", down: flags.contains(.shift))
+                held.set("CONTROL", down: flags.contains(.control))
+                held.set("OPTION", down: flags.contains(.option))
+                held.set("COMMAND", down: flags.contains(.command))
+            }
+            return event
+        }
+        let releaseAll: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.model?.heldKeys.releaseAll() }
+        }
+        heldKeyObservers = [
+            NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main, using: releaseAll),
+            NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main, using: releaseAll),
+        ]
     }
 
     private func installMouseUpMonitor() {

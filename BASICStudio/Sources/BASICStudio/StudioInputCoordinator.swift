@@ -338,3 +338,50 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
         condition.unlock()
     }
 }
+
+/// The keys held on the console's keyboard, for KEYDOWN.
+///
+/// The console sees each key go down and come up (an `NSEvent` monitor on
+/// the Mac, `UIPress` on an iPad's keyboard) and says so here; the
+/// interpreter asks from its own thread. Until a key has gone down here this
+/// cannot tell, which is the case on an iPad with only the on-screen
+/// keyboard: that types, but never reports a key held. KEYDOWN then falls
+/// back on what INKEY$ sees (`BASICHeldKeyEstimate`).
+final class StudioHeldKeys: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: Set<String> = []
+    private var hasSeenKeys = false
+
+    /// `name` went down (true) or came up (false).
+    func set(_ name: String, down: Bool) {
+        lock.lock()
+        if down {
+            held.insert(name)
+            hasSeenKeys = true
+        } else {
+            held.remove(name)
+        }
+        lock.unlock()
+    }
+
+    /// Everything came up: the window lost the keyboard, so no key-up for
+    /// what is held will ever arrive here.
+    func releaseAll() {
+        lock.lock()
+        held.removeAll()
+        lock.unlock()
+    }
+
+    /// Whether `name` is held, or nil until any key has gone down here.
+    func isDown(_ name: String) -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return hasSeenKeys ? held.contains(name) : nil
+    }
+}
+
+extension StudioModel: BASICKeyStateHost {
+    nonisolated func isKeyDown(_ name: String) -> Bool? {
+        heldKeys.isDown(name)
+    }
+}

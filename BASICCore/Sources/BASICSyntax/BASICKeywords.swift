@@ -58,6 +58,8 @@ public enum BASICKeywords {
         // interpreter seeds, so a program that assigns PI keeps its own.
         "DEG", "LN", "LOG10",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
+        // KEYDOWN(k$): whether a key is held now, for games (BASICKeyState).
+        "KEYDOWN",
         // PLAY(n): notes left in the background queue (BBC add-ins A9).
         "PLAY",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",

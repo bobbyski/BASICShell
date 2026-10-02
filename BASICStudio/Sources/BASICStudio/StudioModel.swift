@@ -219,6 +219,8 @@ final class StudioModel: ObservableObject {
     private let inputCoordinator = StudioInputCoordinator()
     private let consoleInputState = StudioConsoleInputState()
     private let gamepadInputCoordinator = StudioGamepadInputCoordinator()
+    /// The keys held on the console's keyboard, for KEYDOWN.
+    let heldKeys = StudioHeldKeys()
     private var suppressNextEmptyProgramSubmit = false
     private var suppressNextProgramNewlineKey = false
     private var debuggerTaskRefreshTask: Task<Void, Never>?
