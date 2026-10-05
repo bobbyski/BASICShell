@@ -147,6 +147,28 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    /// VTG coordinates must be whole numbers, and a game that scales its world
+    /// to the window computes them; at 1:1 a stray half can stay hidden.
+    /// Munchies' score popup stopped the game this way in a window that
+    /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "electric-storm", "incoming", "munchies"])
+    func awkwardScale(game: String) async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
+        studio.model.loadBundledExample(example)
+        studio.model.updateLiveVTGCanvasSize(width: 486, height: 548)
+
+        var frames = 0
+        studio.model.vtgDataSink = { frames += String(decoding: $0, as: UTF8.self).components(separatedBy: "endFrame").count - 1 }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("three seconds of play", timeout: .seconds(30)) { frames > 90 }
+        #expect(studio.model.isProgramRunning, "\(studio.model.consoleText.suffix(300))")
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
     /// The `x` the last command for `id` drew it at.
     private static func lastX(of id: String, in sent: String) -> Int? {
         guard let command = sent.range(of: "id=\(id),", options: .backwards) else { return nil }
