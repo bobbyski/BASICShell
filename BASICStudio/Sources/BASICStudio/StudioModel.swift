@@ -1782,31 +1782,8 @@ final class StudioModel: ObservableObject {
     }
 
     private static func defaultProgramSource() -> String {
-        let fileManager = FileManager.default
         if let source = bundledDemoSource(named: "test-suite") {
             return source
-        }
-
-        let relativePath = "basicPrograms/demos/language/test-suite.bas"
-        let sourcePath = String(#filePath)
-        let sourceURL = URL(fileURLWithPath: sourcePath)
-        let candidates = [
-            fileManager.currentDirectoryPath + "/" + relativePath,
-            fileManager.currentDirectoryPath + "/../../" + relativePath,
-            sourceURL
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent(relativePath)
-                .path
-        ]
-
-        for path in candidates {
-            if let source = try? String(contentsOfFile: path, encoding: .utf8) {
-                return source
-            }
         }
 
         return """
@@ -1823,45 +1800,80 @@ final class StudioModel: ObservableObject {
         """
     }
 
-    private static func bundledDemoSource(named name: String) -> String? {
-        let normalized = normalizedBundledDemoPath(name)
-        let url = URL(fileURLWithPath: normalized.hasSuffix(".bas") ? String(normalized.dropLast(4)) : normalized)
-        let directory = url.deletingLastPathComponent().relativePath
-        let subdirectory = directory == "." || directory.isEmpty ? "Demos" : "Demos/\(directory)"
-        for resource in demoResourceCandidates(named: url.lastPathComponent, subdirectory: subdirectory) {
-            if let source = try? String(contentsOf: resource, encoding: .utf8) {
-                return source
+    /// The demos folder, found once by walking down from the resource bundle
+    /// the app loads everything else from — the module's under SwiftPM, the
+    /// app's own otherwise — until a folder called Demos turns up.
+    ///
+    /// No path to it is written down anywhere: a build puts the demos where it
+    /// puts resources (`Contents/Resources/Demos` in the Xcode app, inside the
+    /// module's resource bundle in the release and SwiftPM builds), and this
+    /// finds them there. The Examples menu, loading an example, LOAD and
+    /// FILES all start from it.
+    nonisolated static let demosFolder: URL? = {
+        var bundles: [Bundle] = []
+        #if SWIFT_PACKAGE
+        bundles.append(Bundle.module)
+        #endif
+        bundles.append(Bundle.main)
+        for bundle in bundles {
+            guard let resources = bundle.resourceURL else { continue }
+            if let found = folder(named: "Demos", under: resources) {
+                return found.resolvingSymlinksInPath()
             }
         }
-        // A bare name, from before the demos had category folders.
-        guard !normalized.contains("/"),
-              let found = demoNamed(url.lastPathComponent + ".bas", in: demoRootCandidates()) else { return nil }
-        return try? String(contentsOf: found, encoding: .utf8)
-    }
+        return nil
+    }()
 
-    /// The one file called `fileName` anywhere under `roots`: the demos sit in
-    /// category folders (games/, graphics/, …), so `test-suite` finds
-    /// `language/test-suite.bas`.
-    nonisolated private static func demoNamed(_ fileName: String, in roots: [URL]) -> URL? {
-        for root in roots {
-            let found = FileManager.default.enumerator(at: root.resolvingSymlinksInPath(), includingPropertiesForKeys: nil)?
-                .compactMap { $0 as? URL }
-                .first { $0.lastPathComponent == fileName }
-            if let found { return found }
+    /// The nearest folder called `name` under `root`: each level is looked
+    /// through before the one below it, a few levels deep at most.
+    nonisolated static func folder(named name: String, under root: URL, levels: Int = 6) -> URL? {
+        let fileManager = FileManager.default
+        var level = [root]
+        for _ in 0..<levels {
+            var below: [URL] = []
+            for parent in level {
+                let children = (try? fileManager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+                for child in children {
+                    var isDirectory: ObjCBool = false
+                    guard fileManager.fileExists(atPath: child.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+                    if child.lastPathComponent == name { return child }
+                    below.append(child)
+                }
+            }
+            level = below
         }
         return nil
     }
 
-    private static func demoFileName(for name: String) -> String {
+    nonisolated private static func bundledDemoSource(named name: String) -> String? {
+        guard let demos = demosFolder else { return nil }
+        let normalized = normalizedBundledDemoPath(name)
+        let file = demos.appendingPathComponent(demoFileName(for: normalized))
+        if let source = try? String(contentsOf: file, encoding: .utf8) {
+            return source
+        }
+        // A bare name, from before the demos had category folders.
+        guard !normalized.contains("/"),
+              let found = demoNamed(demoFileName(for: normalized), in: demos) else { return nil }
+        return try? String(contentsOf: found, encoding: .utf8)
+    }
+
+    /// The one file called `fileName` anywhere in the demos folder: the demos
+    /// sit in category folders (games/, graphics/, …), so `test-suite` finds
+    /// `language/test-suite.bas`.
+    nonisolated private static func demoNamed(_ fileName: String, in demos: URL) -> URL? {
+        FileManager.default.enumerator(at: demos, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .first { $0.lastPathComponent == fileName }
+    }
+
+    nonisolated private static func demoFileName(for name: String) -> String {
         name.hasSuffix(".bas") ? name : "\(name).bas"
     }
 
     private static func availableBundledExamples() -> [BundledExample] {
-        var paths: Set<String> = []
-        for root in demoRootCandidates() {
-            paths.formUnion(programPaths(in: root.resolvingSymlinksInPath()))
-        }
-        return BundledExampleFolder.tree(paths.map(BundledExample.init(path:))).allExamples
+        guard let demos = demosFolder else { return [] }
+        return BundledExampleFolder.tree(programPaths(in: demos).map(BundledExample.init(path:))).allExamples
     }
 
     /// The runnable programs under a demos folder, without `.bas`, at any
@@ -1929,70 +1941,6 @@ final class StudioModel: ObservableObject {
             }
         }
         return folders
-    }
-
-    private static func demoRootCandidates() -> [URL] {
-        let fileManager = FileManager.default
-        let sourceURL = URL(fileURLWithPath: String(#filePath))
-        let packageRoot = sourceURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let bundleDemoRoot = Bundle.main.resourceURL?.appendingPathComponent("Demos")
-        let bundleRootFallback = bundleDemoRoot.map { fileManager.fileExists(atPath: $0.path) } == true
-            ? nil
-            : Bundle.main.resourceURL
-
-        let candidateURLs = [
-            bundleDemoRoot,
-            bundleRootFallback,
-            packageRoot.appendingPathComponent("Sources/BASICStudio/Resources/Demos"),
-            packageRoot
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("basicPrograms/demos"),
-            URL(fileURLWithPath: fileManager.currentDirectoryPath)
-                .appendingPathComponent("Resources/Demos")
-        ].compactMap { $0 }
-
-        var seen: Set<String> = []
-        return candidateURLs.filter { url in
-            let key = url.standardizedFileURL.path
-            guard fileManager.fileExists(atPath: key), !seen.contains(key) else { return false }
-            seen.insert(key)
-            return true
-        }
-    }
-
-    private static func demoResourceCandidates(named name: String, subdirectory: String) -> [URL] {
-        let fileManager = FileManager.default
-        let sourceURL = URL(fileURLWithPath: String(#filePath))
-        let packageRoot = sourceURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-
-        return [
-            Bundle.main.url(forResource: name, withExtension: "bas"),
-            Bundle.main.url(forResource: name, withExtension: "bas", subdirectory: subdirectory),
-            Bundle.main.resourceURL?
-                .appendingPathComponent(subdirectory)
-                .appendingPathComponent("\(name).bas"),
-            packageRoot
-                .appendingPathComponent("Sources/BASICStudio/Resources")
-                .appendingPathComponent(subdirectory)
-                .appendingPathComponent("\(name).bas"),
-            packageRoot
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("basicPrograms/demos")
-                .appendingPathComponent(String(subdirectory.dropFirst("Demos".count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
-                .appendingPathComponent("\(name).bas"),
-            URL(fileURLWithPath: fileManager.currentDirectoryPath)
-                .appendingPathComponent("Resources")
-                .appendingPathComponent(subdirectory)
-                .appendingPathComponent("\(name).bas")
-        ].compactMap { $0 }
     }
 
     var programLineCount: Int {
@@ -2234,10 +2182,9 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
             return diskFiles
         }
 
-        for root in bundledDemoRootCandidates(path: path) {
-            if let files = try recursiveFiles(at: root.standardizedFileURL) {
-                return files
-            }
+        if let demos = Self.demosFolder,
+           let files = try recursiveFiles(at: demos.appendingPathComponent(normalizedDemoPath(path)).standardizedFileURL) {
+            return files
         }
         return []
     }
@@ -2351,39 +2298,15 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
     }
 
     nonisolated private func bundledDemoURL(path: String) -> URL? {
+        guard let demos = Self.demosFolder else { return nil }
         let normalized = normalizedDemoPath(path)
-        for root in bundledDemoRootCandidates(path: "") {
-            let url = root.appendingPathComponent(normalized)
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
+        let url = demos.appendingPathComponent(normalized)
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url
         }
         // A bare name, from before the demos had category folders.
         guard !normalized.contains("/") else { return nil }
-        return Self.demoNamed(normalized, in: bundledDemoRootCandidates(path: ""))
-    }
-
-    nonisolated private func bundledDemoRootCandidates(path: String) -> [URL] {
-        let normalized = normalizedDemoPath(path)
-        let fileManager = FileManager.default
-        let sourceURL = URL(fileURLWithPath: String(#filePath))
-        let packageRoot = sourceURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-
-        return [
-            Bundle.main.resourceURL?.appendingPathComponent("Demos").appendingPathComponent(normalized),
-            Bundle.main.resourceURL?.appendingPathComponent(normalized),
-            packageRoot.appendingPathComponent("Sources/BASICStudio/Resources/Demos").appendingPathComponent(normalized),
-            packageRoot
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("basicPrograms/demos")
-                .appendingPathComponent(normalized)
-        ]
-        .compactMap { $0 }
-        .filter { fileManager.fileExists(atPath: $0.path) }
+        return Self.demoNamed(normalized, in: demos)
     }
 
     nonisolated private static func normalizedBundledDemoPath(_ path: String) -> String {
