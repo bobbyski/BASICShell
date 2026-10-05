@@ -84,6 +84,42 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Incoming: draws the cities and silos, aims, fires from a silo, bursts, and quits with its score")
+    func incoming() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/incoming" })
+        #expect(example.title == "Incoming")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // Six cities, three silos, and the crosshair.
+        try await studio.waitUntil("the ground to be drawn") {
+            sent.contains("id=city5a,") && sent.contains("id=silo2c,") && sent.contains("id=crosshair,")
+        }
+
+        // Held UP moves the crosshair.
+        let crosshairs = sent.components(separatedBy: "id=crosshair,").count
+        studio.model.heldKeys.set("UP", down: true)
+        try await studio.waitUntil("the crosshair to move") { sent.components(separatedBy: "id=crosshair,").count > crosshairs + 3 }
+        studio.model.heldKeys.set("UP", down: false)
+
+        // 2 fires from the middle silo: a trail, its mark, then a fireball.
+        studio.model.handleTerminalInput([.append("2")])
+        try await studio.waitUntil("a counter-missile") { sent.contains("id=abm0,") && sent.contains("id=mark0,") }
+        try await studio.waitUntil("a fireball") { sent.contains("id=blast0,") }
+
+        // The first salvo comes in.
+        try await studio.waitUntil("incoming missiles", timeout: .seconds(30)) { sent.contains("id=trail0,") && sent.contains("id=head0,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// The `x` the last command for `id` drew it at.
     private static func lastX(of id: String, in sent: String) -> Int? {
         guard let command = sent.range(of: "id=\(id),", options: .backwards) else { return nil }
