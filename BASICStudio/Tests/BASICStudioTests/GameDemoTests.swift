@@ -120,6 +120,33 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Munchies: draws the maze and everyone in it, eats dots going left, and quits with its score")
+    func munchies() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/munchies" })
+        #expect(example.title == "Munchies")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The walls, all the dots, the Munchie and four ghosts.
+        try await studio.waitUntil("the maze", timeout: .seconds(30)) {
+            sent.contains("id=wall1,") && sent.contains("id=dot645,") && sent.contains("id=munchie,") && sent.contains("id=g3h,")
+        }
+
+        // After READY!, held LEFT runs along the bottom corridor eating dots.
+        studio.model.heldKeys.set("LEFT", down: true)
+        try await studio.waitUntil("a dot eaten", timeout: .seconds(20)) { sent.contains("delete,id=dot") }
+        studio.model.heldKeys.set("LEFT", down: false)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// The `x` the last command for `id` drew it at.
     private static func lastX(of id: String, in sent: String) -> Int? {
         guard let command = sent.range(of: "id=\(id),", options: .backwards) else { return nil }
