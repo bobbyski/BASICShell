@@ -1,3 +1,5 @@
 42deep
 12
-Runtime error: Out of DATA
+READ C
+^
+Runtime error: Out of DATA at 7

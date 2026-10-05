@@ -173,6 +173,8 @@ public struct BIRPrinter {
             return "line input #\(render(number)) -> \(variable.name)"
         case .markStatement(let id, let line):
             return "statement \(id) line \(line)"
+        case .here(let index):
+            return "here \(index)"
         case .onError(let handler):
             return "on error " + (handler.map { "handler \($0)" } ?? "off")
         case .raise(let number):

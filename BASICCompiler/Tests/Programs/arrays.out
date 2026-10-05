@@ -3,4 +3,6 @@
 two|ten||
 42
 55
-Runtime error: A subscript out of range
+PRINT A(6)
+^
+Runtime error: A subscript out of range at 25

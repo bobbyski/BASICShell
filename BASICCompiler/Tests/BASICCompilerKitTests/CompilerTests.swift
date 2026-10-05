@@ -95,7 +95,9 @@ struct BIRGoldenTests {
             global A$ : string
             function main() : void
               entry:
+                here 0
                 store A$ <- "hi"
+                here 1
                 print A$ (1 + 2) newline
                 end
 
@@ -253,13 +255,13 @@ struct DiagnosticTests {
 struct EndToEndTests {
     @Test func runtimeErrorsLookLikeTheInterpreters() throws {
         let run = try TestBuild.run(path: TestBuild.programsDirectory.appendingPathComponent("divzero.bas").path)
-        #expect(run.stdout == "BEFORE\nRuntime error: Division by zero\n")
+        #expect(run.stdout == "BEFORE\nPRINT 1 / X\n^\nRuntime error: Division by zero at 3\n")
         #expect(run.exitCode == 1)
     }
 
     @Test func returnWithoutGosubFails() throws {
         let run = try TestBuild.run(source: "PRINT \"A\"\nRETURN\nPRINT \"B\"")
-        #expect(run.stdout == "A\nRuntime error: RETURN without GOSUB\n")
+        #expect(run.stdout == "A\nRETURN\n^\nRuntime error: RETURN without GOSUB at 2\n")
         #expect(run.exitCode == 1)
     }
 

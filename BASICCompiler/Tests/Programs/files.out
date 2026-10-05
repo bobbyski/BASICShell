@@ -5,4 +5,6 @@ LOF =42
 4Linus19
 EOF =TRUELOC =42
 FIRST LINE: Ada,16
-Runtime error: File Not Found
+OPEN "missing-file.txt" FOR INPUT AS #4
+^
+Runtime error: File Not Found at 27

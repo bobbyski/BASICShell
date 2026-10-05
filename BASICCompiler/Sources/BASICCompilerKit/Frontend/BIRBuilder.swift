@@ -421,6 +421,13 @@ final class FunctionBuilder {
                 terminate(.jump(block))
                 current = block
             }
+            // A closure body's lines have no source: an error there is
+            // placed at the statement that called it, as the interpreter
+            // places it.
+            if !line.source.isEmpty {
+                function.sourceLocations.append(BIRStatementSource(line: line.displayLineNumber, column: line.column, source: line.source))
+                emit(.here(function.sourceLocations.count - 1))
+            }
             if tracksStatements {
                 let next = position + 1 < owned.count ? blockForLine[owned[position + 1]]! : endBlock()
                 function.statementResumeBlocks.append(next)

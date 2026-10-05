@@ -90,7 +90,11 @@ enum RTTasks {
         let outerTask = currentTaskID
         currentTaskID = task.id
         let argumentsPointer = task.arguments.map { Unmanaged.passUnretained($0).toOpaque() }
+        // The awaiting statement stays where the program is: a body that
+        // failed was left by a jump, past its own restore (BASIC-9).
+        let position = RTLocations.position
         let produced = trampoline(argumentsPointer)
+        RTLocations.position = position
         currentTaskID = outerTask
         if let live {
             restore?(live)

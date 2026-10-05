@@ -46,7 +46,10 @@ enum RTError {
             rt_longjmp(boundary, 1)
         }
         lastNumber = number
-        lastLine = line
+        // ERL is the statement that failed, inside whatever function: the
+        // interpreter's, since BASIC-9.
+        let here = RTLocations.current()
+        lastLine = here?.line ?? line
         if let jumpBuffer, handler >= 0, !isHandling {
             isHandling = true
             faultStatement = statement
@@ -57,10 +60,52 @@ enum RTError {
         // that is still there.
         RTGraphics.finish()
         fflush(stdout)
-        fputs((prefix.map { "\($0): " } ?? "") + message + "\n", stdout)
+        let text = (prefix.map { "\($0): " } ?? "") + message
+        if prefix != nil, let here {
+            // The interpreter's BASICError.located: the statement's line, a
+            // caret under where it starts, and the message with its line.
+            let marker = String(here.source.prefix(max(0, here.column)).map { $0 == "\t" ? "\t" : " " }) + "^"
+            fputs("\(here.source)\n\(marker)\n\(text) at \(here.line)\n", stdout)
+        } else {
+            fputs(text + "\n", stdout)
+        }
         fflush(stdout)
         exit(1)
     }
+}
+
+/// The program's statement table, from `main`: where `@"basic.here"` says
+/// the program is, and each statement's line, column and source text.
+enum RTLocations {
+    nonisolated(unsafe) static var here: UnsafeMutablePointer<Int64>?
+    nonisolated(unsafe) static var count = 0
+    nonisolated(unsafe) static var lines: UnsafePointer<Int64>?
+    nonisolated(unsafe) static var columns: UnsafePointer<Int64>?
+    nonisolated(unsafe) static var sources: UnsafePointer<UnsafePointer<CChar>?>?
+
+    /// Where the program is: saved around a task body, which a failure
+    /// leaves by a jump that skips the restore every return does.
+    static var position: Int64 {
+        get { here?.pointee ?? -1 }
+        set { here?.pointee = newValue }
+    }
+
+    /// The statement running now, or nil before the first one.
+    static func current() -> (line: Int, column: Int, source: String)? {
+        guard let here, let lines, let columns, let sources else { return nil }
+        let index = Int(here.pointee)
+        guard index >= 0, index < count, let text = sources[index] else { return nil }
+        return (Int(lines[index]), Int(columns[index]), String(cString: text))
+    }
+}
+
+@_cdecl("basic_rt_locations")
+public func basic_rt_locations(_ here: UnsafeMutablePointer<Int64>, _ count: Int, _ lines: UnsafePointer<Int64>, _ columns: UnsafePointer<Int64>, _ sources: UnsafePointer<UnsafePointer<CChar>?>) {
+    RTLocations.here = here
+    RTLocations.count = count
+    RTLocations.lines = lines
+    RTLocations.columns = columns
+    RTLocations.sources = sources
 }
 
 @_cdecl("basic_rt_error_install")

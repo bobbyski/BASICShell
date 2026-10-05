@@ -55,16 +55,26 @@ struct LLVMLowering {
         let debug = options.emitDebugInfo
             ? DebugInfo(primarySource: module.sourceFile, moduleName: module.name, optimized: options.optimizationLevel > 0)
             : nil
+        // Every statement's place in the source, in one table: main's first,
+        // then each function's, each function's `.here` indexes offset by
+        // where its own begin (BASIC-9).
+        var bodies: [BIRFunction] = options.omitsEntryPoint ? [] : [module.main]
+        bodies += module.functions.filter { !$0.isExternal }
+        let locations = bodies.flatMap(\.sourceLocations)
+        var locationBase = 0
+
         var functions: [String] = []
         if !options.omitsEntryPoint {
-            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel, debug: debug)
+            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel, debug: debug, locationBase: locationBase, locationTotal: locations.count)
             functions.append(mainEmitter.render())
+            locationBase += module.main.sourceLocations.count
         }
         // An imported class's members have no body here: the framework has
         // them, and the object model emits a thunk onto its symbol.
         for function in module.functions where !function.isExternal {
-            var emitter = FunctionEmitter(function: function, module: module, constants: constants, isMain: false, objectModel: objectModel, debug: debug)
+            var emitter = FunctionEmitter(function: function, module: module, constants: constants, isMain: false, objectModel: objectModel, debug: debug, locationBase: locationBase, locationTotal: locations.count)
             functions.append(emitter.render())
+            locationBase += function.sourceLocations.count
         }
 
         var text = "; basicc — \(module.name), traditional dialect\n"
@@ -78,6 +88,12 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\(attachment)\n"
         }
         text += "\n" + renderDataTables() + "\n"
+        if !locations.isEmpty {
+            text += "@\"basic.here\" = global i64 -1\n"
+            text += "@\"basic.locations.lines\" = private constant [\(locations.count) x i64] [" + locations.map { "i64 \($0.line)" }.joined(separator: ", ") + "]\n"
+            text += "@\"basic.locations.columns\" = private constant [\(locations.count) x i64] [" + locations.map { "i64 \($0.column)" }.joined(separator: ", ") + "]\n"
+            text += "@\"basic.locations.sources\" = private constant [\(locations.count) x ptr] [" + locations.map { "ptr \(constants.constant($0.source))" }.joined(separator: ", ") + "]\n"
+        }
         if options.omitsEntryPoint {
             // `main` normally registers the program's types with the runtime.
             // A library has no main, so a constructor does it when the image
@@ -407,6 +423,7 @@ struct LLVMLowering {
 
     static let runtimeDeclarations = """
     declare void @basic_rt_start()
+    declare void @basic_rt_locations(ptr, i64, ptr, ptr, ptr)
     declare void @basic_rt_finish()
     declare void @basic_rt_fail(ptr)
     declare void @basic_rt_fail_type(ptr)
@@ -768,16 +785,22 @@ struct FunctionEmitter {
     private var scratchRank = 1
     /// The module's debug information, when the build asked for it.
     private let debug: DebugInfo?
+    /// Where this function's statements begin in the module's location
+    /// table, and how long the table is (0: no statement is marked).
+    private let locationBase: Int
+    private let locationTotal: Int
     /// This function's subprogram, once `render` has described it.
     private var debugScope: DebugInfo.Scope?
 
-    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel(), debug: DebugInfo? = nil) {
+    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel(), debug: DebugInfo? = nil, locationBase: Int = 0, locationTotal: Int = 0) {
         self.function = function
         self.module = module
         self.constants = constants
         self.isMain = isMain
         self.objectModel = objectModel
         self.debug = debug
+        self.locationBase = locationBase
+        self.locationTotal = locationTotal
     }
 
     /// The static class of a field's base, when that class is a Swift
@@ -879,8 +902,17 @@ struct FunctionEmitter {
             }
             out.emit("store \(Self.llvmType(of: parameter)) \(value), ptr %\"L.\(parameter.name)\"")
         }
+        if !isMain && locationTotal > 0 {
+            // The caller's statement, put back on every return, so an error
+            // after a call names the caller's statement and not the callee's
+            // last one.
+            out.emit("%\"here.saved\" = load i64, ptr @\"basic.here\"")
+        }
         if isMain {
             out.emit("call void @basic_rt_start()")
+            if locationTotal > 0 {
+                out.emit("call void @basic_rt_locations(ptr @\"basic.here\", i64 \(locationTotal), ptr @\"basic.locations.lines\", ptr @\"basic.locations.columns\", ptr @\"basic.locations.sources\")")
+            }
             for type in module.types {
                 out.emit("call void @basic_rt_type_register(i64 \(type.index), ptr \(constants.constant(LLVMLowering.typeDescriptor(type, module: module))))")
             }
@@ -1340,6 +1372,8 @@ struct FunctionEmitter {
             storeManaged(value, owned: true, into: slotName(variable), type: .string)
         case .markStatement(let id, let line):
             out.emit("call void @basic_rt_statement(i64 \(id), i64 \(line))")
+        case .here(let index):
+            out.emit("store i64 \(locationBase + index), ptr @\"basic.here\"")
         case .onError(let handler):
             out.emit("call void @basic_rt_on_error(i64 \(handler ?? -1))")
         case .raise(let number):
@@ -1977,6 +2011,9 @@ struct FunctionEmitter {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_array_release(ptr \(old))")
+        }
+        if !isMain && locationTotal > 0 {
+            out.emit("store i64 %\"here.saved\", ptr @\"basic.here\"")
         }
         if let result {
             out.emit("ret \(Self.llvmType(function.returnType)) \(result)")

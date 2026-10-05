@@ -186,6 +186,10 @@ public enum BIROperation: Sendable {
     /// runtime error knows its `ERL` and where `RESUME NEXT` continues.
     /// Emitted only when the program uses `ON ERROR`.
     case markStatement(id: Int, line: Int)
+    /// Statement `index` of the function's ``BIRFunction/sourceLocations``
+    /// is starting: an unhandled runtime error names it — its source line,
+    /// a caret, and its line — as the interpreter does (BASIC-9).
+    case here(Int)
     /// `ON ERROR GOTO target` (a handler index into
     /// ``BIRFunction/errorHandlerBlocks``) or `ON ERROR GOTO 0` (nil).
     case onError(handler: Int?)
@@ -273,6 +277,19 @@ public struct BIRBlock: Sendable {
 }
 
 /// A function: `main` for the program body, one per `FUNCTION`.
+/// One statement's place in the source, for a runtime error to point at.
+public struct BIRStatementSource: Sendable, Equatable {
+    public let line: Int
+    public let column: Int
+    public let source: String
+
+    public init(line: Int, column: Int, source: String) {
+        self.line = line
+        self.column = column
+        self.source = source
+    }
+}
+
 public struct BIRFunction: Sendable {
     /// The name as it appears in IR.
     public let name: String
@@ -299,6 +316,10 @@ public struct BIRFunction: Sendable {
     /// For `main` when the program uses `ON ERROR`: the block that begins
     /// statement `id + 1`, i.e. where `RESUME NEXT` after statement `id` goes.
     public var statementResumeBlocks: [BIRBlockID] = []
+    /// Where each statement this function marks with `.here` is: the line
+    /// a runtime error reports, the column its caret goes under, and the
+    /// source line it prints.
+    public var sourceLocations: [BIRStatementSource] = []
     /// For `main`: the blocks `ON ERROR GOTO` can name, by handler index.
     public var errorHandlerBlocks: [BIRBlockID] = []
     /// For `main`: blocks that are entered from outside it — the labels a

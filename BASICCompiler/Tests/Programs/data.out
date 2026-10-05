@@ -3,4 +3,6 @@ thirty
 40.5-5last
 1020thirty40.5-5last
 123
-Runtime error: Out of DATA
+READ H$
+^
+Runtime error: Out of DATA at 18

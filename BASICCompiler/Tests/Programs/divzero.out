@@ -1,2 +1,4 @@
 BEFORE
-Runtime error: Division by zero
+PRINT 1 / X
+^
+Runtime error: Division by zero at 3
