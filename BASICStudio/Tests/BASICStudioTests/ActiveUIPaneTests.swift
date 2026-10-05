@@ -152,20 +152,20 @@ struct ActiveUIPaneTests {
         #expect(tutorials.items.count == UserDoc.loadAll().filter { $0.category == .tutorials }.count)
     }
 
-    @Test("The toolbar's Examples menu lists the programs, then a submenu per folder")
-    func examplesMenu() {
+    @Test("The toolbar's Examples menu is the demos tree, as the menu bar's is")
+    func examplesMenu() throws {
         let model = StudioHarness().model
-        let menu = StudioActiveUIShell.examplesMenu(model: model)
-        let paths = model.bundledExamples.map { $0.path.split(separator: "/").map(String.init) }
-        let programs = paths.filter { $0.count == 1 }.map { BundledExample(path: $0[0]).menuTitle }
-        var folders: [String] = []
-        for path in paths where path.count > 1 {
-            let title = BundledExample(path: path[0]).menuTitle
-            if !folders.contains(title) { folders.append(title) }
+        let menu = StudioActiveUIShell.examplesMenu(model: model).makeNativeMenu()
+        menu.delegate?.menuNeedsUpdate?(menu)
+        #expect(menu.items.map(\.title) == model.exampleTree.folders.map(\.title))
+        #expect(menu.items.allSatisfy { $0.submenu != nil })
+        func programs(in category: String) throws -> [String] {
+            let submenu = try #require(menu.items.first { $0.title == category }?.submenu)
+            submenu.delegate?.menuNeedsUpdate?(submenu)
+            return submenu.items.map(\.title)
         }
-        #expect(!programs.isEmpty && !folders.isEmpty)
-        #expect(menu.items.map(\.title) == programs + [""] + folders)
-        #expect(programs.contains("Hello"))
+        #expect(try programs(in: "Games").contains("Roids"))
+        #expect(try programs(in: "Language").contains("Hello"))
     }
 
     @Test("O5 · The Docs pane with no pages says so, and has no menu")

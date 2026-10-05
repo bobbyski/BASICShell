@@ -2,7 +2,7 @@
 #
 # emit-contacts-template.sh — turn the contact book into project templates.
 #
-# The contact book in basicPrograms/demos/contacts is the reference for how
+# The contact book in basicPrograms/demos/apps/contacts is the reference for how
 # to WRITE BASIC: six files, no GOTO, a model that knows nothing about the
 # screen, and a JSON file it opens and saves. Both IDEs offer it as a
 # starter project, which means both need the source inside them — neither
@@ -25,7 +25,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 ROOT="$PWD"
-SOURCE="$ROOT/basicPrograms/demos/contacts"
+SOURCE="$ROOT/basicPrograms/demos/apps/contacts"
 
 FREEBIRD="${FREEBIRD:-/Users/bobby/AIResearch/SwiftyTextEditor}"
 OMEGA="${OMEGA:-/Users/bobby/AIResearch/OmegaCLIDE}"
@@ -96,7 +96,7 @@ banner = """//
 //  GENERATED — do not edit.
 //
 //  Written by Code/Scripts/emit-contacts-template.sh in the AIBasic repo from
-//  basicPrograms/demos/contacts, which is the original. Change a contact-book
+//  basicPrograms/demos/apps/contacts, which is the original. Change a contact-book
 //  file there and run that script; edits made here are lost the next time it
 //  runs and, until then, are a copy that no longer matches what it copies.
 //

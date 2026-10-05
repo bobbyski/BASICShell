@@ -123,11 +123,13 @@ private func repositoryRootURL() -> URL {
         .deletingLastPathComponent()
 }
 
+/// A demo's source, found by file name wherever its category folder put it.
 private func sharedDemoSource(named name: String) throws -> String {
-    let url = repositoryRootURL()
-        .appendingPathComponent("basicPrograms/demos")
-        .appendingPathComponent(name)
-    return try String(contentsOf: url, encoding: .utf8)
+    let demos = repositoryRootURL().appendingPathComponent("basicPrograms/demos")
+    let found = FileManager.default.enumerator(at: demos.resolvingSymlinksInPath(), includingPropertiesForKeys: nil)?
+        .compactMap { $0 as? URL }
+        .first { $0.lastPathComponent == name }
+    return try String(contentsOf: found ?? demos.appendingPathComponent(name), encoding: .utf8)
 }
 
 @Suite("BASICCore", .serialized)
@@ -1335,7 +1337,7 @@ struct BASICCoreTests {
         let session = BASICSession(host: host)
         session.program.loadSource(
             try sharedDemoSource(named: "typed-events.bas"),
-            fileName: "basicPrograms/demos/typed-events.bas"
+            fileName: "basicPrograms/demos/input-events/typed-events.bas"
         )
 
         try session.runProgram()
@@ -1354,7 +1356,7 @@ struct BASICCoreTests {
         let session = BASICSession(host: host)
         session.program.loadSource(
             try sharedDemoSource(named: "event-dashboard.bas"),
-            fileName: "basicPrograms/demos/event-dashboard.bas"
+            fileName: "basicPrograms/demos/input-events/event-dashboard.bas"
         )
 
         #expect(session.diagnostics().isEmpty)

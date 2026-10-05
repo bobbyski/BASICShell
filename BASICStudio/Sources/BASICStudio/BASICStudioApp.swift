@@ -87,8 +87,16 @@ struct BASICStudioApp: App {
                 Divider()
             case .placeholder(let text):
                 Text(text)
+            case .submenu(let title, let entries):
+                Menu(title) { submenuEntries(entries) }
             }
         }
+    }
+
+    /// A submenu's entries, type-erased: ``menuEntries(_:)`` cannot name its
+    /// own type inside itself.
+    private func submenuEntries(_ entries: [MenuCommandModel.Entry]) -> AnyView {
+        AnyView(menuEntries(entries))
     }
 
     @ViewBuilder

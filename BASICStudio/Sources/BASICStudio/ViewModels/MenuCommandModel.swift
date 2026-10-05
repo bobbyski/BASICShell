@@ -25,7 +25,8 @@ import Foundation
 ///   Edit         ─────                                editFind
 ///                Find                  ⌘F
 ///                Find and Replace      ⌥⌘F
-///   Examples     one item per bundled demo            menus[0]
+///   Examples     the demos folders, as a tree:        menus[0]
+///                Games ▸ Roids, Apps ▸ Contacts, …
 ///   Console      ✓ Overwrite Mode      ⌃I             menus[1]
 ///                ✓ Show Graphics       ⇧⌘G
 ///   Debug        Show Debugger         ⇧⌘D            menus[2]
@@ -65,6 +66,8 @@ struct MenuCommandModel: Equatable {
         case separator
         /// A disabled line of text, such as "No Examples Found".
         case placeholder(String)
+        /// A submenu: a folder of the Examples menu.
+        case submenu(title: String, entries: [Entry])
     }
 
     /// A menu of Studio's own, after the standard ones.
@@ -110,7 +113,7 @@ struct MenuCommandModel: Equatable {
         ]
         let examples: [Entry] = model.bundledExamples.isEmpty
             ? [.placeholder("No Examples Found")]
-            : model.bundledExamples.map { .item(Item(title: $0.menuTitle, shortcut: nil, action: .example($0), isChecked: nil)) }
+            : Self.exampleEntries(model.exampleTree)
         menus = [
             Menu(title: "Examples", entries: examples),
             Menu(title: "Console", entries: [
@@ -154,5 +157,15 @@ struct MenuCommandModel: Equatable {
         case .showGraphics: model.setGraphicsLayersVisible(!model.areGraphicsLayersVisible)
         case .showDebugger: model.openDebugger()
         }
+    }
+}
+
+extension MenuCommandModel {
+    /// The Examples menu, mirroring `basicPrograms/demos` as a tree: a
+    /// submenu per folder, at any depth, holding its subfolders and then its
+    /// programs.
+    static func exampleEntries(_ folder: BundledExampleFolder) -> [Entry] {
+        folder.folders.map { .submenu(title: $0.title, entries: exampleEntries($0)) }
+            + folder.examples.map { .item(Item(title: $0.title, shortcut: nil, action: .example($0), isChecked: nil)) }
     }
 }

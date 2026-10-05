@@ -1880,11 +1880,16 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
 
     private func bundledDemoURL(path: String) -> URL? {
         let normalized = normalizedDemoPath(path)
-        let url = Bundle.module.resourceURL?
-            .appendingPathComponent("Demos")
-            .appendingPathComponent(normalized)
-        guard let url, FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return url
+        guard let demos = Bundle.module.resourceURL?.appendingPathComponent("Demos") else { return nil }
+        let url = demos.appendingPathComponent(normalized)
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        // The demos sit in category folders (games/, graphics/, …), so a bare
+        // name finds the one file of that name in any of them, and
+        // `LOAD "roids.bas"` still works without knowing it is in games/.
+        guard !normalized.contains("/") else { return nil }
+        return FileManager.default.enumerator(at: demos.resolvingSymlinksInPath(), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .first { $0.lastPathComponent == normalized }
     }
 
     private func normalizedDemoPath(_ path: String) -> String {

@@ -2,7 +2,7 @@
 #
 # emit-gallery-template.sh — turn the TUIKit gallery into project templates.
 #
-# The gallery in basicPrograms/demos/gallery is the reference TUIKit program:
+# The gallery in basicPrograms/demos/tui/gallery is the reference TUIKit program:
 # eleven files, every control, and the only BASIC in the tree that shows
 # IMPORT carrying a program across files. Both IDEs offer it as a project you
 # can create and cut down, which means both need the source inside them —
@@ -22,7 +22,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 ROOT="$PWD"
-SOURCE="$ROOT/basicPrograms/demos/gallery"
+SOURCE="$ROOT/basicPrograms/demos/tui/gallery"
 
 FREEBIRD="${FREEBIRD:-/Users/bobby/AIResearch/SwiftyTextEditor}"
 OMEGA="${OMEGA:-/Users/bobby/AIResearch/OmegaCLIDE}"
@@ -72,7 +72,7 @@ banner = """//
 //  GENERATED — do not edit.
 //
 //  Written by Code/Scripts/emit-gallery-template.sh in the AIBasic repo from
-//  basicPrograms/demos/gallery, which is the original. Change a gallery file
+//  basicPrograms/demos/tui/gallery, which is the original. Change a gallery file
 //  there and run that script; edits made here are lost the next time it runs
 //  and, until then, are a copy that no longer matches what it copies.
 //

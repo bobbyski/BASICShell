@@ -16,6 +16,17 @@ struct MenuCommandModelTests {
         entries.compactMap { if case .item(let item) = $0 { item } else { nil } }
     }
 
+    /// Every item, the ones in submenus too.
+    private func allItems(_ entries: [MenuCommandModel.Entry]) -> [MenuCommandModel.Item] {
+        entries.flatMap { entry -> [MenuCommandModel.Item] in
+            switch entry {
+            case .item(let item): [item]
+            case .submenu(_, let inner): allItems(inner)
+            default: []
+            }
+        }
+    }
+
     private func describe(_ shortcut: MenuCommandModel.Shortcut?) -> String {
         guard let shortcut else { return "" }
         let symbols: [MenuCommandModel.Modifier: String] = [.control: "⌃", .option: "⌥", .shift: "⇧", .command: "⌘"]
@@ -56,9 +67,34 @@ struct MenuCommandModelTests {
         let model = StudioHarness().model
         let menu = MenuCommandModel(model)
         #expect(menu.menus.map(\.title) == ["Examples", "Console", "Debug"])
-        #expect(items(menu.menus[0].entries).count == model.bundledExamples.count)
+        #expect(allItems(menu.menus[0].entries).count == model.bundledExamples.count)
         #expect(items(menu.menus[1].entries).map { "\($0.title) \(describe($0.shortcut))" } == ["Overwrite Mode ⌃I", "Show Graphics ⇧⌘G"])
         #expect(items(menu.menus[2].entries).map { "\($0.title) \(describe($0.shortcut))" } == ["Show Debugger ⇧⌘D"])
+    }
+
+    @Test("M1 · Examples is the demos tree: a submenu per folder, then the folder's programs")
+    func exampleTree() {
+        let model = StudioHarness().model
+        let submenus = MenuCommandModel(model).menus[0].entries.compactMap { entry -> String? in
+            if case .submenu(let title, _) = entry { title } else { nil }
+        }
+        #expect(submenus == model.exampleTree.folders.map(\.title))
+        #expect(submenus.first == "Games")
+    }
+
+    @Test("M1 · A folder inside a category is a submenu inside its submenu")
+    func nestedExamples() {
+        let tree = BundledExampleFolder.tree(["games/arcade/pong", "games/arcade/breakout/main", "games/roids", "loose"].map(BundledExample.init(path:)))
+        func describe(_ entries: [MenuCommandModel.Entry]) -> [String] {
+            entries.map { entry in
+                switch entry {
+                case .item(let item): item.title
+                case .submenu(let title, let inner): "\(title) [\(describe(inner).joined(separator: ", "))]"
+                default: "?"
+                }
+            }
+        }
+        #expect(describe(MenuCommandModel.exampleEntries(tree)) == ["Games [Arcade [Breakout, Pong], Roids]", "Loose"])
     }
 
     @Test("M4 · The Console toggles are checked from the model, and flip it")
@@ -76,7 +112,7 @@ struct MenuCommandModelTests {
     @Test("Commands carry no check state")
     func commandsAreNotToggles() {
         let menu = MenuCommandModel(StudioHarness().model)
-        let commands = items(menu.fileOpen + menu.fileSave + menu.editFind + menu.menus[0].entries + menu.menus[2].entries)
+        let commands = items(menu.fileOpen + menu.fileSave + menu.editFind + menu.menus[2].entries) + allItems(menu.menus[0].entries)
         #expect(commands.allSatisfy { $0.isChecked == nil })
     }
 

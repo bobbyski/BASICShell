@@ -148,7 +148,7 @@ struct StudioAUIBridgeTests {
     @Test("P6.4 · aui-gallery.bas, from the Examples menu, worked through by the user")
     func galleryDemo() async throws {
         let studio = harness("")
-        let example = try #require(studio.model.bundledExamples.first { $0.path == "aui-gallery" })
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "activeui/aui-gallery" })
         studio.model.loadBundledExample(example)
         let bridge = studio.model.auiBridge
         var asked: String?
@@ -196,7 +196,7 @@ struct StudioAUIBridgeTests {
     @Test("P6.6 · The translated ActiveUICounterDemo counts its clicks")
     func counterDemo() async throws {
         let studio = harness("")
-        let example = try #require(studio.model.bundledExamples.first { $0.path == "aui/ActiveUICounterDemo" })
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "activeui/ActiveUICounterDemo" })
         studio.model.loadBundledExample(example)
         let bridge = studio.model.auiBridge
         studio.model.runEditorProgram()

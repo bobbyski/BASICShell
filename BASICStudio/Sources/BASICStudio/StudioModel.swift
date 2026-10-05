@@ -200,6 +200,8 @@ final class StudioModel: ObservableObject {
     @Published var selectedLogLevels: Set<String> = []
     @Published private(set) var windowTitle = "BASICStudio"
     let bundledExamples = StudioModel.availableBundledExamples()
+    /// ``bundledExamples`` arranged by their folders, as the Examples menus show them.
+    var exampleTree: BundledExampleFolder { BundledExampleFolder.tree(bundledExamples) }
 
     let graphics = GraphicsFramebuffer()
     var vtgDataSink: ((Data) -> Void)?
@@ -1785,7 +1787,7 @@ final class StudioModel: ObservableObject {
             return source
         }
 
-        let relativePath = "basicPrograms/demos/test-suite.bas"
+        let relativePath = "basicPrograms/demos/language/test-suite.bas"
         let sourcePath = String(#filePath)
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let candidates = [
@@ -1831,6 +1833,22 @@ final class StudioModel: ObservableObject {
                 return source
             }
         }
+        // A bare name, from before the demos had category folders.
+        guard !normalized.contains("/"),
+              let found = demoNamed(url.lastPathComponent + ".bas", in: demoRootCandidates()) else { return nil }
+        return try? String(contentsOf: found, encoding: .utf8)
+    }
+
+    /// The one file called `fileName` anywhere under `roots`: the demos sit in
+    /// category folders (games/, graphics/, …), so `test-suite` finds
+    /// `language/test-suite.bas`.
+    nonisolated private static func demoNamed(_ fileName: String, in roots: [URL]) -> URL? {
+        for root in roots {
+            let found = FileManager.default.enumerator(at: root.resolvingSymlinksInPath(), includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL }
+                .first { $0.lastPathComponent == fileName }
+            if let found { return found }
+        }
         return nil
     }
 
@@ -1839,21 +1857,78 @@ final class StudioModel: ObservableObject {
     }
 
     private static func availableBundledExamples() -> [BundledExample] {
-        var examplesByPath: [String: BundledExample] = [:]
+        var paths: Set<String> = []
         for root in demoRootCandidates() {
-            guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
-                continue
-            }
+            paths.formUnion(programPaths(in: root.resolvingSymlinksInPath()))
+        }
+        return BundledExampleFolder.tree(paths.map(BundledExample.init(path:))).allExamples
+    }
 
-            for case let url as URL in enumerator where url.pathExtension.lowercased() == "bas" {
-                guard let path = pathRelativeToDemoRoot(url, root: root) else { continue }
-                examplesByPath[path] = BundledExample(path: path)
+    /// The runnable programs under a demos folder, without `.bas`, at any
+    /// depth. Each folder's own files are programs, and so is each folder
+    /// below a category holding a `main.bas` or a file named after it
+    /// (`apps/POS/pos`): that program's other files are its modules. A folder
+    /// a program beside it imports (`import "gradeslib/"`) is a library and
+    /// stays out; any other folder is a subcategory, scanned the same way.
+    static func programPaths(in root: URL) -> [String] {
+        let fileManager = FileManager.default
+        func children(_ url: URL) -> [URL] {
+            (try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        }
+        func isDirectory(_ url: URL) -> Bool {
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        func program(_ url: URL) -> String? {
+            url.pathExtension.lowercased() == "bas" ? url.deletingPathExtension().lastPathComponent : nil
+        }
+        func entry(of folder: URL) -> String? {
+            let names = children(folder).compactMap(program)
+            return names.first { $0.lowercased() == "main" }
+                ?? names.first { $0.lowercased() == folder.lastPathComponent.lowercased() }
+        }
+        func scan(_ folder: URL, prefix: String) -> [String] {
+            let items = children(folder)
+            let libraries = importedFolders(in: items.filter { program($0) != nil })
+            var paths: [String] = []
+            for item in items {
+                if let name = program(item) {
+                    paths.append(prefix + name)
+                    continue
+                }
+                let name = item.lastPathComponent
+                guard isDirectory(item), !libraries.contains(name.lowercased()) else { continue }
+                if let main = entry(of: item) {
+                    paths.append("\(prefix)\(name)/\(main)")
+                } else {
+                    paths += scan(item, prefix: "\(prefix)\(name)/")
+                }
+            }
+            return paths
+        }
+        // The folders directly in the demos folder are its categories, never
+        // programs of their own.
+        return children(root).flatMap { item -> [String] in
+            if let name = program(item) { return [name] }
+            return isDirectory(item) ? scan(item, prefix: "\(item.lastPathComponent)/") : []
+        }
+    }
+
+    /// The folders `files` import as libraries, `import "gradeslib/"`, in
+    /// lowercase.
+    private static func importedFolders(in files: [URL]) -> Set<String> {
+        var folders: Set<String> = []
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for line in text.split(whereSeparator: \.isNewline) {
+                let words = line.trimmingCharacters(in: .whitespaces).split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                guard words.count == 2, words[0].lowercased() == "import" else { continue }
+                let target = words[1].drop { $0.isWhitespace }
+                guard target.first == "\"", let close = target.dropFirst().firstIndex(of: "\"") else { continue }
+                let name = target[target.index(after: target.startIndex)..<close]
+                if name.hasSuffix("/") { folders.insert(name.dropLast().lowercased()) }
             }
         }
-
-        return examplesByPath.values.sorted {
-            $0.menuTitle.localizedStandardCompare($1.menuTitle) == .orderedAscending
-        }
+        return folders
     }
 
     private static func demoRootCandidates() -> [URL] {
@@ -1887,15 +1962,6 @@ final class StudioModel: ObservableObject {
             seen.insert(key)
             return true
         }
-    }
-
-    private static func pathRelativeToDemoRoot(_ url: URL, root: URL) -> String? {
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        guard path.hasPrefix(rootPath + "/") else { return nil }
-        let relative = String(path.dropFirst(rootPath.count + 1))
-        guard relative.hasSuffix(".bas") else { return nil }
-        return String(relative.dropLast(4))
     }
 
     private static func demoResourceCandidates(named name: String, subdirectory: String) -> [URL] {
@@ -2285,13 +2351,16 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
     }
 
     nonisolated private func bundledDemoURL(path: String) -> URL? {
+        let normalized = normalizedDemoPath(path)
         for root in bundledDemoRootCandidates(path: "") {
-            let url = root.appendingPathComponent(normalizedDemoPath(path))
+            let url = root.appendingPathComponent(normalized)
             if FileManager.default.fileExists(atPath: url.path) {
                 return url
             }
         }
-        return nil
+        // A bare name, from before the demos had category folders.
+        guard !normalized.contains("/") else { return nil }
+        return Self.demoNamed(normalized, in: bundledDemoRootCandidates(path: ""))
     }
 
     nonisolated private func bundledDemoRootCandidates(path: String) -> [URL] {
