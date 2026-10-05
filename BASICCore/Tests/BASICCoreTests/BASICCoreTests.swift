@@ -811,7 +811,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: Function MissingHandler is not defined"])
+        #expect(host.output == ["on mouse move call MissingHandler\n^\nRuntime error: Function MissingHandler is not defined at 1"])
     }
 
     @Test("ON event CALL rejects async handlers for the MVP policy")
@@ -828,7 +828,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: Event handler ResizeChanged must be synchronous"])
+        #expect(host.output == ["on resize call ResizeChanged\n^\nRuntime error: Event handler ResizeChanged must be synchronous at 1"])
     }
 
     @Test("ON timer event rejects async handlers for the MVP policy")
@@ -846,7 +846,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: Event handler TimerTick must be synchronous"])
+        #expect(host.output == ["on timer call TimerTick\n^\nRuntime error: Event handler TimerTick must be synchronous at 2"])
     }
 
     @Test("Host resize and mouse events dispatch through shared event loop")
@@ -1511,7 +1511,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: Division by zero"])
+        #expect(host.output == ["print 10 / 0\n^\nRuntime error: Division by zero at 3"])
     }
 
     @Test("ERR and ERL remain visible after unhandled runtime errors")
@@ -1530,7 +1530,7 @@ struct BASICCoreTests {
 
         #expect(host.output == [
             "before",
-            "Runtime error: Division by zero",
+            "print 10 / 0\n^\nRuntime error: Division by zero at 2",
             "11",
             "2"
         ])
@@ -1789,7 +1789,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: VOID function Bad cannot be used in an expression"])
+        #expect(host.output == ["print Bad()\n^\nRuntime error: VOID function Bad cannot be used in an expression at 1"])
     }
 
     @Test("Explicit VARIANT parameters keep runtime value kind")
@@ -3193,8 +3193,11 @@ struct BASICCoreTests {
         do {
             try session.runProgram()
             Issue.record("Expected division by zero")
-        } catch BASICError.runtime(let message) {
+        } catch BASICError.located(.runtime(let message), let source, _, let line) {
+            // A program run says where its error happened.
             #expect(message == "Division by zero")
+            #expect(source == "print 10 / 0")
+            #expect(line == 2)
         }
 
         #expect(host.output == ["before"])
@@ -3863,7 +3866,7 @@ struct BASICCoreTests {
 
         session.submit("RUN")
 
-        #expect(host.output == ["Runtime error: URL template has an unresolved substitution"])
+        #expect(host.output == ["response = client.get(\"/points/{latitude},{longitude}\", substitutions)\n^\nRuntime error: URL template has an unresolved substitution at 4"])
         #expect(host.structuredHTTPRequests.isEmpty)
     }
 
@@ -4547,7 +4550,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Type error: Cannot assign non-numeric value to value"])
+        #expect(host.output == ["print twice(\"nope\")\n^\nType error: Cannot assign non-numeric value to value at 2"])
     }
 
     @Test("BASIC closure expressions support explicit capture lists")
@@ -4657,7 +4660,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Type error: Type Mismatch"])
+        #expect(host.output == ["formatter = function(text$ as string) as string = text$\n^\nType error: Type Mismatch at 3"])
     }
 
     @Test("FUNCTION TYPE declarations can type callback parameters")
@@ -5031,7 +5034,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Type Mismatch"])
+        #expect(host.output == ["student = FromJsonString(\"{\" + q$ + \"name\" + q$ + \":\" + q$ + \"Ada\" + q$ + \",\" + q$ + \"age\" + q$ + \":\" + q$ + \"sixteen\" + q$ + \"}\", true)\n^\nRuntime error: Type Mismatch at 8"])
     }
 
     @Test("JSON decodes variable length arrays and LEN reports element count")
@@ -5161,7 +5164,7 @@ struct BASICCoreTests {
         let f = File("exists.txt", WRITE, TEXT, true)
         """)
         existingSession.submit("run")
-        #expect(existingHost.output == ["Runtime error: File Already Exists"])
+        #expect(existingHost.output == ["let f = File(\"exists.txt\", WRITE, TEXT, true)\n^\nRuntime error: File Already Exists at 1"])
 
         let missingHost = TestHost()
         let missingSession = BASICSession(host: missingHost)
@@ -5169,7 +5172,7 @@ struct BASICCoreTests {
         let f = File("missing.txt", READ, TEXT, false)
         """)
         missingSession.submit("run")
-        #expect(missingHost.output == ["Runtime error: File Not Found"])
+        #expect(missingHost.output == ["let f = File(\"missing.txt\", READ, TEXT, false)\n^\nRuntime error: File Not Found at 1"])
     }
 
     @Test("Modern File RAW mode preserves bytes and reports metadata")
@@ -5259,7 +5262,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: File Already Open"])
+        #expect(host.output == ["file.open(\"second.txt\", WRITE, TEXT, false)\n^\nRuntime error: File Already Open at 2"])
         #expect(host.files["first.txt"] == "")
         #expect(host.files["second.txt"] == nil)
     }
@@ -5354,7 +5357,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Directory not empty"])
+        #expect(host.output == ["File.Rm \"workspace\"\n^\nRuntime error: Directory not empty at 3"])
         #expect(host.directories.contains("workspace"))
         #expect(host.files["workspace/keep.txt"] == "keep")
     }
@@ -5370,7 +5373,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Permission denied"])
+        #expect(host.output == ["let file = File(\"blocked.txt\", WRITE, TEXT, false)\n^\nRuntime error: Permission denied at 1"])
         #expect(host.files["blocked.txt"] == nil)
     }
 
@@ -5401,7 +5404,7 @@ struct BASICCoreTests {
         let device = File("COM1:9600,N,8,1", WRITE, RAW, false)
         """)
         modernSession.submit("run")
-        #expect(modernHost.output == ["Runtime error: Unsupported file device"])
+        #expect(modernHost.output == ["let device = File(\"COM1:9600,N,8,1\", WRITE, RAW, false)\n^\nRuntime error: Unsupported file device at 1"])
 
         let legacyHost = TestHost()
         let legacySession = BASICSession(host: legacyHost)
@@ -5409,7 +5412,7 @@ struct BASICCoreTests {
         open "LPT1:" for output as #1
         """)
         legacySession.submit("run")
-        #expect(legacyHost.output == ["Runtime error: Unsupported file device"])
+        #expect(legacyHost.output == ["open \"LPT1:\" for output as #1\n^\nRuntime error: Unsupported file device at 1"])
     }
 
     @Test("Legacy sequential file statements write read append and report EOF")
@@ -5600,19 +5603,19 @@ struct BASICCoreTests {
         let widthSession = BASICSession(host: widthHost)
         widthSession.program.loadSource("print len(mki$(1, 24))")
         widthSession.submit("run")
-        #expect(widthHost.output == ["Runtime error: mki$ width must be 16, 32, or 64"])
+        #expect(widthHost.output == ["print len(mki$(1, 24))\n^\nRuntime error: mki$ width must be 16, 32, or 64 at 1"])
 
         let orderHost = TestHost()
         let orderSession = BASICSession(host: orderHost)
         orderSession.program.loadSource("print cvi(mki$(1), 16, \"SIDEWAYS\")")
         orderSession.submit("run")
-        #expect(orderHost.output == ["Runtime error: cvi byte order must be NATIVE, LITTLE, or BIG"])
+        #expect(orderHost.output == ["print cvi(mki$(1), 16, \"SIDEWAYS\")\n^\nRuntime error: cvi byte order must be NATIVE, LITTLE, or BIG at 1"])
 
         let overflowHost = TestHost()
         let overflowSession = BASICSession(host: overflowHost)
         overflowSession.program.loadSource("print len(mki$(32768))")
         overflowSession.submit("run")
-        #expect(overflowHost.output == ["Runtime error: Overflow"])
+        #expect(overflowHost.output == ["print len(mki$(32768))\n^\nRuntime error: Overflow at 1"])
 
         let precisionHost = TestHost()
         let precisionSession = BASICSession(host: precisionHost)
@@ -5622,7 +5625,7 @@ struct BASICCoreTests {
         print cvi(maxBytes$, 64, little)
         """)
         precisionSession.submit("run")
-        #expect(precisionHost.output == ["Runtime error: CVI 64-bit value cannot be represented exactly"])
+        #expect(precisionHost.output == ["print cvi(maxBytes$, 64, little)\n^\nRuntime error: CVI 64-bit value cannot be represented exactly at 3"])
     }
 
     @Test("Random files reject invalid record layouts and text operations reject binary mode")
@@ -5633,7 +5636,7 @@ struct BASICCoreTests {
         open "bad.dat" as #1 len = 0
         """)
         lengthSession.submit("run")
-        #expect(lengthHost.output == ["Runtime error: Bad record length"])
+        #expect(lengthHost.output == ["open \"bad.dat\" as #1 len = 0\n^\nRuntime error: Bad record length at 1"])
 
         let fieldHost = TestHost()
         let fieldSession = BASICSession(host: fieldHost)
@@ -5642,7 +5645,7 @@ struct BASICCoreTests {
         field #1, 5 as value$
         """)
         fieldSession.submit("run")
-        #expect(fieldHost.output == ["Runtime error: FIELD overflow"])
+        #expect(fieldHost.output == ["field #1, 5 as value$\n^\nRuntime error: FIELD overflow at 2"])
 
         let binaryHost = TestHost()
         let binarySession = BASICSession(host: binaryHost)
@@ -5651,7 +5654,7 @@ struct BASICCoreTests {
         print #1, "text"
         """)
         binarySession.submit("run")
-        #expect(binaryHost.output == ["Runtime error: Bad file mode"])
+        #expect(binaryHost.output == ["print #1, \"text\"\n^\nRuntime error: Bad file mode at 2"])
     }
 
     @Test("Debugger file snapshots expose modern and numbered file state")
@@ -5789,7 +5792,7 @@ struct BASICCoreTests {
         open "missing.txt" for input as #1
         """)
         missingSession.submit("run")
-        #expect(missingHost.output == ["Runtime error: File Not Found"])
+        #expect(missingHost.output == ["open \"missing.txt\" for input as #1\n^\nRuntime error: File Not Found at 1"])
 
         let modeHost = TestHost()
         let modeSession = BASICSession(host: modeHost)
@@ -5798,7 +5801,7 @@ struct BASICCoreTests {
         line input #1, a$
         """)
         modeSession.submit("run")
-        #expect(modeHost.output == ["Runtime error: Bad file mode"])
+        #expect(modeHost.output == ["line input #1, a$\n^\nRuntime error: Bad file mode at 2"])
     }
 
     @Test("CD changes the base directory for BASIC file commands")
@@ -7132,7 +7135,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: CIRCLE aspect must be greater than zero"])
+        #expect(host.output == ["circle (30,31), 10, 6, 0\n^\nRuntime error: CIRCLE aspect must be greater than zero at 2"])
     }
 
     @Test("COLOR supplies default graphics foreground")
@@ -7281,7 +7284,7 @@ struct BASICCoreTests {
         """)
         zeroScaleSession.submit("run")
 
-        #expect(zeroScaleHost.output == ["Runtime error: DRAW scale must be greater than zero"])
+        #expect(zeroScaleHost.output == ["draw \"S0R1\"\n^\nRuntime error: DRAW scale must be greater than zero at 2"])
 
         let badAngleHost = TestHost()
         let badAngleSession = BASICSession(host: badAngleHost)
@@ -7292,7 +7295,7 @@ struct BASICCoreTests {
         """)
         badAngleSession.submit("run")
 
-        #expect(badAngleHost.output == ["Runtime error: DRAW angle must be 0, 1, 2, or 3"])
+        #expect(badAngleHost.output == ["draw \"A4R1\"\n^\nRuntime error: DRAW angle must be 0, 1, 2, or 3 at 2"])
     }
 
     @Test("COLOR accepts text background")
@@ -7380,7 +7383,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: scores subscript out of range"])
+        #expect(host.output == ["scores(11) = 42\n^\nRuntime error: scores subscript out of range at 1"])
     }
 
     @Test("DIM supports dictionary variables")
@@ -7760,7 +7763,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Out of DATA"])
+        #expect(host.output == ["read a, b\n^\nRuntime error: Out of DATA at 2"])
     }
 
     @Test("CLASS supports fields and NEW object construction")
@@ -7943,7 +7946,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: INTERFACE Printable has no method Internal$"])
+        #expect(host.output == ["print item.Internal$()\n^\nRuntime error: INTERFACE Printable has no method Internal$ at 17"])
     }
 
     @Test("INTERFACE typed variables reject nonconforming objects")
@@ -7967,7 +7970,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Type error: Cannot assign non-Printable object to item"])
+        #expect(host.output == ["item = new Report()\n^\nType error: Cannot assign non-Printable object to item at 12"])
     }
 
     @Test("INTERFACE rejects unknown inherited interfaces")
@@ -8144,7 +8147,7 @@ struct BASICCoreTests {
         """)
         surfaceSession.submit("run")
 
-        #expect(surfaceHost.output == ["Runtime error: CLASS Report has no method BadgeText$"])
+        #expect(surfaceHost.output == ["print report.BadgeText$()\n^\nRuntime error: CLASS Report has no method BadgeText$ at 16"])
     }
 
     @Test("CLASS base variables expose only base fields")
@@ -8190,7 +8193,7 @@ struct BASICCoreTests {
         """)
         derivedSession.submit("run")
 
-        #expect(derivedHost.output == ["Runtime error: CLASS Report has no field Badge"])
+        #expect(derivedHost.output == ["report.Badge = \"READY\"\n^\nRuntime error: CLASS Report has no field Badge at 12"])
     }
 
     @Test("INTERFACE typed variables do not expose fields")
@@ -8217,7 +8220,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: INTERFACE Printable has no field Title"])
+        #expect(host.output == ["print item.Title\n^\nRuntime error: INTERFACE Printable has no field Title at 15"])
     }
 
     @Test("CLASS rejects OVERRIDES with mismatched signatures")
@@ -8322,7 +8325,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Code is PRIVATE"])
+        #expect(host.output == ["vault.Code = \"open\"\n^\nRuntime error: Code is PRIVATE at 7"])
     }
 
     @Test("CLASS allows protected base fields and methods from subclasses")
@@ -8380,7 +8383,7 @@ struct BASICCoreTests {
         """)
         fieldSession.submit("run")
 
-        #expect(fieldHost.output == ["Runtime error: Code is PROTECTED"])
+        #expect(fieldHost.output == ["print report.Code\n^\nRuntime error: Code is PROTECTED at 11"])
 
         let methodHost = TestHost()
         let methodSession = BASICSession(host: methodHost)
@@ -8402,7 +8405,7 @@ struct BASICCoreTests {
         """)
         methodSession.submit("run")
 
-        #expect(methodHost.output == ["Runtime error: CodeText$ is PROTECTED"])
+        #expect(methodHost.output == ["print report.CodeText$()\n^\nRuntime error: CodeText$ is PROTECTED at 13"])
     }
 
     @Test("CLASS blocks private methods outside the declaring class")
@@ -8423,7 +8426,7 @@ struct BASICCoreTests {
         """)
         session.submit("run")
 
-        #expect(host.output == ["Runtime error: Code$ is PRIVATE"])
+        #expect(host.output == ["print vault.Code$()\n^\nRuntime error: Code$ is PRIVATE at 9"])
     }
 
     @Test("TASKS commands report logical task status")

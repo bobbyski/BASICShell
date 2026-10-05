@@ -12,6 +12,11 @@ public struct ParsedLine {
     public let statementNumber: Int
     public let isImported: Bool
     public let statement: Statement
+    /// The source line the statement is on, as written (without its line
+    /// number), and the column the statement starts at in it: where a
+    /// runtime error puts its caret.
+    public let source: String
+    public let column: Int
 
     /// The breakpoint key for this statement.
     public var breakpointLocation: BASICBreakpointLocation {
@@ -19,7 +24,7 @@ public struct ParsedLine {
     }
 
     /// Creates a parsed line.
-    public init(number: Int?, displayLineNumber: Int, fileName: String?, sourceLineNumber: Int, statementNumber: Int, isImported: Bool, statement: Statement) {
+    public init(number: Int?, displayLineNumber: Int, fileName: String?, sourceLineNumber: Int, statementNumber: Int, isImported: Bool, statement: Statement, source: String = "", column: Int = 0) {
         self.number = number
         self.displayLineNumber = displayLineNumber
         self.fileName = fileName
@@ -27,12 +32,26 @@ public struct ParsedLine {
         self.statementNumber = statementNumber
         self.isImported = isImported
         self.statement = statement
+        self.source = source
+        self.column = column
+    }
+
+    /// The column of the first thing on `source` that isn't a space or tab:
+    /// where a statement starts when no parser said.
+    public static func firstColumn(of source: String) -> Int {
+        source.prefix { $0 == " " || $0 == "\t" }.count
     }
 
     /// Splits a colon-separated `.sequence` into one parsed line per
     /// statement, numbering them so breakpoints can name each.
-    public static func flatten(number: Int?, fileName: String?, sourceLineNumber: Int, isImported: Bool, statement: Statement) -> [ParsedLine] {
+    /// `source` is the line's text and `columns` where each of its statements
+    /// starts (from `Parser.statementColumns`); with none, a statement starts
+    /// at the line's first non-blank column.
+    public static func flatten(number: Int?, fileName: String?, sourceLineNumber: Int, isImported: Bool, statement: Statement, source: String = "", columns: [Int] = []) -> [ParsedLine] {
         let displayLineNumber = number ?? sourceLineNumber
+        func column(_ index: Int) -> Int {
+            index < columns.count ? columns[index] : firstColumn(of: source)
+        }
         guard case .sequence(let statements) = statement else {
             return [
                 ParsedLine(
@@ -42,7 +61,9 @@ public struct ParsedLine {
                     sourceLineNumber: sourceLineNumber,
                     statementNumber: 0,
                     isImported: isImported,
-                    statement: statement
+                    statement: statement,
+                    source: source,
+                    column: column(0)
                 )
             ]
         }
@@ -55,7 +76,9 @@ public struct ParsedLine {
                 sourceLineNumber: sourceLineNumber,
                 statementNumber: index,
                 isImported: isImported,
-                statement: statement
+                statement: statement,
+                source: source,
+                column: column(index)
             )
         }
     }
@@ -127,7 +150,8 @@ public enum ProgramParser {
                     fileName: line.fileName,
                     sourceLineNumber: line.sourceLineNumber ?? parsed.count + 1,
                     isImported: line.isImported,
-                    statement: .enumDeclaration(name: name, cases: cases)
+                    statement: .enumDeclaration(name: name, cases: cases),
+                    source: line.source
                 )
                 index += 1
                 continue
@@ -189,7 +213,8 @@ public enum ProgramParser {
                         header.returnType,
                         header.captures,
                         body
-                    )
+                    ),
+                    source: line.source
                 )
                 index += 1
                 continue
@@ -207,7 +232,9 @@ public enum ProgramParser {
                 fileName: line.fileName,
                 sourceLineNumber: line.sourceLineNumber ?? index + 1,
                 isImported: line.isImported,
-                statement: statement
+                statement: statement,
+                source: line.source,
+                columns: parser.statementColumns
             )
             index += 1
         }

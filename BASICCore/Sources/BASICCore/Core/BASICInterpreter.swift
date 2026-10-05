@@ -34,6 +34,17 @@ public final class BASICInterpreter {
     private var lineIndexByNumber: [Int: Int] = [:]
     private var lineIndexByLabel: [String: Int] = [:]
     private var parsedLines: [ParsedLine] = []
+
+    /// Whether an unhandled runtime error leaving `continueExecution` says
+    /// where it happened (`BASICError.located`). Set for a program run, not
+    /// for direct mode or a task: a direct command has no program line, and
+    /// a task's error is text a program reads back with ERROR$.
+    var locatesRuntimeErrors = false
+
+    /// The statement a runtime error began at, recorded by the innermost
+    /// statement loop it passes through, so a failure deep in a function is
+    /// placed there and not at the call at the top of the program.
+    private var faultLine: ParsedLine?
     private var outputColumn = 0
     private var pausedDebugCallStack: [BASICCallStackFrame]?
     private var pausedDebugLocalVariables: [BASICVariableSnapshot]?
@@ -656,6 +667,7 @@ public final class BASICInterpreter {
                 updateExecutionLocation(current)
                 try checkExecutionBreak()
                 traceExecution(current)
+                faultLine = nil
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
                 try apply(flow: next, currentPC: pc, parsed: parsedLines)
                 try drainPendingEventsIfAllowed(limit: 16)
@@ -671,13 +683,15 @@ public final class BASICInterpreter {
                     }
                     throw error
                 }
-                if try handleRuntimeError(error, faultPC: pc, parsed: parsedLines) {
+                let fault = faultLine ?? parsedLines[pc]
+                faultLine = nil
+                if try handleRuntimeError(error, fault: fault, faultPC: pc) {
                     continue
                 }
                 if let task {
                     taskScheduler?.markFailed(task, error: error)
                 }
-                throw error
+                throw located(error, at: fault)
             } catch {
                 if let task {
                     taskScheduler?.markFailed(task, error: error)
@@ -733,11 +747,26 @@ public final class BASICInterpreter {
         errorResumeNextPC = nil
     }
 
+    /// `error` with where it happened, when this run reports that and the
+    /// error is one a program raised while running.
+    private func located(_ error: BASICError, at fault: ParsedLine) -> BASICError {
+        guard locatesRuntimeErrors, !fault.source.isEmpty else { return error }
+        switch error {
+        case .runtime, .numberedRuntime, .type:
+            return .located(error, source: fault.source, column: fault.column, line: fault.displayLineNumber)
+        default:
+            return error
+        }
+    }
+
+    /// Records the error for ERR and ERL — ERL being the line of the
+    /// statement that failed, inside whatever function — and jumps to the
+    /// ON ERROR handler if there is one.
     @discardableResult
-    private func handleRuntimeError(_ error: BASICError, faultPC: Int, parsed: [ParsedLine]) throws -> Bool {
+    private func handleRuntimeError(_ error: BASICError, fault: ParsedLine, faultPC: Int) throws -> Bool {
         runtime.setLastError(
             number: errorNumber(for: error),
-            line: parsed[safe: faultPC]?.displayLineNumber ?? 0,
+            line: fault.displayLineNumber,
             message: error.description
         )
         guard errorHandlerTarget != nil, !isHandlingError else {
@@ -3676,6 +3705,11 @@ public final class BASICInterpreter {
                     if try suspendAsyncFunctionForDebugger(error) {
                         continue
                     }
+                } else if faultLine == nil, !parsed[pc].source.isEmpty {
+                    // A closure body's lines carry no source; an error in one
+                    // is placed at the statement that called it, as basicc
+                    // places it.
+                    faultLine = parsed[pc]
                 }
                 throw error
             }

@@ -9,6 +9,11 @@ public struct Parser {
     private var current = 0
     private var stopsAtElse = false
 
+    /// Where each statement `parseStatement` read began, as a column of the
+    /// source, in order: one entry per statement of a colon-separated line.
+    /// A runtime error points its caret here.
+    public private(set) var statementColumns: [Int] = []
+
     public init(source: String) throws {
         self.source = source
         var lexer = Lexer(source: source)
@@ -17,7 +22,9 @@ public struct Parser {
 
     public mutating func parseStatement() throws -> Statement {
         var statements: [Statement] = []
+        statementColumns = []
         while !isAtEnd {
+            statementColumns.append(tokens[current].column)
             statements.append(try parseSingleStatement())
             if !match(.colon) {
                 break

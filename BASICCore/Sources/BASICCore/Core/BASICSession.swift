@@ -983,6 +983,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             eventLoop: eventLoop,
             outputCoordinator: outputCoordinator
         )
+        interpreter.locatesRuntimeErrors = true
         activeInterpreter = interpreter
         do {
             try interpreter.run(startLine: startLine)

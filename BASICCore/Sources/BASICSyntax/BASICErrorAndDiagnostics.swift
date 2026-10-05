@@ -30,6 +30,10 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
     case stepComplete(BASICBreakpointLocation)
     /// Execution halted intentionally.
     case halted
+    /// A runtime or type error from a running program, with where it
+    /// happened: the failing statement's source line, the column the
+    /// statement starts at, and its line number (what ERL reports).
+    indirect case located(BASICError, source: String, column: Int, line: Int)
 
     /// A user-facing rendering of the error, including caret context when available.
     public var description: String {
@@ -57,6 +61,11 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
         case .stepComplete(let location):
             return "Break at \(location.lineNumber)"
         case .halted: return "Program halted"
+        case .located(let error, let source, let column, let line):
+            // The caret keeps any tabs before it, so it lines up under the
+            // statement however the line is indented.
+            let marker = String(source.prefix(max(0, column)).map { $0 == "\t" ? "\t" : " " }) + "^"
+            return "\(source)\n\(marker)\n\(error.description) at \(line)"
         }
     }
 
@@ -68,6 +77,8 @@ public enum BASICError: Error, CustomStringConvertible, Equatable {
             return "Error \(number)"
         case .type(let message):
             return message
+        case .located(let error, _, _, _):
+            return error.eventHandlerMessage
         default:
             return description
         }
