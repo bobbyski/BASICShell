@@ -46,6 +46,44 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Electric Storm: draws the tube, moves and fires, zaps what climbs out, and quits with its score")
+    func electricStorm() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/electric-storm" })
+        #expect(example.title == "Electric Storm")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The tube — sixteen rails and both rims — and the ship on it.
+        try await studio.waitUntil("the tube to be drawn") {
+            sent.contains("id=rim-near,") && sent.contains("id=rail15,") && sent.contains("id=ship,")
+        }
+
+        // Held LEFT moves the ship round the rim: the rails it lights move with it.
+        let railsLitAtStart = sent.components(separatedBy: "#fde047").count
+        studio.model.heldKeys.set("LEFT", down: true)
+        try await studio.waitUntil("the ship to change lane") { sent.components(separatedBy: "#fde047").count > railsLitAtStart + 4 }
+        studio.model.heldKeys.set("LEFT", down: false)
+
+        // Held SPACE keeps firing down the lane.
+        studio.model.heldKeys.set("SPACE", down: true)
+        try await studio.waitUntil("shots") { sent.contains("id=shot0,") && sent.contains("id=shot1,") }
+        studio.model.heldKeys.set("SPACE", down: false)
+
+        // Once something has climbed out, Z zaps it and the tube flashes white.
+        try await studio.waitUntil("an enemy", timeout: .seconds(30)) { sent.contains("id=enemy") }
+        studio.model.handleTerminalInput([.append("z")])
+        try await studio.waitUntil("the Superzapper") { sent.contains("delete,id=enemy") && sent.contains("id=rim-near,stroke=#ffffff") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// The `x` the last command for `id` drew it at.
     private static func lastX(of id: String, in sent: String) -> Int? {
         guard let command = sent.range(of: "id=\(id),", options: .backwards) else { return nil }
