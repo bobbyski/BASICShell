@@ -59,6 +59,19 @@ public struct BASICString: Equatable, CustomStringConvertible, Sendable {
         }
     }
 
+    /// Equal when the contents are, however each was made: `CHR$(65) = "A"`,
+    /// and a key from `INKEY$` equals the `CHR$(13)` a program compares it
+    /// with. Two text strings compare as text; once either holds bytes
+    /// (`CHR$`, `MKI$`, a NUL), they compare byte for byte.
+    public static func == (lhs: BASICString, rhs: BASICString) -> Bool {
+        switch (lhs.storage, rhs.storage) {
+        case (.text(let left), .text(let right)):
+            return left == right
+        default:
+            return lhs.rawData == rhs.rawData
+        }
+    }
+
     /// This string `count` times over — `STRING$(3, "ab")` is `ababab`.
     /// Data-backed strings stay data, so bytes from `MKI$` repeat intact.
     func repeated(_ count: Int) -> BASICString {

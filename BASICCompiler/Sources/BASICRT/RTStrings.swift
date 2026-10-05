@@ -70,6 +70,16 @@ package struct RTText: Equatable {
         return false
     }
 
+    /// Equal when the contents are, however each was made — the
+    /// interpreter's `BASICString ==`: two texts compare as text, and once
+    /// either holds bytes they compare byte for byte, so `CHR$(65) = "A"`.
+    package static func == (lhs: RTText, rhs: RTText) -> Bool {
+        switch (lhs.storage, rhs.storage) {
+        case (.text(let left), .text(let right)): return left == right
+        default: return lhs.rawData == rhs.rawData
+        }
+    }
+
     /// This text `count` times over; data stays data, as in the interpreter's
     /// `BASICString.repeated`.
     func repeated(_ count: Int) -> RTText {
@@ -161,8 +171,9 @@ public func basic_rt_string_concat(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMut
     rtOwned(rtString(a).concatenating(rtString(b)))
 }
 
-/// The interpreter's `==` on strings: same storage kind, same contents —
-/// so `CHR$(65) = "A"` is false there, and here.
+/// The interpreter's `==` on strings: same contents, however each string
+/// was made, so `CHR$(65) = "A"` and a key equals the `CHR$(13)` it is
+/// compared with.
 @_cdecl("basic_rt_string_equal")
 public func basic_rt_string_equal(_ a: UnsafeMutableRawPointer?, _ b: UnsafeMutableRawPointer?) -> Bool {
     rtString(a) == rtString(b)
