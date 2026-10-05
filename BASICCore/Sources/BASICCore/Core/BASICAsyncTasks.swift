@@ -1217,14 +1217,25 @@ public enum BASICWorkerLaneRunResult: Equatable, Sendable {
 }
 
 /// Serialized execution lane for running BASIC work away from a caller thread.
+///
+/// Each operation runs on a thread of its own with a large stack, not on a
+/// dispatch queue. The interpreter recurses for every BASIC call — several
+/// big Swift frames per call — and a dispatch queue's worker thread has 512 KB
+/// of stack, which a program eight calls deep used up: Munchies' ghosts
+/// crashed Studio deciding which way to turn. A program run from the command
+/// line gets the main thread's 8 MB; this gives a lane far more than that.
 public final class BASICWorkerLane: @unchecked Sendable {
-    private let queue: DispatchQueue
+    /// Room for about a thousand nested BASIC calls. Reserved, not committed:
+    /// only the stack a program actually uses costs memory.
+    public static let stackSize = 64 << 20
+
+    private let label: String
     private let lock = NSLock()
     private var running = false
 
-    /// Creates a worker lane backed by a serial dispatch queue.
+    /// Creates a worker lane whose operations run on threads named `label`.
     public init(label: String = "AIBasic.BASICWorkerLane") {
-        self.queue = DispatchQueue(label: label, qos: .userInitiated)
+        self.label = label
     }
 
     /// True while a submitted operation is active on the lane.
@@ -1245,10 +1256,14 @@ public final class BASICWorkerLane: @unchecked Sendable {
         running = true
         lock.unlock()
 
-        queue.async { [weak self] in
+        let thread = Thread { [weak self] in
             operation()
             self?.finishOperation()
         }
+        thread.name = label
+        thread.stackSize = Self.stackSize
+        thread.qualityOfService = .userInitiated
+        thread.start()
         return true
     }
 
