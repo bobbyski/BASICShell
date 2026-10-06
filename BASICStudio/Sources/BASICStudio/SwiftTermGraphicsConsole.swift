@@ -1136,12 +1136,13 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         if visibleDirectory.isEmpty {
             return model?.consoleCompletionWorkingDirectoryPath() ?? FileManager.default.currentDirectoryPath
         }
+        let tilde = model?.tildeURL() ?? StudioHome.url
         if visibleDirectory == "~/" {
-            return StudioHome.url.path
+            return tilde.path
         }
         if visibleDirectory.hasPrefix("~/") {
             let rest = visibleDirectory.dropFirst(2)
-            return StudioHome.url.appendingPathComponent(String(rest)).path
+            return tilde.appendingPathComponent(String(rest)).path
         }
         if visibleDirectory.hasPrefix("/") {
             return NSString(string: visibleDirectory).expandingTildeInPath

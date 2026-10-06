@@ -7,6 +7,7 @@
 //  (BASIC-29). The rule is checked here on the Mac with iOS's paths.
 //
 
+import Foundation
 import Testing
 @testable import BASICStudio
 
@@ -37,6 +38,16 @@ struct StudioDocumentsBoundaryTests {
         #expect(!allows(local + "/../Library"))
         #expect(!allows("/"))
         #expect(!allows("/var/mobile/Library/Mobile Documents/iCloud~com~other~App/Documents"))
+    }
+
+    @Test("~ is the Documents folder in use: iCloud's when it is on, the app's own otherwise")
+    func tilde() {
+        let cloud = URL(fileURLWithPath: iCloud, isDirectory: true)
+        #expect(StudioDocumentsBoundary.tildeFolder(cloudFolder: cloud, localDocuments: local)?.path == iCloud)
+        #expect(StudioDocumentsBoundary.tildeFolder(cloudFolder: nil, localDocuments: local)?.path == local)
+        #expect(StudioDocumentsBoundary.tildeFolder(cloudFolder: nil, localDocuments: nil) == nil)
+        // Either way, CD lets the user go there.
+        #expect(allows(iCloud) && allows(local))
     }
 
     @Test("A folder that only starts like Documents is outside it")

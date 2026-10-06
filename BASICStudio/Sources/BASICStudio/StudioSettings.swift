@@ -247,6 +247,16 @@ enum StudioDocumentsBoundary {
         return next < folders.endIndex && folders[next] == "Documents"
     }
 
+    /// What `~` means on iPhone and iPad: the Documents folder the user
+    /// works in, the iCloud one when programs are kept there and the app's
+    /// own otherwise. Nil only when neither is known.
+    static func tildeFolder(cloudFolder: URL?, localDocuments: String?) -> URL? {
+        if let cloudFolder {
+            return cloudFolder.standardizedFileURL
+        }
+        return localDocuments.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
+    }
+
     private static func withoutPrivatePrefix(_ path: String) -> String {
         path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
     }

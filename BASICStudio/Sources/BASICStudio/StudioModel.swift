@@ -1229,6 +1229,23 @@ final class StudioModel: ObservableObject {
         session.shellModeEnabled
     }
 
+    /// What `~` means in a path the user types: home on the Mac. On iPhone
+    /// and iPad the home above Documents is not the user's to reach, so it is
+    /// the Documents folder they work in, the iCloud one when programs are
+    /// kept there and the app's own otherwise (BASIC-29).
+    nonisolated func tildeURL() -> URL {
+        #if os(iOS)
+        let cloudFolder = valueOnMainSync { () -> URL? in
+            if case .on(let folder) = cloudStatus { return folder }
+            return nil
+        }
+        if let folder = StudioDocumentsBoundary.tildeFolder(cloudFolder: cloudFolder, localDocuments: StudioDocumentsBoundary.localDocuments) {
+            return folder
+        }
+        #endif
+        return StudioHome.url
+    }
+
     func consoleCompletionWorkingDirectoryPath() -> String {
         (try? currentDirectoryPath()) ?? FileManager.default.currentDirectoryPath
     }
@@ -1844,7 +1861,7 @@ final class StudioModel: ObservableObject {
 
     nonisolated private func expandedPath(_ path: String) -> String {
         if path == "~" || path.hasPrefix("~/") {
-            return StudioHome.url.path + String(path.dropFirst())
+            return tildeURL().path + String(path.dropFirst())
         }
         if path.hasPrefix("/") {
             return path
