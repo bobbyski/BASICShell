@@ -15,3 +15,5 @@ function AddOne(value as integer) as integer
     return value + 1
 end function
 ```
+
+A program in more than one file is usually a project: see [Projects](PROJECTS.md).
