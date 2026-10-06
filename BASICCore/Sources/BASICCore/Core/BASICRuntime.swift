@@ -524,6 +524,17 @@ final class BASICRuntime {
         return .systemObject("VectorTerminal", id)
     }
 
+    /// The host's on-screen controls, set when a program makes a
+    /// `TouchControls` (BASIC-11); nil on a host without them.
+    weak var touchControlsHost: BASICTouchControlsHost?
+    let touchControlsCall = BASICTouchControlsCall()
+
+    /// A `TouchControls`. Every one a program makes is the same screen's
+    /// controls, so they share one id.
+    func touchControlsObject() -> BASICValue {
+        .systemObject("TouchControls", 1)
+    }
+
     func secondsTimerObject(intervalSeconds: Double) -> BASICValue {
         let id = nextTimerObjectID
         nextTimerObjectID += 1
@@ -630,6 +641,8 @@ final class BASICRuntime {
             }
         case "VECTORTERMINAL", "VTG":
             return try callVectorTerminalMethod(method: method, arguments: arguments, host: vectorTerminalHost)
+        case "TOUCHCONTROLS":
+            return try touchControlsCall.method(method, arguments: arguments, host: touchControlsHost)
         case "SECONDSTIMER":
             return try callSecondsTimerMethod(id: id, method: method, arguments: arguments, host: timerHost)
         // Every TUI pseudo class, by rule rather than by list. This was a
@@ -740,6 +753,8 @@ final class BASICRuntime {
             default:
                 throw BASICError.runtime("\(typeName) has no property \(property)")
             }
+        case "TOUCHCONTROLS":
+            return try BASICTouchControlsCall.property(property, host: touchControlsHost)
         case "SECONDSTIMER":
             guard let timer = timerObjects[id] else {
                 throw BASICError.runtime("Timer is not defined")
@@ -2539,6 +2554,8 @@ final class BASICRuntime {
                 switch name.uppercased() {
                 case "VECTORTERMINAL", "VTG":
                     return vectorTerminalObject()
+                case "TOUCHCONTROLS":
+                    return touchControlsObject()
                 case "BASICEVENT", "BASICRESIZEEVENT", "BASICMOUSEEVENT", "BASICTIMEREVENT", "BASICGAMEPADEVENT", "BASICFRAMEEVENT", "BASICROUTEEVENT", "BASICNETWORKEVENT", "BASICAUIEVENT":
                     return Self.builtInEventObject(typeName: name, fields: [:])
                 case "SECONDSTIMER":

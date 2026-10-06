@@ -6009,6 +6009,9 @@ public final class BASICInterpreter {
             if name.normalized == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
             }
+            if name.normalized == "TOUCHCONTROLS" {
+                return try constructTouchControls(arguments: arguments)
+            }
             if let database = try constructDatabaseObject(named: name.normalized, arguments: arguments) {
                 return database
             }
@@ -6058,6 +6061,9 @@ public final class BASICInterpreter {
             }
             if className.uppercased() == "SECONDSTIMER" {
                 return try constructSecondsTimer(arguments: arguments)
+            }
+            if className.uppercased() == "TOUCHCONTROLS" {
+                return try constructTouchControls(arguments: arguments)
             }
             if let database = try constructDatabaseObject(named: className.uppercased(), arguments: arguments) {
                 return database
@@ -6728,6 +6734,16 @@ public final class BASICInterpreter {
             throw BASICError.runtime("VectorTerminal expects 0 arguments")
         }
         return runtime.vectorTerminalObject()
+    }
+
+    /// `TouchControls()`: this host's on-screen controls, or, on a host
+    /// without a touch screen, an object whose every call does nothing.
+    private func constructTouchControls(arguments: [Expression]) throws -> BASICValue {
+        guard arguments.isEmpty else {
+            throw BASICError.runtime("TouchControls expects 0 arguments")
+        }
+        runtime.touchControlsHost = host as? BASICTouchControlsHost
+        return runtime.touchControlsObject()
     }
 
     /// The Rich* pseudo classes, spelled as the runtime stores them.

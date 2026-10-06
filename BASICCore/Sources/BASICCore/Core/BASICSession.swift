@@ -188,11 +188,14 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public let eventLoop: BASICEventLoop
     private let hostEventLock = NSLock()
     private var pendingHostEvents: [BASICEventSelector: BASICValue] = [:]
-    private var pendingHostEventOrder: [BASICEventSelector] = []
+    private var pendingHostEventOrder: [(selector: BASICEventSelector, sequence: Int)] = []
     /// Events that must each arrive, in order: two clicks are two clicks.
     /// The coalesced ones above keep only the latest per selector, which is
     /// right for a resize and wrong for a button.
-    private var queuedHostEvents: [(BASICEventSelector, BASICValue)] = []
+    private var queuedHostEvents: [(selector: BASICEventSelector, data: BASICValue, sequence: Int)] = []
+    /// Every posted event's place in line, merged or not, so a drain delivers
+    /// them in the order they came within each priority.
+    private var hostEventSequence = 0
     private var isHostEventDrainQueued = false
     private var aliases: [String: String] = [:]
     private var pendingInteractiveLines: [String] = []
@@ -1096,6 +1099,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let normalizedSubtype = subtype.uppercased()
         let selector = BASICEventSelector(type: "GAMEPAD", subtype: normalizedSubtype)
         guard runtime.isHostInputEnabled(for: selector) else { return }
+        // Never merged: a press and its release can both arrive between two
+        // statements, and merging them would keep only the release.
         postEvent(
             selector: selector,
             fields: [
@@ -1104,7 +1109,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 "controller": .number(Double(controller)),
                 "control": .string(BASICString(control)),
                 "value": .number(value)
-            ]
+            ],
+            coalesces: false
         )
     }
 
@@ -1315,11 +1321,12 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         let data = BASICValue.dictionary(BASICDictionary(values: fields))
         hostEventLock.lock()
         let replacesExisting = coalesces && pendingHostEvents[selector] != nil
+        hostEventSequence += 1
         if !coalesces {
-            queuedHostEvents.append((selector, data))
+            queuedHostEvents.append((selector, data, hostEventSequence))
         } else {
             if !replacesExisting {
-                pendingHostEventOrder.append(selector)
+                pendingHostEventOrder.append((selector, hostEventSequence))
             }
             pendingHostEvents[selector] = data
         }
@@ -1341,12 +1348,18 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     private func drainHostEvents() {
         guard !eventLoop.hasPendingError else { return }
         hostEventLock.lock()
-        let orderedSelectors = pendingHostEventOrder.sorted { lhs, rhs in
-            eventDeliveryPriority(lhs) < eventDeliveryPriority(rhs)
+        // By priority, then in the order they were posted: a merged event
+        // keeps the place of its first post.
+        let merged = pendingHostEventOrder.compactMap { entry in
+            pendingHostEvents[entry.selector].map { (selector: entry.selector, data: $0, sequence: entry.sequence) }
         }
-        let events = orderedSelectors.compactMap { selector in
-            pendingHostEvents[selector].map { (selector, $0) }
-        } + queuedHostEvents
+        let events = (merged + queuedHostEvents)
+            .sorted { lhs, rhs in
+                let left = eventDeliveryPriority(lhs.selector)
+                let right = eventDeliveryPriority(rhs.selector)
+                return left != right ? left < right : lhs.sequence < rhs.sequence
+            }
+            .map { ($0.selector, $0.data) }
         pendingHostEvents.removeAll()
         pendingHostEventOrder.removeAll()
         queuedHostEvents.removeAll()

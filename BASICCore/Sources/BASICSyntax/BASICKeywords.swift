@@ -177,7 +177,7 @@ public enum BASICKeywords {
         "TUIPIECHART", "TUISCATTER", "TUITIMELINE", "TUIIMAGE", "TUICANVAS",
         "TUIWIZARD", "TUIBOARD", "TUIDIAGRAM", "TUILOG",
         "TUIPREFS", "TUIFORM", "TUIPREFSDIALOG", "TUILINK", "TUINAVIGATOR",
-        "VECTORTERMINAL", "VTG",
+        "VECTORTERMINAL", "VTG", "TOUCHCONTROLS",
     ])
 
     /// The ActiveUI family (ACTIVEUI_TRANSITION.md P6): real Mac windows for a
