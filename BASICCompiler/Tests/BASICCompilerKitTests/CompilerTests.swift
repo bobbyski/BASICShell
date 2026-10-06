@@ -29,6 +29,19 @@ enum TestBuild {
         return FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }()
 
+    /// The environment the tests run programs in: their own, less the
+    /// `DYLD_*` paths `swift test` points at its debug build.
+    ///
+    /// A compiled program is linked against the release libraries and names
+    /// them in its rpath. Given the debug folder first, it loads the debug
+    /// TUIKit instead, which does not export what the release build's
+    /// cross-module optimization reaches for, and dies before its first line:
+    /// `dyld: Symbol not found: …TUIKit6WindowC28dismissOverlayIfPressOutside…`.
+    /// From a terminal, where nothing sets those paths, the same program runs.
+    static var programEnvironment: [String: String] {
+        ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
+    }
+
     struct Run {
         let stdout: String
         let exitCode: Int32
@@ -55,7 +68,7 @@ enum TestBuild {
         defer { try? FileManager.default.removeItem(at: workDir) }
         let output = workDir.appendingPathComponent("program").path
         try onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: path, output: output) }
-        let result = try ProcessRunner.run(output, [])
+        let result = try ProcessRunner.run(output, [], environment: programEnvironment)
         return Run(stdout: result.stdout, exitCode: result.exitCode)
     }
 
@@ -70,7 +83,7 @@ enum TestBuild {
     /// Runs the interpreter on the program, when available.
     static func interpret(path: String) throws -> String? {
         guard let interpreter else { return nil }
-        let result = try ProcessRunner.run(interpreter, [path])
+        let result = try ProcessRunner.run(interpreter, [path], environment: programEnvironment)
         return result.stdout
     }
 
@@ -321,7 +334,7 @@ struct SoundParityTests {
 
         func traced(_ executable: String, _ arguments: [String], into name: String) throws -> (stdout: String, trace: String) {
             let trace = directory.appendingPathComponent(name).path
-            var environment = ProcessInfo.processInfo.environment
+            var environment = TestBuild.programEnvironment
             environment["BASIC_SOUND_TRACE"] = trace
             let result = try ProcessRunner.run(executable, arguments, environment: environment)
             return (result.stdout, try String(contentsOfFile: trace, encoding: .utf8))
@@ -363,7 +376,7 @@ struct SoundParityTests {
 
         func traced(_ executable: String, _ arguments: [String], into name: String) throws -> (stdout: String, trace: String) {
             let trace = directory.appendingPathComponent(name).path
-            var environment = ProcessInfo.processInfo.environment
+            var environment = TestBuild.programEnvironment
             environment["BASIC_SOUND_TRACE"] = trace
             let result = try ProcessRunner.run(executable, arguments, environment: environment, workingDirectory: directory.path)
             return (result.stdout, try String(contentsOfFile: trace, encoding: .utf8))
@@ -397,7 +410,7 @@ struct SwiftPMPluginTests {
             "--cache-path", scratch.appendingPathComponent("cache").path,
         ])
         #expect(build.exitCode == 0, Comment(rawValue: build.stderr))
-        let run = try ProcessRunner.run(scratch.appendingPathComponent("debug/Hello").path, [])
+        let run = try ProcessRunner.run(scratch.appendingPathComponent("debug/Hello").path, [], environment: TestBuild.programEnvironment)
         #expect(run.stdout == "Hello from a SwiftPM package!\n  count1\n  count2\n  count3\n")
     }
 }
@@ -420,7 +433,7 @@ struct ProjectTests {
 
         let output = root.appendingPathComponent("Build/Demo").path
         try Compilation(dialect: TraditionalDialect()).build(sourcePath: root.path, output: output)
-        let run = try ProcessRunner.run(output, [])
+        let run = try ProcessRunner.run(output, [], environment: TestBuild.programEnvironment)
         #expect(run.stdout == "project!\nno ${sub} here\n")
     }
 
@@ -520,7 +533,7 @@ struct StarterTests {
         #expect(plistText.contains("<string>Greeter-launch</string>"))
         #expect(try String(contentsOfFile: launcher, encoding: .utf8).contains("/Greeter\""))
         // The program inside it is the program.
-        let run = try ProcessRunner.run(inner, [])
+        let run = try ProcessRunner.run(inner, [], environment: TestBuild.programEnvironment)
         #expect(run.stdout == "hi\n")
     }
 
@@ -528,6 +541,7 @@ struct StarterTests {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = TestBuild.programEnvironment
         let inPipe = Pipe(), outPipe = Pipe()
         process.standardInput = inPipe
         process.standardOutput = outPipe

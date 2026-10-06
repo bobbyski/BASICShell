@@ -327,7 +327,7 @@ struct SwiftImportEndToEndTests {
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
 
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == Self.expected, "got:\n\(run.stdout)")
 
@@ -424,7 +424,7 @@ struct SwiftImportEndToEndTests {
         let binary = root.appendingPathComponent("run-program").path
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == "Editor (main) is 80 wide\nEditor (side) is 24 wide\n243\n", "got:\n\(run.stdout)")
     }
@@ -517,7 +517,7 @@ struct SwiftImportEndToEndTests {
         let binary = root.appendingPathComponent("run-program").path
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == "level 4\nstep 4 rose TRUE\nlevel 1\nstep 1 rose FALSE\nstep 2 rose TRUE\nscaled 6\nquiet\nlabel peak ( 4)\n2.0 dB!\n", "got:\n\(run.stdout)")
     }
@@ -602,7 +602,7 @@ struct SwiftImportEndToEndTests {
         let binary = root.appendingPathComponent("run-program").path
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == "origin 10,20 size 300x400\nTRUE\nFALSE\n10\n640\n1 2 3 4\n10 2 3 40\n300 150\n", "got:\n\(run.stdout)")
     }
@@ -652,7 +652,7 @@ struct SwiftImportEndToEndTests {
         let binary = root.appendingPathComponent("run-program").path
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.stdout == " 5 \n" || run.stdout == "5\n", "got:\n\(run.stdout)")
     }
 
@@ -733,7 +733,7 @@ struct SwiftImportEndToEndTests {
         let binary = root.appendingPathComponent("run-program").path
         let build = try ProcessRunner.run(Self.compiler, ["build", source.path, "--dialect", "swift", "-o", binary])
         #expect(build.exitCode == 0, "compile failed: \(build.stderr)\(build.stdout)")
-        let run = try ProcessRunner.run(binary, [])
+        let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
         #expect(run.exitCode == 0, "run failed: \(run.stderr)")
         #expect(run.stdout == "no favorite\nswatch 700 warm true\nswatch 700 warm true\nswatch 700 warm true\nno favorite\nTRUE\nswatch 300 warm false\nswatch 255 warm false\n",
                 "got:\n\(run.stdout)")

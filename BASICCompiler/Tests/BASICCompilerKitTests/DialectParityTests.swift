@@ -59,7 +59,8 @@ struct DialectParityTests {
         // — identically under both dialects, which would pass while proving
         // nothing.
         let result = try ProcessRunner.run(
-            binary, [], workingDirectory: (program as NSString).deletingLastPathComponent
+            binary, [], environment: TestBuild.programEnvironment,
+            workingDirectory: (program as NSString).deletingLastPathComponent
         )
         return (result.stdout + result.stderr, result.exitCode)
     }

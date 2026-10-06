@@ -38,7 +38,7 @@ struct ContainerTests {
 
     private func build(_ path: String, into output: String) throws -> String {
         try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: path, output: output) }
-        return try ProcessRunner.run(output, []).stdout
+        return try ProcessRunner.run(output, [], environment: TestBuild.programEnvironment).stdout
     }
 
     @Test func aZippedProjectBuildsLikeItsDirectory() throws {

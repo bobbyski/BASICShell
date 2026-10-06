@@ -207,7 +207,7 @@ struct SwiftClassMetadataTests {
         ])
         #expect(link.exitCode == 0, "linking: \(link.stderr)")
 
-        let run = try ProcessRunner.run(path("run"), [])
+        let run = try ProcessRunner.run(path("run"), [], environment: TestBuild.programEnvironment)
         // 700: the override ran, reached through the superclass's vtable slot.
         // BSprite: the runtime read our nominal type descriptor for the name.
         // 900: the inherited setter wrote the field our metadata laid out.
@@ -251,7 +251,7 @@ struct SwiftClassMetadataTests {
         ])
         #expect(link.exitCode == 0, "linking a Swift subclass of a BASIC class: \(link.stderr)")
 
-        let run = try ProcessRunner.run(path("run"), [])
+        let run = try ProcessRunner.run(path("run"), [], environment: TestBuild.programEnvironment)
         // 305 twice: super.describe() reached the body BASIC wrote (3 * 100),
         // and the Swift override is found through a base-class reference too.
         #expect(run.stdout == "305\n305\nSwiftShip\n", "got: \(run.stdout)\(run.stderr)")

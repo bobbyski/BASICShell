@@ -50,7 +50,7 @@ struct DialectPerformanceTests {
         var output = ""
         for _ in 0..<repeats {
             let start = Date()
-            let run = try ProcessRunner.run(binary, [])
+            let run = try ProcessRunner.run(binary, [], environment: TestBuild.programEnvironment)
             best = min(best, -start.timeIntervalSinceNow)
             output = run.stdout
         }
