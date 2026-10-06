@@ -122,8 +122,8 @@ struct ActiveUISettingsTests {
     func promptEditorStarts() {
         let model = StudioHarness().model
         let pane = PromptEditorAUI(model: model)
-        #expect(pane.editor.segments.count == 5)
-        #expect(pane.segmentTable.rowCount() == 5)
+        #expect(pane.editor.segments.count == 4)
+        #expect(pane.segmentTable.rowCount() == 4)
         #expect(pane.templateField.text == model.promptTemplate)
         #expect(pane.editor.selectedIndex == 0)
         #expect(pane.addForm.root.isHidden && !pane.editForm.root.isHidden)
@@ -164,7 +164,7 @@ struct ActiveUISettingsTests {
         menu.items[0].perform()
         #expect(pane.editor.selectedSegmentID == second)
         menu.items[1].perform()
-        #expect(pane.editor.segments.count == 4)
+        #expect(pane.editor.segments.count == 3)
         #expect(!pane.editor.segments.contains { $0.id == second })
         #expect(model.promptTemplate == pane.editor.template)
     }
@@ -175,9 +175,9 @@ struct ActiveUISettingsTests {
         let pane = PromptEditorAUI(model: model)
         pane.addForm.onChange?(.kind(.user))
         pane.addForm.onAdd?()
-        #expect(pane.editor.segments.count == 6)
+        #expect(pane.editor.segments.count == 5)
         #expect(pane.editor.segments.last?.kind == .user)
-        #expect(pane.editor.selectedIndex == 5)
+        #expect(pane.editor.selectedIndex == 4)
     }
 
     @Test("N4 · Classic BASIC sets the template directly; the segments stay")
@@ -187,6 +187,6 @@ struct ActiveUISettingsTests {
         model.promptTemplate = PromptEditorModel.classicBASICTemplate
         pane.refresh()
         #expect(pane.templateField.text == "READY%nl> ")
-        #expect(pane.editor.segments.count == 5)
+        #expect(pane.editor.segments.count == 4)
     }
 }

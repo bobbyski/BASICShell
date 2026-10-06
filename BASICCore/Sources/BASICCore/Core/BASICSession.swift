@@ -79,7 +79,12 @@ private final class BASICTimerControlBlock: @unchecked Sendable {
 public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Default graphical prompt template used by BASICStudio. The git branch
     /// and changes segments drop out where there is no git to show.
-    public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m ${gitchanges} \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    ///
+    /// It used to open with the Apple logo (U+F179), kept below for reference.
+    /// Apple may object to its logo in an app, so the default no longer has
+    /// it (BASIC-29); the prompt editor's macOS Icon segment still adds it.
+    // public static let defaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m ${gitchanges} \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
+    public static let defaultPromptTemplate = "\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m ${gitchanges} \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
     /// The default before 2026-09-29, whose status segment was the literal
     /// sample `!1`; a saved copy of it is moved to ``defaultPromptTemplate``.
     public static let legacyDefaultPromptTemplate = "\u{001B}[38;5;16;48;5;250m  \u{001B}[38;5;250;48;5;99m\u{001B}[38;5;15;48;5;99m  ${currentdir} \u{001B}[38;5;99;48;5;142m\u{001B}[38;5;16;48;5;142m git  ${gitstatus} \u{001B}[38;5;142;48;5;142m\u{001B}[38;5;16;48;5;142m !1 \u{001B}[38;5;142;48;5;40m\u{001B}[38;5;16;48;5;40m Ready \u{001B}[38;5;40;49m\u{001B}[0m "
@@ -96,8 +101,10 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     public static let continuationPrompt = "... "
     /// Legacy default prompt string.
     public static let defaultPrompt = "\(NSUserName()):~ > "
-    /// Nerd-font prompt template for shell-style hosts.
-    public static let nerdFontPromptTemplate = "    %cwd %gitSegment "
+    /// Nerd-font prompt template for shell-style hosts. The Apple logo is out
+    /// of this one too (BASIC-29); the old one is kept below for reference.
+    // public static let nerdFontPromptTemplate = "    %cwd %gitSegment "
+    public static let nerdFontPromptTemplate = "  %cwd %gitSegment "
 
     /// Editable program associated with this session.
     public let program = BASICProgram()
@@ -2485,17 +2492,41 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
 
     private func abbreviatedPath(_ path: String) -> String {
         #if os(iOS)
-        let home = NSHomeDirectory()
+        return Self.promptPath(path, home: NSHomeDirectory(), fromDocuments: true)
         #else
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return Self.promptPath(path, home: FileManager.default.homeDirectoryForCurrentUser.path, fromDocuments: false)
         #endif
-        if path == home {
+    }
+
+    /// `path` as the prompt shows it, with `home` written `~` (BASIC-29).
+    ///
+    /// On iPhone and iPad (`fromDocuments`) the path starts at its first
+    /// folder named `Documents`: nothing above the app's Documents folder,
+    /// the iCloud one (`/var/mobile/Library/Mobile Documents/iCloud~…/Documents`)
+    /// or the local one, is anywhere the user can go. `Mobile Documents` is not
+    /// one; the name has to match. iOS names the same container
+    /// `/private/var/…` in one place and `/var/…` in another, so a leading
+    /// `/private` is ignored when comparing with `home`.
+    static func promptPath(_ path: String, home: String, fromDocuments: Bool) -> String {
+        if fromDocuments {
+            let folders = path.split(separator: "/", omittingEmptySubsequences: false)
+            if let documents = folders.firstIndex(of: "Documents") {
+                return folders[documents...].joined(separator: "/")
+            }
+        }
+        let bare = withoutPrivatePrefix(path)
+        let bareHome = withoutPrivatePrefix(home)
+        if bare == bareHome {
             return "~"
         }
-        if path.hasPrefix(home + "/") {
-            return "~" + path.dropFirst(home.count)
+        if bare.hasPrefix(bareHome + "/") {
+            return "~" + bare.dropFirst(bareHome.count)
         }
         return path
+    }
+
+    private static func withoutPrivatePrefix(_ path: String) -> String {
+        path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
     }
 
     /// What the prompt shows of git. Both parts are empty outside a

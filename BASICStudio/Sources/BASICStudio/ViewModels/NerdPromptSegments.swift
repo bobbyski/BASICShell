@@ -99,8 +99,10 @@ struct NerdPromptSegment: Identifiable, Equatable {
         }
     }
 
+    /// The default prompt's segments. The Apple logo that opened it is
+    /// commented out (BASIC-29); the macOS Icon segment can still be added.
     static let shellStylePreset: [NerdPromptSegment] = [
-        NerdPromptSegment(kind: .os, foreground: .black, background: .silver),
+        // NerdPromptSegment(kind: .os, foreground: .black, background: .silver),
         NerdPromptSegment(kind: .currentDirectory, foreground: .white, background: .purple),
         NerdPromptSegment(kind: .gitBranch, foreground: .black, background: .gold),
         NerdPromptSegment(kind: .gitStatus, foreground: .black, background: .gold),

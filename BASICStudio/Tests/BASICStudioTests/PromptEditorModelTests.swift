@@ -16,10 +16,18 @@ struct PromptEditorModelTests {
         editor.segments.map(\.kind)
     }
 
+    /// The editor with the macOS Icon segment in front of the preset, as the
+    /// default prompt had it before BASIC-29: five rows to move and delete.
+    private func fiveRows() -> PromptEditorModel {
+        var editor = PromptEditorModel()
+        editor.segments.insert(NerdPromptSegment(kind: .os, foreground: .black, background: .silver), at: 0)
+        return editor
+    }
+
     @Test("N6 · A new editor starts from the Shell Style preset, adding, not editing")
     func startsFromThePreset() {
         let editor = PromptEditorModel()
-        #expect(kinds(editor) == [.os, .currentDirectory, .gitBranch, .gitStatus, .literal])
+        #expect(kinds(editor) == [.currentDirectory, .gitBranch, .gitStatus, .literal])
         #expect(!editor.isEditing)
         #expect(editor.template == NerdPromptTemplateBuilder.template(for: NerdPromptSegment.shellStylePreset))
     }
@@ -29,9 +37,21 @@ struct PromptEditorModelTests {
         #expect(PromptEditorModel().template == BASICSession.defaultPromptTemplate)
     }
 
+    @Test("BASIC-29 · The default has no Apple logo, and the macOS Icon segment still adds one")
+    func appleLogo() {
+        let logo = "\u{F179}"
+        #expect(!BASICSession.defaultPromptTemplate.contains(logo))
+        #expect(!BASICSession.nerdFontPromptTemplate.contains(logo))
+        var editor = PromptEditorModel()
+        #expect(NerdPromptSegment.Kind.allCases.contains(.os))
+        editor.newKind = .os
+        editor.addNewSegment()
+        #expect(editor.template.contains(logo))
+    }
+
     @Test("N1 · Clicking a row selects it; clicking it again goes back to adding")
     func selection() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         let id = editor.segments[1].id
         editor.toggleSelection(id)
         #expect(editor.isEditing && editor.selectedIndex == 1)
@@ -62,7 +82,7 @@ struct PromptEditorModelTests {
 
     @Test("N1 · Drag to reorder: rows land before the destination, counted before the move")
     func move() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         editor.move(fromOffsets: [0], toOffset: 3)
         #expect(kinds(editor) == [.currentDirectory, .gitBranch, .os, .gitStatus, .literal])
         editor.move(fromOffsets: [3, 4], toOffset: 0)
@@ -73,7 +93,7 @@ struct PromptEditorModelTests {
 
     @Test("N1 · Swipe to delete: deleting the selected row selects the first")
     func swipeDelete() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         editor.select(editor.segments[2].id)
         editor.delete(atOffsets: [1, 2])
         #expect(kinds(editor) == [.os, .gitStatus, .literal])
@@ -86,7 +106,7 @@ struct PromptEditorModelTests {
 
     @Test("N1 · The row's Delete: the first row takes a deleted selection")
     func menuDelete() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         let id = editor.segments[3].id
         editor.select(id)
         editor.delete(id)
@@ -95,7 +115,7 @@ struct PromptEditorModelTests {
 
     @Test("N2 · The editor's Delete: the next row takes the selection, or the last when it was last")
     func editorDelete() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         editor.select(editor.segments[1].id)
         editor.deleteSelected()
         #expect(kinds(editor) == [.os, .gitBranch, .gitStatus, .literal])
@@ -107,7 +127,7 @@ struct PromptEditorModelTests {
 
     @Test("N2 · Duplicate inserts a copy after the selection and selects it")
     func duplicate() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         let original = editor.segments[1]
         editor.select(original.id)
         editor.duplicateSelected()
@@ -119,7 +139,7 @@ struct PromptEditorModelTests {
 
     @Test("N2 · Field edits: leaving Text clears the text; a right edge never matches")
     func fieldEdits() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         editor.select(editor.segments[4].id)
         #expect(editor.selectedKind == .literal && editor.selectedLiteral == "Ready")
         editor.setSelectedLiteral("Go")
@@ -150,10 +170,10 @@ struct PromptEditorModelTests {
 
     @Test("N4 · Presets: Shell Style restores the segments; the other two are fixed templates")
     func presets() {
-        var editor = PromptEditorModel()
+        var editor = fiveRows()
         editor.delete(atOffsets: [0, 1, 2])
         editor.applyShellStylePreset()
-        #expect(kinds(editor) == [.os, .currentDirectory, .gitBranch, .gitStatus, .literal])
+        #expect(kinds(editor) == [.currentDirectory, .gitBranch, .gitStatus, .literal])
         #expect(PromptEditorModel.plainDefaultTemplate == BASICSession.plainPromptTemplate)
         #expect(PromptEditorModel.classicBASICTemplate == "READY%nl> ")
     }
@@ -163,15 +183,15 @@ struct PromptEditorModelTests {
         var editor = PromptEditorModel()
         editor.delete(atOffsets: [0])
         editor.sync(fromTemplate: "READY%nl> ")
-        #expect(editor.segments.count == 4)
+        #expect(editor.segments.count == 3)
         editor.sync(fromTemplate: BASICSession.defaultPromptTemplate)
-        #expect(editor.segments.count == 5 && editor.selectedIndex == 0)
+        #expect(editor.segments.count == 4 && editor.selectedIndex == 0)
     }
 
     @Test("No segments build BASICSession's default template")
     func emptyTemplate() {
         var editor = PromptEditorModel()
-        editor.delete(atOffsets: IndexSet(0..<5))
+        editor.delete(atOffsets: IndexSet(0..<editor.segments.count))
         #expect(editor.template == BASICSession.defaultPromptTemplate)
     }
 }
