@@ -147,11 +147,46 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Bugs from Space: the bugs fly in, the fighter moves and fires, and it quits with its score")
+    func bugsFromSpace() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/bugs-from-space" })
+        #expect(example.title == "Bugs From Space")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The fighter, the score, and the first bug flying in.
+        try await studio.waitUntil("the fighter and the first bug") {
+            sent.contains("id=f1a,") && sent.contains("id=score") && sent.contains("id=b0c,")
+        }
+
+        // Held LEFT moves the fighter; its canopy is the circle f1f.
+        let start = try #require(Self.lastX(of: "f1f", in: sent))
+        studio.model.heldKeys.set("LEFT", down: true)
+        try await studio.waitUntil("the fighter to move left") { (Self.lastX(of: "f1f", in: sent) ?? start) < start - 20 }
+        studio.model.heldKeys.set("LEFT", down: false)
+
+        // A tap of Space fires.
+        studio.model.handleTerminalInput([.append(" ")])
+        try await studio.waitUntil("a shot") { sent.contains("id=p0,") }
+
+        // They come in groups of eight: here comes the second.
+        try await studio.waitUntil("the second group", timeout: .seconds(30)) { sent.contains("id=b8c,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// VTG coordinates must be whole numbers, and a game that scales its world
     /// to the window computes them; at 1:1 a stray half can stay hidden.
     /// Munchies' score popup stopped the game this way in a window that
     /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
-    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "electric-storm", "incoming", "munchies"])
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies"])
     func awkwardScale(game: String) async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
