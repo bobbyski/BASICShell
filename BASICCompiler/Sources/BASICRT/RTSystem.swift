@@ -76,6 +76,10 @@ package final class RTTUIHandle {
 /// shares the host canvas, as the interpreter's do.
 package final class RTVectorTerminal {}
 
+/// A `TouchControls()` object: a compiled program has no touch screen, so
+/// it holds nothing and every call does nothing (BASIC-11).
+package final class RTTouchControls {}
+
 /// The `HttpClient` object's state.
 package final class RTHTTPClient {
     package let baseURL: String
@@ -184,6 +188,8 @@ enum RTSystem {
             return RTDatabase.call(handle, method: method, arguments: arguments)
         case let timer as RTTimer:
             return callTimer(timer, method: method, arguments: arguments)
+        case is RTTouchControls:
+            return callTouchControls(method: method, arguments: arguments)
         case is RTVectorTerminal:
             var boxes = arguments.map { Optional(rtOwned($0)) }
             defer { boxes.forEach { basic_rt_value_release($0) } }
@@ -194,6 +200,62 @@ enum RTSystem {
             return rtValue(result)
         default:
             basic_rt_fail("\(object.typeName) has no method \(method)")
+        }
+    }
+
+    /// `TouchControls`' members, with no touch screen: placing checks its
+    /// arguments as the interpreter does and shows nothing, and every poll
+    /// reads a control at rest.
+    static func callTouchControls(method: String, arguments: [RTValue]) -> RTValue {
+        func expect(_ count: Int, _ name: String) {
+            guard arguments.count == count else { basic_rt_fail("\(name) expects \(count) argument\(count == 1 ? "" : "s")") }
+        }
+        func checkPlace(_ name: String) {
+            guard let place = arguments[1].string?.description else { basic_rt_fail("Expected a string") }
+            let squeezed = place.uppercased().filter { $0.isLetter }
+            guard ["TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT"].contains(squeezed) else {
+                basic_rt_fail("\(place) is not a place on the screen: use TOPLEFT, TOP, TOPRIGHT, LEFT, CENTER, RIGHT, BOTTOMLEFT, BOTTOM or BOTTOMRIGHT")
+            }
+            guard let size = arguments[4].number else { basic_rt_fail("Expected a number") }
+            guard size > 0 else { basic_rt_fail("A touch control's size must be more than 0") }
+        }
+        switch method.uppercased() {
+        case "AVAILABLE":
+            expect(0, "Available")
+            return .boolean(false)
+        case "JOYSTICK", "DPAD", "WHEEL":
+            let name = ["JOYSTICK": "Joystick", "DPAD": "DPad", "WHEEL": "Wheel"][method.uppercased()]!
+            guard (5...6).contains(arguments.count) else {
+                basic_rt_fail("\(name) expects an id, an anchor, two offsets, a size, and optionally the gamepad name it reports as")
+            }
+            checkPlace(name)
+            return .empty
+        case "BUTTON":
+            guard (7...8).contains(arguments.count) else {
+                basic_rt_fail("Button expects an id, an anchor, two offsets, a size, a label, a color, and optionally the gamepad name it reports as")
+            }
+            checkPlace("Button")
+            return .empty
+        case "DIRECTIONS":
+            expect(2, "Directions")
+            guard let word = arguments[1].string?.description.uppercased(), ["ALL", "4", "8", "HORIZONTAL", "VERTICAL"].contains(word) else {
+                basic_rt_fail("Directions expects ALL, 4, 8, HORIZONTAL or VERTICAL")
+            }
+            return .empty
+        case "REMOVE":
+            expect(1, "Remove")
+            return .empty
+        case "CLEAR":
+            expect(0, "Clear")
+            return .empty
+        case "X", "Y", "TURN":
+            expect(1, method.uppercased() == "TURN" ? "Turn" : method.uppercased())
+            return .number(0)
+        case "HELD":
+            expect(1, "Held")
+            return .boolean(false)
+        default:
+            basic_rt_fail("TouchControls has no method \(method)")
         }
     }
 
@@ -466,6 +528,9 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
     case "VECTORTERMINAL", "VTG":
         guard values.isEmpty else { basic_rt_fail("VectorTerminal expects 0 arguments") }
         return rtOwned(RTValue.system(RTSystemObject(typeName: "VectorTerminal", payload: RTVectorTerminal())))
+    case "TOUCHCONTROLS":
+        guard values.isEmpty else { basic_rt_fail("TouchControls expects 0 arguments") }
+        return rtOwned(RTValue.system(RTSystemObject(typeName: "TouchControls", payload: RTTouchControls())))
     case "SECONDSTIMER":
         guard values.count == 1 else { basic_rt_fail("SecondsTimer expects 1 argument") }
         return basic_rt_timer_new(RTSystem.timerNumber(values[0], "SecondsTimer interval"))

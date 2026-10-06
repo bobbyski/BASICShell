@@ -153,6 +153,15 @@ public final class SemanticModel {
             "PILLBUTTON": (nil, .variant),
         ],
         "VTG": [:],
+        // On-screen touch controls (BASIC-11). A compiled program has no
+        // touch screen to put them on, so the runtime accepts every call and
+        // does nothing, as the interpreter does on a host without one.
+        "TOUCHCONTROLS": [
+            "AVAILABLE": (0, .boolean),
+            "JOYSTICK": (nil, .void), "DPAD": (nil, .void), "WHEEL": (nil, .void), "BUTTON": (nil, .void),
+            "DIRECTIONS": (2, .void), "REMOVE": (1, .void), "CLEAR": (0, .void),
+            "X": (1, .number), "Y": (1, .number), "HELD": (1, .boolean), "TURN": (1, .number),
+        ],
         "SECONDSTIMER": [
             "START": (0, .void), "STOP": (0, .void), "CANCEL": (0, .void),
         ],
