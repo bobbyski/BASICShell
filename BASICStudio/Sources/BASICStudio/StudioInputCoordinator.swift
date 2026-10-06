@@ -332,6 +332,12 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
         return controllers.firstIndex(where: { $0 === controller }) ?? 0
     }
 
+    /// A key for `INKEY$` from another controller: the on-screen controls'
+    /// presses, `[GP:A`.
+    func pushKey(_ key: String) {
+        push(key)
+    }
+
     private func push(_ key: String) {
         condition.lock()
         keyBuffer.append(key)
@@ -383,5 +389,31 @@ final class StudioHeldKeys: @unchecked Sendable {
 extension StudioModel: BASICKeyStateHost {
     nonisolated func isKeyDown(_ name: String) -> Bool? {
         heldKeys.isDown(name)
+    }
+}
+
+/// The program's on-screen controls: drawn on iPhone and iPad, kept but never
+/// shown on the Mac, which has no touch screen and says so.
+extension StudioModel: BASICTouchControlsHost {
+    nonisolated var touchControlsAvailable: Bool { StudioTouchControls.screenHasTouch }
+
+    nonisolated func placeTouchControl(_ control: BASICTouchControl) {
+        touchControls.place(control)
+    }
+
+    nonisolated func removeTouchControl(id: String) {
+        touchControls.remove(id: id)
+    }
+
+    nonisolated func clearTouchControls() {
+        touchControls.clear()
+    }
+
+    nonisolated func touchControlState(id: String) -> BASICTouchControlState {
+        touchControls.state(id: id)
+    }
+
+    nonisolated func takeTouchWheelTurn(id: String) -> Double {
+        touchControls.takeTurn(id: id)
     }
 }

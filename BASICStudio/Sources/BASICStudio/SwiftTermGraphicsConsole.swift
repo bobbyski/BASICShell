@@ -73,6 +73,8 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     #if os(macOS)
     private var mouseTrackingArea: NSTrackingArea?
     #else
+    /// The program's on-screen controls, over the terminal (BASIC-11).
+    private let touchControlsView = StudioTouchControlsView(frame: .zero)
     /// The button a touch or pointer press went down with, for its moves and
     /// its release: 0 for a finger or a primary click, 1 for a secondary one.
     private var touchMouseButton = 0
@@ -159,6 +161,9 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         #endif
 
         addSubview(terminalView)
+        #if os(iOS)
+        addSubview(touchControlsView)
+        #endif
     }
 
     #if os(macOS)
@@ -316,6 +321,8 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     override func layoutSubviews() {
         super.layoutSubviews()
         applyScreenSize()
+        // Over what the terminal shows, clear of the notch and the home bar.
+        touchControlsView.frame = terminalView.frame.intersection(bounds.inset(by: safeAreaInsets))
     }
 
     /// Touch as the mouse, for VTG programs: a finger is the left button, and
@@ -399,6 +406,9 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     func attach(to model: StudioModel) {
         self.model = model
         connectVTG(to: model)
+        #if os(iOS)
+        touchControlsView.attach(model.touchControls)
+        #endif
     }
 
     /// Draws `input`: only what changed since the last call.

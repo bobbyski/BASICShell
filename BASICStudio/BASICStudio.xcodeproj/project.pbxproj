@@ -76,6 +76,7 @@
 		878DB6E7730BBCFAC631A5E0 /* ActiveUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8D89B2C60ED71E15D0CBBA80 /* MonacoEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CB8284FB31709C1BD017047 /* MonacoEditor.swift */; };
 		9606D359B9EB6DF218563A37 /* DocsPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */; };
+		96B5F236DFAC2FF64AE2BE1C /* StudioTouchControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */; };
 		986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
 		9C87713C17B0ED518CCEB3AD /* ActiveUIMarkdown in Embed Frameworks */ = {isa = PBXBuildFile; productRef = D9A4F83464CADD0769EA55F8 /* ActiveUIMarkdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -84,6 +85,7 @@
 		A1432993494F6BA04B2BAD6C /* StudioAbout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 944D27C4D351F1DFFC50FE6D /* StudioAbout.swift */; };
 		A2B52125DD80C4AB8C550CAF /* StudioFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38AB3D82C7A880B72971A1D /* StudioFonts.swift */; };
 		A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */; };
+		A576E8E7BAF6B568AA015D37 /* StudioTouchControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */; };
 		A701F0C2F75FDF8FEA13549B /* MenuCommandModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */; };
 		A84D9C63ACA6E0B650C89872 /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
 		A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */; };
@@ -93,6 +95,7 @@
 		ADA6A24313C5FC396E1ADBE5 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
 		ADDFE6A9D2FDACA2F68836A8 /* StudioAUIBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */; };
 		AE5E41C53A99364CDA4C82E6 /* Demos in Resources */ = {isa = PBXBuildFile; fileRef = 96CA444014E259C30BE4F365 /* Demos */; };
+		AF80532D6D0C8831C2960E51 /* StudioTouchControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */; };
 		B0B26D83A69449507033F56B /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = 9C9B2EE479C7AD1539AEB20B /* Assets */; };
 		B0D5C46F25D36C3FBEE5C1C6 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = B28A38404D59414EADD295C5 /* Fonts */; };
 		B1D4EE89EC954CE224038E7F /* Themes in Resources */ = {isa = PBXBuildFile; fileRef = 6338F8D64F595F8A442DCB46 /* Themes */; };
@@ -121,6 +124,7 @@
 		DF215486A6205E5F919022F0 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E0B7DE9AA99281653B58BED4 /* StudioJITRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADBF639C0AF1EFB97031FC3 /* StudioJITRun.swift */; };
 		E2BB610C9A6139F7AE4A8034 /* DebugPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3E736836021C24D244390D /* DebugPaneModel.swift */; };
+		EB6C68A6EA4C84DDBCAFCDE4 /* StudioTouchControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */; };
 		EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
 		EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
 		F0E7956231640CDEC7C34663 /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
@@ -219,6 +223,7 @@
 		CD856E6A67B449DF70D14B01 /* NerdPromptSegments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NerdPromptSegments.swift; sourceTree = "<group>"; };
 		CEEA0F4A6FF62DCB06D74711 /* BASICStudioiOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BASICStudioiOS.swift; sourceTree = "<group>"; };
 		DB6405A0933EA2491CDDF863 /* LogPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPane.swift; sourceTree = "<group>"; };
+		DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTouchControlsView.swift; sourceTree = "<group>"; };
 		E01D1E66A75BA2495AEA6493 /* ActiveUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUI; path = ../../../../AIResearch/ActiveUI/Code/ActiveUI; sourceTree = SOURCE_ROOT; };
 		E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioView.swift; sourceTree = "<group>"; };
 		ED3E736836021C24D244390D /* DebugPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPaneModel.swift; sourceTree = "<group>"; };
@@ -226,6 +231,7 @@
 		F768CDEF475FDA4603BD917D /* DebugPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPane.swift; sourceTree = "<group>"; };
 		FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuCommandModel.swift; sourceTree = "<group>"; };
 		FDA023CFFFD1F535E44E65FD /* SwiftyCodeEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftyCodeEditor; path = ../../../../AIResearch/SwiftyTextEditor/Code/SwiftyCodeEditor; sourceTree = SOURCE_ROOT; };
+		FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTouchControls.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -366,6 +372,8 @@
 				338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */,
 				5472221B9FB79FDAA9BB355A /* StudioSettings.swift */,
 				C5330F694E45075A8E70C411 /* StudioSound.swift */,
+				FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */,
+				DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */,
 				5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */,
 				4374AC2CA731F78F135C262B /* StudioTypes.swift */,
 				E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */,
@@ -591,6 +599,8 @@
 				C1D294560A121336FE4AAF4D /* StudioShellModel.swift in Sources */,
 				093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */,
 				B621B0BD8B331CA053F4D096 /* StudioTUIDriver.swift in Sources */,
+				96B5F236DFAC2FF64AE2BE1C /* StudioTouchControls.swift in Sources */,
+				AF80532D6D0C8831C2960E51 /* StudioTouchControlsView.swift in Sources */,
 				2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */,
 				986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */,
 				A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */,
@@ -637,6 +647,8 @@
 				A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */,
 				4D62081D908243760D673386 /* StudioSound.swift in Sources */,
 				B8DAF256B206B91A26B38239 /* StudioTUIDriver.swift in Sources */,
+				EB6C68A6EA4C84DDBCAFCDE4 /* StudioTouchControls.swift in Sources */,
+				A576E8E7BAF6B568AA015D37 /* StudioTouchControlsView.swift in Sources */,
 				0F1F3E09500DA103690EB456 /* StudioTypes.swift in Sources */,
 				00924436B19B72D30F51108C /* SwiftTermGraphicsConsole.swift in Sources */,
 				1D0ABCD72B7C3DAF6ABE7A94 /* UserDocumentationPane.swift in Sources */,

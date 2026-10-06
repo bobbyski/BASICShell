@@ -223,6 +223,8 @@ final class StudioModel: ObservableObject {
     private let gamepadInputCoordinator = StudioGamepadInputCoordinator()
     /// The keys held on the console's keyboard, for KEYDOWN.
     let heldKeys = StudioHeldKeys()
+    /// The on-screen controls the running program placed (BASIC-11).
+    let touchControls = StudioTouchControls()
     private var suppressNextEmptyProgramSubmit = false
     private var suppressNextProgramNewlineKey = false
     private var debuggerTaskRefreshTask: Task<Void, Never>?
@@ -258,6 +260,15 @@ final class StudioModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
             }
+        }
+        // The on-screen controls report as one more game controller.
+        touchControls.post = { [weak self] subtype, control, value in
+            Task { @MainActor [weak self] in
+                self?.postGamepadEvent(subtype: subtype, controller: StudioTouchControls.controllerNumber, control: control, value: value)
+            }
+        }
+        touchControls.pushKey = { [weak coordinator = gamepadInputCoordinator] key in
+            coordinator?.pushKey(key)
         }
         appendLog(
             level: "GAMEPAD",
@@ -618,11 +629,15 @@ final class StudioModel: ObservableObject {
 
     func postGamepadEvent(subtype: String, controller: Int, control: String, value: Double) {
         guard session.acceptsHostInputEvent(type: "GAMEPAD", subtype: subtype) else { return }
-        appendLog(
-            level: "GAMEPAD",
-            issuer: .basic,
-            text: "event subtype=\(subtype) controller=\(controller) control=\(control) value=\(value)"
-        )
+        // A wheel turning sends one at every move of the finger: too many
+        // for the log.
+        if subtype != "WHEEL" {
+            appendLog(
+                level: "GAMEPAD",
+                issuer: .basic,
+                text: "event subtype=\(subtype) controller=\(controller) control=\(control) value=\(value)"
+            )
+        }
         session.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
     }
 
@@ -1459,6 +1474,10 @@ final class StudioModel: ObservableObject {
         inputCoordinator.setProgramRunning(false)
         // A program's windows go with it: nothing is left to answer them.
         auiBridge.closeAll()
+        // So do its on-screen controls, unless it is only paused.
+        if !paused {
+            touchControls.clear()
+        }
         if !paused {
             // And so do the terminal modes it set. `ON MOUSE` turns mouse
             // reporting on in the console's terminal; left on, every click at
