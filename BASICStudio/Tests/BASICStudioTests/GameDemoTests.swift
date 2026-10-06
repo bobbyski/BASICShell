@@ -7,6 +7,7 @@
 //  draw read back from the console's graphics stream.
 //
 
+import CoreGraphics
 import Foundation
 import Testing
 @testable import BASICStudio
@@ -198,6 +199,203 @@ struct GameDemoTests {
         studio.model.runEditorProgram()
         try await studio.waitUntil("three seconds of play", timeout: .seconds(30)) { frames > 90 }
         #expect(studio.model.isProgramRunning, "\(studio.model.consoleText.suffix(300))")
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    // MARK: - Touch and gamepad
+
+    /// The screen the touch tests put fingers on. On the Mac the controls are
+    /// kept but not drawn; a touch reaches them the way the iPad's view would
+    /// send it.
+    private static let screen = CGRect(x: 0, y: 0, width: 1000, height: 700)
+
+    /// A finger down on control `id`, at a fraction of its radius from the
+    /// middle.
+    private static func touch(_ studio: StudioHarness, _ id: String, finger: Int, x: Double = 0, y: Double = 0) throws {
+        let control = try #require(studio.model.touchControls.snapshot().map(\.control).first { $0.id == id }, "no control \(id)")
+        let frame = StudioTouchControls.frame(of: control, in: screen)
+        let point = CGPoint(x: frame.midX + CGFloat(x) * frame.width / 2, y: frame.midY + CGFloat(y) * frame.width / 2)
+        #expect(studio.model.touchControls.touchBegan(finger, at: point, in: screen))
+    }
+
+    private static func slide(_ studio: StudioHarness, _ id: String, finger: Int, x: Double, y: Double) throws {
+        let control = try #require(studio.model.touchControls.snapshot().map(\.control).first { $0.id == id })
+        let frame = StudioTouchControls.frame(of: control, in: screen)
+        studio.model.touchControls.touchMoved(finger, to: CGPoint(x: frame.midX + CGFloat(x) * frame.width / 2, y: frame.midY + CGFloat(y) * frame.width / 2), in: screen)
+    }
+
+    @Test("Every game places its touch controls, and takes them away when it ends", arguments: [
+        ("roids", ["stick", "fire", "jump", "pause"]),
+        ("brick-breaker", ["stick", "launch", "pause"]),
+        ("electric-storm", ["wheel", "fire", "zap", "pause"]),
+        ("incoming", ["stick", "fire", "silo1", "silo2", "silo3", "pause"]),
+        ("munchies", ["pad", "pause"]),
+        ("bugs-from-space", ["stick", "fire", "pause"]),
+    ])
+    func touchControlsPlaced(game: String, controls: [String]) async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
+        studio.model.loadBundledExample(example)
+        studio.model.vtgDataSink = { _ in }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the controls", timeout: .seconds(20)) { !studio.model.touchControls.isEmpty }
+        try await studio.waitUntil("all of them") { studio.model.touchControls.snapshot().count == controls.count }
+        #expect(studio.model.touchControls.snapshot().map(\.control.id) == controls)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.touchControls.isEmpty)
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Bugs from Space by touch: the stick moves the fighter and Fire shoots")
+    func bugsFromSpaceByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/bugs-from-space" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the fighter") { sent.contains("id=f1f,") && !studio.model.touchControls.isEmpty }
+
+        let start = try #require(Self.lastX(of: "f1f", in: sent))
+        try Self.touch(studio, "stick", finger: 1)
+        try Self.slide(studio, "stick", finger: 1, x: 0.9, y: 0)
+        try await studio.waitUntil("the fighter to move right") { (Self.lastX(of: "f1f", in: sent) ?? start) > start + 20 }
+        studio.model.touchControls.touchEnded(1)
+
+        try Self.touch(studio, "fire", finger: 2)
+        try await studio.waitUntil("a shot") { sent.contains("id=p0,") }
+        studio.model.touchControls.touchEnded(2)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Electric Storm by touch: the wheel moves the ship round the rim, and Fire shoots")
+    func electricStormByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/electric-storm" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the ship") { sent.contains("id=ship,") && !studio.model.touchControls.isEmpty }
+
+        // A quarter turn clockwise: five lanes.
+        let ships = sent.components(separatedBy: "draw,id=ship,").count
+        try Self.touch(studio, "wheel", finger: 1, x: 0.8, y: 0)
+        try Self.slide(studio, "wheel", finger: 1, x: 0.57, y: 0.57)
+        try Self.slide(studio, "wheel", finger: 1, x: 0, y: 0.8)
+        studio.model.touchControls.touchEnded(1)
+        try await studio.waitUntil("the ship to move") { sent.components(separatedBy: "draw,id=ship,").count > ships }
+
+        try Self.touch(studio, "fire", finger: 2)
+        try await studio.waitUntil("a shot") { sent.contains("id=shot0,") }
+        studio.model.touchControls.touchEnded(2)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Brick Breaker by touch: a lean on the stick slides the paddle, and Launch serves")
+    func brickBreakerByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/brick-breaker" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the paddle") { sent.contains("id=paddle,") && !studio.model.touchControls.isEmpty }
+
+        let start = try #require(Self.lastX(of: "paddle", in: sent))
+        try Self.touch(studio, "stick", finger: 1)
+        try Self.slide(studio, "stick", finger: 1, x: -0.5, y: 0)
+        try await studio.waitUntil("the paddle to slide left") { (Self.lastX(of: "paddle", in: sent) ?? start) < start - 30 }
+        studio.model.touchControls.touchEnded(1)
+
+        let balls = sent.components(separatedBy: "id=ball,").count
+        try Self.touch(studio, "launch", finger: 2)
+        studio.model.touchControls.touchEnded(2)
+        try await studio.waitUntil("the ball to fly") { sent.components(separatedBy: "id=ball,").count > balls + 5 }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Incoming by touch: the stick moves the crosshair and a silo button fires from that silo")
+    func incomingByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/incoming" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the crosshair") { sent.contains("id=crosshair,") && !studio.model.touchControls.isEmpty }
+
+        let crosshairs = sent.components(separatedBy: "id=crosshair,").count
+        try Self.touch(studio, "stick", finger: 1)
+        try Self.slide(studio, "stick", finger: 1, x: 0, y: -0.9)
+        try await studio.waitUntil("the crosshair to move") { sent.components(separatedBy: "id=crosshair,").count > crosshairs + 3 }
+        studio.model.touchControls.touchEnded(1)
+
+        try Self.touch(studio, "silo2", finger: 2)
+        studio.model.touchControls.touchEnded(2)
+        try await studio.waitUntil("a counter-missile") { sent.contains("id=abm0,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Munchies by touch: the pad held left eats dots along the bottom corridor")
+    func munchiesByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/munchies" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the maze", timeout: .seconds(30)) { sent.contains("id=munchie,") && !studio.model.touchControls.isEmpty }
+
+        try Self.touch(studio, "pad", finger: 1, x: -0.7, y: 0)
+        try await studio.waitUntil("a dot eaten", timeout: .seconds(20)) { sent.contains("delete,id=dot") }
+        studio.model.touchControls.touchEnded(1)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Roids by touch: Fire shoots and the stick turns the ship")
+    func roidsByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/roids" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the ship") { sent.contains("id=ship,") && !studio.model.touchControls.isEmpty }
+
+        try Self.touch(studio, "fire", finger: 1)
+        studio.model.touchControls.touchEnded(1)
+        try await studio.waitUntil("a shot") { sent.contains("id=shot0,") }
+
+        let ship = try #require(sent.range(of: "draw,id=ship,", options: .backwards)).upperBound
+        let before = String(sent[ship...].prefix { $0 != "\u{1b}" })
+        try Self.touch(studio, "stick", finger: 2)
+        try Self.slide(studio, "stick", finger: 2, x: -0.9, y: 0)
+        try await studio.waitUntil("the ship to turn") {
+            guard let now = sent.range(of: "draw,id=ship,", options: .backwards)?.upperBound else { return false }
+            return String(sent[now...].prefix { $0 != "\u{1b}" }) != before
+        }
+        studio.model.touchControls.touchEnded(2)
 
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))

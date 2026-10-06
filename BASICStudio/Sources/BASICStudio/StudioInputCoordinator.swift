@@ -307,6 +307,12 @@ final class StudioGamepadInputCoordinator: NSObject, @unchecked Sendable {
             bind(gamepad.rightThumbstick.down, "RIGHT_STICK_DOWN", controller: controller)
             bind(gamepad.rightThumbstick.left, "RIGHT_STICK_LEFT", controller: controller)
             bind(gamepad.rightThumbstick.right, "RIGHT_STICK_RIGHT", controller: controller)
+            // Menu is the pause button; Options, where a controller has one,
+            // the one beside it.
+            bind(gamepad.buttonMenu, "MENU", controller: controller)
+            if let options = gamepad.buttonOptions {
+                bind(options, "OPTIONS", controller: controller)
+            }
         } else if let gamepad = controller.microGamepad {
             bind(gamepad.buttonA, "A", controller: controller)
             bind(gamepad.buttonX, "X", controller: controller)
