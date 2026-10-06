@@ -183,11 +183,54 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Protector: the planet scrolls by, the ship climbs, turns and fires, landers come, and it quits with its score")
+    func protector() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/protector" })
+        #expect(example.title == "Protector")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The ship, the mountains across the screen, the score, and the
+        // first five landers on the scanner.
+        try await studio.waitUntil("the ship, the mountains and the first landers") {
+            sent.contains("id=se,") && sent.contains("id=m8,") && sent.contains("id=score") && sent.contains("id=ke4,")
+        }
+
+        // Held UP climbs; the ship's canopy is the circle se.
+        let low = try #require(Self.lastField("cy", of: "se", in: sent))
+        studio.model.heldKeys.set("UP", down: true)
+        try await studio.waitUntil("the ship to climb") { (Self.lastField("cy", of: "se", in: sent) ?? low) < low - 30 }
+        studio.model.heldKeys.set("UP", down: false)
+
+        // Held LEFT turns it round, and the camera glides it across the
+        // screen so the long view is ahead.
+        let start = try #require(Self.lastX(of: "se", in: sent))
+        studio.model.heldKeys.set("LEFT", down: true)
+        try await studio.waitUntil("the ship to turn and glide across") { (Self.lastX(of: "se", in: sent) ?? start) > start + 200 }
+        studio.model.heldKeys.set("LEFT", down: false)
+
+        // A tap of Space fires a laser; B sets off a smart bomb, which
+        // flashes the screen.
+        studio.model.handleTerminalInput([.append(" ")])
+        try await studio.waitUntil("a laser") { sent.contains("id=l0,") }
+        studio.model.handleTerminalInput([.append("b")])
+        try await studio.waitUntil("the smart bomb's flash") { sent.contains("id=flash,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// VTG coordinates must be whole numbers, and a game that scales its world
     /// to the window computes them; at 1:1 a stray half can stay hidden.
     /// Munchies' score popup stopped the game this way in a window that
     /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
-    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies"])
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "protector"])
     func awkwardScale(game: String) async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
@@ -234,6 +277,7 @@ struct GameDemoTests {
         ("incoming", ["stick", "fire", "silo1", "silo2", "silo3", "pause"]),
         ("munchies", ["pad", "pause"]),
         ("bugs-from-space", ["stick", "fire", "pause"]),
+        ("protector", ["stick", "fire", "bomb", "hyper", "pause"]),
     ])
     func touchControlsPlaced(game: String, controls: [String]) async throws {
         let studio = StudioHarness()
@@ -270,6 +314,35 @@ struct GameDemoTests {
         try Self.touch(studio, "fire", finger: 2)
         try await studio.waitUntil("a shot") { sent.contains("id=p0,") }
         studio.model.touchControls.touchEnded(2)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Protector by touch: the stick flies the ship, Fire shoots, and Bomb sets off a smart bomb")
+    func protectorByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/protector" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the ship") { sent.contains("id=se,") && !studio.model.touchControls.isEmpty }
+
+        let low = try #require(Self.lastField("cy", of: "se", in: sent))
+        try Self.touch(studio, "stick", finger: 1)
+        try Self.slide(studio, "stick", finger: 1, x: 0, y: -0.9)
+        try await studio.waitUntil("the ship to climb") { (Self.lastField("cy", of: "se", in: sent) ?? low) < low - 30 }
+        studio.model.touchControls.touchEnded(1)
+
+        try Self.touch(studio, "fire", finger: 2)
+        try await studio.waitUntil("a laser") { sent.contains("id=l0,") }
+        studio.model.touchControls.touchEnded(2)
+
+        try Self.touch(studio, "bomb", finger: 3)
+        try await studio.waitUntil("the smart bomb's flash") { sent.contains("id=flash,") }
+        studio.model.touchControls.touchEnded(3)
 
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))
@@ -400,6 +473,15 @@ struct GameDemoTests {
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))
         #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    /// The value of `field` in the last command for `id`: `cy` for a
+    /// circle's center, say.
+    private static func lastField(_ field: String, of id: String, in sent: String) -> Int? {
+        guard let command = sent.range(of: "id=\(id),", options: .backwards) else { return nil }
+        let rest = sent[command.upperBound...]
+        guard let value = rest.range(of: ",\(field)=") else { return nil }
+        return Int(rest[value.upperBound...].prefix { $0.isNumber || $0 == "-" })
     }
 
     /// The `x` the last command for `id` drew it at.
