@@ -13,7 +13,7 @@ import Testing
 @Suite("Bundled example catalog")
 @MainActor
 struct BundledExampleCatalogTests {
-    @Test("A program is a file, or a folder's main or namesake; a folder with neither is a subcategory, unless it is imported")
+    @Test("A program is a file, a project's entry, or a folder's main or namesake; a folder with none is a subcategory, unless it is imported")
     func programPaths() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("catalog-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -22,8 +22,11 @@ struct BundledExampleCatalogTests {
             "games/roids.build/roids.ll": "",
             "games/arcade/pong.bas": "PRINT 1",
             "games/arcade/breakout/main.bas": "IMPORT \"Bricks.bas\"", "games/arcade/breakout/Bricks.bas": "",
-            "apps/contacts/main.bas": "", "apps/contacts/ContactModel.bas": "",
-            "apps/POS/pos.bas": "import \"poslib/\"", "apps/POS/poslib/receipt.bas": "",
+            "apps/contacts.basproj/main.bas": "", "apps/contacts.basproj/ContactModel.bas": "",
+            "apps/POS.basproj/pos.bas": "import \"poslib/\"", "apps/POS.basproj/poslib/receipt.bas": "",
+            "apps/POS.basproj/project.json": #"{"schemaVersion": 1, "kind": "project", "name": "POS", "entry": "pos.bas"}"#,
+            "apps/Kit.basproj/src/main.bas": "", "apps/Kit.basproj/src/Parts.bas": "",
+            "apps/old/main.bas": "",
             "data/gradebook.bas": "  import \"gradeslib/\" ' its classes", "data/gradeslib/student.bas": "class Student",
             "files/output/legacy.txt": "",
             "loose.bas": "",
@@ -35,7 +38,8 @@ struct BundledExampleCatalogTests {
         }
         #expect(Set(StudioModel.programPaths(in: root)) == [
             "games/roids", "games/arcade/pong", "games/arcade/breakout/main",
-            "apps/contacts/main", "apps/POS/pos", "data/gradebook", "loose",
+            "apps/contacts.basproj/main", "apps/POS.basproj/pos", "apps/Kit.basproj/src/main", "apps/old/main",
+            "data/gradebook", "loose",
         ])
     }
 
@@ -44,9 +48,14 @@ struct BundledExampleCatalogTests {
         #expect(BundledExample(path: "games/roids").title == "Roids")
         #expect(BundledExample(path: "games/roids").menuFolders == ["games"])
         #expect(BundledExample(path: "activeui/aui-gallery").title == "Aui Gallery")
-        #expect(BundledExample(path: "apps/contacts/main").title == "Contacts")
-        #expect(BundledExample(path: "apps/contacts/main").menuFolders == ["apps"])
-        #expect(BundledExample(path: "apps/POS/pos").title == "POS")
+        #expect(BundledExample(path: "apps/contacts.basproj/main").title == "Contacts")
+        #expect(BundledExample(path: "apps/contacts.basproj/main").menuFolders == ["apps"])
+        #expect(BundledExample(path: "apps/contacts.basproj/main").projectFolder == "apps/contacts.basproj")
+        #expect(BundledExample(path: "apps/POS.basproj/pos").title == "POS")
+        #expect(BundledExample(path: "apps/Kit.basproj/src/main").title == "Kit")
+        #expect(BundledExample(path: "apps/Kit.basproj/src/main").menuFolders == ["apps"])
+        #expect(BundledExample(path: "apps/old/main").title == "Old")
+        #expect(BundledExample(path: "apps/old/main").projectFolder == nil)
         #expect(BundledExample(path: "games/arcade/pong").menuFolders == ["games", "arcade"])
         #expect(BundledExample(path: "games/roids").menuTitle == "Games / Roids")
     }

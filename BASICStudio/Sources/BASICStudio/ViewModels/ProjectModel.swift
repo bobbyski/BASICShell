@@ -5,6 +5,7 @@
 //  The project sidebar as values: the open folder and its programs.
 //
 
+import BASICRecipes
 import Foundation
 
 /// The project sidebar (ACTIVEUI_TRANSITION.md P3.7): the folder that is open
@@ -51,7 +52,8 @@ struct ProjectModel: Equatable {
 
     init(directory: URL?, files: [String], openFile: URL?) {
         isOpen = directory != nil
-        title = directory?.lastPathComponent ?? Self.noProjectTitle
+        // `MyGame.basproj` is the project MyGame.
+        title = directory.map { BASICProjectFolder.displayName(ofFolder: $0.lastPathComponent) } ?? Self.noProjectTitle
         rows = files.map { path in
             let parts = path.split(separator: "/")
             return Row(

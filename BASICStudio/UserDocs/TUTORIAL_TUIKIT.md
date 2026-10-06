@@ -104,11 +104,11 @@ travels with the call rather than being captured.
 
 ## Where to look next
 
-`basicPrograms/demos/tui/gallery` is every control there is, one file per group,
+`basicPrograms/demos/tui/gallery.basproj` is every control there is, one file per group,
 and is the place to find the call you want. Start it with:
 
 ```basic
-basicshell basicPrograms/demos/tui/gallery/main.bas
+basicshell basicPrograms/demos/tui/gallery.basproj/main.bas
 ```
 
 A GLOBAL declared in an IMPORTed file does not reach the file that imported

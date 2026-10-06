@@ -7,6 +7,9 @@ options:
 packages:
   BASICCore:
     path: ../BASICCore
+  # New-project recipes, shared with basicc and the IDEs (BASIC-24).
+  BASICRecipes:
+    path: ../BASICRecipes
   # The local checkout, on develop: the only SwiftTerm with an iOS
   # VectorTerminalView (merged 96c3973, in no tag yet).
   SwiftTerm:
@@ -66,6 +69,8 @@ targets:
     dependencies:
       - package: BASICCore
         product: BASICCore
+      - package: BASICRecipes
+        product: BASICRecipes
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK
@@ -147,6 +152,8 @@ targets:
     dependencies:
       - package: BASICCore
         product: BASICCore
+      - package: BASICRecipes
+        product: BASICRecipes
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK

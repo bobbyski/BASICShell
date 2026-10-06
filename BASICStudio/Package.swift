@@ -7,6 +7,8 @@ let package = Package(
     platforms: [.macOS("16.0")],
     dependencies: [
         .package(path: "../BASICCore"),
+        // New-project recipes, shared with basicc and the IDEs (BASIC-24).
+        .package(path: "../BASICRecipes"),
         .package(path: "../DocumentArchive"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         // The local checkout, on develop: the only SwiftTerm with an iOS
@@ -28,6 +30,7 @@ let package = Package(
             name: "BASICStudio",
             dependencies: [
                 "BASICCore",
+                "BASICRecipes",
                 "DocumentArchive",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",

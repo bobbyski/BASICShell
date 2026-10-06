@@ -1,3 +1,4 @@
+import BASICRecipes
 import BASICCore
 #if canImport(AppKit)
 import AppKit
@@ -54,25 +55,44 @@ struct BundledExample: Identifiable, Hashable {
 
     private var parts: [String] { path.split(separator: "/").map(String.init) }
 
-    /// Whether it is a program with a folder of its own, `apps/contacts/main`
-    /// or `apps/POS/pos`: its file is the folder's `main` or its namesake.
+    /// Where its project folder is among ``parts``, when it is the program
+    /// of a project: `apps/contacts.basproj/main`.
+    private var projectIndex: Int? {
+        parts.firstIndex { $0.lowercased().hasSuffix("." + BASICProjectFolder.fileExtension) }
+    }
+
+    /// The project it is the program of, `apps/contacts.basproj`, or nil.
+    /// Opened from Examples, a project opens as a project (BASIC-24).
+    var projectFolder: String? {
+        projectIndex.map { parts[...$0].joined(separator: "/") }
+    }
+
+    /// Whether it is a program with a folder of its own: a project's, or a
+    /// folder's whose file is its `main` or its namesake (`apps/POS/pos`).
     /// A category's own files never count, so `games/roids` is a file.
     var hasOwnFolder: Bool {
+        if projectIndex != nil { return true }
         let parts = parts
         guard parts.count >= 3, let name = parts.last?.lowercased() else { return false }
         return name == "main" || name == parts[parts.count - 2].lowercased()
     }
 
     /// Its name on the Examples menu: the file's, or for a program with a
-    /// folder of its own, the folder's.
+    /// folder of its own, the folder's, without `.basproj`.
     var title: String {
         let parts = parts
+        if let index = projectIndex {
+            return Self.words(BASICProjectFolder.displayName(ofFolder: parts[index]))
+        }
         return Self.words(hasOwnFolder ? parts[parts.count - 2] : parts.last ?? path)
     }
 
     /// The folders it sits in on the Examples menu, outermost first:
-    /// `["games"]` for `games/roids`, `["apps"]` for `apps/contacts/main`.
-    var menuFolders: [String] { Array(parts.dropLast(hasOwnFolder ? 2 : 1)) }
+    /// `["games"]` for `games/roids`, `["apps"]` for `apps/contacts.basproj/main`.
+    var menuFolders: [String] {
+        if let index = projectIndex { return Array(parts[..<index]) }
+        return Array(parts.dropLast(hasOwnFolder ? 2 : 1))
+    }
 
     /// `aui-gallery` as `Aui Gallery`: hyphens become spaces, and each word
     /// starts in capitals.

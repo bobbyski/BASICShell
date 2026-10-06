@@ -74,6 +74,9 @@ final class StudioActiveUIShell {
     private var drawnShell: StudioShellModel?
     private var drawnTitle: String?
     private(set) var drawnProject: ProjectModel?
+    /// The model's ``StudioModel/projectOpenCount`` when the sidebar was
+    /// last shown for it: a project restored at launch does not count.
+    private var drawnProjectOpenCount = 0
     private var observation: AnyCancellable?
     /// Under Native, the editor's colors follow the system's appearance.
     private var appearanceObservation: NSKeyValueObservation?
@@ -85,6 +88,7 @@ final class StudioActiveUIShell {
 
     init(model: StudioModel) {
         self.model = model
+        drawnProjectOpenCount = model.projectOpenCount
 
         console.attach(to: model)
         consoleHost = AUINativeHost(console)
@@ -317,6 +321,12 @@ final class StudioActiveUIShell {
             sidebar.headerTitle = project.title
             sidebar.selectedIndex = project.selectedIndex
             drawnProject = project
+        }
+        // A project opened on purpose shows the sidebar, so its files are
+        // there to pick; one restored at launch leaves it as it was.
+        if model.projectOpenCount != drawnProjectOpenCount {
+            drawnProjectOpenCount = model.projectOpenCount
+            sidebar.isSidebarCollapsed = false
         }
         if model.windowTitle != drawnTitle {
             AUIApplication.mainWindowTitle = model.windowTitle

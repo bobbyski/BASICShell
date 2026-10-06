@@ -1,3 +1,4 @@
+import BASICRecipes
 import BASICCore
 import TUIKit
 #if canImport(AppKit)
@@ -137,6 +138,9 @@ final class StudioModel: ObservableObject {
         didSet { saveSettings() }
     }
     @Published private(set) var projectFiles: [String] = []
+    /// How many times a project has been opened on purpose, rather than
+    /// restored at launch: the shell shows the sidebar when it goes up.
+    @Published private(set) var projectOpenCount = 0
     @Published var promptTemplate = BASICSession.defaultPromptTemplate {
         didSet {
             guard !isLoadingSettings else { return }
@@ -808,16 +812,106 @@ final class StudioModel: ObservableObject {
         projectDirectoryURL = directory
         projectFiles = ProjectModel.scan(directory)
         workingDirectoryURL = directory
+        projectOpenCount += 1
     }
 
-    /// File ▸ Open Project…: choose a folder.
+    /// File ▸ Open Project…: choose a folder, a `.basproj` or any other;
+    /// it opens with the file it starts with in the editor.
     func openProjectFromMenu() {
         chooseFile(FileRequest(
             kind: .openFolder,
             title: ProjectModel.openProjectTitle,
             directory: projectDirectoryURL ?? workingDirectoryURL
         )) { [weak self] url in
-            self?.openProject(at: url)
+            self?.openProjectAndEntry(at: url)
+        }
+    }
+
+    /// Opens `url` as the project, and in the editor the file it starts
+    /// with: the one its `project.json` names, else `src/main.bas` or
+    /// `main.bas` (BASICProjectFolder).
+    func openProjectAndEntry(at url: URL) {
+        openProject(at: url)
+        guard let entry = BASICProjectFolder.entry(of: url.standardizedFileURL) else { return }
+        do {
+            try loadProgram(from: entry)
+        } catch {
+            presentFileError("Unable to load \(entry.lastPathComponent).", error: error)
+        }
+    }
+
+    // MARK: - Examples that are projects (BASIC-24)
+
+    /// Where examples that are projects are copied to be opened: an
+    /// `Examples` folder in the documents Studio works in, the iCloud one when
+    /// programs are kept there. On the Mac, whose Documents is everyone's,
+    /// it is `BASICStudio Examples`.
+    var examplesFolderURL: URL {
+        if let examplesFolderOverride {
+            return examplesFolderOverride
+        }
+        if case .on(let folder) = cloudStatus {
+            return folder.standardizedFileURL.appendingPathComponent("Examples", isDirectory: true)
+        }
+        let documents = (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? StudioHome.url).standardizedFileURL
+        #if os(macOS)
+        return documents.appendingPathComponent("BASICStudio Examples", isDirectory: true)
+        #else
+        return documents.appendingPathComponent("Examples", isDirectory: true)
+        #endif
+    }
+
+    /// Where a test puts example copies, rather than the user's Documents.
+    var examplesFolderOverride: URL?
+
+    /// Opens the bundled example project at `path` (`apps/contacts.basproj`)
+    /// as the project, on a copy: the app's own is read-only. A copy made
+    /// before is opened as it is, changes and all, never written over.
+    func openExampleProject(_ path: String, title: String) {
+        guard let demos = Self.demosFolder else {
+            showWarning("Unable to open \(title).", message: "The bundled examples could not be found.")
+            return
+        }
+        let source = demos.appendingPathComponent(path, isDirectory: true)
+        let copy = examplesFolderURL.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        do {
+            if !FileManager.default.fileExists(atPath: copy.path) {
+                try Self.copyExampleProject(from: source, to: copy)
+            }
+        } catch {
+            presentFileError("Unable to copy \(title) to open it.", error: error)
+            return
+        }
+        openProjectAndEntry(at: copy)
+    }
+
+    /// Copies a project's own files, leaving out what building it left
+    /// behind: `Build`, `.build`, `*.build` folders, and programs (files
+    /// that can be run, with no extension).
+    nonisolated static func copyExampleProject(from source: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isExecutableKey]
+        let root = source.standardizedFileURL.resolvingSymlinksInPath()
+        guard let walker = fileManager.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for case let url as URL in walker {
+            let values = try url.resourceValues(forKeys: Set(keys))
+            let name = url.lastPathComponent
+            if values.isDirectory == true {
+                if name == "Build" || name == ".build" || name.hasSuffix(".build") {
+                    walker.skipDescendants()
+                }
+                continue
+            }
+            if values.isExecutable == true && url.pathExtension.isEmpty {
+                continue
+            }
+            let inside = String(url.standardizedFileURL.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1))
+            let target = destination.appendingPathComponent(inside)
+            try fileManager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.copyItem(at: url, to: target)
         }
     }
 
@@ -840,6 +934,10 @@ final class StudioModel: ObservableObject {
     }
 
     func loadBundledExample(_ example: BundledExample) {
+        if let project = example.projectFolder {
+            openExampleProject(project, title: example.menuTitle)
+            return
+        }
         guard let source = Self.bundledDemoSource(named: example.path) else {
             showWarning("Unable to load \(example.menuTitle).", message: "The bundled example could not be found.")
             return
@@ -2014,9 +2112,10 @@ final class StudioModel: ObservableObject {
     }
 
     /// The runnable programs under a demos folder, without `.bas`, at any
-    /// depth. Each folder's own files are programs, and so is each folder
-    /// below a category holding a `main.bas` or a file named after it
-    /// (`apps/POS/pos`): that program's other files are its modules. A folder
+    /// depth. Each folder's own files are programs, and so is each project
+    /// below a category (`apps/POS.basproj/pos`, the file its manifest names)
+    /// and each folder holding a `main.bas` or a file named after it: that
+    /// program's other files are its modules. A folder
     /// a program beside it imports (`import "gradeslib/"`) is a library and
     /// stays out; any other folder is a subcategory, scanned the same way.
     static func programPaths(in root: URL) -> [String] {
@@ -2046,7 +2145,13 @@ final class StudioModel: ObservableObject {
                 }
                 let name = item.lastPathComponent
                 guard isDirectory(item), !libraries.contains(name.lowercased()) else { continue }
-                if let main = entry(of: item) {
+                if item.pathExtension.lowercased() == BASICProjectFolder.fileExtension {
+                    // A project: its program is the one its manifest names.
+                    if let entry = BASICProjectFolder.entry(of: item) {
+                        let inside = entry.standardizedFileURL.path.dropFirst(item.standardizedFileURL.path.count + 1)
+                        paths.append("\(prefix)\(name)/\((inside as NSString).deletingPathExtension)")
+                    }
+                } else if let main = entry(of: item) {
                     paths.append("\(prefix)\(name)/\(main)")
                 } else {
                     paths += scan(item, prefix: "\(prefix)\(name)/")
