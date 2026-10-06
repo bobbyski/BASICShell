@@ -325,6 +325,13 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         touchControlsView.frame = terminalView.frame.intersection(bounds.inset(by: safeAreaInsets))
     }
 
+    /// The program placed or took away on-screen controls: draw them, and
+    /// keep the keyboard out of the way while there are any.
+    private func touchControlsChanged() {
+        touchControlsView.setNeedsDisplay()
+        terminalView.hidesSoftwareKeyboard = model.map { !$0.touchControls.isEmpty } ?? false
+    }
+
     /// Touch as the mouse, for VTG programs: a finger is the left button, and
     /// an iPad's pointer adds hovering, the secondary click and scrolling. A
     /// TUI program's mouse reporting is SwiftTerm's, from the same touches.
@@ -408,6 +415,9 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         connectVTG(to: model)
         #if os(iOS)
         touchControlsView.attach(model.touchControls)
+        model.touchControls.onChange = { [weak self] in
+            MainActor.assumeIsolated { self?.touchControlsChanged() }
+        }
         #endif
     }
 

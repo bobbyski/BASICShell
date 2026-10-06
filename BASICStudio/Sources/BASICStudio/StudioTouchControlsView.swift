@@ -31,12 +31,11 @@ final class StudioTouchControlsView: UIView {
         fatalError("init(coder:) is not used")
     }
 
+    /// The controls to draw. The console redraws this when the program
+    /// changes them (`StudioTouchControls.onChange`).
     func attach(_ controls: StudioTouchControls) {
         guard self.controls !== controls else { return }
         self.controls = controls
-        controls.onChange = { [weak self] in
-            MainActor.assumeIsolated { self?.setNeedsDisplay() }
-        }
         setNeedsDisplay()
     }
 

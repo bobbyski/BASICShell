@@ -19,6 +19,27 @@ final class ConsoleTerminalView: VectorTerminalView {
     /// KEYDOWN name, whoever takes the key.
     var onKeyHeld: ((String, Bool) -> Void)?
 
+    /// The on-screen keyboard and its key bar, put away while a program's
+    /// touch controls are up: the game is played by touch, and the keyboard
+    /// would take half the screen from it. The view stays first responder,
+    /// so a hardware keyboard, and KEYDOWN, still work.
+    var hidesSoftwareKeyboard = false {
+        didSet {
+            guard hidesSoftwareKeyboard != oldValue else { return }
+            if hidesSoftwareKeyboard {
+                keyBarWhileHidden = inputAccessoryView
+                inputView = UIView(frame: .zero)
+                inputAccessoryView = nil
+            } else {
+                inputView = nil
+                inputAccessoryView = keyBarWhileHidden
+                keyBarWhileHidden = nil
+            }
+            reloadInputViews()
+        }
+    }
+    private var keyBarWhileHidden: UIView?
+
     /// Presses the console took, so their end is not handed to SwiftTerm
     /// either — it never saw them begin.
     private var interceptedPresses: Set<UIPress> = []

@@ -33,7 +33,7 @@ wend
 - **`offsetX` and `offsetY`** are measured in from that side, in points. Along a centered axis they shift it right or down.
 - **`size`** is its width, in points. A thumb is about 40 points across, so 140 to 180 suits a joystick or wheel, and 70 to 90 a button.
 
-Controls stay where they are anchored when the screen rotates or the window changes size. They are taken away when the program ends. `touch.Remove(id)` takes one away, and `touch.Clear()` takes them all.
+While any controls are on the screen, the on-screen keyboard is put away so the game has the whole screen; a hardware keyboard still works, and the keyboard comes back when the program ends. Controls stay where they are anchored when the screen rotates or the window changes size. They are taken away when the program ends. `touch.Remove(id)` takes one away, and `touch.Clear()` takes them all.
 
 `touch.Directions(id, mode)` limits a joystick or d-pad:
 
