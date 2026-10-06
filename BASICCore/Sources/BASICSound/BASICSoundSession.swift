@@ -20,6 +20,8 @@ public protocol BASICSoundOutput: AnyObject {
     func silence(voice: Int)
     /// Silences everything.
     func stopAll()
+    /// Why `PLAY MIDI` cannot play this song here, or nil when it can.
+    func reasonSongCannotPlay(_ data: Data) -> String?
     /// Cuts `voice` short at `time`, dropping whatever it had scheduled from
     /// then on: the next note on a channel ends the last one's release.
     func cut(voice: Int, at time: TimeInterval)
@@ -27,6 +29,7 @@ public protocol BASICSoundOutput: AnyObject {
 
 extension BASICSoundOutput {
     public func cut(voice: Int, at time: TimeInterval) {}
+    public func reasonSongCannotPlay(_ data: Data) -> String? { nil }
 }
 
 /// The time sound is measured against, and a way to wait on it.
@@ -161,6 +164,10 @@ public final class BASICSoundSession {
     /// or background as the last `MF`/`MB` said.
     public func playMIDI(data: Data, name: String) throws {
         let song = try BASICMIDIFile(data: data)
+        // Said, not left silent: a device with no instruments to play it on.
+        if let reason = output?.reasonSongCannotPlay(data) {
+            throw BASICSoundError(reason)
+        }
         let event = BASICSoundEvent.song(data: data, name: name, duration: song.duration)
         try enqueue([[event]], voice: Self.midiVoice, capacity: Self.backgroundCapacity, waits: !music.isBackground)
     }

@@ -27,7 +27,13 @@ import Foundation
 ///
 /// Times are on `BASICSystemSoundClock`'s clock (system uptime). Frame 0 is
 /// the moment the synthesizer started, so a note scheduled for now starts at
-/// the next buffer.
+/// the next buffer; `BASICSoundTimeline` keeps that so after the engine has
+/// been stopped.
+///
+/// iPhone and iPad stop the engine when the app is suspended or its audio is
+/// interrupted, and a change of output (headphones, a Bluetooth speaker)
+/// stops it anywhere. It is started again before the next note, and as soon
+/// as the system says the interruption or the change is over (BASIC-26).
 ///
 /// There is one per process, started on first use. `shared` is nil where
 /// there is no audio device, and a host then keeps timing without sound.
@@ -56,7 +62,8 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let sampleRate: Double
-    private let origin: TimeInterval
+    private var timeline: BASICSoundTimeline
+    private var observers: [NSObjectProtocol] = []
     private let lock = NSLock()
     private var notes: [Note] = []
     /// Where each voice's square wave is in its cycle, 0..<1.
@@ -70,7 +77,7 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         let hardware = engine.outputNode.outputFormat(forBus: 0)
         sampleRate = hardware.sampleRate > 0 ? hardware.sampleRate : 44_100
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return nil }
-        origin = ProcessInfo.processInfo.systemUptime
+        timeline = BASICSoundTimeline(sampleRate: sampleRate, origin: ProcessInfo.processInfo.systemUptime)
         let source = AVAudioSourceNode(format: format) { [unowned self] _, _, frameCount, bufferList -> OSStatus in
             self.render(frameCount: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(bufferList))
             return noErr
@@ -82,9 +89,47 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         } catch {
             return nil
         }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            self?.restartIfStopped()
+        })
+        #if os(iOS) || os(tvOS) || os(visionOS)
+        observers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            self?.restartIfStopped()
+        })
+        #endif
+    }
+
+    /// Starts the engine again if the system has stopped it. Nothing else
+    /// does, and a stopped engine plays nothing until the app is relaunched.
+    private func restartIfStopped() {
+        guard !engine.isRunning else { return }
+        try? engine.start()
+    }
+
+    /// Why `PLAY MIDI` cannot play `data` here, or nil when it can, so the
+    /// program is told rather than left in silence. iPhone and iPad have no
+    /// General MIDI instruments of their own to play a song with.
+    public func reasonSongCannotPlay(_ data: Data) -> String? {
+        do {
+            _ = try AVMIDIPlayer(data: data, soundBankURL: nil)
+            return nil
+        } catch {
+            #if os(macOS)
+            return "PLAY MIDI could not play the song: \(error.localizedDescription)"
+            #else
+            return "PLAY MIDI needs General MIDI instruments, which this device does not have"
+            #endif
+        }
     }
 
     public func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval) {
+        restartIfStopped()
         let start = frame(at: time)
         // "Play indefinitely" lasts until the voice is silenced or cut.
         let end = event.duration.isFinite ? start + Int64((event.duration * sampleRate).rounded()) : Int64.max
@@ -133,8 +178,22 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The frame `time` falls in, catching the timeline up first when the
+    /// engine has rendered less than the clock says it should have: the notes
+    /// already scheduled move with it, keeping their places.
     private func frame(at time: TimeInterval) -> Int64 {
-        Int64(((time - origin) * sampleRate).rounded())
+        lock.lock()
+        defer { lock.unlock() }
+        let shift = timeline.catchUp(now: ProcessInfo.processInfo.systemUptime, rendered: renderedFrames)
+        if shift != 0 {
+            for index in notes.indices {
+                notes[index].start += shift
+                if notes[index].end != Int64.max {
+                    notes[index].end += shift
+                }
+            }
+        }
+        return timeline.frame(at: time)
     }
 
     /// Loads a song now and starts it at `time`. A song silenced before it

@@ -23,6 +23,15 @@ final class RecordingOutput: BASICSoundOutput {
     }
 }
 
+/// An output with no instruments for songs, as an iPad has none.
+final class SonglessOutput: BASICSoundOutput {
+    var played: [BASICSoundEvent] = []
+    func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval) { played.append(event) }
+    func silence(voice: Int) {}
+    func stopAll() {}
+    func reasonSongCannotPlay(_ data: Data) -> String? { "no instruments here" }
+}
+
 /// Frequencies are compared to the cent, not the bit.
 private func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 0.01 }
 
@@ -303,6 +312,16 @@ struct BASICEnvelopedSessionTests {
         #expect(output.silenced == [BASICSoundSession.midiVoice])
     }
 
+    @Test("PLAY MIDI says why when the output cannot play a song, and plays nothing")
+    func unplayableSong() throws {
+        let output = SonglessOutput()
+        let sound = BASICSoundSession(output: output, clock: BASICVirtualSoundClock())
+        #expect(throws: BASICSoundError("no instruments here")) {
+            try sound.playMIDI(data: MIDIFixture.twoTempos, name: "song.mid")
+        }
+        #expect(output.played.isEmpty)
+    }
+
     @Test("a break request ends a long wait at once, and silences the sound")
     func interruptedWait() throws {
         let (sound, _) = session(clock: BASICSystemSoundClock())
@@ -354,3 +373,40 @@ struct BASICMIDIFileTests {
         #expect(throws: BASICSoundError.self) { try BASICMIDIFile(data: MIDIFixture.twoTempos.prefix(30)) }
     }
 }
+
+/// The speaker plays only the frames it renders, and renders none while the
+/// engine is stopped, as it is whenever iPadOS suspends the app. The clock
+/// keeps going, so the timeline catches up rather than leave every later
+/// note waiting out the gap (BASIC-26).
+@Suite("Sound timeline")
+struct BASICSoundTimelineTests {
+    @Test("A time is seconds since the origin, in frames")
+    func frames() {
+        let timeline = BASICSoundTimeline(sampleRate: 48_000, origin: 100)
+        #expect(timeline.frame(at: 100) == 0)
+        #expect(timeline.frame(at: 101.5) == 72_000)
+    }
+
+    @Test("While rendering keeps up, nothing moves")
+    func inStep() {
+        var timeline = BASICSoundTimeline(sampleRate: 48_000, origin: 100)
+        // A buffer or two of latency either way is normal.
+        #expect(timeline.catchUp(now: 110, rendered: 480_000 + 1_024) == 0)
+        #expect(timeline.catchUp(now: 110, rendered: 480_000 - 1_024) == 0)
+        #expect(timeline.frame(at: 110) == 480_000)
+    }
+
+    @Test("After the engine was stopped, now is the next frame played, and scheduled notes move with it")
+    func afterAStop() {
+        var timeline = BASICSoundTimeline(sampleRate: 48_000, origin: 100)
+        // Ten seconds rendered, then two minutes suspended: nothing rendered.
+        let rendered: Int64 = 480_000
+        let scheduled = timeline.frame(at: 230.5)
+        let shift = timeline.catchUp(now: 230, rendered: rendered)
+        #expect(shift == -120 * 48_000)
+        #expect(timeline.frame(at: 230) == rendered, "a note for now plays now, not two minutes on")
+        #expect(scheduled + shift == timeline.frame(at: 230.5), "a note already queued keeps its place")
+        #expect(timeline.catchUp(now: 230, rendered: rendered) == 0, "caught up once is caught up")
+    }
+}
+
