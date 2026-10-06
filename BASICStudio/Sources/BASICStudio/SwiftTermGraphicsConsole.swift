@@ -326,10 +326,14 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     }
 
     /// The program placed or took away on-screen controls: draw them, and
-    /// keep the keyboard out of the way while there are any.
+    /// keep the keyboard and its key bar out of the way while there are any —
+    /// the program is played by touch, and they would take half the screen.
+    /// SwiftTerm keeps the view first responder, so a hardware keyboard,
+    /// INKEY$ and KEYDOWN still work; the keyboard comes back when the
+    /// controls go.
     private func touchControlsChanged() {
         touchControlsView.setNeedsDisplay()
-        terminalView.hidesSoftwareKeyboard = model.map { !$0.touchControls.isEmpty } ?? false
+        terminalView.isSoftwareKeyboardHidden = model.map { !$0.touchControls.isEmpty } ?? false
     }
 
     /// Touch as the mouse, for VTG programs: a finger is the left button, and
@@ -417,6 +421,12 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         touchControlsView.attach(model.touchControls)
         model.touchControls.onChange = { [weak self] in
             MainActor.assumeIsolated { self?.touchControlsChanged() }
+        }
+        // The keyboard button can put the keyboard away altogether; a tap on
+        // the console brings it back, but not while touch controls are up,
+        // where a tap is the program's.
+        terminalView.showsHiddenKeyboardOnTap = { [weak model] in
+            MainActor.assumeIsolated { model?.touchControls.isEmpty ?? true }
         }
         #endif
     }
