@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.activeui",
+  "name": "ActiveUI App",
+  "language": "BASIC",
+  "summary": "A window of its own, made with ActiveUI: a row of buttons, a field, a list and a status line, with a to-do list to show how they work together.",
+  "icon": "macwindow",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it in BASICStudio, which opens its window"
+}

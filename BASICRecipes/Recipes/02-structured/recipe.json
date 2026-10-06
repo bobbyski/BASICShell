@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.structured",
+  "name": "Structured Program",
+  "language": "BASIC",
+  "summary": "Functions, arrays and DATA in one program: the shape a real program grows into.",
+  "icon": "function",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it, or build it with make (needs basicc)"
+}

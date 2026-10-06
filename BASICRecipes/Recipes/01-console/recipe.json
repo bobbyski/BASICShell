@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.console",
+  "name": "Console Program",
+  "language": "BASIC",
+  "summary": "One file that prints, loops and reads what is typed. The smallest program, for trying the language.",
+  "icon": "terminal",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it, or build it with make (needs basicc)"
+}

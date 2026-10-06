@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.tui",
+  "name": "TUI App",
+  "language": "BASIC",
+  "summary": "A full-screen terminal application made with TUIKit: a window, a menu bar, a field, a list and buttons, each with its handler.",
+  "icon": "rectangle.split.3x1",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it in BASICStudio or BASICShell, or build it with make"
+}
