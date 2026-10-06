@@ -42,6 +42,10 @@ struct SettingsViewModel: Equatable {
     static let fontNote = "The selected font is used by Monaco and the SwiftTerm console. Prompt symbols need a Nerd Font or a font with matching glyph coverage."
 
     static let scrollbackSectionTitle = "Scrollback"
+    static let graphicsSectionTitle = "Graphics"
+    static let hidesGraphicsOnStopTitle = "Hide graphics when a program stops on a break or an error"
+    static let showsGraphicsHiddenNoticeTitle = "Say so when they are hidden"
+    static let hidesGraphicsOnStopNote = "So the error and the prompt can be read. RUN or CLS shows the graphics again; graphics you hid yourself stay hidden."
     static let scrollbackRange = StudioSettings.consoleScrollbackRange
     static let scrollbackStep = 100
     static let scrollbackNote = "Older console lines are discarded once the console passes this many lines. Lowering it reduces memory use and speeds up programs that print heavily, because the console re-reads its buffer on every update."

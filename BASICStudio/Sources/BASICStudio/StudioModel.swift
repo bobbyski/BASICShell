@@ -80,6 +80,31 @@ final class StudioModel: ObservableObject {
     var jitInput: Pipe?
     @Published var isConsoleOverwriteMode = false
     @Published var areGraphicsLayersVisible = true
+    /// Hide the graphics when a program stops on a break or an error, so the
+    /// console can be read; RUN or CLS shows them again (BASIC-27).
+    @Published var hidesGraphicsOnStop = true {
+        didSet {
+            guard hidesGraphicsOnStop != oldValue, !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
+    /// Say so when that happens, once a launch; off for good after "Don't
+    /// show this message again".
+    @Published var showsGraphicsHiddenNotice = true {
+        didSet {
+            guard showsGraphicsHiddenNotice != oldValue, !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
+    /// The graphics are hidden because the program stopped, not because the
+    /// user hid them: only these come back on RUN or CLS.
+    @Published private(set) var graphicsHiddenOnStop = false
+    /// How many times the notice has been asked for, for tests.
+    private(set) var graphicsHiddenNoticeCount = 0
+    private var hasShownGraphicsHiddenNoticeThisLaunch = false
+    /// The running program has drawn with VectorTerminal: only then is there
+    /// anything over the console to hide.
+    private var programDrewGraphics = false
     @Published var terminalScreenSize: TerminalScreenSize = .flexible {
         didSet { saveSettings() }
     }
@@ -295,6 +320,8 @@ final class StudioModel: ObservableObject {
         fontSize = min(max(settings.fontSize, 10), 24)
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
         keepsProgramsInICloud = settings.keepsProgramsInICloud
+        hidesGraphicsOnStop = settings.hidesGraphicsOnStop
+        showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
             let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
             projectDirectoryURL = directory
@@ -996,12 +1023,59 @@ final class StudioModel: ObservableObject {
         return value
     }
 
+    /// The user's own choice, from View ▸ Show Graphics: from here on the
+    /// graphics stay as the user has them.
     func setGraphicsLayersVisible(_ isVisible: Bool) {
         areGraphicsLayersVisible = isVisible
+        graphicsHiddenOnStop = false
     }
 
     func toggleGraphicsLayersVisible() {
-        areGraphicsLayersVisible.toggle()
+        setGraphicsLayersVisible(!areGraphicsLayersVisible)
+    }
+
+    /// A program stopped on a break or an error: its graphics would cover the
+    /// error and the prompt, so they are hidden (BASIC-27).
+    private func hideGraphicsAfterStop() {
+        guard hidesGraphicsOnStop, programDrewGraphics, areGraphicsLayersVisible else { return }
+        areGraphicsLayersVisible = false
+        graphicsHiddenOnStop = true
+        guard showsGraphicsHiddenNotice, !hasShownGraphicsHiddenNoticeThisLaunch else { return }
+        hasShownGraphicsHiddenNoticeThisLaunch = true
+        graphicsHiddenNoticeCount += 1
+        // A headless model (tests, the walk) shows no modal alerts.
+        guard persistsSettings else { return }
+        Task { @MainActor [weak self] in self?.showGraphicsHiddenNotice() }
+    }
+
+    /// RUN or CLS: graphics hidden because the last program stopped come
+    /// back; graphics the user hid stay hidden.
+    private func restoreGraphicsHiddenOnStop() {
+        guard graphicsHiddenOnStop else { return }
+        graphicsHiddenOnStop = false
+        areGraphicsLayersVisible = true
+    }
+
+    private func showGraphicsHiddenNotice() {
+        let title = "Graphics are hidden"
+        let message = "When a program stops on a break or an error, its graphics are hidden so you can read the console. RUN or CLS shows them again. You can change this in Settings ▸ Console."
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don't show this message again"
+        alert.runModal()
+        if alert.suppressionButton?.state == .on {
+            showsGraphicsHiddenNotice = false
+        }
+        #else
+        Task { @MainActor [weak self] in
+            let pressed = await AUIAlert.show(title: title, message: message, buttons: ["OK", "Don't Show Again"])
+            if pressed == 1 { self?.showsGraphicsHiddenNotice = false }
+        }
+        #endif
     }
 
     func stopProgram() {
@@ -1349,6 +1423,10 @@ final class StudioModel: ObservableObject {
         suppressNextEmptyProgramSubmit = false
         suppressNextProgramNewlineKey = command == .run || command == .runStep
         appendLog(level: "RUN", issuer: .basic, text: "starting \(command) \(startLine.map { "at \($0)" } ?? "")")
+        if command == .run || command == .runStep {
+            restoreGraphicsHiddenOnStop()
+            programDrewGraphics = false
+        }
         let control = BASICExecutionControl()
         control.setBreakpoints(debuggerBreakpoints)
         switch command {
@@ -1410,6 +1488,8 @@ final class StudioModel: ObservableObject {
     private func finishProgramRun(_ result: Result<Void, Error>) {
         var paused = false
         var consoleMessage: String?
+        // Stopped on a break or a runtime error, rather than ending or pausing.
+        var stoppedShort = false
         switch result {
         case .success:
             debuggerExecutionLine = nil
@@ -1427,6 +1507,7 @@ final class StudioModel: ObservableObject {
                 if session.stopsForegroundProgramOnBreak {
                     debuggerExecutionLine = nil
                     paused = false
+                    stoppedShort = true
                 } else {
                     debuggerExecutionLine = activeExecutionControl?.location.flatMap(debuggerSourceLineNumber(for:))
                         ?? line.flatMap(sourceLineNumber(forBasicLineNumber:))
@@ -1440,11 +1521,12 @@ final class StudioModel: ObservableObject {
                 paused = true
             default:
                 isProgramPaused = false
-                break
+                stoppedShort = true
             }
             consoleMessage = session.debugPauseDescription(for: error)
         case .failure(let error):
             isProgramPaused = false
+            stoppedShort = true
             consoleMessage = "Unexpected error: \(error)"
         }
 
@@ -1477,6 +1559,9 @@ final class StudioModel: ObservableObject {
         // So do its on-screen controls, unless it is only paused.
         if !paused {
             touchControls.clear()
+        }
+        if stoppedShort && !paused {
+            hideGraphicsAfterStop()
         }
         if !paused {
             // And so do the terminal modes it set. `ON MOUSE` turns mouse
@@ -1707,7 +1792,9 @@ final class StudioModel: ObservableObject {
                 fontSize: fontSize,
                 consoleScrollbackLines: consoleScrollbackLines,
                 projectDirectoryPath: projectDirectoryURL?.path,
-                keepsProgramsInICloud: keepsProgramsInICloud
+                keepsProgramsInICloud: keepsProgramsInICloud,
+                hidesGraphicsOnStop: hidesGraphicsOnStop,
+                showsGraphicsHiddenNotice: showsGraphicsHiddenNotice
             )
         )
     }
@@ -2048,6 +2135,9 @@ extension StudioModel: BASICHost, BASICKeyboardHost, BASICBlockingKeyboardHost, 
 
     nonisolated func printLine(_ text: String) {
         runOnMainSync {
+            // CLS clears with this; graphics hidden when the last program
+            // stopped come back with it.
+            if text.contains("\u{1B}[2J") { restoreGraphicsHiddenOnStop() }
             highlightErrorIfPresent(text)
             appendConsoleOutput(text)
         }
@@ -2370,6 +2460,7 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
 extension StudioModel: BASICVectorTerminalHost {
     nonisolated private func useVTGCanvas(_ operation: @MainActor (VectorTerminalCanvas) -> Void) {
         runOnMainActorSync {
+            programDrewGraphics = true
             operation(vtgCanvas)
         }
     }

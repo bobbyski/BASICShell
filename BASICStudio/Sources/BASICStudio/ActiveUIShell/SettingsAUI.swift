@@ -25,6 +25,7 @@ import Foundation
 ///             Display: line numbers
 ///   Font      Font ▾ (preferred first)   Size ──●── 13
 ///   Console   Lines ──●── [−|+] 10000    the scrollback note
+///             Graphics: hide them when a program stops, and say so
 ///   Storage   iCloud Drive: keep programs there, and whether it is
 /// ```
 ///
@@ -50,6 +51,8 @@ final class SettingsAUI {
     let scrollbackSlider: AUISlider
     let scrollbackStepper: AUIStepper
     let scrollbackLabel: AUILabel
+    let hideGraphicsSwitch: AUISwitch
+    let graphicsNoticeSwitch: AUISwitch
     let families: [String]
     private var drawn: SettingsViewModel?
 
@@ -86,7 +89,20 @@ final class SettingsAUI {
         let scrollbackGroup = AUISettingsGroup(title: SettingsViewModel.scrollbackSectionTitle)
         // The value, then its stepper: a SwiftUI Stepper draws its label first.
         scrollbackGroup.addRow(Self.row("Lines", [scrollbackSlider.stretches(), scrollbackLabel, scrollbackStepper]))
-        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote)])
+        hideGraphicsSwitch = AUISwitch(isOn: model.hidesGraphicsOnStop) { [weak model] in
+            model?.hidesGraphicsOnStop = $0
+        }
+        graphicsNoticeSwitch = AUISwitch(isOn: model.showsGraphicsHiddenNotice) { [weak model] in
+            model?.showsGraphicsHiddenNotice = $0
+        }
+        let graphicsGroup = AUISettingsGroup(title: SettingsViewModel.graphicsSectionTitle)
+        graphicsGroup.addRow(SettingsViewModel.hidesGraphicsOnStopTitle,
+                             description: SettingsViewModel.hidesGraphicsOnStopNote,
+                             accessory: hideGraphicsSwitch)
+        graphicsGroup.addRow(SettingsViewModel.showsGraphicsHiddenNoticeTitle,
+                             description: "",
+                             accessory: graphicsNoticeSwitch)
+        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote), graphicsGroup])
 
         // Editor: what Studio takes from FreebirdStudio's Editing and Display
         // pages, which drive the same SwiftyCodeEditor. What it leaves out,
@@ -243,6 +259,13 @@ final class SettingsAUI {
         promptEditor.refresh()
         refreshEditorPage()
         refreshStoragePage()
+        // Set only where they differ, as the Editor page's are.
+        if hideGraphicsSwitch.isOn != model.hidesGraphicsOnStop {
+            hideGraphicsSwitch.isOn = model.hidesGraphicsOnStop
+        }
+        if graphicsNoticeSwitch.isOn != model.showsGraphicsHiddenNotice {
+            graphicsNoticeSwitch.isOn = model.showsGraphicsHiddenNotice
+        }
         let settings = SettingsViewModel(model)
         guard settings != drawn else { return }
         fontPicker.selectedIndex = families.firstIndex(of: settings.fontFamily)

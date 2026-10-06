@@ -293,3 +293,4 @@ Done:
 - Use `OPTION MOUSE OFF` in programs that do not need mouse events.
 - Keep `PSET` for compatibility and small pixel details. Prefer vector commands and retained VTG objects for application UI.
 - End graphical programs with `CLS`, `vtg.clear()`, and `vtg.present()` so the terminal is left clean.
+- When a program stops on a break or an error, BASICStudio hides its graphics so the error and the prompt can be read, and RUN or CLS shows them again; graphics you hid yourself with View ▸ Show Graphics stay hidden. Turn this off in Settings ▸ Console ▸ Graphics.

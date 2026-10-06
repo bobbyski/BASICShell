@@ -107,6 +107,11 @@ struct StudioSettings: Codable {
     var projectDirectoryPath: String?
     /// Programs are kept in iCloud Drive (``StudioCloudStorage``).
     var keepsProgramsInICloud = StudioSettings.defaultKeepsProgramsInICloud
+    /// A program that stops on a break or an error has its graphics hidden,
+    /// so the console can be read (BASIC-27).
+    var hidesGraphicsOnStop = true
+    /// Say so when that happens; off once "Don't show this message again".
+    var showsGraphicsHiddenNotice = true
 
     /// On by default on iPad and iPhone, where the app's own folder is
     /// otherwise the only place a program can be; off on the Mac, where
@@ -134,6 +139,8 @@ struct StudioSettings: Codable {
         case consoleScrollbackLines
         case projectDirectoryPath
         case keepsProgramsInICloud
+        case hidesGraphicsOnStop
+        case showsGraphicsHiddenNotice
     }
 
     init(
@@ -150,7 +157,9 @@ struct StudioSettings: Codable {
         fontSize: Double = 13,
         consoleScrollbackLines: Int = StudioSettings.defaultConsoleScrollbackLines,
         projectDirectoryPath: String? = nil,
-        keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud
+        keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud,
+        hidesGraphicsOnStop: Bool = true,
+        showsGraphicsHiddenNotice: Bool = true
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -166,6 +175,8 @@ struct StudioSettings: Codable {
         self.consoleScrollbackLines = Self.clampedConsoleScrollbackLines(consoleScrollbackLines)
         self.projectDirectoryPath = projectDirectoryPath
         self.keepsProgramsInICloud = keepsProgramsInICloud
+        self.hidesGraphicsOnStop = hidesGraphicsOnStop
+        self.showsGraphicsHiddenNotice = showsGraphicsHiddenNotice
     }
 
     init(from decoder: Decoder) throws {
@@ -187,6 +198,8 @@ struct StudioSettings: Codable {
         projectDirectoryPath = try container.decodeIfPresent(String.self, forKey: .projectDirectoryPath)
         keepsProgramsInICloud = try container.decodeIfPresent(Bool.self, forKey: .keepsProgramsInICloud)
             ?? Self.defaultKeepsProgramsInICloud
+        hidesGraphicsOnStop = try container.decodeIfPresent(Bool.self, forKey: .hidesGraphicsOnStop) ?? true
+        showsGraphicsHiddenNotice = try container.decodeIfPresent(Bool.self, forKey: .showsGraphicsHiddenNotice) ?? true
     }
 }
 
@@ -305,6 +318,14 @@ struct SettingsView: View {
                 }
 
                 Text(SettingsViewModel.scrollbackNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section(SettingsViewModel.graphicsSectionTitle) {
+                Toggle(SettingsViewModel.hidesGraphicsOnStopTitle, isOn: $model.hidesGraphicsOnStop)
+                Toggle(SettingsViewModel.showsGraphicsHiddenNoticeTitle, isOn: $model.showsGraphicsHiddenNotice)
+                    .disabled(!model.hidesGraphicsOnStop)
+                Text(SettingsViewModel.hidesGraphicsOnStopNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
