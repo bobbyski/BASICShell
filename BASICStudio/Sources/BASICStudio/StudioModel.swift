@@ -1799,12 +1799,26 @@ final class StudioModel: ObservableObject {
         )
     }
 
+    /// Home on the Mac. On iPhone and iPad, the app's own Documents folder,
+    /// the one Files shows: the app's home above it is not the user's to
+    /// reach, and CD would not let them back up to it (BASIC-29).
     private static func defaultWorkingDirectoryURL() -> URL {
-        StudioHome.url
+        #if os(iOS)
+        if let documents = StudioDocumentsBoundary.localDocuments {
+            return URL(fileURLWithPath: documents, isDirectory: true).standardizedFileURL
+        }
+        #endif
+        return StudioHome.url
     }
 
     private static func validWorkingDirectory(from path: String?) -> URL {
         guard let path, !path.isEmpty else { return defaultWorkingDirectoryURL() }
+        #if os(iOS)
+        // A folder saved before CD stopped at Documents.
+        guard StudioDocumentsBoundary.allows(path, localDocuments: StudioDocumentsBoundary.localDocuments) else {
+            return defaultWorkingDirectoryURL()
+        }
+        #endif
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
@@ -2268,6 +2282,13 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
 
     nonisolated func changeDirectory(path: String) throws {
         let resolvedPath = expandedPath(path)
+        #if os(iOS)
+        // Nothing above the app's Documents folders is anywhere the user can
+        // go, so CD stops there (BASIC-29).
+        guard StudioDocumentsBoundary.allows(resolvedPath, localDocuments: StudioDocumentsBoundary.localDocuments) else {
+            throw BASICError.runtime("Could not change directory to \(path): Documents is as far up as CD goes on iPhone and iPad")
+        }
+        #endif
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory),
               isDirectory.boolValue else {

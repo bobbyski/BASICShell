@@ -215,6 +215,43 @@ enum StudioHome {
     }
 }
 
+/// How far up CD can go. On iPhone and iPad the user can reach only the
+/// app's Documents folders, its own (which Files shows) and its iCloud one,
+/// so CD stops at them (BASIC-29). The Mac has no such edge.
+enum StudioDocumentsBoundary {
+    /// The app's own Documents folder.
+    static var localDocuments: String? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path
+    }
+
+    /// Whether `path` is in a Documents folder the user can reach: at or
+    /// below `localDocuments`, or the Documents folder of the app's iCloud
+    /// container, `…/iCloud~com~aibasic~BASICStudio/Documents`, wherever that
+    /// is. A leading `/private` is ignored, since iOS names the container
+    /// both ways.
+    static func allows(
+        _ path: String,
+        localDocuments: String?,
+        cloudContainer: String = StudioCloudStorage.onDiskName(of: StudioCloudStorage.containerIdentifier)
+    ) -> Bool {
+        let bare = withoutPrivatePrefix(URL(fileURLWithPath: path).standardizedFileURL.path)
+        if let localDocuments {
+            let root = withoutPrivatePrefix(URL(fileURLWithPath: localDocuments).standardizedFileURL.path)
+            if bare == root || bare.hasPrefix(root + "/") {
+                return true
+            }
+        }
+        let folders = bare.split(separator: "/")
+        guard let container = folders.firstIndex(where: { $0 == cloudContainer }) else { return false }
+        let next = folders.index(after: container)
+        return next < folders.endIndex && folders[next] == "Documents"
+    }
+
+    private static func withoutPrivatePrefix(_ path: String) -> String {
+        path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+    }
+}
+
 struct StudioSettingsStore {
     private static let fileName = "StudioSettings.json"
 
