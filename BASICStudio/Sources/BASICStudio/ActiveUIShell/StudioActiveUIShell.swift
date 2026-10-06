@@ -77,6 +77,9 @@ final class StudioActiveUIShell {
     /// The model's ``StudioModel/projectOpenCount`` when the sidebar was
     /// last shown for it: a project restored at launch does not count.
     private var drawnProjectOpenCount = 0
+    /// The New Project wizard while its sheet is up; New Project… again
+    /// meanwhile does nothing.
+    private(set) var newProjectWizard: NewProjectWizardAUI?
     private var observation: AnyCancellable?
     /// Under Native, the editor's colors follow the system's appearance.
     private var appearanceObservation: NSKeyValueObservation?
@@ -159,6 +162,8 @@ final class StudioActiveUIShell {
             guard let self, let rows = self.drawnProject?.rows, rows.indices.contains(index) else { return }
             self.model.openProjectFile(rows[index].path)
         }
+
+        model.newProjectWizardPresenter = { [weak self] in self?.presentNewProjectWizard() }
 
         observation = model.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
@@ -279,6 +284,31 @@ final class StudioActiveUIShell {
                 guard let self else { return }
                 self.isRefreshScheduled = false
                 self.refresh()
+            }
+        }
+    }
+
+    /// File ▸ New Project… (BASIC-24): the wizard in a sheet. Create makes
+    /// the project and opens it, with the file it starts with in the editor.
+    func presentNewProjectWizard() {
+        guard newProjectWizard == nil else { return }
+        let model = self.model
+        let sheet = NewProjectWizardAUI(wizard: model.makeNewProjectWizard())
+        sheet.chooseFolder = { start, done in
+            model.chooseFile(StudioModel.FileRequest(kind: .openFolder, title: "Choose Where the Project Goes", directory: start)) { done($0) }
+        }
+        newProjectWizard = sheet
+        Task { @MainActor [weak self] in
+            let create: Bool = await AUISheet.present(contentSize: NewProjectWizardAUI.contentSize) { finish in
+                sheet.onFinish = { finish($0 != nil) }
+                return sheet.root
+            }
+            self?.newProjectWizard = nil
+            guard create else { return }
+            do {
+                try model.createProject(from: sheet.wizard)
+            } catch {
+                model.showWarning("Unable to create the project.", message: "\(error)")
             }
         }
     }

@@ -771,10 +771,18 @@ final class StudioModel: ObservableObject {
         rescanProject()
     }
 
-    /// File ▸ New Project… (⇧⌘N): a new folder, named in a save panel, with
-    /// a main.bas in it; the folder opens as the project and main.bas in the
-    /// editor.
+    /// Shows the New Project wizard. The ActiveUI shell sets it; without
+    /// one (the SwiftUI reference shell), New Project asks for a folder.
+    var newProjectWizardPresenter: (() -> Void)?
+
+    /// File ▸ New Project… (⇧⌘N): the wizard, which makes a project from a
+    /// recipe (BASIC-24). Without a shell to show it, a new folder, named
+    /// in a save panel, with a main.bas in it.
     func newProjectFromMenu() {
+        if let newProjectWizardPresenter {
+            newProjectWizardPresenter()
+            return
+        }
         chooseFile(FileRequest(
             kind: .newFolder(name: Self.untitledName(in: currentDirectoryURL, base: "Untitled Project", extension: nil)),
             title: "New Project",
@@ -801,6 +809,44 @@ final class StudioModel: ObservableObject {
         }
         openProject(at: url)
         openProjectFile("main.bas")
+    }
+
+    // MARK: - The New Project wizard (BASIC-24)
+
+    /// A wizard ready to start: every recipe, and the folder a project goes
+    /// in. On the Mac that is beside the open project, else the working
+    /// directory, and can be changed; on iPhone and iPad it is the Documents
+    /// folder Studio works in.
+    func makeNewProjectWizard() -> NewProjectWizardModel {
+        let recipes = BASICRecipes.all(userFolders: userRecipeFolders)
+        #if os(iOS)
+        return NewProjectWizardModel(recipes: recipes, location: tildeURL(), canChooseLocation: false)
+        #else
+        let location = projectDirectoryURL?.deletingLastPathComponent() ?? workingDirectoryURL
+        return NewProjectWizardModel(recipes: recipes, location: location.standardizedFileURL, canChooseLocation: true)
+        #endif
+    }
+
+    /// Where a user's own recipes are read from: `Recipes` in Studio's
+    /// Application Support folder on the Mac; on iPhone and iPad, in the
+    /// Documents folder, where Files can put them.
+    var userRecipeFolders: [URL] {
+        #if os(iOS)
+        return [tildeURL().appendingPathComponent("Recipes", isDirectory: true)]
+        #else
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? StudioHome.url.appendingPathComponent("Library/Application Support")
+        return [support.appendingPathComponent("AIBasic/Recipes", isDirectory: true)]
+        #endif
+    }
+
+    /// Makes the project the wizard describes, and opens it with the file it
+    /// starts with in the editor.
+    @discardableResult
+    func createProject(from wizard: NewProjectWizardModel) throws -> URL {
+        let project = try wizard.create()
+        openProjectAndEntry(at: project)
+        return project
     }
 
     // MARK: - The project (ACTIVEUI_TRANSITION.md P3.7)
