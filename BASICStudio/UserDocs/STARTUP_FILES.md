@@ -16,9 +16,12 @@ the ones read.
 ```basic
 ' ~/.BASICrc
 option shellmode on
+option graphics-on-stop hide
 alias ll="ls -la"
 prompt "BASIC> "
 ```
+
+`OPTION GRAPHICS-ON-STOP` chooses what happens to a program's graphics when it stops on a break or an error: hidden (the default), erased, or left showing. See [OPTION](OPTION.md).
 
 ## A script reads neither
 

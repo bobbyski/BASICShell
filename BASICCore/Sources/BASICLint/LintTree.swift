@@ -254,7 +254,8 @@ public struct LintTree: @unchecked Sendable {
             case .read, .restore: return .readStatement
             case .returnValue, .returnFromSubroutine, .exitFunction: return .returnStatement
             case .remark: return .comment
-            case .optionLetMode, .optionKeyMode, .optionShellMode, .optionStringSubstitution, .optionEventInput:
+            case .optionLetMode, .optionKeyMode, .optionShellMode, .optionStringSubstitution, .optionEventInput,
+                 .optionGraphicsOnStop:
                 return .optionStatement
             default: return .statement
             }

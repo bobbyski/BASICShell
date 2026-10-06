@@ -142,6 +142,14 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         set { runtime.stringSubstitutionEnabled = newValue }
     }
 
+    /// What the host does with a program's graphics when it stops on a break
+    /// or an error: `OPTION GRAPHICS-ON-STOP`. BASICShell reads it; Studio
+    /// has a setting of its own.
+    public var graphicsOnStop: BASICGraphicsOnStop {
+        get { runtime.graphicsOnStop }
+        set { runtime.graphicsOnStop = newValue }
+    }
+
     /// Environment mutations exported by this session for child processes.
     public var processEnvironmentPatch: BASICEnvironmentPatch {
         runtime.environmentPatch

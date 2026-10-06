@@ -1608,7 +1608,16 @@ public struct Parser {
             guard match(.minus), matchIdentifier("SUB") else { throw syntax("Expected STRING-SUB") }
             return .optionStringSubstitution(try parseOnOffOption(optionName: "STRING-SUB"))
         }
-        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, GAMEPAD, SHELLMODE, or STRINGSUB")
+        if matchIdentifier("GRAPHICS") {
+            guard match(.minus), matchIdentifier("ON"), match(.minus), matchIdentifier("STOP") else {
+                throw syntax("Expected GRAPHICS-ON-STOP")
+            }
+            if matchIdentifier("HIDE") { return .optionGraphicsOnStop(.hide) }
+            if matchIdentifier("CLEAR") { return .optionGraphicsOnStop(.clear) }
+            if matchIdentifier("KEEP") { return .optionGraphicsOnStop(.keep) }
+            throw syntax("Expected HIDE, CLEAR, or KEEP after OPTION GRAPHICS-ON-STOP")
+        }
+        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, GAMEPAD, SHELLMODE, STRINGSUB, or GRAPHICS-ON-STOP")
     }
 
     private mutating func parseEventInputMode(optionName: String) throws -> BASICEventInputMode {

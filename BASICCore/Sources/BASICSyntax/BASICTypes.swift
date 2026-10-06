@@ -143,6 +143,18 @@ public enum BASICEventInputMode: Equatable, Sendable {
     case off
 }
 
+/// What a host does with a program's graphics when the program stops on a
+/// break or an error: `OPTION GRAPHICS-ON-STOP` (BASIC-28).
+public enum BASICGraphicsOnStop: Equatable, Sendable {
+    /// Hide them, keeping the picture, so the error can be read. RUN or CLS
+    /// shows the graphics again. The default.
+    case hide
+    /// Erase them.
+    case clear
+    /// Leave them showing.
+    case keep
+}
+
 public enum AssignmentKind: Equatable, Sendable {
     case bare
     case letValue

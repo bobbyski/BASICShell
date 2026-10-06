@@ -161,7 +161,9 @@ be the BASIC variable `PATH`, which is empty — not the environment.
 ## What else belongs in the file
 
 `OPTION SHELLMODE ON` if you want to run external commands, `ALIAS` for short
-names, `PROMPT` for the prompt. See [Startup Files](STARTUP_FILES.md) for
+names, `PROMPT` for the prompt, and `OPTION GRAPHICS-ON-STOP` if you would
+rather a program's graphics were erased (`CLEAR`) or left showing (`KEEP`)
+than hidden when it stops on an error ([OPTION](OPTION.md)). See [Startup Files](STARTUP_FILES.md) for
 which file is read when, [SETENV, EXPORT and UNSETENV](ENVIRONMENT.md), and
 [Shell Scripting](SHELL_SCRIPTING.md) for running commands from a program.
 

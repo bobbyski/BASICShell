@@ -115,6 +115,7 @@ public indirect enum Statement: Equatable {
     case optionEventInput(type: String, mode: BASICEventInputMode)
     case optionShellMode(Bool)
     case optionStringSubstitution(Bool)
+    case optionGraphicsOnStop(BASICGraphicsOnStop)
     case input(prompt: Expression?, target: ReadTarget)
     case lineInput(prompt: Expression?, target: ReadTarget, exitTarget: ReadTarget?, fieldLength: Expression?, maxLength: Expression?, defaultValue: Expression?)
     case openFile(path: Expression, mode: BASICLegacyFileMode, number: Expression, recordLength: Expression?)

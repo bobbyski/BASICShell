@@ -1447,6 +1447,9 @@ public final class BASICInterpreter {
         case .optionStringSubstitution(let enabled):
             runtime.stringSubstitutionEnabled = enabled
             return .next
+        case .optionGraphicsOnStop(let mode):
+            runtime.graphicsOnStop = mode
+            return .next
         case .input(let prompt, let target):
             let promptText = try prompt.map(string) ?? "\(inputTargetName(target))? "
             let raw = host?.readLine(prompt: promptText) ?? ""

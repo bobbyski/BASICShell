@@ -1425,6 +1425,13 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
     private let foregroundProcessRegistry: ShellForegroundProcessRegistry
     private lazy var vectorTerminalAvailability = vectorTerminalProbe.isAvailable
     private var didUseVectorTerminal = false
+    /// What was done with the graphics of the program that last stopped on a
+    /// break or an error, while its picture is still there: `.hide` while they
+    /// are hidden, `.keep` while they were left showing. RUN, CLS, a program
+    /// in the foreground or leaving the shell starts afresh (BASIC-28).
+    private var graphicsLeftByStop: BASICGraphicsOnStop?
+    /// The once-only note saying why the graphics went is due, under the error.
+    private var graphicsHiddenNoteDue = false
     private var graphicsMode = BASICScreenMode(number: 0, width: 0, height: 0, colorCount: 0)
     private var graphicsPixels: [Int] = []
     private var graphicsColor = 1
@@ -1468,6 +1475,8 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
     }
 
     func foregroundProcessStarted(_ process: BASICForegroundProcessSnapshot) {
+        // A program in the foreground may draw: not on hidden layers.
+        restoreGraphicsLeftByStop()
         foregroundProcessRegistry.foregroundProcessStarted(process)
     }
 
@@ -2773,10 +2782,59 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
 
     func clearVectorTerminalOnExit() {
         finishVectorTerminalForegroundRun()
+        restoreGraphicsLeftByStop()
     }
 
+    /// A program stopped on a break or an error, and the error is about to be
+    /// printed. Its graphics would cover it, so they are hidden, erased or
+    /// left as `OPTION GRAPHICS-ON-STOP` says (BASIC-28).
     func prepareToPrintRunResult() {
-        finishVectorTerminalForegroundRun()
+        stopVectorTerminalEventPolling()
+        guard didUseVectorTerminal, isVectorTerminalAvailable else { return }
+        switch session?.graphicsOnStop ?? .hide {
+        case .clear:
+            finishVectorTerminalForegroundRun()
+        case .keep:
+            graphicsLeftByStop = .keep
+        case .hide:
+            hideGraphicsAfterStop()
+        }
+        // Left as they are now, not erased when the command finishes.
+        didUseVectorTerminal = false
+    }
+
+    /// Hides the graphics, keeping the picture: the terminal's Show Graphics
+    /// can bring it back to look at, and RUN or CLS does. Graphics the user
+    /// has hidden already stay the user's.
+    private func hideGraphicsAfterStop() {
+        guard vtgCanvas.areGraphicsLayersVisible(timeoutMilliseconds: 250) != false else { return }
+        vtgCanvas.setGraphicsLayersVisible(false)
+        graphicsLeftByStop = .hide
+        graphicsHiddenNoteDue = !ShellOnceNotes.hasShown(ShellOnceNotes.graphicsHiddenOnStop)
+    }
+
+    /// RUN, CLS, a foreground program or leaving the shell: the stopped
+    /// program's picture goes, as it would have when it ended, and graphics
+    /// hidden for it are shown again.
+    func restoreGraphicsLeftByStop() {
+        guard let left = graphicsLeftByStop else { return }
+        graphicsLeftByStop = nil
+        graphicsHiddenNoteDue = false
+        vtgCanvas.clear()
+        vtgCanvas.present()
+        if left == .hide {
+            vtgCanvas.setGraphicsLayersVisible(true)
+        }
+    }
+
+    /// After the command and its error: why the graphics went, the first
+    /// time they do. A terminal has no dialog to say it in.
+    func printDueNotes() {
+        guard graphicsHiddenNoteDue else { return }
+        graphicsHiddenNoteDue = false
+        ShellOnceNotes.markShown(ShellOnceNotes.graphicsHiddenOnStop)
+        printLine("Graphics are hidden so the error can be read. RUN or CLS shows them again.")
+        printLine("OPTION GRAPHICS-ON-STOP KEEP or CLEAR in ~/.BASICrc leaves them or erases them instead.")
     }
 
     func clearEverything() {
@@ -2802,6 +2860,7 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
 
     func clearGraphics(color: Int?) {
         guard isVectorTerminalAvailable else { return }
+        restoreGraphicsLeftByStop()
         guard graphicsMode.width > 0, graphicsMode.height > 0 else {
             didUseVectorTerminal = true
             vtgCanvas.clear()
@@ -3595,6 +3654,7 @@ func finish(_ code: Int32) -> Never {
 func drainSessionEventLoop() {
     _ = session.eventLoop.runUntilIdle()
     host.finishVectorTerminalForegroundRun()
+    host.printDueNotes()
     ShellLineEditor.shared.drainPendingVectorTerminalResponses()
 }
 
@@ -4176,12 +4236,49 @@ enum ShellStartupFiles {
     /// two agree in every ordinary session; making them agree in the odd one is
     /// a change to path expansion everywhere, which is not this feature's to
     /// make.
-    private static var home: String {
+    static var home: String {
         if let fromEnvironment = ProcessInfo.processInfo.environment["HOME"],
            !fromEnvironment.isEmpty {
             return fromEnvironment
         }
         return FileManager.default.homeDirectoryForCurrentUser.path
+    }
+}
+
+/// Notes BASICShell gives once, ever, remembered beside the command history.
+///
+/// Under `$HOME` when that is set, as the startup files are, so a sandboxed
+/// `HOME=/tmp/sandbox basicshell` keeps its own.
+enum ShellOnceNotes {
+    /// Graphics hidden when a program stopped on a break or an error (BASIC-28).
+    static let graphicsHiddenOnStop = "graphics-hidden-on-stop"
+
+    private static var url: URL {
+        #if os(macOS)
+        let base = URL(fileURLWithPath: ShellStartupFiles.home, isDirectory: true)
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        #else
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: ShellStartupFiles.home + "/.local/share", isDirectory: true)
+        #endif
+        return base.appendingPathComponent("BASICShell", isDirectory: true)
+            .appendingPathComponent("ShownNotes.txt")
+    }
+
+    private static var shown: Set<String> {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return Set(text.split(whereSeparator: \.isNewline).map(String.init))
+    }
+
+    static func hasShown(_ note: String) -> Bool {
+        shown.contains(note)
+    }
+
+    static func markShown(_ note: String) {
+        var notes = shown
+        guard notes.insert(note).inserted else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? (notes.sorted().joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }
 
@@ -4318,6 +4415,10 @@ func runShellLine(_ line: String) -> Bool {
         runIntegratedEditor()
         drainSessionEventLoop()
         return true
+    }
+    // A new run starts with the graphics showing and the last picture gone.
+    if isRunCommand(line) || isJITCommand(line) {
+        host.restoreGraphicsLeftByStop()
     }
     if isJITCommand(line) {
         runJITCommand(line)

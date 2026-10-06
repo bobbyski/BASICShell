@@ -229,9 +229,9 @@ public enum BASICKeywords {
     /// Words reserved only in a modifier or `OPTION` position.
     public static let options: Set<String> = [
         "AIBASIC", "ALL", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
-        "GAMEPAD", "IBM", "KEYS", "LENGTH", "MAX", "MIDI", "MODE", "MOUSE", "OFF",
-        "ONLY", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT", "TROFF", "TRON",
-        "TTY", "USING",
+        "GAMEPAD", "GRAPHICS", "HIDE", "IBM", "KEEP", "KEYS", "LENGTH", "MAX", "MIDI",
+        "MODE", "MOUSE", "OFF", "ONLY", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT",
+        "TROFF", "TRON", "TTY", "USING",
     ]
 
     /// Intrinsic functions.

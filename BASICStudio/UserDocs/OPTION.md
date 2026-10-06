@@ -39,3 +39,24 @@ on mouse up call MouseUp
 
 option gamepad off
 ```
+
+## OPTION GRAPHICS-ON-STOP
+
+What BASICShell does with a program's graphics when the program stops on a break (Ctrl-C) or a runtime error, in a terminal that draws them, such as VGTerm.
+
+| Value | What happens |
+| --- | --- |
+| `HIDE` (the default) | The graphics are hidden so the error, its caret and the prompt can be read. The picture is kept: the terminal's Show Graphics brings it back to look at, and `RUN` or `CLS` shows the graphics again, starting afresh. |
+| `CLEAR` | The graphics are erased. |
+| `KEEP` | The graphics are left showing, over the error. |
+
+A program that ends normally is not affected: its graphics are erased when it ends, as before. Graphics you have hidden yourself stay hidden. The first time graphics are hidden this way BASICShell says so under the error, once.
+
+Set it in `~/.BASICrc` to have it in every shell; see [Startup Files](STARTUP_FILES.md).
+
+```basic
+' ~/.BASICrc
+option graphics-on-stop keep
+```
+
+BASICStudio has the same choice in its settings, under Console ▸ Graphics, and does not read this option. A compiled program accepts it and ignores it.

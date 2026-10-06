@@ -976,9 +976,10 @@ final class FunctionBuilder {
             break  // Resolved by the analyzer for the whole program.
         case .optionKeyMode(let mode):
             emit(.keyMode(mode == .ibm ? 1 : 0))
-        case .optionShellMode, .optionEventInput:
+        case .optionShellMode, .optionEventInput, .optionGraphicsOnStop:
             // Host-facing options: key encoding for INKEY$, shell-mode
-            // command dispatch, and mouse/gamepad gating. A compiled console
+            // command dispatch, mouse/gamepad gating, and what the shell does
+            // with graphics when a program stops. A compiled console
             // program has none of those surfaces yet (Phase 5.2), so the
             // options are accepted and change nothing, as they would in the
             // interpreter with no such host.

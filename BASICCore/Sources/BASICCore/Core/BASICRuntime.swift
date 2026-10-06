@@ -34,6 +34,7 @@ final class BASICRuntime {
     var gamepadEventMode: BASICEventInputMode = .auto
     var shellModeEnabled = false
     var stringSubstitutionEnabled = false
+    var graphicsOnStop: BASICGraphicsOnStop = .hide
     var environmentValues: [String: String] = [:]
     var unsetEnvironmentNames: Set<String> = []
     var directoryStack: [String] = []
