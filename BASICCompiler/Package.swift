@@ -59,12 +59,18 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../BASICCore"),
+        // The recipes `basicc new` makes projects from, shared with BASICStudio
+        // and the IDEs (BASIC-24).
+        .package(path: "../BASICRecipes"),
         .package(path: vectorTerminalSDKPath),
     ],
     targets: [
         .target(
             name: "BASICCompilerKit",
-            dependencies: [.product(name: "BASICSyntax", package: "BASICCore")]
+            dependencies: [
+                .product(name: "BASICSyntax", package: "BASICCore"),
+                .product(name: "BASICRecipes", package: "BASICRecipes"),
+            ]
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),

@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.contacts",
+  "name": "Contact Book",
+  "language": "BASIC",
+  "summary": "A full-screen TUIKit contact book in six files: a model, JSON save and load, a window with a toolbar and menus, and an unsaved-changes dialog. A real program to learn from and build on.",
+  "icon": "person.crop.rectangle.stack",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it in BASICStudio or BASICShell, or build it with make"
+}

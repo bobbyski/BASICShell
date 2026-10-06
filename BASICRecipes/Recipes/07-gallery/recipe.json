@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.gallery",
+  "name": "TUIKit Gallery",
+  "language": "BASIC",
+  "summary": "Every TUIKit control in one full-screen application, one file per group of them, to copy from.",
+  "icon": "square.grid.2x2",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it in BASICStudio or BASICShell, or build it with make"
+}

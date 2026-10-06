@@ -42,7 +42,7 @@ func printUsage() {
       -g, -g0              DWARF for lldb: BASIC lines, functions, variables (default -g)
       --json-diagnostics   report errors as a JSON array (for IDEs)
       --bundle             also write <name>.app, a macOS launcher for the program
-      --kind <kind>        for new: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (default: console)
+      --kind <kind>        for new: \(ProjectScaffold.kinds.joined(separator: ", ")) (default: console)
     """)
 }
 
@@ -360,8 +360,9 @@ case "dialects":
     }
 case "new":
     guard let name = invocation.source else { fail("basicc new needs a project name", code: 2) }
-    guard let kind = ProjectScaffold.Kind(rawValue: invocation.kind ?? "console") else {
-        fail("unknown kind '\(invocation.kind ?? "")' — one of: \(ProjectScaffold.Kind.allCases.map(\.rawValue).joined(separator: ", "))", code: 2)
+    let kind = invocation.kind ?? "console"
+    guard ProjectScaffold.summary(of: kind) != nil else {
+        fail("unknown kind '\(kind)' — one of: \(ProjectScaffold.kinds.joined(separator: ", "))", code: 2)
     }
     do {
         let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath, kind: kind)

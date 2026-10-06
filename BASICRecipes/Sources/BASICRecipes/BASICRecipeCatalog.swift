@@ -1209,6 +1209,3321 @@ enum BASICRecipeCatalog {
                 """#),
             ]
         ),
+        recipe(
+            json: #"""
+            {
+              "identifier": "basic.contacts",
+              "name": "Contact Book",
+              "language": "BASIC",
+              "summary": "A full-screen TUIKit contact book in six files: a model, JSON save and load, a window with a toolbar and menus, and an unsaved-changes dialog. A real program to learn from and build on.",
+              "icon": "person.crop.rectangle.stack",
+              "folderExtension": "basproj",
+              "openFile": "src/main.bas",
+              "postNote": "created — run it in BASICStudio or BASICShell, or build it with make"
+            }
+
+            """#,
+            files: [
+                (".gitignore", #"""
+                Build/
+
+                """#),
+                ("Makefile", #"""
+                # BASIC build. `basicc` comes from the BASICCompiler package in the
+                # BASICShell repo (`swift build` there puts it in .build/debug/basicc),
+                # or from its buildAndInstall.sh.
+                BASICC ?= basicc
+                BUILD := Build
+                NAME := {{NAME}}
+
+                .PHONY: run build clean help
+
+                ## run — build, then run it
+                run: build
+                	$(BUILD)/$(NAME)
+
+                ## build — compile src/main.bas to Build/$(NAME)
+                build:
+                	@mkdir -p $(BUILD)
+                	$(BASICC) build src/main.bas -o $(BUILD)/$(NAME)
+
+                ## clean — remove everything the build produced
+                clean:
+                	rm -rf $(BUILD)
+
+                ## help — list these targets
+                help:
+                	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
+
+                """#),
+                ("README.md", #"""
+                # {{NAME}}
+
+                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
+                build it with `basicc`:
+
+                ```sh
+                make        # build and run
+                make build  # just build, into Build/{{NAME}}
+                ```
+
+                The same source runs unchanged in the interpreter:
+
+                ```sh
+                BASICShell src/main.bas
+                ```
+
+                `project.json` names the file the program starts with (`entry`); its
+                modules sit beside it in `src/`.
+
+                `basicc` builds from the BASICCompiler package in the BASICShell repo
+                (`swift build --package-path Code/BASICCompiler`), or installs with
+                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
+                point the Makefile at a build.
+
+                """#),
+                ("project.json", #"""
+                {
+                  "schemaVersion": 1,
+                  "kind": "project",
+                  "name": "{{NAME}}",
+                  "entry": "src/main.bas"
+                }
+
+                """#),
+                ("src/ContactApp.bas", #"""
+                ' ContactApp.bas - the application: theme, menu bar, status strip, start-up.
+                '
+                ' A TUIKit program is three things put together: an application (the run
+                ' loop), a shell (the backdrop that owns the menu row and the status row),
+                ' and windows that float in front of it. This file assembles all three and
+                ' then hands control to app.run, which does not come back until something
+                ' calls app.stop.
+                '
+                ' The layout is OmegaCLIDE's, and it is worth copying: menus across the
+                ' top, desktop in the middle, one line of status along the bottom.
+
+                ' Builds everything and runs. Called from main.bas, and the only function
+                ' in this program that blocks.
+                FUNCTION RunContactBook() AS VARIANT
+                    shell = TUIShell()
+
+                    ' Esc quits from anywhere in a TUIKit shell. Left alone it stops the
+                    ' application outright, which would walk straight past the unsaved-
+                    ' changes dialog that File > Quit puts up - so Esc is pointed at the
+                    ' same gate. Three ways out of the program, one question asked.
+                    shell.onquit("RequestQuit")
+
+                    ' The menu bar next, so the shell knows which bar owns Esc while a
+                    ' dropdown is open: a menu is closed by Esc before the program is.
+                    shell.add(BuildMenuBar())
+
+                    ' The status strip: how many contacts on the left, what just happened
+                    ' in the middle. Both are plain labels that RefreshChrome rewrites, so
+                    ' the strip never has to be rebuilt.
+                    statusTitle = TUILabel(" 0 contacts")
+                    statusHint = TUILabel("")
+                    LOCAL strip = TUIStatus()
+                    strip.addsegment(statusTitle, 16)
+                    strip.addsegment(statusHint, 0, 100)
+                    shell.add(strip)
+
+                    ' Modern Turbo: the blue-and-white look this kit is named after. The
+                    ' theme is set before anything is presented, because a theme applied
+                    ' afterwards restyles controls that have already been drawn once.
+                    app.theme("Modern Turbo")
+                    StyleStatusStrip()
+
+                    ' The book, before the window: the window fills itself from the model
+                    ' when it refreshes, so the model has to be true first.
+                    LoadStartingBook()
+
+                    app.present(BuildContactWindow())
+                    RefreshEverything()
+
+                    app.run(shell)
+
+                    ' Anything printed while the app is up goes to a screen nobody can see -
+                    ' app.run owns the terminal until it returns. This is the first line
+                    ' after it returns, and so the first PRINT that can be read.
+                    PRINT "Contact Book closed. " + LastMessage$
+                    RETURN 0
+                END FUNCTION
+
+                ' Opens the default file when there is one, and seeds samples when not.
+                '
+                ' A starter program that begins with an empty list and no file teaches
+                ' nothing about either. This way the first run shows three contacts, the
+                ' second run shows whatever was saved.
+                FUNCTION LoadStartingBook() AS INTEGER
+                    IF FILEEXISTS(CurrentPath$) THEN
+                        LoadContacts(CurrentPath$)
+                        RETURN ContactCount
+                    END IF
+
+                    SeedSampleContacts()
+                    LastMessage$ = "new book - Save writes " + CurrentPath$
+                    RETURN ContactCount
+                END FUNCTION
+
+                ' The strip's labels take their colors from the theme by naming a role,
+                ' rather than by naming a color. Name a color and the strip stays that
+                ' color when the theme changes, which is how a themed program ends up
+                ' with one piece that does not match.
+                FUNCTION StyleStatusStrip() AS INTEGER
+                    statusTitle.style("header")
+                    statusHint.style("headerplain")
+                    RETURN 0
+                END FUNCTION
+
+                ' ------------------------------------------------------------ the menu bar
+                '
+                ' Every menu item names a handler function, and each one calls exactly the
+                ' function the matching toolbar button calls. The menu is a second door
+                ' into the same room, not a second implementation.
+                '
+                ' "&" marks the Alt- mnemonic: "&Open..." is Alt-O.
+                FUNCTION BuildMenuBar() AS VARIANT
+                    LOCAL bar = TUIMenu()
+
+                    bar.menu("&File")
+                    bar.item("&New Contact", "NewContactAction")
+                    bar.separator()
+                    bar.item("&Open...", "FileOpen")
+                    bar.item("&Save", "FileSave")
+                    bar.item("Save &As...", "FileSaveAs")
+                    bar.separator()
+                    bar.item("&Quit", "RequestQuit")
+
+                    bar.menu("&Edit")
+                    bar.item("&Apply Edits", "ApplyEdits")
+                    bar.item("&Revert Edits", "RevertEdits")
+                    bar.separator()
+                    bar.item("&Delete Contact", "DeleteContactAction")
+
+                    bar.menu("&Help")
+                    bar.item("&About Contact Book", "ShowAbout")
+
+                    RETURN bar
+                END FUNCTION
+
+                ' ------------------------------------------------------------ the commands
+                '
+                ' The four File commands. Each one is short because the deciding is done
+                ' elsewhere: ContactDialogs.bas decides whether unsaved edits allow an
+                ' Open, ContactStorage.bas decides whether a path can be written.
+
+                ' Open the file named in the toolbar - after asking about unsaved edits.
+                FUNCTION FileOpen() AS VARIANT
+                    ' ConfirmFirst does not open anything. It either runs the action now,
+                    ' because there is nothing to lose, or puts up the Save / Discard /
+                    ' Cancel dialog and runs it later, or never. Either way this function
+                    ' is finished; see PerformPendingAction in ContactDialogs.bas.
+                    ConfirmFirst("open")
+                    RETURN 0
+                END FUNCTION
+
+                ' Save to the file that is open.
+                FUNCTION FileSave() AS VARIANT
+                    SaveContacts(CurrentPath$)
+                    RefreshEverything()
+                    RETURN 0
+                END FUNCTION
+
+                ' Save to whatever the toolbar field says, and open that file from now on.
+                '
+                ' Save As and Save are one function apart, and the difference is only which
+                ' path they take - which is why CurrentPath$ is a variable and not a
+                ' constant buried in the save code.
+                FUNCTION FileSaveAs() AS VARIANT
+                    SaveContacts(pathField.value$())
+                    RefreshEverything()
+                    RETURN 0
+                END FUNCTION
+
+                ' Quit - after asking about unsaved edits.
+                FUNCTION RequestQuit() AS VARIANT
+                    ConfirmFirst("quit")
+                    RETURN 0
+                END FUNCTION
+
+                """#),
+                ("src/ContactDialogs.bas", #"""
+                ' ContactDialogs.bas - the dialogs, and the unsaved-changes gate.
+                '
+                ' The interesting one is the gate. Quitting and opening a different file
+                ' both throw away edits, so both have to ask first, and asking is not a
+                ' question a BASIC function can wait for an answer to: app.show puts the
+                ' dialog up and returns immediately, and the answer arrives later as a call
+                ' to whichever button's handler was pressed.
+                '
+                ' That shape - ask now, continue later - is what PendingAction$ is for:
+                '
+                '   ConfirmFirst("quit")        remembers "quit", puts the dialog up
+                '   UnsavedSave                 saves, then does the remembered thing
+                '   UnsavedDiscard              does the remembered thing
+                '   UnsavedCancel               forgets it
+                '
+                ' Written any other way this turns into a flag per command and a tangle of
+                ' IFs. One remembered action, three buttons, one function that carries it
+                ' out - and adding a fifth command that discards edits means adding one
+                ' CASE below, not another dialog.
+
+                ' Runs an action, or asks about unsaved edits and runs it afterwards.
+                '
+                ' action$ is a name this file understands: "quit" or "open". Anything that
+                ' can lose edits should come through here.
+                FUNCTION ConfirmFirst(action$ AS STRING) AS INTEGER
+                    IF NOT IsDirty THEN
+                        ' Nothing to lose: do it now, and never put up a dialog that has
+                        ' only one sensible answer. A program that asks needlessly trains
+                        ' people to dismiss its questions without reading them.
+                        PendingAction$ = action$
+                        PerformPendingAction()
+                        RETURN 1
+                    END IF
+
+                    PendingAction$ = action$
+
+                    LOCAL ask = TUIDialog("Unsaved Changes")
+                    ask.message("You have unsaved changes to " + CurrentPath$ + "." + CHR$(10) + "Save them before you " + action$ + "?")
+
+                    ' The first button added is the default and takes the focus, so the
+                    ' order here is a decision, not a list: Enter saves. Cancel is last,
+                    ' because the safe-but-useless answer should not be the easy one.
+                    ask.addbutton("Save", "UnsavedSave")
+                    ask.addbutton("Discard", "UnsavedDiscard")
+                    ask.addbutton("Cancel", "UnsavedCancel")
+
+                    app.show(ask)
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION UnsavedSave() AS VARIANT
+                    IF NOT SaveContacts(CurrentPath$) THEN
+                        ' The save failed and said why in LastMessage$. The remembered
+                        ' action is dropped: quitting now would throw away the edits the
+                        ' person just asked to keep.
+                        PendingAction$ = ""
+                        RefreshEverything()
+                        RETURN 0
+                    END IF
+
+                    PerformPendingAction()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION UnsavedDiscard() AS VARIANT
+                    ' Discarding is only a decision about the edits; the action itself is
+                    ' the one that was already asked for.
+                    IsDirty = 0
+                    PerformPendingAction()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION UnsavedCancel() AS VARIANT
+                    PendingAction$ = ""
+                    LastMessage$ = "canceled - nothing was saved or lost"
+                    RefreshEverything()
+                    RETURN 0
+                END FUNCTION
+
+                ' Carries out whatever was waiting on the dialog, and forgets it.
+                '
+                ' SELECT CASE rather than a chain of IFs: one statement says "these are all
+                ' the things that can be waiting", and an unknown name falls into CASE ELSE
+                ' instead of quietly doing nothing.
+                FUNCTION PerformPendingAction() AS INTEGER
+                    LOCAL action$ = PendingAction$
+                    PendingAction$ = ""
+
+                    SELECT CASE action$
+                        CASE "quit"
+                            app.stop()
+                            RETURN 1
+
+                        CASE "open"
+                            LoadContacts(pathField.value$())
+                            RefreshEverything()
+                            RETURN 1
+
+                        CASE ELSE
+                            ' Nothing was pending. Reached when a dialog is dismissed by
+                            ' Esc rather than by a button, which is a normal thing to do.
+                            RETURN 0
+                    END SELECT
+                END FUNCTION
+
+                ' ------------------------------------------------------------------ About
+
+                FUNCTION ShowAbout() AS VARIANT
+                    LOCAL about = TUIDialog("About Contact Book")
+                    about.message("A contact book in BASIC, on TUIKit." + CHR$(10) + CHR$(10) + "Contacts are held in a JSON file you can open in any editor. Six source files, no GOTO, and every handler is a named FUNCTION." + CHR$(10) + CHR$(10) + "Reading order: main.bas, ContactModel.bas, ContactStorage.bas, ContactWindow.bas, ContactApp.bas, ContactDialogs.bas.")
+                    about.addbutton("Close", "AboutClosed")
+                    app.show(about)
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION AboutClosed() AS VARIANT
+                    ' A dialog button needs a handler even when there is nothing to do:
+                    ' without one the button still dismisses, but naming the function is
+                    ' where a "don't show this again" would go later.
+                    RETURN 0
+                END FUNCTION
+
+                """#),
+                ("src/ContactModel.bas", #"""
+                ' ContactModel.bas - what a contact IS, and the list of them.
+                '
+                ' There is not one window in this file, and that is the point. The model
+                ' knows names, addresses and a dirty flag; it does not know that a list
+                ' control exists. Everything here can be called from a program with no
+                ' screen at all, which is what makes it the part you can trust.
+                '
+                ' The rule this file follows, and the reason it is first in the tour:
+                ' decide what the data is before you decide what it looks like.
+
+                ' A single contact.
+                '
+                ' JSON NAME gives each field the spelling it has in the file, so the BASIC
+                ' name and the file format can differ without a conversion step: FullName
+                ' is written as "name". A field with no JSON NAME is not written at all,
+                ' which is how you keep scratch state out of a saved file.
+                TYPE Contact
+                    FullName AS STRING JSON NAME "name" = ""
+                    Email AS STRING JSON NAME "email" = ""
+                    Phone AS STRING JSON NAME "phone" = ""
+                    Notes AS STRING JSON NAME "notes" = ""
+                END TYPE
+
+                ' The whole file, as one value.
+                '
+                ' A RECORD can hold a growable array of TYPEs - People(*) - and the JSON
+                ' reader fills it in from the file, so loading is one call rather than a
+                ' parsing loop. Version is here because a format that cannot say what it is
+                ' cannot be changed later without guessing.
+                RECORD ContactBook
+                    Version AS INTEGER JSON NAME "version" = 1
+                    People(*) AS Contact JSON NAME "people"
+                END RECORD
+
+                ' ---------------------------------------------------------------- the list
+                '
+                ' Contacts() and ContactCount are GLOBALs in main.bas. This BASIC has no
+                ' REDIM, so the array is DIMmed once at its largest and ContactCount says
+                ' how much of it is real - the classic BASIC arrangement, and the reason
+                ' every function here checks the bound before it writes.
+
+                ' Adds a contact and answers its row, or -1 when the book is full.
+                '
+                ' Answering -1 rather than stopping is deliberate: a full book is something
+                ' the caller can tell the person about, not a reason to lose the window.
+                FUNCTION AddContact(fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
+                    IF ContactCount > MaxContacts THEN
+                        RETURN -1
+                    END IF
+
+                    LOCAL row = ContactCount
+                    Contacts(row).FullName = fullName
+                    Contacts(row).Email = email
+                    Contacts(row).Phone = phone
+                    Contacts(row).Notes = notes
+                    ContactCount = ContactCount + 1
+                    IsDirty = 1
+                    RETURN row
+                END FUNCTION
+
+                ' Writes edited values back over one row. Answers 1 when it wrote.
+                FUNCTION UpdateContact(row AS INTEGER, fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
+                    IF NOT ContactExists(row) THEN
+                        RETURN 0
+                    END IF
+
+                    Contacts(row).FullName = fullName
+                    Contacts(row).Email = email
+                    Contacts(row).Phone = phone
+                    Contacts(row).Notes = notes
+                    IsDirty = 1
+                    RETURN 1
+                END FUNCTION
+
+                ' Removes one row, closing the gap behind it. Answers 1 when it removed.
+                '
+                ' The loop copies each later contact down one place. A TYPE assigns whole:
+                ' one statement moves all four fields, so this is the same code it would be
+                ' for a book with forty fields per person.
+                FUNCTION RemoveContact(row AS INTEGER) AS INTEGER
+                    IF NOT ContactExists(row) THEN
+                        RETURN 0
+                    END IF
+
+                    LOCAL later
+                    FOR later = row TO ContactCount - 2
+                        Contacts(later) = Contacts(later + 1)
+                    NEXT later
+
+                    ContactCount = ContactCount - 1
+                    IsDirty = 1
+                    RETURN 1
+                END FUNCTION
+
+                ' Is there a contact in this row? Asked by everything that takes a row.
+                '
+                ' A list control answers -1 when nothing is selected, so "is this a real
+                ' row?" is a question every handler has to ask, and it should be spelled
+                ' one way in one place.
+                FUNCTION ContactExists(row AS INTEGER) AS INTEGER
+                    IF row < 0 THEN
+                        RETURN 0
+                    END IF
+                    IF row >= ContactCount THEN
+                        RETURN 0
+                    END IF
+                    RETURN 1
+                END FUNCTION
+
+                ' Empties the book. Used by Open before it reads a file in.
+                FUNCTION ResetContacts() AS INTEGER
+                    ContactCount = 0
+                    EditingRow = -1
+                    IsDirty = 0
+                    RETURN 0
+                END FUNCTION
+
+                ' One row of the list, as the person reading it wants to see it.
+                '
+                ' Presentation, but not a view: it makes a STRING, and a string is
+                ' something a list, a report or a PRINT can all take. That is the seam -
+                ' the model formats text, the window decides where text goes.
+                FUNCTION ContactRow$(row AS INTEGER) AS STRING
+                    IF NOT ContactExists(row) THEN
+                        RETURN ""
+                    END IF
+
+                    LOCAL shown$ = Contacts(row).FullName
+                    IF shown$ = "" THEN
+                        shown$ = "(no name)"
+                    END IF
+
+                    IF Contacts(row).Email <> "" THEN
+                        shown$ = shown$ + "  <" + Contacts(row).Email + ">"
+                    END IF
+                    RETURN shown$
+                END FUNCTION
+
+                ' Three contacts, so a first run has something to click on.
+                '
+                ' Only called when there is no file to open. A starter project that opens
+                ' empty teaches nothing about the list, the form, or the dirty flag.
+                FUNCTION SeedSampleContacts() AS INTEGER
+                    AddContact("Ada Lovelace", "ada@example.com", "555-0100", "Wrote the first program.")
+                    AddContact("Grace Hopper", "grace@example.com", "555-0101", "Found the first bug.")
+                    AddContact("Katherine Johnson", "katherine@example.com", "555-0102", "Checked the computer's math by hand.")
+
+                    ' Sample data is not an edit: the book matches nothing on disk, but
+                    ' there is nothing on disk to match, and starting up with the quit
+                    ' dialog already armed would be a lie.
+                    IsDirty = 0
+                    RETURN ContactCount
+                END FUNCTION
+
+                ' A number as text, with no gap in front of it.
+                '
+                ' STR$ leaves a space where a minus sign would go, so "have " + STR$(3)
+                ' reads "have  3". Every count in this program goes through here instead,
+                ' which is the sort of thing worth fixing once rather than remembering at
+                ' every call.
+                FUNCTION Number$(amount AS INTEGER) AS STRING
+                    LOCAL text$ = STR$(amount)
+                    IF LEFT$(text$, 1) = " " THEN
+                        RETURN MID$(text$, 2)
+                    END IF
+                    RETURN text$
+                END FUNCTION
+
+                """#),
+                ("src/ContactStorage.bas", #"""
+                ' ContactStorage.bas - the JSON file, in and out.
+                '
+                ' Two functions do the work, LoadContacts and SaveContacts, and both answer
+                ' 1 for success and 0 for failure rather than stopping the program. Between
+                ' them sits one rule worth stating out loud:
+                '
+                '   CHECK BEFORE YOU OPEN.
+                '
+                ' BASIC's only error trap is ON ERROR GOTO, and a trap is a poor fit for a
+                ' windowed program: the label it jumps to is somewhere else, and the window
+                ' it jumped out of is still on the screen. Every failure this program can
+                ' have is one it can ask about first - does the file exist, does the folder
+                ' exist - so it asks, reports in the status strip, and carries on. No GOTO,
+                ' and no run that ends in a stack of red text over the desktop.
+
+                ' The folder part of a path: everything before the last "/".
+                '
+                ' Answers "." for a bare file name, because "the folder of contacts.json"
+                ' is the current directory and the caller should not have to special-case
+                ' it. MID$ walks backwards rather than using a search function, since the
+                ' last separator is the one that matters and INSTR finds the first.
+                FUNCTION FolderOf$(path AS STRING) AS STRING
+                    LOCAL at = LEN(path)
+                    WHILE at > 0
+                        IF MID$(path, at, 1) = "/" THEN
+                            ' A leading "/" means the root folder, which is "/" and not "".
+                            IF at = 1 THEN
+                                RETURN "/"
+                            END IF
+                            RETURN LEFT$(path, at - 1)
+                        END IF
+                        at = at - 1
+                    WEND
+                    RETURN "."
+                END FUNCTION
+
+                ' Can this path be written to? Checks the name and the folder, not the file.
+                '
+                ' The file itself is allowed not to exist - that is what Save As does. What
+                ' must exist is somewhere to put it.
+                FUNCTION PathIsWritable(path AS STRING) AS INTEGER
+                    IF path = "" THEN
+                        LastMessage$ = "no file name - type one in the toolbar"
+                        RETURN 0
+                    END IF
+
+                    LOCAL folder$ = FolderOf$(path)
+                    IF NOT FILEEXISTS(folder$) THEN
+                        LastMessage$ = "no folder called " + folder$
+                        RETURN 0
+                    END IF
+                    RETURN 1
+                END FUNCTION
+
+                ' The book as one value, ready for the JSON writer.
+                '
+                ' People(*) is a growable array and Contacts() is a fixed one with a count,
+                ' so the two cannot be handed straight across: staging is DIMmed to exactly
+                ' the contacts that are real and assigned whole. DIM takes an expression,
+                ' which is what makes "exactly this many" possible.
+                FUNCTION BookSnapshot() AS VARIANT
+                    LOCAL book AS ContactBook
+                    book.Version = 1
+
+                    IF ContactCount = 0 THEN
+                        ' An empty book writes {"version":1} and reads back as no contacts,
+                        ' which is the right answer for a file someone emptied on purpose.
+                        RETURN book
+                    END IF
+
+                    DIM staging(ContactCount - 1) AS Contact
+                    LOCAL row
+                    FOR row = 0 TO ContactCount - 1
+                        staging(row) = Contacts(row)
+                    NEXT row
+
+                    book.People = staging
+                    RETURN book
+                END FUNCTION
+
+                ' Writes the book to a JSON file. Answers 1 when it wrote.
+                FUNCTION SaveContacts(path AS STRING) AS INTEGER
+                    IF NOT PathIsWritable(path) THEN
+                        RETURN 0
+                    END IF
+
+                    LOCAL book AS ContactBook
+                    book = BookSnapshot()
+
+                    ' File(name, access, type, requireNew) and writeJson(value, pretty).
+                    ' Pretty is on because a contact book is a file a person might open in
+                    ' an editor, and a format nobody can read is a format nobody checks.
+                    LOCAL writer = File()
+                    writer.open(path, WRITE, JSON, false)
+                    writer.writeJson(book, true)
+                    writer.close
+
+                    CurrentPath$ = path
+                    IsDirty = 0
+                    LastMessage$ = "saved " + Number$(ContactCount) + " contacts to " + path
+                    RETURN 1
+                END FUNCTION
+
+                ' Reads a JSON file into the book, replacing what was there.
+                '
+                ' The caller is responsible for asking about unsaved edits FIRST - see
+                ' ContactDialogs.bas. This function is the part that has no opinion.
+                FUNCTION LoadContacts(path AS STRING) AS INTEGER
+                    IF path = "" THEN
+                        LastMessage$ = "no file name - type one in the toolbar"
+                        RETURN 0
+                    END IF
+
+                    IF NOT FILEEXISTS(path) THEN
+                        LastMessage$ = "no file called " + path
+                        RETURN 0
+                    END IF
+
+                    LOCAL reader = File(path, READ, JSON, false)
+                    LOCAL book AS ContactBook
+                    book = reader.json()
+                    reader.close
+
+                    ' Nothing is disturbed until the file has been read, so a file that
+                    ' turns out to be unreadable leaves the book you already had.
+                    ResetContacts()
+
+                    LOCAL loaded = LEN(book.People)
+                    IF loaded > MaxContacts + 1 THEN
+                        ' More contacts than the array holds: take what fits and say so,
+                        ' rather than writing past the end.
+                        LastMessage$ = "file holds " + Number$(loaded) + " contacts; reading the first " + Number$(MaxContacts + 1)
+                        loaded = MaxContacts + 1
+                    ELSE
+                        LastMessage$ = "opened " + path
+                    END IF
+
+                    LOCAL row
+                    FOR row = 0 TO loaded - 1
+                        Contacts(row) = book.People(row)
+                    NEXT row
+                    ContactCount = loaded
+
+                    CurrentPath$ = path
+                    IsDirty = 0
+                    RETURN 1
+                END FUNCTION
+
+                """#),
+                ("src/ContactWindow.bas", #"""
+                ' ContactWindow.bas - the window: toolbar, list, and edit form.
+                '
+                ' The window is built once, in BuildContactWindow, and then never rebuilt.
+                ' Everything that happens afterwards changes a control that already exists:
+                ' RefreshList replaces the rows, ShowContact fills the fields, RefreshChrome
+                ' rewrites the title and the status line. That is the shape to copy. A
+                ' program that tears down its window to show new data loses the selection,
+                ' the scroll position and the focus every time, and the person using it can
+                ' feel every one of those losses.
+                '
+                ' Handlers are named FUNCTIONs, and they have to be: a BASIC closure
+                ' captures by snapshot, so a closure used as a handler runs and quietly
+                ' throws away everything it did. Every "onclick" below names a function
+                ' further down this file.
+
+                ' Builds the one window and answers it, for the caller to present.
+                FUNCTION BuildContactWindow() AS VARIANT
+                    mainWindow = TUIFloatWindow("Contacts")
+                    mainWindow.frame(2, 1, 76, 22)
+                    mainWindow.minsize(54, 14)
+                    mainWindow.maximizeinsets(1, 1)
+
+                    ' The window's close box asks the same question the File menu's Quit
+                    ' asks. One gate, reached from both, is the only way the two can agree.
+                    mainWindow.onclose("WindowCloseRequested")
+
+                    InstallContactToolbar()
+
+                    ' Left: the contacts. Right: the one being edited.
+                    LOCAL browser = TUISplit("h", BuildContactList(), BuildEditForm())
+                    browser.minimums(22, 26)
+
+                    mainWindow.add(browser)
+                    RETURN mainWindow
+                END FUNCTION
+
+                ' ------------------------------------------------------------- the toolbar
+                '
+                ' Open, Save and New Contact - the three things this program does often -
+                ' with the file name beside them in a field that stretches to the window.
+                '
+                ' The field is not decoration. This binding's dialogs hold a message and
+                ' buttons but no text entry, so the toolbar is where a file name is typed:
+                ' the same arrangement as a browser's address bar, which is where the
+                ' pattern comes from.
+                FUNCTION InstallContactToolbar() AS VARIANT
+                    LOCAL bar = TUIToolbar()
+
+                    ' "both" draws the icon and the title. A toolbar of bare symbols is a
+                    ' guessing game for anyone who did not write it.
+                    bar.displaymode("both")
+
+                    pathField = TUIField()
+                    pathField.text(CurrentPath$)
+
+                    bar.additem("Open", "^", "ToolbarOpen")
+                    bar.additem("Save", "*", "ToolbarSave")
+                    bar.additem("New Contact", "+", "ToolbarNewContact")
+                    bar.divider()
+                    bar.addview(pathField, "File", 1)
+
+                    mainWindow.toolbar(bar)
+                    RETURN 0
+                END FUNCTION
+
+                ' --------------------------------------------------------------- the list
+
+                FUNCTION BuildContactList() AS VARIANT
+                    LOCAL panel = TUIPanel("Contacts")
+                    contactList = TUIList()
+                    contactList.onselect("ContactSelected")
+                    panel.add(contactList)
+                    RETURN panel
+                END FUNCTION
+
+                ' Replaces every row from the model.
+                '
+                ' items() with no arguments empties the list; additem appends. Called after
+                ' anything that changes what contacts exist - adding, deleting, opening a
+                ' file - and never for a change that only affects one contact's text, which
+                ' is what UpdateRow is for.
+                FUNCTION RefreshList() AS INTEGER
+                    contactList.items()
+
+                    ' LOCAL row, and not because the loop needs it: a name that is not
+                    ' LOCAL is shared with the whole program, so an undeclared loop
+                    ' counter here would overwrite a variable of the same name in the
+                    ' function that called this one. Declare what you use.
+                    LOCAL row
+                    FOR row = 0 TO ContactCount - 1
+                        contactList.additem(ContactRow$(row))
+                    NEXT row
+                    RETURN ContactCount
+                END FUNCTION
+
+                ' ---------------------------------------------------------- the edit form
+                '
+                ' TUIForm lays out label-and-control rows in one column, which is exactly
+                ' what a form is; doing it by hand with stacks and labels is four times the
+                ' code and comes out crooked when the window is resized.
+
+                FUNCTION BuildEditForm() AS VARIANT
+                    fullNameField = TUIField()
+                    fullNameField.placeholder("full name")
+                    emailField = TUIField()
+                    emailField.placeholder("you@example.com")
+                    phoneField = TUIField()
+                    phoneField.placeholder("555-0100")
+                    notesField = TUIField()
+                    notesField.placeholder("anything worth remembering")
+
+                    LOCAL entry = TUIForm()
+                    entry.section("Contact")
+                    entry.field("Name", fullNameField)
+                    entry.field("Email", emailField)
+                    entry.field("Phone", phoneField)
+                    entry.field("Notes", notesField)
+
+                    ' Apply is explicit rather than saving on every keystroke. Typing into
+                    ' a field is not a decision; pressing Apply is - and it means Revert
+                    ' can put back what was there without remembering keystrokes.
+                    LOCAL applyButton = TUIButton("&Apply")
+                    applyButton.onclick("ApplyEdits")
+                    LOCAL revertButton = TUIButton("&Revert")
+                    revertButton.onclick("RevertEdits")
+                    LOCAL deleteButton = TUIButton("&Delete")
+                    deleteButton.onclick("DeleteContactAction")
+
+                    LOCAL buttons = TUIStack("h")
+                    buttons.add(applyButton)
+                    buttons.add(revertButton)
+                    buttons.add(deleteButton)
+                    buttons.height(1)
+
+                    LOCAL column = TUIStack("v")
+                    column.add(entry)
+                    column.add(buttons)
+
+                    LOCAL panel = TUIPanel("Details")
+                    panel.add(column)
+                    RETURN panel
+                END FUNCTION
+
+                ' Moves the list highlight and the form to one row, together.
+                '
+                ' Two things have to agree about which contact is current: the highlighted
+                ' row and the fields beside it. Every place that changes the current
+                ' contact calls this, so they cannot drift apart - and selecting in code
+                ' does not fire the list's own handler, which would re-enter this function
+                ' halfway through.
+                FUNCTION SelectRow(row AS INTEGER) AS INTEGER
+                    IF ContactExists(row) THEN
+                        contactList.select(row)
+                    END IF
+                    ShowContact(row)
+                    RETURN 0
+                END FUNCTION
+
+                ' Fills the form from one contact, or empties it when there is none.
+                FUNCTION ShowContact(row AS INTEGER) AS INTEGER
+                    IF NOT ContactExists(row) THEN
+                        EditingRow = -1
+                        fullNameField.text("")
+                        emailField.text("")
+                        phoneField.text("")
+                        notesField.text("")
+                        RETURN 0
+                    END IF
+
+                    EditingRow = row
+                    fullNameField.text(Contacts(row).FullName)
+                    emailField.text(Contacts(row).Email)
+                    phoneField.text(Contacts(row).Phone)
+                    notesField.text(Contacts(row).Notes)
+                    RETURN 1
+                END FUNCTION
+
+                ' ------------------------------------------------------------- the chrome
+
+                ' Rewrites the window title and the status line from the model.
+                '
+                ' One function, called after every change, rather than each handler
+                ' remembering to update the title itself. The asterisk in the title is the
+                ' whole of the unsaved-changes display, and it comes from IsDirty, so it
+                ' can never disagree with the dialog that asks about it.
+                FUNCTION RefreshChrome() AS INTEGER
+                    LOCAL marker$ = ""
+                    IF IsDirty THEN
+                        marker$ = " *"
+                    END IF
+
+                    mainWindow.title("Contacts - " + CurrentPath$ + marker$)
+                    statusTitle.text(" " + Number$(ContactCount) + " contacts")
+
+                    IF LastMessage$ = "" THEN
+                        statusHint.text("Tab moves focus - Apply commits an edit - Esc quits")
+                    ELSE
+                        statusHint.text(LastMessage$)
+                    END IF
+                    RETURN 0
+                END FUNCTION
+
+                ' Everything the screen shows, from the model. Used after opening a file.
+                FUNCTION RefreshEverything() AS INTEGER
+                    RefreshList()
+                    pathField.text(CurrentPath$)
+
+                    ' Land on the first contact when nothing is current, so the form is
+                    ' showing something the moment the window opens. An empty book leaves
+                    ' EditingRow at -1 and the form empty, which is also correct.
+                    IF EditingRow < 0 THEN
+                        EditingRow = 0
+                    END IF
+                    SelectRow(EditingRow)
+
+                    RefreshChrome()
+                    RETURN 0
+                END FUNCTION
+
+                ' -------------------------------------------------------------- handlers
+                '
+                ' Below here, one FUNCTION per thing a person can do. They are short on
+                ' purpose: each one changes the model, then asks the screen to catch up.
+
+                FUNCTION ContactSelected() AS VARIANT
+                    ShowContact(contactList.selected())
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION ApplyEdits() AS VARIANT
+                    IF NOT ContactExists(EditingRow) THEN
+                        LastMessage$ = "nothing selected - pick a contact or press New Contact"
+                        RefreshChrome()
+                        RETURN 0
+                    END IF
+
+                    UpdateContact(EditingRow, fullNameField.value$(), emailField.value$(), phoneField.value$(), notesField.value$())
+
+                    ' Only one contact changed, but the list holds strings rather than
+                    ' contacts, so its row has to be rewritten - and replacing the rows
+                    ' clears the highlight, which is why the row is selected again after.
+                    RefreshList()
+                    SelectRow(EditingRow)
+                    LastMessage$ = "applied changes to " + ContactRow$(EditingRow)
+                    RefreshChrome()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION RevertEdits() AS VARIANT
+                    ShowContact(EditingRow)
+                    LastMessage$ = "reverted the form to the saved contact"
+                    RefreshChrome()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION NewContactAction() AS VARIANT
+                    LOCAL row = AddContact("New Contact", "", "", "")
+                    IF row < 0 THEN
+                        LastMessage$ = "the book is full - " + Number$(MaxContacts + 1) + " contacts is the limit"
+                        RefreshChrome()
+                        RETURN 0
+                    END IF
+
+                    RefreshList()
+                    SelectRow(row)
+                    LastMessage$ = "added a contact - type a name and press Apply"
+                    RefreshChrome()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION DeleteContactAction() AS VARIANT
+                    IF NOT ContactExists(EditingRow) THEN
+                        LastMessage$ = "nothing selected - pick a contact first"
+                        RefreshChrome()
+                        RETURN 0
+                    END IF
+
+                    LOCAL gone$ = ContactRow$(EditingRow)
+                    LOCAL removed = EditingRow
+                    RemoveContact(removed)
+
+                    ' Select whatever moved up into the gap, or the new last row when the
+                    ' one deleted was at the end. A window that deselects after every
+                    ' delete makes deleting three in a row three separate hunts.
+                    IF removed >= ContactCount THEN
+                        removed = ContactCount - 1
+                    END IF
+
+                    RefreshList()
+                    SelectRow(removed)
+                    LastMessage$ = "deleted " + gone$
+                    RefreshChrome()
+                    RETURN 0
+                END FUNCTION
+
+                ' ------------------------------------------------------- toolbar handlers
+                '
+                ' The toolbar buttons do not do the work; they call the same functions the
+                ' menu items call. Two ways in, one thing done - so a fix to Save is a fix
+                ' to both.
+
+                FUNCTION ToolbarOpen() AS VARIANT
+                    FileOpen()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION ToolbarSave() AS VARIANT
+                    FileSave()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION ToolbarNewContact() AS VARIANT
+                    NewContactAction()
+                    RETURN 0
+                END FUNCTION
+
+                FUNCTION WindowCloseRequested() AS VARIANT
+                    ' The close box is a quit: one window, and closing it leaves nothing.
+                    RequestQuit()
+                    RETURN 0
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                #!/usr/bin/env BASICShell
+                ' Contact Book - a windowed BASIC program, in six files.
+                '
+                '   basicshell basicPrograms/demos/apps/contacts.basproj/main.bas
+                '
+                ' WHAT IT DOES
+                '
+                ' Keeps an address book in a JSON file. Open and Save are on the toolbar
+                ' and in the File menu; the list on the left picks a contact, the form on
+                ' the right edits it, and quitting with unsaved edits asks Save, Discard or
+                ' Cancel before it goes.
+                '
+                ' WHAT IT IS FOR
+                '
+                ' This is a starter project, so it is also an argument about how to write
+                ' BASIC. The language got its reputation from programs that were one file,
+                ' one flat run of statements, and a GOTO every time a decision was made.
+                ' None of that is required, and none of it is here:
+                '
+                '   * No GOTO and no GOSUB. Every decision is IF/END IF or SELECT CASE,
+                '     and every piece of work is a FUNCTION with a name that says what it
+                '     does. You can read any one of them without reading the others.
+                '
+                '   * Six files, not one. IMPORT brings them together, and each file is
+                '     about one thing, so "where does saving happen?" has an answer you can
+                '     point at rather than search for.
+                '
+                '   * The model does not know about the screen. ContactModel.bas could be
+                '     used by a program that prints a report and never opens a window.
+                '
+                '   * State is named and shared on purpose, not by accident. Every GLOBAL
+                '     in the program is declared below, in one list, with a comment.
+                '
+                '   * Everything else is declared LOCAL, loop counters included. A name
+                '     that is not declared is shared with the whole program, so an
+                '     undeclared counter in one function silently overwrites a variable of
+                '     the same name in the function that called it. That is the oldest bug
+                '     in BASIC, and the fix is one word: LOCAL.
+                '
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas            you are here - the shared state, and the start
+                '   ContactModel.bas    what a contact IS, and the list of them
+                '   ContactStorage.bas  the JSON file, in and out
+                '   ContactWindow.bas   the window: toolbar, list, edit form
+                '   ContactApp.bas      theme, menu bar, status strip, start-up
+                '   ContactDialogs.bas  the dialogs, and the unsaved-changes gate
+
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's FUNCTIONs and TYPEs into this program. Paths
+                ' are relative to this file, so the program runs from any directory.
+                '
+                ' The order does not matter to BASIC - a function may call one that is
+                ' imported further down - so these are listed in reading order instead.
+                IMPORT "ContactModel.bas"
+                IMPORT "ContactStorage.bas"
+                IMPORT "ContactWindow.bas"
+                IMPORT "ContactApp.bas"
+                IMPORT "ContactDialogs.bas"
+
+                ' ----------------------------------------------------------------- the state
+                '
+                ' Every GLOBAL the program has is HERE, and that is not a preference:
+                ' functions cross the IMPORT boundary but state does not, so a GLOBAL
+                ' declared inside an imported file cannot be seen by the file that imported
+                ' it. Shared state has to be declared in the entry file to be shared at all.
+                '
+                ' The list is short, and that is also on purpose. Anything only one
+                ' function needs is a LOCAL inside that function.
+
+                ' The book. This BASIC has no REDIM, so the array is DIMmed once at its
+                ' largest and ContactCount says how much of it is real - the traditional
+                ' arrangement, and the reason every function that takes a row number checks
+                ' it against ContactCount first.
+                GLOBAL MaxContacts = 199
+                GLOBAL Contacts(199) AS Contact
+                GLOBAL ContactCount = 0
+
+                ' Which contact the form is editing, or -1 for none. Held here rather than
+                ' asked of the list, because a list that has just been refilled has no
+                ' selection yet and the form still has to know what it is showing.
+                GLOBAL EditingRow = -1
+
+                ' Are there edits that are not in the file? Set by the model, displayed as
+                ' the asterisk in the window title, and asked about before quitting.
+                GLOBAL IsDirty = 0
+
+                ' The file the book came from, and the file Save writes back to.
+                GLOBAL CurrentPath$ = "contacts.json"
+
+                ' What the status strip says: the last thing that happened, good or bad.
+                ' Failures are reported here instead of stopping the program.
+                GLOBAL LastMessage$ = ""
+
+                ' What the unsaved-changes dialog is waiting to do - "quit", "open", or ""
+                ' for nothing. See ContactDialogs.bas.
+                GLOBAL PendingAction$ = ""
+
+                ' The application and its shell. TUIApp() is the run loop; everything the
+                ' program shows lives inside the shell or in a window in front of it.
+                GLOBAL app = TUIApp()
+                GLOBAL shell AS VARIANT
+
+                ' The controls the handlers reach for after the window is built. A handler
+                ' is a named function with no arguments, so the controls it touches have to
+                ' be findable by name - which is what these are.
+                GLOBAL mainWindow AS VARIANT
+                GLOBAL contactList AS VARIANT
+                GLOBAL pathField AS VARIANT
+                GLOBAL fullNameField AS VARIANT
+                GLOBAL emailField AS VARIANT
+                GLOBAL phoneField AS VARIANT
+                GLOBAL notesField AS VARIANT
+                GLOBAL statusTitle AS VARIANT
+                GLOBAL statusHint AS VARIANT
+
+                ' ----------------------------------------------------------------- the start
+                '
+                ' One call. Everything else is in ContactApp.bas, where it can be read as
+                ' one piece: build the shell, dress it, load the book, show the window, run.
+                RunContactBook()
+
+                """#),
+            ]
+        ),
+        recipe(
+            json: #"""
+            {
+              "identifier": "basic.gallery",
+              "name": "TUIKit Gallery",
+              "language": "BASIC",
+              "summary": "Every TUIKit control in one full-screen application, one file per group of them, to copy from.",
+              "icon": "square.grid.2x2",
+              "folderExtension": "basproj",
+              "openFile": "src/main.bas",
+              "postNote": "created — run it in BASICStudio or BASICShell, or build it with make"
+            }
+
+            """#,
+            files: [
+                (".gitignore", #"""
+                Build/
+
+                """#),
+                ("Makefile", #"""
+                # BASIC build. `basicc` comes from the BASICCompiler package in the
+                # BASICShell repo (`swift build` there puts it in .build/debug/basicc),
+                # or from its buildAndInstall.sh.
+                BASICC ?= basicc
+                BUILD := Build
+                NAME := {{NAME}}
+
+                .PHONY: run build clean help
+
+                ## run — build, then run it
+                run: build
+                	$(BUILD)/$(NAME)
+
+                ## build — compile src/main.bas to Build/$(NAME)
+                build:
+                	@mkdir -p $(BUILD)
+                	$(BASICC) build src/main.bas -o $(BUILD)/$(NAME)
+
+                ## clean — remove everything the build produced
+                clean:
+                	rm -rf $(BUILD)
+
+                ## help — list these targets
+                help:
+                	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
+
+                """#),
+                ("README.md", #"""
+                # {{NAME}}
+
+                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
+                build it with `basicc`:
+
+                ```sh
+                make        # build and run
+                make build  # just build, into Build/{{NAME}}
+                ```
+
+                The same source runs unchanged in the interpreter:
+
+                ```sh
+                BASICShell src/main.bas
+                ```
+
+                `project.json` names the file the program starts with (`entry`); its
+                modules sit beside it in `src/`.
+
+                `basicc` builds from the BASICCompiler package in the BASICShell repo
+                (`swift build --package-path Code/BASICCompiler`), or installs with
+                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
+                point the Makefile at a build.
+
+                """#),
+                ("project.json", #"""
+                {
+                  "schemaVersion": 1,
+                  "kind": "project",
+                  "name": "{{NAME}}",
+                  "entry": "src/main.bas"
+                }
+
+                """#),
+                ("src/GalleryApp.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The gallery's OmegaCLIDE-form shell: menu bar strip on top, the gallery
+                ' window floating on the desktop, a status strip along the bottom. Boots
+                ' into Modern Turbo; the Theme menu re-dresses everything live.
+                '
+                ' final class GalleryApp
+                '
+                ' BASIC has no classes, so the three stored properties are GLOBALs in
+                ' main.bas rather than fields here:
+                '
+                '   let app = App(driver: ANSIDriver())   -> GLOBAL app = TUIApp()
+                '   let settings = GallerySettings(...)   -> GallerySettings.bas's globals
+                '   private var windowCount = 0           -> GLOBAL windowCount
+                '
+                ' TUIApp() takes no driver. TUIKit fixes the driver at construction and the
+                ' host owns the terminal, so the binding holds an empty seat until `run` and
+                ' builds the App around the host's driver then.
+
+                ' Backdrop for themes that don't paint their own desktop (their
+                ' desktop-context background resolves `.standard`) - without it the
+                ' terminal default shows through and reads as a hole.
+                '
+                ' No `neutralBackdrop` local: the binding applies exactly this fallback
+                ' whenever a theme is set (tuiDesktopFill - cell background, else the
+                ' vector backdrop's top colour, else neutral grey), so in BASIC the
+                ' desktop follows from asking for the theme.
+
+                function RunGalleryApp() as variant
+                    shell = TUIShell()
+                    ' shell.onQuit = { app.stop() }
+                    '
+                    ' Wired by the binding when the app starts, which is the first moment
+                    ' there is an application to stop. Esc quits from anywhere, and hands the
+                    ' key to an open dropdown instead - both in TUIShell.
+
+                    ' The Log page watches LogStore.shared; the gallery narrates itself
+                    ' into it - page clicks, and the VTG startup check below. DEBUG so
+                    ' the page's level filter has layers to peel.
+                    WireGalleryLogging()
+                    galleryLog.write("notice", "gallery starting")
+
+                    ' Status strip content, declared early so the theme path can
+                    ' restyle it.
+                    statusTitle = TUILabel(" TUIKit Gallery")
+                    statusHint = TUILabel("Tab moves focus - ^L controls panel - Theme menu restyles")
+                    clock = TUILabel("--:--:--")
+
+                    ' func styleStatusChrome() and func applyGalleryTheme(_:) are nested
+                    ' functions in the Swift, closing over the labels and over `app`. BASIC
+                    ' has no nested functions and no capture, so both are file-level
+                    ' functions below reading the same globals.
+
+                    ' settings.applyTheme = applyGalleryTheme
+                    ' settings.setHintsVisible = { visible in ... }
+                    '
+                    ' Function values cannot be stored in BASIC, so the settings page calls
+                    ' ApplyGalleryTheme and SetHintsVisible by name instead of through a
+                    ' property it was handed. The seam is the same one, named rather than
+                    ' assigned.
+
+                    ' File: more gallery windows, preferences, close, quit.
+                    let menuBar = TUIMenu()
+                    menuBar.menu("&File")
+                    menuBar.item("&New Gallery Window", "FileNewGalleryWindow")
+                    menuBar.separator()
+                    menuBar.item("&Preferences...", "FilePreferences")
+                    menuBar.separator()
+                    menuBar.item("&Close Window", "FileCloseWindow")
+                    menuBar.separator()
+                    menuBar.item("&Quit", "FileQuit")
+                    '
+                    ' No keyEquivalent: the binding's `item` takes a title and a handler.
+                    ' ^N/^P/^W/^Q are not bound, so the menu is the only way to these four.
+
+                    ' View: the Controls slide-out of the frontmost gallery window - the
+                    ' menu's equivalent of ^L and the [>] title button.
+                    menuBar.menu("&View")
+                    menuBar.item("Toggle &Controls Panel", "ViewToggleControlsPanel")
+
+                    ' Theme: every built-in, so the gallery doubles as the theme tour.
+                    '
+                    ' for (name, theme) in TUIKit.Theme.builtIn -> count and name, because
+                    ' this BASIC has no UBOUND and no FOR EACH. The Swift item closure
+                    ' captures its theme; a BASIC handler is a name, so the name travels as
+                    ' the item's third argument and one handler serves all fifteen.
+                    menuBar.menu("&Theme")
+                    let themeCount = app.themecount()
+                    for themeIndex = 0 to themeCount - 1
+                        let themeName = app.themename(themeIndex)
+                        menuBar.item(themeName, "ApplyGalleryThemeNamed", themeName)
+                    next themeIndex
+
+                    shell.add(menuBar)
+                    ' menuBar.anchors / shell.menuBar / shell.makeFirstResponder(menuBar) are
+                    ' all what `add` does for a menu bar: anchor it across the top row, tell
+                    ' the shell which bar owns Esc, and focus it.
+
+                    ' Status strip with a live clock.
+                    RefreshClock()
+                    app.timer(1, "RefreshClock")
+
+                    ' `let status = StatusBar()` - renamed, not restyled. STATUS is a reserved
+                    ' word in this BASIC: the assignment is accepted and the variable then
+                    ' reads back as 0, so `shell.add(status)` is handed a number and reports
+                    ' that it expected a view. The Swift name is kept in this comment because
+                    ' the rename is BASIC's, not the gallery's.
+                    let statusStrip = TUIStatus()
+                    ' status.showsSeparators = false - the binding's own default.
+                    statusStrip.addsegment(statusTitle, 16)
+                    statusStrip.addsegment(statusHint, 0, 100)
+                    statusStrip.addsegment(clock, 10)
+                    ' status.anchors = AnchorSet(leading: 0, trailing: 0, bottom: 0, height: 1)
+                    ' is what `add` does for a status strip: it owns the last row, the way a
+                    ' menu bar owns the first.
+                    shell.add(statusStrip)
+
+                    ' Boot look: the remembered theme, else Modern Turbo - via the same
+                    ' path the menu and the preferences dialog take.
+                    ApplyGalleryThemeNamed(StoredThemeName())
+                    SetHintsVisible(ShowsHints())
+
+                    app.present(MakeGalleryWindow(0))
+
+                    ' The VTG check happens inside run(); the first tick after it can
+                    ' say what the probe found.
+                    app.after(100, "ReportVTGCheck")
+
+                    ' do { try await app.run(shell) } catch { ... }
+                    '
+                    ' BASIC has no try/catch around this: a host with no terminal makes
+                    ' `run` raise, which the shell reports. The Swift's message and its
+                    ' "Restored terminal." are the same information the shell prints when a
+                    ' program ends.
+                    app.run(shell)
+
+                    print "Restored terminal."
+                    return 0
+                end function
+
+                ' The one theming path, used at boot, by every Theme menu item, and
+                ' by the preferences dialog's Appearance page.
+                '
+                ' Takes the theme's *name* rather than a Theme: BASIC has no theme values,
+                ' and the binding matches a name without case or spaces.
+                function ApplyGalleryThemeNamed(themeName as string) as variant
+                    app.theme(themeName)
+                    ' let backdrop = theme.resolved(for: .desktop).background
+                    ' app.desktop.fillStyle = ... - done by `theme` itself, which paints the
+                    ' desktop with the same `.standard` fallback the Swift spells out here.
+
+                    StyleStatusChrome()
+                    return 0
+                end function
+
+                function StyleStatusChrome() as variant
+                    ' let header = shell.effectiveTheme.header
+                    ' statusTitle.style = header
+                    ' var plain = header; plain.flags.remove(.bold)
+                    '
+                    ' A BASIC label takes the role name and resolves the style through
+                    ' itself - same theme, same context, because the strip is already in the
+                    ' shell by the time this runs.
+                    statusTitle.style("header")
+                    statusHint.style("headerplain")
+                    clock.style("headerplain")
+                    return 0
+                end function
+
+                function SetHintsVisible(visible as integer) as variant
+                    if visible = 1 then
+                        statusHint.text("Tab moves focus - ^L controls panel - Theme menu restyles")
+                    else
+                        statusHint.text("")
+                    end if
+                    return 0
+                end function
+
+                function RefreshClock() as variant
+                    ' let clockFormatter = DateFormatter(); dateFormat = "HH:mm:ss"
+                    '
+                    ' TIME$ is already HH:mm:ss, so BASIC needs no formatter.
+                    clock.text(TIME$)
+                    return 0
+                end function
+
+                ' ---------------------------------------------------------------- menu items
+                '
+                ' One function per menu item, because a BASIC menu item names a handler
+                ' where the Swift writes a closure.
+
+                function FileNewGalleryWindow() as variant
+                    windowCount = windowCount + 1
+                    app.present(MakeGalleryWindow(windowCount))
+                    return 0
+                end function
+
+                function FilePreferences() as variant
+                    PresentPreferences()
+                    return 0
+                end function
+
+                function FileCloseWindow() as variant
+                    ' if let target = app.windows.last(where: { $0 !== shell }) { app.dismiss(target) }
+                    '
+                    ' BASIC cannot search app.windows, so the binding dismisses the
+                    ' front-most window that is not the shell - the same one the Swift picks.
+                    app.dismiss()
+                    return 0
+                end function
+
+                function FileQuit() as variant
+                    app.stop()
+                    return 0
+                end function
+
+                function ViewToggleControlsPanel() as variant
+                    ' (app.windows.last { $0 is GalleryWindow } as? GalleryWindow)?
+                    '     .toggleSlideOut(.leading)
+                    '
+                    ' `win` is the gallery window this program built; the Swift reaches for
+                    ' the front-most one because it may have opened several.
+                    win.toggleslideout("leading")
+                    return 0
+                end function
+
+                ' The VTG check, a tick after the app is up.
+                function ReportVTGCheck() as variant
+                    ' app.isVectorChromeActive / app.graphicsCapabilities - the binding
+                    ' answers the probe as one line rather than as a capability record,
+                    ' because BASIC has no shape to hand the record back in.
+                    galleryLog.write("notice", app.vtgreport())
+                    return 0
+                end function
+
+                """#),
+                ("src/GalleryCharts.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Charts tab: every chart TWICE, side by side - the left copy renders
+                ' vector graphics on a VTG terminal, the right copy sets
+                ' `suppressesVectorChrome` so it always renders ANSI cells. On a plain
+                ' terminal the two columns are identical by design; the caption says so.
+                ' Taller than the window on purpose: the whole tab lives in a ScrollView.
+
+                ' One chart beside its cells-pinned twin, each in a titled panel.
+                '
+                ' `sideBySide(_:height:make:)` takes a closure and calls it twice. BASIC
+                ' cannot pass a builder, so the two copies are built by the caller and
+                ' handed in; everything the helper actually does - the two panels, their
+                ' VTG/ANSI titles, the nochrome on the right copy, the pinned height - is
+                ' here, once, as in the Swift.
+                function SideBySide(title as string, height as integer, vector as variant, cells as variant) as variant
+                    cells.nochrome(1)
+
+                    ' vector.anchors = .fill(); vectorPanel.content.addSubview(vector)
+                    '
+                    ' `fill`, not `add`: a panel's `add` stacks its children in a padded
+                    ' column, which is right for a group of controls and wrong for one chart
+                    ' that should own the panel - the extra layer and its one-column inset
+                    ' change the rect the chart is measured and clipped against, and a chart
+                    ' that is not wholly inside the clip drops its vector rendering.
+                    let vectorPanel = TUIPanel(title + " - VTG")
+                    vectorPanel.fill(vector)
+
+                    let cellsPanel = TUIPanel(title + " - ANSI")
+                    cellsPanel.fill(cells)
+
+                    let pair = Row()
+                    pair.add(vectorPanel)
+                    pair.add(cellsPanel)
+                    return PinnedHeight(pair, height)
+                end function
+
+                ' private final class ChartsColumn: StackView { var contentHeight }
+                '
+                ' A stack whose scroll height is declared, so the ScrollView can size the
+                ' document (pinned rows carry no intrinsic of their own). A BASIC vertical
+                ' TUIStack is that class already - `contentheight` is its declared height.
+
+                function MakeChartsTab() as variant
+                    let column = TUIStack("v")
+                    let totalHeight = 0
+
+                    ' func addRow(_ row: TUIView, _ height: Int) - adds the row and keeps the
+                    ' running total the column is sized by.
+                    column.add(SideBySide("Sparkline", 3, MakeSparkline(), MakeSparkline()))
+                    totalHeight = totalHeight + 3
+
+                    column.add(SideBySide("BarChart", 9, MakeBarChart(), MakeBarChart()))
+                    totalHeight = totalHeight + 9
+
+                    column.add(SideBySide("TimelineChart", 7, MakeTimelineChart(), MakeTimelineChart()))
+                    totalHeight = totalHeight + 7
+
+                    column.add(SideBySide("ScatterChart", 9, MakeScatterChart(), MakeScatterChart()))
+                    totalHeight = totalHeight + 9
+
+                    column.add(SideBySide("LineChart (heap fills its area)", 10, MakeLineChart(), MakeLineChart()))
+                    totalHeight = totalHeight + 10
+
+                    ' The pie sits last: its cell disc is the coarsest thing on the tab,
+                    ' and the charts above it deserve the first screenful.
+                    column.add(SideBySide("PieChart (donut 0.55)", 8, MakePieChart(), MakePieChart()))
+                    totalHeight = totalHeight + 8
+
+                    let note = TUILabel("If the two columns look the same, this terminal has no VTG graphics.")
+                    note.align("c")
+                    column.add(PinnedHeight(note, 1))
+                    totalHeight = totalHeight + 1
+
+                    column.contentheight(totalHeight)
+
+                    let scroll = TUIScroll(column)
+                    return scroll
+                end function
+
+                ' Every builder below calls its chart `chart` in the Swift. BASIC fixes a
+                ' name's type at its first assignment and that type is not scoped to the
+                ' function, so a second `let chart = TUILineChart()` is rejected as an
+                ' assignment of the wrong object. Each builder names its own.
+
+                function MakeSparkline() as variant
+                    return TUISparkline(2, 3, 3, 4, 5, 7, 8, 8, 9, 11, 14, 13, 15, 18, 17, 19, 22, 21, 24, 26)
+                end function
+
+                function MakeBarChart() as variant
+                    let barChart = TUIBarChart()
+                    barChart.categories("Mon", "Tue", "Wed", "Thu", "Fri")
+                    barChart.series("builds", 12, 17, 9, 21, 14)
+                    barChart.series("deploys", 4, 6, 3, 8, 5)
+                    barChart.legend(1)
+                    return barChart
+                end function
+
+                function MakeTimelineChart() as variant
+                    let timelineChart = TUITimeline()
+                    ' TimelineRow(label:, segments: [.init(start:duration:kind:)])
+                    '
+                    ' A track opens a row; its segments follow, each carrying its own kind -
+                    ' which is what colours style.css's wait and track.js's failure
+                    ' differently from the rest.
+                    timelineChart.track("index.html")
+                    timelineChart.segment(0, 210, "active")
+                    timelineChart.track("style.css")
+                    timelineChart.segment(60, 180, "waiting")
+                    timelineChart.segment(240, 380, "active")
+                    timelineChart.track("logo.png")
+                    timelineChart.segment(120, 30, "active")
+                    timelineChart.track("track.js")
+                    timelineChart.segment(150, 260, "waiting")
+                    timelineChart.segment(410, 90, "failed")
+                    timelineChart.domain(0, 800)
+                    ' chart.tickFormatter = { "\(Int($0))ms" } - a unit suffix, which is the
+                    ' part of a formatting closure BASIC can hand over.
+                    timelineChart.tickformat("ms")
+                    return timelineChart
+                end function
+
+                function MakeScatterChart() as variant
+                    let scatterChart = TUIScatter()
+                    scatterChart.series("cache hit", 2, 11, 5, 14, 7, 13, 11, 17, 14, 16, 17, 21, 21, 20, 24, 24)
+                    scatterChart.series("cache miss", 3, 4, 8, 7, 12, 5, 16, 9, 20, 7, 25, 11)
+                    scatterChart.legend(1)
+                    return scatterChart
+                end function
+
+                function MakeLineChart() as variant
+                    let lineChart = TUILineChart()
+                    lineChart.series("resident", 8, 9, 9, 10, 12, 12, 14, 17, 16, 18, 21, 22, 22, 25, 28)
+                    lineChart.series("heap", 3, 3, 4, 5, 5, 6, 8, 7, 8, 10, 10, 12, 12, 13, 15)
+                    ' `fillsArea: true` on the heap series - named after the fact, because a
+                    ' series is added by label and the flag cannot ride in with the values.
+                    lineChart.fillarea("heap")
+                    lineChart.legend(1)
+                    lineChart.yformat("MB")
+                    lineChart.domain(0, 180)
+                    lineChart.xformat("s")
+                    return lineChart
+                end function
+
+                function MakePieChart() as variant
+                    let pieChart = TUIPieChart()
+                    pieChart.slice("rent", 42)
+                    pieChart.slice("food", 33)
+                    pieChart.slice("transit", 17)
+                    pieChart.slice("misc", 8)
+                    pieChart.donut(0.55)
+                    return pieChart
+                end function
+
+                """#),
+                ("src/GalleryControlTabs.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Buttons, Inputs, and Pickers folder tabs.
+
+                ' ---------------------------------------------------------------- Buttons
+
+                function MakeButtonsTab() as variant
+                    let root = TUIStack("v")
+
+                    ' Roles: how a theme dresses ordinary/default/destructive.
+                    let ok = TUIButton("&Save")
+                    ok.role("default")
+                    let danger = TUIButton("&Delete")
+                    danger.role("destructive")
+                    let plain = TUIButton("&Reset")
+                    let bordered = TUIButton("Bordered")
+                    bordered.style("bordered")
+
+                    ' Long-press: hold fires the alternate; a quick click still clicks.
+                    holdResult = TUILabel("click / hold 600ms - the toolbar's Back button holds too")
+                    let hold = TUIButton("&Back")
+                    hold.onclick("ButtonsHoldClicked")
+                    hold.onlongpress("ButtonsHoldLongPressed")
+
+                    let menuButton = TUIButton("Menu on hold")
+                    let context = TUIMenu()
+                    context.menu("")
+                    context.item("Reopen Closed Tab", "ButtonsMenuReopen")
+                    context.item("Copy Address", "ButtonsMenuCopy")
+                    ' no handler -> long-press opens this
+                    menuButton.contextmenu(context)
+
+                    let toggle = TUIToggle("Wrap Lines")
+                    let check = TUICheck("Show hidden files")
+                    let radios = TUIRadio("Ask", "Allow", "Block")
+                    let segments = TUISegments("Day", "Week", "Month")
+
+                    ' Dialogs: modal Dialog, and the open/save FileDialogs.
+                    dialogResult = TUILabel("dialogs report here")
+
+                    let showDialog = TUIButton("Dialog...")
+                    showDialog.onclick("ButtonsShowDialog")
+
+                    let openFile = TUIButton("Open File...")
+                    openFile.onclick("ButtonsOpenFile")
+
+                    ' Phase 16.25: a document window - DocumentController owns Open/Save/
+                    ' Save As/Close, the dirty marker in the title, and the close confirm.
+                    let openDocument = TUIButton("Document...")
+                    openDocument.onclick("ButtonsOpenDocument")
+
+                    let rolesRow = Row()
+                    rolesRow.add(ok)
+                    rolesRow.add(danger)
+                    rolesRow.add(plain)
+                    rolesRow.add(bordered)
+                    let rolesGroup = Group("Roles & Styles")
+                    rolesGroup.add(rolesRow)
+                    root.add(PinnedHeight(rolesGroup, 4))
+
+                    let holdRow = Row()
+                    holdRow.add(hold)
+                    holdRow.add(menuButton)
+                    let holdGroup = Group("Long-press (hold a fresh press ~600 ms)")
+                    holdGroup.add(holdRow)
+                    holdGroup.add(holdResult)
+                    root.add(PinnedHeight(holdGroup, 5))
+
+                    let stateRow = Row()
+                    stateRow.add(toggle)
+                    stateRow.add(check)
+                    let stateGroup = Group("State")
+                    stateGroup.add(stateRow)
+                    root.add(PinnedHeight(stateGroup, 4))
+
+                    ' The preferences dialog in each variation - the gallery's own
+                    ' preferences (theme, panel at launch, hints), so the pages are real.
+                    '
+                    ' Both buttons reach the same dialog: the binding builds the toolbar
+                    ' strip, and the split-list style is not exposed, so "(split)" opens the
+                    ' toolbar one. The pair is kept because the Swift shows both.
+                    let preferencesToolbar = TUIButton("Preferences (toolbar)...")
+                    preferencesToolbar.onclick("ButtonsPreferences")
+                    let preferencesSplit = TUIButton("Preferences (split)...")
+                    preferencesSplit.onclick("ButtonsPreferences")
+
+                    let dialogsRow = Row()
+                    dialogsRow.add(showDialog)
+                    dialogsRow.add(openFile)
+                    dialogsRow.add(openDocument)
+                    let preferencesRow = Row()
+                    preferencesRow.add(preferencesToolbar)
+                    preferencesRow.add(preferencesSplit)
+                    let dialogsGroup = Group("Dialogs - Document (16.25) - Preferences (16.29)")
+                    dialogsGroup.add(dialogsRow)
+                    dialogsGroup.add(preferencesRow)
+                    dialogsGroup.add(dialogResult)
+                    root.add(PinnedHeight(dialogsGroup, 6))
+
+                    let choiceRow = Row()
+                    choiceRow.add(radios)
+                    choiceRow.add(segments)
+                    let choiceGroup = Group("Choice")
+                    choiceGroup.add(choiceRow)
+                    root.add(choiceGroup)
+
+                    return root
+                end function
+
+                function ButtonsHoldClicked() as variant
+                    holdResult.text("clicked - quick press")
+                    return 0
+                end function
+
+                function ButtonsHoldLongPressed() as variant
+                    holdResult.text("long-pressed - the alternate action fired")
+                    return 0
+                end function
+
+                function ButtonsMenuReopen() as variant
+                    holdResult.text("menu: reopen")
+                    return 0
+                end function
+
+                function ButtonsMenuCopy() as variant
+                    holdResult.text("menu: copy")
+                    return 0
+                end function
+
+                function ButtonsShowDialog() as variant
+                    let dialog = TUIDialog("Delete Page?")
+                    dialog.message("This cannot be undone.")
+                    dialog.addbutton("&Cancel", "ButtonsDialogCancelled")
+                    dialog.addbutton("&Delete", "ButtonsDialogDeleted")
+                    ' isCancel / isDefault / isDestructive are not carried: the binding makes
+                    ' the first button added the default one. The Swift's Delete is the
+                    ' default and the destructive one, so here Cancel takes the focus and
+                    ' neither button is dressed in the destructive role.
+                    '
+                    ' dialog.onDismiss and the two sizeToFit calls are what `show` does.
+                    app.show(dialog)
+                    return 0
+                end function
+
+                function ButtonsDialogCancelled() as variant
+                    dialogResult.text("dialog: cancelled")
+                    return 0
+                end function
+
+                function ButtonsDialogDeleted() as variant
+                    dialogResult.text("dialog: deleted")
+                    return 0
+                end function
+
+                function ButtonsOpenFile() as variant
+                    ' FileDialog(mode: .open, root: FileManager.default.currentDirectoryPath)
+                    '
+                    ' Not bound: BASIC has no FileDialog pseudo class, so there is no way to
+                    ' raise the open panel or to receive its onConfirm path. The button is
+                    ' kept, and says so, rather than being quietly dropped from the tab.
+                    dialogResult.text("open: FileDialog is not bound to BASIC yet")
+                    return 0
+                end function
+
+                function ButtonsOpenDocument() as variant
+                    ' The document window is buildable; DocumentController is not bound, so
+                    ' Open/Save/Save As/Close have nothing to drive and the dirty marker in
+                    ' the title never appears. The window is still opened, because the
+                    ' FloatingWindow, the TextView and the button row all translate.
+                    let window = TUIFloatWindow("Untitled")
+                    window.frame(6, 3, 64, 16)
+                    let editor = TUIText("Type here, then File-style buttons below: the title shows a dot while dirty.")
+
+                    ' `let bar = HStack(...)` - renamed: BASIC fixes a name's type at its
+                    ' first assignment across the whole program, and `bar` is the toolbar in
+                    ' GalleryWindow.bas.
+                    let buttonRow = Row()
+                    buttonRow.add(TUIButton("&Open..."))
+                    buttonRow.add(TUIButton("&Save"))
+                    buttonRow.add(TUIButton("Save &As..."))
+                    buttonRow.add(TUIButton("&Close"))
+
+                    let column = TUIStack("v")
+                    column.add(PinnedHeight(buttonRow, 1))
+                    column.add(editor)
+                    window.add(column)
+                    app.present(window)
+                    return 0
+                end function
+
+                function ButtonsPreferences() as variant
+                    PresentPreferences()
+                    return 0
+                end function
+
+                ' ----------------------------------------------------------------- Inputs
+
+                function MakeInputsTab() as variant
+                    let root = TUIStack("v")
+
+                    ' `let field = TextField()` - renamed: FIELD is a reserved word in this
+                    ' BASIC, so a variable called `field` derails the parser on the line after
+                    ' it ("Expected file number").
+                    let entry = TUIField()
+                    entry.placeholder("type here...")
+                    let combo = TUICombo("Mercury", "Venus", "Earth", "Mars")
+                    let popUp = TUIPopup("Balanced", "Performance", "Quiet")
+
+                    let slider = TUISlider(35, 0, 100)
+                    let stepper = TUIStepper(4, 0, 10)
+                    let level = TUILevel(3, 5)
+                    level.editable(1)
+                    ' Phase 16.12: thresholds recolour the fill
+                    level.thresholds(4, 5)
+
+                    let progressBar = TUIProgress("bar", 0.6)
+                    spinner = TUIProgress("spinner")
+
+                    ' The App timer story: the spinner animates like input redraws.
+                    '
+                    ' `app.addTimer(every: .milliseconds(150))` - the binding's timer takes
+                    ' seconds, so 150ms is 0.15.
+                    app.timer(0.15, "InputsAdvanceSpinner")
+
+                    let textRow = Row()
+                    textRow.add(entry)
+                    textRow.add(combo)
+                    textRow.add(popUp)
+                    let textGroup = Group("Text & Choices")
+                    textGroup.add(textRow)
+                    root.add(PinnedHeight(textGroup, 4))
+
+                    let valuesRow = Row()
+                    valuesRow.add(slider)
+                    valuesRow.add(stepper)
+                    valuesRow.add(level)
+                    let valuesGroup = Group("Values")
+                    valuesGroup.add(valuesRow)
+                    root.add(PinnedHeight(valuesGroup, 4))
+
+                    let progressRow = Row()
+                    progressRow.add(progressBar)
+                    progressRow.add(spinner)
+                    let progressGroup = Group("Progress (the spinner rides an App timer)")
+                    progressGroup.add(progressRow)
+                    root.add(progressGroup)
+
+                    return root
+                end function
+
+                function InputsAdvanceSpinner() as variant
+                    spinner.advance()
+                    return 0
+                end function
+
+                ' ---------------------------------------------------------------- Pickers
+
+                function MakePickersTab() as variant
+                    let root = TUIStack("h")
+
+                    let dateField = TUIDate("date")
+                    let calendar = TUIDate("calendar")
+                    let colorPicker = TUIColor()
+
+                    ' Phase 16: Matrix - a grid of cells as one control.
+                    days = TUIMatrix(4, "highlight", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+                    daysLabel = TUILabel("highlight mode - Space toggles, arrows move")
+                    days.onselect("PickersDaysChanged")
+                    let size = TUIMatrix(4, "radio", "S", "M", "L", "XL")
+                    size.select(1)
+
+                    let left = TUIStack("v")
+                    let dateGroup = Group("DatePicker - .date (Space drops a month grid)")
+                    dateGroup.add(dateField)
+                    left.add(PinnedHeight(dateGroup, 4))
+
+                    let sizeRow = Row()
+                    sizeRow.add(size)
+                    sizeRow.add(daysLabel)
+                    let matrixGroup = Group("Matrix - .highlight (days) and .radio (size)")
+                    matrixGroup.add(days)
+                    matrixGroup.add(sizeRow)
+                    left.add(PinnedHeight(matrixGroup, 6))
+
+                    let calendarGroup = Group("DatePicker - .calendar")
+                    calendarGroup.add(calendar)
+                    left.add(calendarGroup)
+
+                    root.add(left)
+                    let colorGroup = Group("ColorPicker (named / palette / RGB tabs)")
+                    colorGroup.add(colorPicker)
+                    root.add(colorGroup)
+
+                    return root
+                end function
+
+                function PickersDaysChanged() as variant
+                    ' days.onSelectionChanged = { daysLabel.text = "selected: \(...)" }
+                    '
+                    ' The Swift maps the selected indexes back to day names; a BASIC handler
+                    ' is handed nothing, and a Matrix's selection cannot be read back, so the
+                    ' label reports that the selection changed rather than what it is.
+                    daysLabel.text("selection changed - Space toggles, arrows move")
+                    return 0
+                end function
+
+                """#),
+                ("src/GalleryDataTabs.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Lists, Text, and Layout folder tabs.
+
+                ' -------------------------------------------------------- Lists & trees
+
+                function MakeListsTab() as variant
+                    let root = TUIStack("v")
+
+                    let listView = TUIList()
+                    listView.items("Inbox", "Drafts", "Sent", "Archive", "Spam", "Trash")
+
+                    ' TreeView(roots: [TreeNode("Sources", children: [...]), ...])
+                    '
+                    ' A BASIC tree is built by adding nodes with a parent rather than by
+                    ' nesting constructors, because a node cannot hold an array of nodes.
+                    let tree = TUITree()
+                    tree.addnode("Sources")
+                    tree.addnode("TUIKit", "Sources")
+                    tree.addnode("Charts.swift", "TUIKit")
+                    tree.addnode("Toolbar.swift", "TUIKit")
+                    tree.addnode("Tests", "Sources")
+                    tree.addnode("Docs")
+                    tree.addnode("Architecture.md", "Docs")
+
+                    let table = TUITable()
+                    table.column("Name")
+                    table.column("Size", 8)
+                    table.column("Kind", 10)
+                    table.addrow("index.html", "12 KB", "html")
+                    table.addrow("style.css", "48 KB", "css")
+                    table.addrow("app.js", "214 KB", "js")
+                    table.addrow("logo.png", "9 KB", "image")
+
+                    ' The real disk, twice: an outline and Miller columns.
+                    let cwd = CURDIR$
+                    let directory = TUIDirTree(cwd)
+                    let browser = TUIBrowser(cwd)
+
+                    ' Crumbs + favorites: the one-row navigation strips.
+                    let pathStrip = TUIPath("/Users/bobby/src/frameworks/UILess/Code/TUIKit")
+                    let favorites = TUIFavorites()
+                    favorites.additem("TUIKit")
+                    favorites.additem("RichSwift")
+                    favorites.additem("VectorTerminal")
+
+                    let listsRow = Row()
+                    let listGroup = Group("ListView")
+                    listGroup.add(listView)
+                    listsRow.add(listGroup)
+                    let treeGroup = Group("TreeView")
+                    treeGroup.add(tree)
+                    listsRow.add(treeGroup)
+                    let tableGroup = Group("TableView")
+                    tableGroup.add(table)
+                    listsRow.add(tableGroup)
+                    root.add(listsRow)
+
+                    let diskRow = Row()
+                    let directoryGroup = Group("DirectoryTree (the real disk)")
+                    directoryGroup.add(directory)
+                    diskRow.add(directoryGroup)
+                    let browserGroup = Group("Browser - Miller columns")
+                    browserGroup.add(browser)
+                    diskRow.add(browserGroup)
+                    root.add(diskRow)
+
+                    let stripRow = Row()
+                    stripRow.add(pathStrip)
+                    stripRow.add(favorites)
+                    let stripGroup = Group("PathControl - TUIFavorites")
+                    stripGroup.add(stripRow)
+                    root.add(PinnedHeight(stripGroup, 4))
+                    return root
+                end function
+
+                ' ------------------------------------------------------------------ Text
+
+                function MakeTextTab() as variant
+                    ' The R8 lexers, all three at once: markup, a style island, a script
+                    ' island with a regex literal.
+                    '
+                    ' BASIC has no multi-line string literal, so the sample is joined line by
+                    ' line with CHR$(10). The text is the Swift's, character for character.
+                    let nl = CHR$(10)
+                    let sample = "<!doctype html>" + nl
+                    sample = sample + "<html>" + nl
+                    sample = sample + "  <head>" + nl
+                    sample = sample + "    <style>" + nl
+                    sample = sample + "      body { color: #333; margin: 0; }  /* island: CSS */" + nl
+                    sample = sample + "    </style>" + nl
+                    sample = sample + "    <script>" + nl
+                    sample = sample + "      // island: JavaScript" + nl
+                    sample = sample + "      const ok = /ab+c/.test(input) && count > 42;" + nl
+                    sample = sample + "      document.title = `found ${count} items`;" + nl
+                    sample = sample + "    </script>" + nl
+                    sample = sample + "  </head>" + nl
+                    sample = sample + "  <body class=" + CHR$(34) + "main" + CHR$(34) + ">&lt;escaped&gt; &amp; entities</body>" + nl
+                    sample = sample + "</html>"
+
+                    let editor = TUISyntax(sample)
+                    editor.language("html")
+
+                    let textView = TUIText("TextView: focusable, selectable multi-line text." + nl + nl + "Arrow keys move, Shift extends the selection, ^C copies - the same editing engine as the code view, minus the gutter.")
+
+                    markdown = TUIMarkdown("# MarkdownView" + nl + nl + "Renders **RichSwift markdown**: headings, lists, quotes, `inline code`." + nl + nl + "- scrolls with arrows and the wheel" + nl + "- soft-wraps to its width")
+
+                    let rich = TUIRich("[bold yellow]RichText[/]: inline [cyan]markup[/] via [green]RichSwift[/] - tables, panels and syntax render too.")
+
+                    let top = Row()
+                    let editorGroup = Group("SyntaxTextView - html (script/style islands lex as JS/CSS)")
+                    editorGroup.add(editor)
+                    top.add(editorGroup)
+                    let textGroup = Group("TextView")
+                    textGroup.add(textView)
+                    top.add(textGroup)
+
+                    ' Phase 16.24: Edit flips the same pane to highlighted source and back.
+                    editToggle = TUIButton("&Edit source")
+                    editToggle.onclick("TextToggleEditing")
+
+                    let bottom = Row()
+                    let markdownGroup = Group("MarkdownView - Edit flips to the source editor")
+                    markdownGroup.add(PinnedHeight(editToggle, 1))
+                    markdownGroup.add(markdown)
+                    bottom.add(markdownGroup)
+                    let richGroup = Group("RichText")
+                    richGroup.add(rich)
+                    bottom.add(richGroup)
+
+                    ' Phase 16: Link hands its URL over (or opens it); (?) is the same
+                    ' control in its help-button dress.
+                    linkResult = TUILabel("links report here")
+                    let link = TUILink("TUIKit on GitHub", "https://github.com/bobbyski/TUIKit")
+                    link.onopen("TextLinkOpened")
+                    let help = TUILink("", "text", "tuikit://help#")
+                    help.onopen("TextHelpOpened")
+
+                    let root = TUIStack("v")
+                    root.add(top)
+                    root.add(bottom)
+                    let linkRow = Row()
+                    linkRow.add(link)
+                    linkRow.add(help)
+                    linkRow.add(linkResult)
+                    let linkGroup = Group("Link & HelpLink")
+                    linkGroup.add(linkRow)
+                    root.add(PinnedHeight(linkGroup, 4))
+                    return root
+                end function
+
+                function TextToggleEditing() as variant
+                    markdown.toggleedit()
+                    ' editToggle.title = markdown.isEditing ? "&Render" : "&Edit source"
+                    '
+                    ' `isEditing` cannot be read back, so the button's own title is what says
+                    ' which way the pane is facing.
+                    if editToggle.title() = "&Edit source" then
+                        editToggle.text("&Render")
+                    else
+                        editToggle.text("&Edit source")
+                    end if
+                    return 0
+                end function
+
+                function TextLinkOpened(url as string) as variant
+                    linkResult.text("would open: " + url)
+                    return 0
+                end function
+
+                function TextHelpOpened(url as string) as variant
+                    linkResult.text("help anchor: " + url)
+                    return 0
+                end function
+
+                ' ---------------------------------------------------------------- Layout
+
+                function MakeLayoutTab() as variant
+                    let root = TUIStack("v")
+
+                    ' SplitView with the R7 axis flip, live.
+                    let first = TUILabel("first pane")
+                    first.align("c")
+                    let second = TUILabel("second pane")
+                    second.align("c")
+                    splitter = TUISplit("h", first, second)
+                    ' The divider position is sticky user state; minimums keep it sane
+                    ' through the zero-size first layout a freshly built tab goes through.
+                    splitter.minimums(8, 8)
+
+                    let flip = TUIButton("&Flip Axis")
+                    flip.onclick("LayoutFlipAxis")
+
+                    ' ScrollView: a document taller than its viewport.
+                    let document = TUIStack("v")
+                    for line = 1 to 30
+                        document.add(PinnedHeight(TUILabel("scrolling line " + STR$(line)), 1))
+                    next line
+                    document.contentheight(30)
+                    let scroll = TUIScroll(document)
+
+                    ' Disclosure + divider + ribbon.
+                    let disclosure = TUIDisclosure("Advanced")
+                    disclosure.add(TUILabel("hidden until disclosed"))
+
+                    let ribbon = TUIRibbon()
+                    ribbon.group("Clipboard", "Cut", "Copy", "Paste")
+                    ribbon.group("History", "Undo", "Redo")
+
+                    ' Phase 16: StatusBar flash (a timed message owning the row) and
+                    ' priority (the hint gives way first when the bar is narrow).
+                    layoutStatus = TUIStatus()
+                    ' a connected separator would weld into the group's title row
+                    layoutStatus.addsegment(TUILabel("Ready"), 8, 0, 2)
+                    layoutStatus.addsegment(TUILabel("low-priority hint - narrows first"), 0, 100, 0)
+                    layoutStatus.addsegment(TUILabel("Ln 12, Col 4"), 0, 0, 1)
+                    let flash = TUIButton("&Flash")
+                    flash.onclick("LayoutFlash")
+
+                    ' Phase 16: FlowStack reflows tags to the width; Form sections share
+                    ' one label column across headers.
+                    let tags = TUIFlow()
+                    tags.add(TUIButton("swift"))
+                    tags.add(TUIButton("terminal"))
+                    tags.add(TUIButton("tui"))
+                    tags.add(TUIButton("concurrency"))
+                    tags.add(TUIButton("testing"))
+                    tags.add(TUIButton("headless"))
+                    tags.add(TUIButton("vtg"))
+                    tags.add(TUIButton("themes"))
+                    tags.add(TUIButton("gallery"))
+                    tags.add(TUIButton("wave-b"))
+
+                    let nameEntry = TUIField()
+                    nameEntry.placeholder("your name")
+                    let emailEntry = TUIField()
+                    emailEntry.placeholder("you@host")
+                    let themePick = TUIPopup("Turbo", "Ambiance", "Standard")
+                    let sectioned = TUIForm()
+                    sectioned.section("Account")
+                    sectioned.field("Name", nameEntry)
+                    sectioned.field("Email", emailEntry)
+                    sectioned.section("Appearance")
+                    sectioned.field("Theme", themePick)
+
+                    ' Phase 16: Toolbox - an exclusive tool palette.
+                    toolLabel = TUILabel("tool: Select")
+                    toolbox = TUIToolbox("Select", "Pen", "Rect", "Ellipse")
+                    toolbox.onselect("LayoutToolChanged")
+
+                    let topRow = Row()
+                    let ribbonGroup = Group("Ribbon - grouped toolbar, placed like any view")
+                    ribbonGroup.add(ribbon)
+                    topRow.add(ribbonGroup)
+                    let toolboxGroup = Group("Toolbox - one tool at a time")
+                    toolboxGroup.add(toolbox)
+                    toolboxGroup.add(toolLabel)
+                    topRow.add(toolboxGroup)
+                    root.add(PinnedHeight(topRow, 5))
+
+                    let formRow = Row()
+                    let tagsGroup = Group("FlowStack - tags wrap to the width")
+                    tagsGroup.add(tags)
+                    formRow.add(tagsGroup)
+                    let sectionedGroup = Group("Form - Section headers, one label column")
+                    sectionedGroup.add(sectioned)
+                    formRow.add(sectionedGroup)
+                    root.add(PinnedHeight(formRow, 8))
+
+                    let flashRow = Row()
+                    flashRow.add(PinnedHeight(flash, 1))
+                    let statusGroup = Group("StatusBar - flash and priority")
+                    statusGroup.add(layoutStatus)
+                    statusGroup.add(flashRow)
+                    root.add(PinnedHeight(statusGroup, 5))
+
+                    ' Phase 16: Scroller - a bar of its own, driving the ScrollView beside it
+                    ' (and following it, when the view scrolls on its own).
+                    '
+                    ' The two-way wiring - scroller.onScroll moves the view, and the view's
+                    ' onOffsetChanged moves the scroller - is not expressible: neither
+                    ' callback is bound, and a BASIC handler is handed no offset. The bar is
+                    ' placed beside the view, spanning the same document, but the two do not
+                    ' follow each other.
+                    ' Scroller(axis:span:) - the span is fixed at construction: viewport 8
+                    ' over a document of 30, the same ScrollSpan the Swift gives it.
+                    let scroller = TUIScroller("v", 8, 30)
+
+                    let bottomRow = Row()
+                    ' Button and split as siblings: nesting them in their own stack
+                    ' would give the pair a fit-content intrinsic and starve the split.
+                    let splitGroup = Group("SplitView - Flip Axis is R7")
+                    splitGroup.add(PinnedHeight(flip, 1))
+                    splitGroup.add(splitter)
+                    bottomRow.add(splitGroup)
+
+                    let scrollRow = Row()
+                    scrollRow.add(scroller)
+                    scrollRow.add(scroll)
+                    let scrollGroup = Group("Scroller - ScrollView")
+                    scrollGroup.add(scrollRow)
+                    bottomRow.add(scrollGroup)
+
+                    let discloseGroup = Group("DisclosureGroup + Divider")
+                    discloseGroup.add(disclosure)
+                    discloseGroup.add(TUIDivider("h"))
+                    discloseGroup.add(TUILabel("below the rule"))
+                    bottomRow.add(discloseGroup)
+                    root.add(bottomRow)
+
+                    return root
+                end function
+
+                function LayoutFlipAxis() as variant
+                    if splitAxisIsHorizontal = 1 then
+                        splitter.axis("v")
+                        splitAxisIsHorizontal = 0
+                    else
+                        splitter.axis("h")
+                        splitAxisIsHorizontal = 1
+                    end if
+                    return 0
+                end function
+
+                function LayoutFlash() as variant
+                    layoutStatus.flash("Saved 3 files - back in 3 seconds")
+                    return 0
+                end function
+
+                function LayoutToolChanged() as variant
+                    ' toolLabel.text = "tool: \(toolbox.tools[$0].caption)"
+                    toolLabel.text("tool: " + toolbox.selectedtitle())
+                    return 0
+                end function
+
+                """#),
+                ("src/GalleryLogPage.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Log page: TUILogger's tools, watching the gallery's own diagnostics.
+                ' The gallery logs its page clicks and the VTG startup check into
+                ' LogStore.shared (see GalleryApp), so this page fills itself by being used -
+                ' switch a few tabs and come back.
+
+                ' extension LogCategory { static let gallery = "gallery" }
+                '
+                ' BASIC has no extensions and no LogCategory type. The binding takes the
+                ' category as a plain string and passes "gallery" for every line the gallery
+                ' writes, which is what the constant stood for.
+
+                ' Points TUILogger at the shared store, once - called by the app's run and
+                ' by the page, whichever gets there first (snapshots never run the app).
+                '
+                ' In BASIC this is what TUILog() does when it is constructed: it adds
+                ' LogStore.shared to TUILogger and sets the level to debug. Constructing one
+                ' is therefore the only way to wire the logger - so `galleryLoggingWired`
+                ' guards it exactly as the Swift's private var does, and the handle is kept
+                ' in a global because BASIC writes log lines through it rather than through
+                ' a shared logger.
+                function WireGalleryLogging() as variant
+                    if galleryLoggingWired = 1 then
+                        return galleryLog
+                    end if
+
+                    galleryLoggingWired = 1
+                    galleryLog = TUILog()
+                    return galleryLog
+                end function
+
+                function MakeLogTab() as variant
+                    WireGalleryLogging()
+
+                    ' return LogView() - a fresh view, watching the same store. In BASIC a
+                    ' second TUILog() is that view; both show every line either one writes.
+                    let logView = TUILog()
+
+                    ' The page fills itself with the gallery's own diagnostics - page
+                    ' clicks, the VTG check - but an empty first open (or a snapshot) should
+                    ' still show what a log looks like, so seed one line per band. Flushed,
+                    ' so they are in the store before the view reads it.
+                    '
+                    ' The Swift seeds "gallery starting" only when the store is empty. BASIC
+                    ' cannot read LogStore.entries, so the line is written unconditionally;
+                    ' on a second open it appears twice rather than once.
+                    logView.write("notice", "gallery starting")
+
+                    logView.write("debug", "log page built - this line is DEBUG; the level picker hides it first")
+                    logView.write("info", "sample: something worth knowing happened")
+                    logView.write("warning", "sample: something is off but the gallery carried on")
+                    logView.write("error", "sample: something failed (it did not - this is the Log page)")
+
+                    return logView
+                end function
+
+                """#),
+                ("src/GalleryNavigationTab.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Navigation folder tab: the Phase 16 structural pieces - pages,
+                ' accordion sections, a layout that degrades, and (16.1) the navigator.
+
+                function MakeNavigationTab() as variant
+                    let root = TUIStack("v")
+
+                    ' ViewThatFits: the same intent at three sizes. The narrow group is
+                    ' capped, so the same control picks a shorter candidate there.
+                    let narrow = Group("ViewThatFits - narrow")
+                    narrow.add(SaveChoices())
+                    ' narrow.maximumSize = Size(width: 22, height: Int.max) - a maximum width
+                    ' is not bound, so the narrow group is as wide as the row gives it and
+                    ' both copies pick the same candidate.
+
+                    ' PageView: three pages, dots and arrows.
+                    pageLabel = TUILabel("page 1 of 3 - left/right turn, or click the dots")
+                    ' PageView(pages: [...]) - the pages are fixed at construction, as they
+                    ' are in the Swift, so they are passed rather than added.
+                    pages = TUIPages(TUILabel("Welcome - the first page."), TUILabel("Features - the second page."), TUILabel("Finish - the last page."))
+                    pages.onselect("NavigationPageChanged")
+
+                    ' Accordion: two sections with more options than fit, two with a line
+                    ' or two. The sections do NOT scroll themselves - the accordion sits in
+                    ' a ScrollView and is scrolled as a whole, its open section at its
+                    ' natural height.
+                    let accordion = TUIAccordion()
+                    accordion.section("General - 30 options", NavigationOptions("General", 30), 1)
+                    accordion.section("Appearance - 24 options", NavigationOptions("Appearance", 24))
+                    accordion.section("Shortcuts - one item", TUILabel("Cmd-K opens the command palette"))
+                    let about = TUIStack("v")
+                    about.add(PinnedHeight(TUILabel("TUIKit Gallery"), 1))
+                    about.add(PinnedHeight(TUILabel("the control showroom"), 1))
+                    accordion.section("About - two items", about)
+                    let accordionScroll = TUIScroll(accordion)
+
+                    ' Navigator: a drill-down menu two levels deep. Esc or Back returns.
+                    let menu = TUIStack("v")
+                    navigator = TUINavigator(menu, "Settings")
+                    depthLabel = TUILabel("level 1 - Enter a row to drill in")
+                    navigator.ondepth("NavigationDepthChanged")
+
+                    ' for (title, body) in [("Appearance", ...), ("Network", ...)]
+                    '
+                    ' The Swift closure captures its title and body and builds the page when
+                    ' the row is pressed; a BASIC handler is a name, so there is one handler
+                    ' per row and it builds the same page.
+                    let appearanceRow = TUIButton("Appearance >")
+                    appearanceRow.onclick("NavigationPushAppearance")
+                    menu.add(PinnedHeight(appearanceRow, 1))
+                    let networkRow = TUIButton("Network >")
+                    networkRow.onclick("NavigationPushNetwork")
+                    menu.add(PinnedHeight(networkRow, 1))
+
+                    let fitsRow = Row()
+                    let wideGroup = Group("ViewThatFits - wide")
+                    wideGroup.add(SaveChoices())
+                    fitsRow.add(wideGroup)
+                    fitsRow.add(narrow)
+                    root.add(PinnedHeight(fitsRow, 4))
+
+                    let middleRow = Row()
+                    let pagesGroup = Group("PageView")
+                    pagesGroup.add(pages)
+                    pagesGroup.add(pageLabel)
+                    middleRow.add(pagesGroup)
+                    let navigatorGroup = Group("Navigator - drill in, Esc back")
+                    navigatorGroup.add(navigator)
+                    navigatorGroup.add(depthLabel)
+                    middleRow.add(navigatorGroup)
+                    root.add(PinnedHeight(middleRow, 7))
+
+                    let accordionGroup = Group("Accordion - exclusive; Space on a header; the whole accordion scrolls")
+                    accordionGroup.add(accordionScroll)
+                    root.add(accordionGroup)
+
+                    return root
+                end function
+
+                ' func saveChoices() -> ViewThatFits - a nested function in the Swift,
+                ' called twice so each group gets its own copy.
+                function SaveChoices() as variant
+                    ' Candidates widest-first, at construction, as ViewThatFits takes them.
+                    return TUIViewThatFits("h", TUIButton("Save the document to disk"), TUIButton("Save document"), TUIButton("Save"))
+                end function
+
+                ' func options(_ prefix: String, count: Int) -> TUIView
+                function NavigationOptions(prefix as string, count as integer) as variant
+                    let list = TUIStack("v")
+                    for index = 1 to count
+                        list.add(PinnedHeight(TUICheck(prefix + " option " + STR$(index)), 1))
+                    next index
+                    return list
+                end function
+
+                function NavigationPageChanged() as variant
+                    pageLabel.text("page " + STR$(pages.selected() + 1) + " of 3 - left/right turn, or click the dots")
+                    return 0
+                end function
+
+                function NavigationDepthChanged(depth as integer) as variant
+                    depthLabel.text("level " + STR$(depth) + " - Esc, Backspace or Back returns")
+                    return 0
+                end function
+
+                function NavigationPushAppearance() as variant
+                    navigator.push(NavigationPage("Appearance", "theme, colours, fonts", "NavigationPushAdvancedAppearance"), "Appearance")
+                    return 0
+                end function
+
+                function NavigationPushNetwork() as variant
+                    navigator.push(NavigationPage("Network", "proxies and timeouts", "NavigationPushAdvancedNetwork"), "Network")
+                    return 0
+                end function
+
+                function NavigationPage(title as string, body as string, advancedHandler as string) as variant
+                    let page = TUIStack("v")
+                    page.add(PinnedHeight(TUILabel(body), 1))
+                    let advanced = TUIButton("Advanced " + title + " >")
+                    advanced.onclick(advancedHandler)
+                    page.add(PinnedHeight(advanced, 1))
+                    return page
+                end function
+
+                function NavigationPushAdvancedAppearance() as variant
+                    navigator.push(TUILabel("the deep end of Appearance"), "Advanced Appearance")
+                    return 0
+                end function
+
+                function NavigationPushAdvancedNetwork() as variant
+                    navigator.push(TUILabel("the deep end of Network"), "Advanced Network")
+                    return 0
+                end function
+
+                """#),
+                ("src/GalleryNewPages.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The Phase 16 controls, each family on a page of its own (Bobby): fields,
+                ' data views, the wizard, gauges, and drawing.
+
+                ' ---------------------------------------------------------------- Fields
+
+                function MakeFieldsTab() as variant
+                    let root = TUIStack("v")
+
+                    searchResult = TUILabel("search reports here")
+                    search = TUISearch()
+                    search.onsearch("FieldsSearchChanged")
+                    search.oncommit("FieldsSearchCommitted")
+                    let paste = TUIPaste()
+                    paste.onclick("FieldsPasted")
+                    paste.onempty("FieldsPasteEmpty")
+
+                    let recipients = TUITokens("add a team, Return mints", "ops")
+                    let teamCompletions = TUICompletions(recipients)
+                    teamCompletions.items("ops", "dev", "design", "docs", "qa", "security")
+                    ' teamCompletions.onAccept = { recipients.mint($0) } - the binding wires
+                    ' accepting to minting when the completion list is attached to a token
+                    ' field, which is the one thing the Swift closure does.
+                    let themeEntry = TUIField()
+                    themeEntry.placeholder("type a theme name...")
+                    let themeCompletions = TUICompletions(themeEntry)
+                    ' themeCompletions.items = TUIKit.Theme.builtIn.map(\.name)
+                    '
+                    ' `items` takes the names one by one, so the list is walked rather than
+                    ' mapped. Same fifteen names, same order.
+                    for themeIndex = 0 to app.themecount() - 1
+                        themeCompletions.additem(app.themename(themeIndex))
+                    next themeIndex
+
+                    let ticked = TUISlider(50, 0, 100)
+                    ticked.ticks(5, 1)
+                    span = TUIRange(20, 60, 0, 100, 10)
+                    spanLabel = TUILabel("20...60 - Space switches thumbs")
+                    span.onchange("FieldsSpanChanged")
+
+                    let searchRow = Row()
+                    searchRow.add(search)
+                    searchRow.add(paste)
+                    let searchGroup = Group("SearchField - PasteButton - Esc/x clear, live and committed reports")
+                    searchGroup.add(searchRow)
+                    searchGroup.add(searchResult)
+                    root.add(PinnedHeight(searchGroup, 5))
+
+                    let tokenRow = Row()
+                    tokenRow.add(recipients)
+                    tokenRow.add(themeEntry)
+                    let tokenGroup = Group("TokenField + CompletionList - type 'd', down, Return - a second list on a plain field")
+                    tokenGroup.add(tokenRow)
+                    root.add(PinnedHeight(tokenGroup, 4))
+
+                    let sliderRow = Row()
+                    sliderRow.add(ticked)
+                    sliderRow.add(span)
+                    sliderRow.add(spanLabel)
+                    let sliderGroup = Group("Slider ticks that snap - RangeSlider")
+                    sliderGroup.add(sliderRow)
+                    root.add(PinnedHeight(sliderGroup, 4))
+
+                    return root
+                end function
+
+                ' The Swift closures receive the text; a BASIC search handler is handed
+                ' nothing, so each reads the field it belongs to.
+                function FieldsSearchChanged() as variant
+                    let text = search.text()
+                    if text = "" then
+                        searchResult.text("search cleared")
+                    else
+                        searchResult.text("searching: " + text)
+                    end if
+                    return 0
+                end function
+
+                function FieldsSearchCommitted() as variant
+                    searchResult.text("committed: " + search.text())
+                    return 0
+                end function
+
+                function FieldsPasted() as variant
+                    ' PasteButton { searchResult.text = "pasted: \($0)" } - the pasted text
+                    ' is not handed to a BASIC handler, so the report says that a paste
+                    ' happened rather than what arrived.
+                    searchResult.text("pasted")
+                    return 0
+                end function
+
+                function FieldsPasteEmpty() as variant
+                    searchResult.text("nothing to paste - copy something first (^C in a field)")
+                    return 0
+                end function
+
+                function FieldsSpanChanged() as variant
+                    ' span.onValuesChanged = { spanLabel.text = "\($0.lowerBound)...\($0.upperBound) ..." }
+                    spanLabel.text(STR$(span.lower()) + "..." + STR$(span.upper()) + " - Space switches thumbs")
+                    return 0
+                end function
+
+                ' ------------------------------------------------------------------ Data
+
+                function MakeDataTab() as variant
+                    let root = TUIStack("v")
+
+                    ' MasterDetail at full width, so the split form shows; narrow the
+                    ' window below 60 columns to watch it collapse onto a navigator.
+                    let masterDetail = TUIMasterDetail()
+                    masterDetail.additem("=", "Inbox", "12 unread")
+                    masterDetail.additem("*", "Starred", "3 flagged")
+                    masterDetail.additem("~", "Drafts", "1 draft")
+                    masterDetail.additem("<", "Trash", "empty")
+
+                    ' The Swift builds each detail pane in a closure from the row's own
+                    ' title and subtitle; BASIC hands the finished pane over per row.
+                    masterDetail.detail(0, MakeFolderDetail("Inbox", "12 unread"))
+                    masterDetail.detail(1, MakeFolderDetail("Starred", "3 flagged"))
+                    masterDetail.detail(2, MakeFolderDetail("Drafts", "1 draft"))
+                    masterDetail.detail(3, MakeFolderDetail("Trash", "empty"))
+
+                    ' `let files = CollectionView(...)` - renamed: FILES is a reserved word,
+                    ' and using it as a variable ends the statement early.
+                    let fileGrid = TUICollection()
+                    fileGrid.section("Recent")
+                    fileGrid.additem("report.pdf")
+                    fileGrid.additem("notes.md")
+                    fileGrid.additem("photo.png")
+                    fileGrid.additem("deck.key")
+                    fileGrid.additem("todo.txt")
+                    fileGrid.section("Shared")
+                    fileGrid.additem("budget.xlsx")
+                    fileGrid.additem("plan.md")
+                    fileGrid.additem("logo.svg")
+
+                    let masterGroup = Group("MasterDetail - list drives detail; collapses to a navigator below 60 columns")
+                    masterGroup.add(masterDetail)
+                    root.add(PinnedHeight(masterGroup, 11))
+
+                    let filesGroup = Group("CollectionView - sections; arrows walk the grid")
+                    filesGroup.add(fileGrid)
+                    root.add(filesGroup)
+
+                    return root
+                end function
+
+                function MakeFolderDetail(title as string, subtitle as string) as variant
+                    let detail = TUIStack("v")
+                    detail.add(PinnedHeight(TUILabel("  " + title), 1))
+                    detail.add(PinnedHeight(TUILabel("  " + subtitle + " - the detail pane for this folder"), 1))
+                    return detail
+                end function
+
+                ' ---------------------------------------------------------------- Wizard
+
+                function MakeWizardTab() as variant
+                    let root = TUIStack("v")
+
+                    wizardName = TUIField()
+                    wizardName.placeholder("user name (required)")
+                    let expressSkip = TUICheck("Express - skip the account step")
+                    let welcome = TUIStack("v")
+                    welcome.add(PinnedHeight(TUILabel("Welcome to the setup wizard."), 1))
+                    welcome.add(PinnedHeight(expressSkip, 1))
+                    wizardDone = TUILabel("setup has not finished yet")
+
+                    let wizard = TUIWizard()
+                    wizard.step("welcome", "Welcome", welcome)
+                    wizard.step("account", "Account", wizardName)
+                    wizard.step("done", "All set", TUILabel("Press Finish to complete the setup."))
+                    ' The `validate` and `next` closures are not bound: a step cannot refuse
+                    ' Next on an empty name, and Express does not branch past the account
+                    ' step. The steps and the trail are the Swift's; the two closures that
+                    ' make it interesting are what BASIC cannot yet say.
+                    wizard.onfinish("WizardFinished")
+
+                    let wizardGroup = Group("Wizard - validation blocks Next; Express branches past a step; Back walks the trail")
+                    wizardGroup.add(wizard)
+                    wizardGroup.add(wizardDone)
+                    root.add(PinnedHeight(wizardGroup, 12))
+
+                    return root
+                end function
+
+                function WizardFinished() as variant
+                    let entered = wizardName.text()
+                    if entered = "" then
+                        wizardDone.text("setup finished for (express)")
+                    else
+                        wizardDone.text("setup finished for " + entered)
+                    end if
+                    return 0
+                end function
+
+                ' ---------------------------------------------------------------- Gauges
+
+                function MakeGaugesTab() as variant
+                    let root = TUIStack("v")
+
+                    ' func gauges(_ style: Gauge.Style) -> TUIView is a nested function taking
+                    ' the style; in BASIC it is GaugeRow below, called once per style.
+                    let levelIndicator = TUILevel(4, 5)
+                    levelIndicator.editable(1)
+                    levelIndicator.thresholds(4, 5)
+                    let stars = TUILevel(3, 5, "rating")
+                    stars.editable(1)
+
+                    root.add(SideBySideGauges("Gauge .ring - 0.7 warning, 0.9 critical", 9, "ring"))
+                    root.add(SideBySideGauges("Gauge .dial", 9, "dial"))
+
+                    let barGroup = Group("Gauge .bar - the form every terminal draws")
+                    barGroup.add(GaugeRow("bar"))
+                    root.add(PinnedHeight(barGroup, 3))
+
+                    let levelRow = Row()
+                    levelRow.add(levelIndicator)
+                    levelRow.add(stars)
+                    let levelGroup = Group("LevelIndicator - warning at 4, critical at 5 (left/right change it) - rating")
+                    levelGroup.add(levelRow)
+                    root.add(PinnedHeight(levelGroup, 3))
+
+                    return root
+                end function
+
+                function GaugeRow(style as string) as variant
+                    ' `let row = HStack(spacing: 2)` - renamed twice over: ROW is this file's
+                    ' own helper, `bar` is the toolbar in GalleryWindow.bas, and BASIC is
+                    ' case-insensitive, so `gaugeRow` would collide with GaugeRow itself.
+                    let styleRow = Row()
+                    let cpu = TUIGauge(42, style, "CPU")
+                    cpu.thresholds(0.7, 0.9)
+                    styleRow.add(cpu)
+                    let ram = TUIGauge(76, style, "RAM")
+                    ram.thresholds(0.7, 0.9)
+                    styleRow.add(ram)
+                    let disk = TUIGauge(93, style, "Disk")
+                    disk.thresholds(0.7, 0.9)
+                    styleRow.add(disk)
+                    return styleRow
+                end function
+
+                ' sideBySide(title, height:) { make() } takes a *closure* that builds the
+                ' view twice - once for the VTG panel, once for the ANSI one. BASIC has no
+                ' closure to pass, so each caller has its own side-by-side that calls its
+                ' own builder twice. Everything else - the two panels, their titles, the
+                ' nochrome on the right copy, the pinned height - is shared in SideBySide.
+                function SideBySideGauges(title as string, height as integer, style as string) as variant
+                    return SideBySide(title, height, GaugeRow(style), GaugeRow(style))
+                end function
+
+                ' --------------------------------------------------------------- Drawing
+
+                function MakeDrawingTab() as variant
+                    let root = TUIStack("v")
+
+                    ' Canvas.drawChrome and .drawCells are drawing closures - a Canvas paints
+                    ' through (Chrome, Rect) -> Void and (Painter, Rect) -> Void, and BASIC
+                    ' has no way to supply either. The two canvases are placed, side by side
+                    ' as in the Swift, and draw nothing.
+                    root.add(SideBySide("Canvas - chrome-only draw closure (the ANSI side is the honest placeholder)", 7, TUICanvas(), TUICanvas()))
+                    root.add(SideBySide("Canvas - with a cell closure too (no placeholder needed)", 5, TUICanvas(), TUICanvas()))
+
+                    ' The TUIKit logo from Docs, bundled as a resource; the generated
+                    ' gradient stands in if the bundle is missing.
+                    '
+                    ' Neither is reachable: BASIC cannot read the Swift package's bundle, and
+                    ' the gradient is a base64 literal decoded into Data. TUIImage takes a
+                    ' caption and draws its own placeholder.
+                    root.add(SideBySide("ImageView - right-click or long-press for Open in Viewer / Copy / Paste", 18, TUIImage("TUIKitLogo.png"), TUIImage("TUIKitLogo.png")))
+
+                    return root
+                end function
+
+                """#),
+                ("src/GallerySettings.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The gallery's real preferences: a `Preferences` suite on disk and the
+                ' `PreferencesDialog` that edits it - reached from the toolbar's Settings
+                ' button and File > Preferences..., the way an app would do it.
+                '
+                ' Keys: `theme` (a built-in theme name), `controlsPanelOpen` (whether the
+                ' Controls slide-out starts open), `showsHints` (the status-bar hint).
+                '
+                ' final class GallerySettings
+                '
+                ' BASIC has no classes, so the store is a GLOBAL in main.bas and the
+                ' computed properties below are functions. The two closure properties -
+                '
+                '   var applyTheme: (Theme) -> Void
+                '   var setHintsVisible: (Bool) -> Void
+                '
+                ' - are not stored at all: BASIC cannot hold a function value, so the pages
+                ' call ApplyGalleryThemeNamed and SetHintsVisible in GalleryApp.bas by name.
+                ' The seam is the same one, named rather than assigned.
+
+                ' var storedTheme: Theme?
+                '
+                ' Returns the *name*, not a Theme: BASIC has no theme values, and the name is
+                ' what every consumer of this ends up passing on. "" would be the Swift's
+                ' nil, so the fallback to Modern Turbo lives here rather than at the call
+                ' site, where `?? .modernTurbo` is in the Swift.
+                function StoredThemeName() as string
+                    ' `let name = store.string(forKey: "theme")` - renamed: NAME is a
+                    ' reserved word, so a variable called `name` reads back empty.
+                    let storedName = prefsStore.text("theme")
+                    if storedName = "" then
+                        return "Modern Turbo"
+                    end if
+
+                    ' guard the stored name still names a built-in one, as
+                    ' `Theme.builtIn.first { $0.name == name }` does - a suite that outlives a
+                    ' renamed theme should fall back rather than fail.
+                    for themeIndex = 0 to app.themecount() - 1
+                        if app.themename(themeIndex) = storedName then
+                            return storedName
+                        end if
+                    next themeIndex
+
+                    return "Modern Turbo"
+                end function
+
+                ' var controlsPanelOpen: Bool { get { ... ?? false } set { ... } }
+                '
+                ' A BASIC function cannot be a property, so the getter and setter are two.
+                function ControlsPanelOpen() as integer
+                    return prefsStore.flag("controlsPanelOpen", 0)
+                end function
+
+                function SetControlsPanelOpen(value as integer) as variant
+                    prefsStore.setflag("controlsPanelOpen", value)
+                    return 0
+                end function
+
+                ' var showsHints: Bool { get { ... ?? true } set { ... } }
+                function ShowsHints() as integer
+                    return prefsStore.flag("showsHints", 1)
+                end function
+
+                function SetShowsHints(value as integer) as variant
+                    prefsStore.setflag("showsHints", value)
+                    return 0
+                end function
+
+                ' Presents the preferences dialog - the same pages in either selector
+                ' style (the toolbar strip is the default; the split list is the
+                ' legacy look).
+                '
+                ' No `style` parameter: the binding builds the toolbar strip, which is the
+                ' Swift's default and the only style the gallery asks for.
+                function PresentPreferences() as variant
+                    let dialog = TUIPrefsDialog("Preferences")
+
+                    ' General: the two behaviours the gallery itself reads.
+                    panelCheck = TUICheck("Open the Controls panel at launch")
+                    panelCheck.checked(ControlsPanelOpen())
+                    panelCheck.onchange("PreferencesPanelChanged")
+                    hintsCheck = TUICheck("Show the status-bar hint")
+                    hintsCheck.checked(ShowsHints())
+                    hintsCheck.onchange("PreferencesHintsChanged")
+                    let general = TUIForm()
+                    general.field("Startup", panelCheck)
+                    general.field("Status bar", hintsCheck)
+
+                    ' Appearance: the theme, applied live and remembered.
+                    let themeCount = app.themecount()
+                    let stored = StoredThemeName()
+                    let current = 0
+                    themePopUp = TUIPopup()
+                    for themeIndex = 0 to themeCount - 1
+                        let themeName = app.themename(themeIndex)
+                        themePopUp.additem(themeName)
+                        if themeName = stored then
+                            current = themeIndex
+                        end if
+                    next themeIndex
+                    themePopUp.selected(current)
+                    themePopUp.onselect("PreferencesThemeChanged")
+                    let appearance = TUIForm()
+                    appearance.field("Theme", themePopUp)
+
+                    dialog.addpage("General", "*", general)
+                    dialog.addpage("Appearance", "~", appearance)
+                    dialog.addbutton("&Done", 1)
+                    ' dialog.onDismiss = { app.dismiss(dialog) } and the two sizeToFit calls
+                    ' either side of the present are what `show` does - TUIKit's own document
+                    ' controller sizes twice, once before the desktop has given the dialog a
+                    ' frame and once after.
+                    app.show(dialog)
+                    return 0
+                end function
+
+                ' The three onChange/onSelectionChanged closures, as named handlers. Each
+                ' reads its control rather than being handed the new value, because a BASIC
+                ' handler takes no argument from a control.
+
+                function PreferencesPanelChanged() as variant
+                    SetControlsPanelOpen(panelCheck.checked())
+                    return 0
+                end function
+
+                function PreferencesHintsChanged() as variant
+                    let visible = hintsCheck.checked()
+                    SetShowsHints(visible)
+                    SetHintsVisible(visible)
+                    return 0
+                end function
+
+                function PreferencesThemeChanged() as variant
+                    let index = themePopUp.selected()
+                    if index < 0 then
+                        return 0
+                    end if
+
+                    ' self.store.set(names[index], forKey: "theme"); self.applyTheme(...)
+                    let themeName = app.themename(index)
+                    prefsStore.settext("theme", themeName)
+                    ApplyGalleryThemeNamed(themeName)
+                    return 0
+                end function
+
+                """#),
+                ("src/GallerySiblingPages.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The sibling packages' pages: a kanban board, a diagram, and a terminal.
+
+                ' ---------------------------------------------------------------- Boards
+
+                function MakeBoardsTab() as variant
+                    let root = TUIStack("v")
+
+                    boardMoved = TUILabel("left/right columns - up/down cards - Space picks up and drops - drag with the mouse - -/+ fold")
+
+                    let board = TUIBoard()
+                    ' A card joins the column most recently opened, so the nesting the Swift
+                    ' writes as an array of columns each holding its cards is written here as
+                    ' a column followed by its cards.
+                    board.column("todo", "To do")
+                    board.card("1", "Write the spec", "docs")
+                    board.card("2", "Port the charts", "TUIKit")
+                    board.card("3", "Ship 1.0", "release")
+                    board.column("doing", "Doing", 2)
+                    board.card("4", "Fix the donut seam", "VTG")
+                    board.card("5", "Soak harness", "driver")
+                    board.card("6", "Idle lockup", "driver")
+                    board.column("review", "Review")
+                    board.card("7", "Parity doc", "Phase 16")
+                    board.column("done", "Done")
+                    board.card("8", "Wave A", "10 controls")
+                    board.card("9", "Wave B", "15 controls")
+                    ' `isCollapsed: true` on Done is not carried: the column is built open.
+                    board.onmove("BoardCardMoved")
+
+                    let boardGroup = Group("TUIBoards - BoardView: WIP limit on Doing (2), Done folded")
+                    boardGroup.add(board)
+                    root.add(boardGroup)
+                    root.add(PinnedHeight(boardMoved, 1))
+                    return root
+                end function
+
+                function BoardCardMoved() as variant
+                    ' board.onCardMoved = { card, _, to, _ in moved.text = "moved ... to column \(to + 1)" }
+                    '
+                    ' The card and the destination column are not handed to a BASIC handler,
+                    ' so the label reports the move rather than naming the card.
+                    boardMoved.text("a card moved")
+                    return 0
+                end function
+
+                ' --------------------------------------------------------------- Diagram
+
+                function MakeDiagramTab() as variant
+                    let root = TUIStack("v")
+
+                    diagramSelected = TUILabel("arrows walk the layers - Enter activates - click selects")
+
+                    let diagram = TUIDiagram()
+                    diagram.node("sources", "Sources")
+                    diagram.node("parse", "Parse")
+                    diagram.node("check", "Type check")
+                    diagram.node("lint", "Lint")
+                    diagram.node("emit", "Emit")
+                    diagram.node("link", "Link")
+                    diagram.node("test", "Test")
+                    diagram.node("ship", "Ship")
+                    diagram.edge("sources", "parse")
+                    diagram.edge("parse", "check")
+                    diagram.edge("parse", "lint")
+                    diagram.edge("check", "emit")
+                    diagram.edge("lint", "emit", "warnings")
+                    diagram.edge("emit", "link")
+                    diagram.edge("link", "test")
+                    diagram.edge("test", "ship")
+                    diagram.onselect("DiagramSelectionChanged")
+                    ' diagram.onActivate = { selected.text = "activated: \($0)" } - one
+                    ' selection handler is bound, so Enter reports as a selection does.
+
+                    let scroll = TUIScroll(diagram)
+
+                    let diagramGroup = Group("TUIDiagram - DiagramView: a build pipeline, laid out by the layering algorithm (rounded boxes and polylines under VTG)")
+                    diagramGroup.add(scroll)
+                    root.add(diagramGroup)
+                    root.add(PinnedHeight(diagramSelected, 1))
+                    return root
+                end function
+
+                function DiagramSelectionChanged() as variant
+                    ' The selected node's id is not handed over, so the label reports that
+                    ' the selection moved rather than which node it landed on.
+                    diagramSelected.text("selection changed")
+                    return 0
+                end function
+
+                ' -------------------------------------------------------------- Terminal
+                '
+                ' func makeTerminalTab(live: Bool) is deliberately absent, with WebBrowser:
+                ' both drive a live subprocess. GalleryWindow leaves the tab out of the
+                ' page list, and Scripts/gallery-parity.sh counts it as skipped.
+
+                """#),
+                ("src/GalleryWindow.bas", #"""
+                ' (no import line: BASIC reaches TUIKit through the TUI* pseudo classes)
+
+                ' The gallery window: an icon toolbar across the top, then folder tabs, one
+                ' per control group. RULE (PLAN.md maintenance rules): a new TUIKit control
+                ' lands with a spot in one of these tabs, in the same commit.
+
+                ' final class GalleryWindow: FloatingWindow
+                '
+                ' The subclass exists for one override: ^L toggles the leading slide-out.
+                ' BASIC cannot subclass a TUIKit window, so the key is not bound here - the
+                ' View menu's "Toggle Controls Panel" and the [>] title button reach the same
+                ' toggleslideout. ^L itself is the one thing this file loses.
+
+                ' Builds one gallery window - a resizable, maximizable *content* window
+                ' (Turbo dresses it blue with a white double frame) whose content is a
+                ' folder-tab view over every control in the kit, with a Controls panel
+                ' that slides out of the left edge to jump between the tabs.
+                '
+                ' No `app`/`settings` parameters: both are globals. No `live` parameter
+                ' either - it exists in the Swift to keep the Terminal tab from starting a
+                ' real shell during snapshots, and the Terminal tab is deliberately absent.
+                function MakeGalleryWindow(index as integer) as variant
+                    if index = 0 then
+                        win = TUIFloatWindow("TUIKit Gallery")
+                    else
+                        win = TUIFloatWindow("TUIKit Gallery " + STR$(index + 1))
+                    end if
+
+                    win.frame(2 + index * 2, 1 + index, 78, 24)
+                    ' window.themeContext = .contentWindow - the document surface, Turbo
+                    ' blue. Set by the binding for every TUIFloatWindow.
+                    win.minsize(50, 14)
+                    win.maximizeinsets(1, 1)
+                    win.onclose("GalleryWindowCloseRequested")
+
+                    InstallToolbar()
+
+                    tabs = TUITabs()
+
+                    ' let pages: [(title, summary, content)]
+                    '
+                    ' BASIC has no tuple array, so the three columns are read straight into
+                    ' the two places the Swift uses them - addtab, and the Controls index -
+                    ' one page per pair of lines rather than one row per page.
+                    controlsIndex = TUISidebar()
+
+                    AddGalleryPage("Buttons", "roles, long-press, dialogs", MakeButtonsTab())
+                    AddGalleryPage("Inputs", "fields, values, progress", MakeInputsTab())
+                    AddGalleryPage("Fields", "search, tokens, completion", MakeFieldsTab())
+                    AddGalleryPage("Pickers", "dates, colours, matrix", MakePickersTab())
+                    AddGalleryPage("Lists", "lists, trees, tables", MakeListsTab())
+                    AddGalleryPage("Data", "master-detail, collection", MakeDataTab())
+                    AddGalleryPage("Text", "editors and markdown", MakeTextTab())
+                    AddGalleryPage("Layout", "stacks, splits, forms", MakeLayoutTab())
+                    AddGalleryPage("Nav", "pages, navigator, accordion", MakeNavigationTab())
+                    AddGalleryPage("Wizard", "steps, validation, branching", MakeWizardTab())
+                    AddGalleryPage("Gauges", "ring, dial, bar, levels", MakeGaugesTab())
+                    AddGalleryPage("Drawing", "canvas and images", MakeDrawingTab())
+                    AddGalleryPage("Charts", "cells and VTG", MakeChartsTab())
+                    AddGalleryPage("Boards", "kanban - TUIBoards", MakeBoardsTab())
+                    AddGalleryPage("Diagram", "nodes and edges - TUIDiagram", MakeDiagramTab())
+                    ' ("Terminal", "a shell - TUITerminal", makeTerminalTab(live:)) is left
+                    ' out on purpose, with WebBrowser: both drive a live subprocess.
+                    AddGalleryPage("Log", "TUILogger + LogView", MakeLogTab())
+
+                    ' Every page click lands in the log - which is what fills the Log page.
+                    tabs.onselect("GalleryPageSelected")
+
+                    ' A rule between the toolbar and the folder tabs; connected, so the
+                    ' window welds it into its frame.
+                    let content = TUIStack("v")
+                    content.add(PinnedHeight(TUIDivider("h"), 1))
+                    content.add(tabs)
+                    win.add(content)
+
+                    ' The Controls panel: the slide-out, holding an index of the tabs.
+                    ' Selecting a row shows that tab; the panel stays put (pinned) because
+                    ' jumping between tabs is exactly when you want it open.
+                    controlsIndex.onselect("GalleryControlsIndexSelected")
+                    ' index.onActivate = { tabs?.select(selected) } - a BASIC sidebar has one
+                    ' selection handler, and it already selects the tab, so activating a row
+                    ' does what the Swift's second closure does.
+
+                    ' if settings.controlsPanelOpen { window.openSlideOut(.leading) }
+                    '
+                    ' The fifth argument is that `if`: the panel is installed open or shut,
+                    ' because a window that has not been presented yet has no open panel to
+                    ' close afterwards.
+                    win.slideout("leading", "Controls", controlsIndex, 28, ControlsPanelOpen())
+
+                    return win
+                end function
+
+                ' One page: a tab, and the row that indexes it in the Controls panel. The
+                ' Swift builds an array of triples and then walks it twice; BASIC has no
+                ' tuple array, so the two walks become one call per page.
+                function AddGalleryPage(title as string, summary as string, content as variant) as variant
+                    tabs.addtab(title, content)
+                    controlsIndex.additem(">", title, summary)
+                    return 0
+                end function
+
+                function GalleryPageSelected() as variant
+                    ' TUILogger.shared.info("page: \(titles[selected])")
+                    galleryLog.write("info", "page: " + tabs.selectedtitle())
+                    return 0
+                end function
+
+                function GalleryControlsIndexSelected() as variant
+                    let selected = controlsIndex.selected()
+                    if selected < 0 then
+                        return 0
+                    end if
+
+                    tabs.select(selected)
+                    galleryLog.write("info", "page: " + tabs.selectedtitle() + " - controls panel")
+                    return 0
+                end function
+
+                function GalleryWindowCloseRequested() as variant
+                    ' window.onCloseRequest = { app.dismiss(window) }
+                    app.dismiss()
+                    return 0
+                end function
+
+                ' The window toolbar: icon buttons, a flexible address field (R6), and the
+                ' long-press example - hold Back for its history menu, exactly the browser
+                ' gesture the feature was built for.
+                function InstallToolbar() as variant
+                    let bar = TUIToolbar()
+                    bar.displaymode("both")
+
+                    address = TUIField()
+                    address.text("tuikit://gallery/charts")
+
+                    bar.additem("Back", "<", "ToolbarBack")
+                    ' back.longPressAction - the held-Back history menu.
+                    bar.longpress("Back", "ToolbarBackHistory")
+
+                    bar.additem("Forward", ">", "ToolbarForward")
+                    bar.additem("Reload", "@", "ToolbarReload")
+                    bar.divider()
+                    bar.addview(address, "Address", 1)
+                    bar.divider()
+                    bar.additem("Settings", "*", "ToolbarSettings")
+
+                    win.toolbar(bar)
+                    return 0
+                end function
+
+                function ToolbarBack() as variant
+                    address.text("tuikit://gallery/back - quick click")
+                    return 0
+                end function
+
+                function ToolbarBackHistory() as variant
+                    let history = TUIMenu()
+                    history.menu("")
+                    history.item("tuikit://gallery/charts", "ToolbarHistoryCharts")
+                    history.item("tuikit://gallery/text", "ToolbarHistoryText")
+                    history.item("tuikit://gallery/buttons", "ToolbarHistoryButtons")
+                    ' Below the toolbar row, at the button.
+                    win.contextmenu(history, 3, 2)
+                    return 0
+                end function
+
+                ' for entry in [...] { history.addItem(...) { address.setText(...) } }
+                '
+                ' Three handlers rather than a loop: the Swift closure captures its entry,
+                ' and a menu item's carried argument is a string, so the loop could be kept -
+                ' but the three URLs are literals in the Swift too, and one handler each
+                ' reads the same as the array does.
+                function ToolbarHistoryCharts() as variant
+                    address.text("tuikit://gallery/charts - from held Back")
+                    return 0
+                end function
+
+                function ToolbarHistoryText() as variant
+                    address.text("tuikit://gallery/text - from held Back")
+                    return 0
+                end function
+
+                function ToolbarHistoryButtons() as variant
+                    address.text("tuikit://gallery/buttons - from held Back")
+                    return 0
+                end function
+
+                function ToolbarForward() as variant
+                    address.text("tuikit://gallery/forward")
+                    return 0
+                end function
+
+                function ToolbarReload() as variant
+                    address.text("tuikit://gallery - reloaded")
+                    return 0
+                end function
+
+                function ToolbarSettings() as variant
+                    ' the real preferences dialog
+                    PresentPreferences()
+                    return 0
+                end function
+
+                ' ------------------------------------------- Shared layout helpers
+                '
+                ' Used by every tab file, as in the Swift.
+
+                ' A group box: a titled panel whose content is a padded vertical stack.
+                '
+                ' `group(_:spacing:_:)` takes an array of children; BASIC has no array
+                ' literal of handles, so a group is opened, added to, and used - TUIPanel
+                ' stacks what it is given, which is what the Swift's helper does by hand.
+                function Group(title as string) as variant
+                    return TUIPanel(title)
+                end function
+
+                ' Pins a stack row to an exact height, so flexible rows don't absorb it.
+                function PinnedHeight(view as variant, height as integer) as variant
+                    view.height(height)
+                    return view
+                end function
+
+                ' A row of side-by-side flexible children.
+                function Row() as variant
+                    return TUIStack("h")
+                end function
+
+                """#),
+                ("src/main.bas", #"""
+                ' TUIKit Gallery - every control, grouped into folder tabs.
+                '
+                '   basicshell basicPrograms/demos/tui/gallery.basproj/main.bas
+                '
+                ' The shell is the OmegaCLIDE form: a menu bar strip across the top, a
+                ' resizable gallery window floating on the desktop, and a status strip
+                ' along the bottom. The Theme menu restyles everything live (the app boots
+                ' into Modern Turbo); the Charts tab shows each chart's VTG and ANSI
+                ' renderings side by side on a VectorTerminal.
+                '
+                ' A file-for-file translation of TUIGallery/Sources/TUIKitGallery. Every
+                ' <Name>.swift has a <Name>.bas beside it with its functions in the same
+                ' order; Scripts/gallery-parity.sh shows the two side by side.
+
+                ' One IMPORT per Swift file, added as each is translated, so the gallery runs
+                ' at every step rather than only at the end. The list is complete when
+                ' Scripts/gallery-parity.sh reports no file left.
+                IMPORT "GalleryLogPage.bas"
+                IMPORT "GalleryApp.bas"
+                IMPORT "GallerySettings.bas"
+                IMPORT "GalleryWindow.bas"
+                IMPORT "GalleryControlTabs.bas"
+                IMPORT "GalleryDataTabs.bas"
+                IMPORT "GalleryNewPages.bas"
+                IMPORT "GalleryCharts.bas"
+                IMPORT "GallerySiblingPages.bas"
+                IMPORT "GalleryNavigationTab.bas"
+
+                ' ---------------------------------------------------------------- globals
+                '
+                ' Every GLOBAL the gallery uses is declared HERE rather than in the file that
+                ' owns it, and that is not a preference. A GLOBAL declared inside an IMPORTed
+                ' file does not reach the importer - functions cross the boundary, state does
+                ' not - so state has to be declared in the entry file to be shared at all.
+                '
+                ' Each one is labelled with the Swift file and binding it stands for, so the
+                ' side-by-side reading still works.
+
+                ' GalleryApp.swift
+                GLOBAL app = TUIApp()
+                GLOBAL statusTitle AS VARIANT
+                GLOBAL statusHint AS VARIANT
+                GLOBAL clock AS VARIANT
+                GLOBAL shell AS VARIANT
+                GLOBAL windowCount = 0
+
+                ' GalleryLogPage.swift
+                GLOBAL galleryLog AS VARIANT
+                GLOBAL galleryLoggingWired = 0
+
+                ' GallerySettings.swift
+                '
+                ' `store` is the Swift's `let store: Preferences`. STORE is not reserved, but
+                ' the name is kept distinct from the gallery's other handles for the same
+                ' reason the Swift qualifies it with `self.`.
+                GLOBAL prefsStore = TUIPrefs("com.tuikit.gallery")
+                GLOBAL panelCheck AS VARIANT
+                GLOBAL hintsCheck AS VARIANT
+                GLOBAL themePopUp AS VARIANT
+
+                ' GalleryWindow.swift
+                GLOBAL win AS VARIANT
+                GLOBAL tabs AS VARIANT
+                GLOBAL address AS VARIANT
+                GLOBAL controlsIndex AS VARIANT
+
+                ' GalleryControlTabs.swift
+                GLOBAL holdResult AS VARIANT
+                GLOBAL dialogResult AS VARIANT
+                GLOBAL spinner AS VARIANT
+                GLOBAL days AS VARIANT
+
+                ' GalleryNewPages.swift
+                GLOBAL searchResult AS VARIANT
+                GLOBAL search AS VARIANT
+                GLOBAL span AS VARIANT
+                GLOBAL spanLabel AS VARIANT
+                GLOBAL daysLabel AS VARIANT
+                GLOBAL days AS VARIANT
+                GLOBAL wizardName AS VARIANT
+                GLOBAL wizardDone AS VARIANT
+
+                ' GalleryNavigationTab.swift
+                GLOBAL pages AS VARIANT
+                GLOBAL pageLabel AS VARIANT
+                GLOBAL navigator AS VARIANT
+                GLOBAL depthLabel AS VARIANT
+
+                ' GalleryDataTabs.swift
+                GLOBAL markdown AS VARIANT
+                GLOBAL editToggle AS VARIANT
+                GLOBAL toolbox AS VARIANT
+                GLOBAL toolLabel AS VARIANT
+                GLOBAL splitter AS VARIANT
+                GLOBAL splitAxisIsHorizontal = 1
+                GLOBAL layoutStatus AS VARIANT
+                GLOBAL linkResult AS VARIANT
+
+                ' GallerySiblingPages.swift
+                GLOBAL boardMoved AS VARIANT
+                GLOBAL diagramSelected AS VARIANT
+
+                ' The snapshot branch of main.swift is deliberately absent: GallerySnapshot
+                ' renders every tab to SVG headlessly, which is a test harness rather than
+                ' part of the app. Scripts/gallery-parity.sh lists it as skipped.
+
+                RunGalleryApp()
+
+                """#),
+            ]
+        ),
     ]
 
     /// A recipe from its `recipe.json` and files. The JSON was read from a

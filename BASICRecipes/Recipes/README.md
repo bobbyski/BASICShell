@@ -45,5 +45,10 @@ swift run basic-recipe-catalog
 
 The tests fail while the catalog and these folders differ.
 
+`06-contacts` and `07-gallery` are copies of the demo projects
+`apps/contacts.basproj` and `tui/gallery.basproj`, which are the originals.
+Change those, then copy them here and write the catalog with
+`./sync-demo-recipes.sh`.
+
 A user's own recipes are folders like these, which a tool reads where it
 keeps them; one with a built-in recipe's identifier is left out.

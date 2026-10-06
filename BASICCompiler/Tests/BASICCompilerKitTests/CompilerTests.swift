@@ -438,27 +438,61 @@ struct ProjectTests {
 
 /// The starters `basicc new` writes must compile and, where the interpreter
 /// is built, match it — otherwise the wizards hand people a broken project.
+/// They are the shared recipes (BASIC-24); those that need a window, a
+/// terminal or VTG graphics stop where they would need one, and say so the
+/// same way in both engines.
 struct StarterTests {
-    @Test(arguments: ProjectScaffold.Kind.allCases)
-    func starterBuildsAndMatchesTheInterpreter(kind: ProjectScaffold.Kind) throws {
+    /// The starters that run to the end with nothing but stdin.
+    static let runsToTheEnd: Set<String> = ["console", "structured"]
+    /// The starters basicc refuses: a program's own ActiveUI windows run in
+    /// BASICStudio's interpreter, and basicc says so.
+    static let studioOnly: Set<String> = ["activeui"]
+
+    @Test(arguments: ProjectScaffold.kinds)
+    func starterBuildsAndMatchesTheInterpreter(kind: String) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind)
+        #expect((project as NSString).lastPathComponent == "Starter.basproj")
         let source = (project as NSString).appendingPathComponent("src/main.bas")
         let output = (project as NSString).appendingPathComponent("Build/Starter")
         try FileManager.default.createDirectory(atPath: (output as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        if Self.studioOnly.contains(kind) {
+            #expect(throws: CompileError.self, "starter \(kind) is BASICStudio's") {
+                try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
+            }
+            return
+        }
         try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
 
         // The console starter reads a name; feed both engines the same one.
         let stdin = "Bobby\n"
         let compiled = try runWithInput(output, stdin)
-        // The TUI starter needs a terminal, and says so where the
-        // interpreter says so. Everything else runs to the end.
-        #expect(compiled.exitCode == (kind == .tui ? 1 : 0))
+        if Self.runsToTheEnd.contains(kind) {
+            #expect(compiled.exitCode == 0, "starter \(kind)")
+        } else {
+            #expect(compiled.exitCode != 0, "starter \(kind) needs a window, a terminal or graphics")
+        }
         if let interpreter = TestBuild.interpreter {
             let interpreted = try runWithInput(interpreter, stdin, arguments: [source])
-            #expect(compiled.stdout == interpreted.stdout, "starter \(kind.rawValue)")
+            #expect(compiled.stdout == interpreted.stdout, "starter \(kind)")
+        }
+    }
+
+    @Test func aProjectIsBuiltFromItsFolder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = try ProjectScaffold.generate(named: "Folder", into: root.path, kind: "structured")
+        let output = (root.path as NSString).appendingPathComponent("folder-built")
+        try Compilation(dialect: TraditionalDialect()).build(sourcePath: project, output: output)
+        #expect(try runWithInput(output, "").exitCode == 0)
+        #expect(throws: ProjectScaffold.Failure.self) {
+            try ProjectScaffold.generate(named: "Folder", into: root.path, kind: "structured")
+        }
+        #expect(throws: ProjectScaffold.Failure.self) {
+            try ProjectScaffold.generate(named: "Other", into: root.path, kind: "nonsense")
         }
     }
 
