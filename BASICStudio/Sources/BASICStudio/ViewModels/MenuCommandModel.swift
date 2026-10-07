@@ -18,6 +18,9 @@ import Foundation
 ///   File         New                   ⌘N             fileNew
 ///                New Project…          ⇧⌘N
 ///                Load…                 ⌘O             fileOpen
+///                Open Project…         ⇧⌘O            (the ActiveUI shell's)
+///                Open Recent ▸         Projects, Files, Clear Menu
+///                                                     recentEntries, as it opens
 ///                Save                  ⌘S             fileSave
 ///                Save As…              ⇧⌘S
 ///                ─────
@@ -38,6 +41,8 @@ struct MenuCommandModel: Equatable {
         case newProgram, newProject
         case load, save, saveAs, setWorkingDirectory
         case example(BundledExample)
+        case openRecent(StudioRecentItems.Kind, URL)
+        case clearRecent
         case find, findAndReplace
         case overwriteMode, showGraphics
         case showDebugger
@@ -66,6 +71,8 @@ struct MenuCommandModel: Equatable {
         case separator
         /// A disabled line of text, such as "No Examples Found".
         case placeholder(String)
+        /// A heading over the items that follow it, such as "Projects".
+        case heading(String)
         /// A submenu: a folder of the Examples menu.
         case submenu(title: String, entries: [Entry])
     }
@@ -151,6 +158,8 @@ struct MenuCommandModel: Equatable {
         case .saveAs: model.saveProgramAsFromMenu()
         case .setWorkingDirectory: model.setWorkingDirectoryFromMenu()
         case .example(let example): model.loadBundledExample(example)
+        case .openRecent(let kind, let url): model.openRecent(url, as: kind)
+        case .clearRecent: model.clearRecentItems()
         case .find: model.showFind()
         case .findAndReplace: model.showFindAndReplace()
         case .overwriteMode: model.setConsoleOverwriteMode(!model.isConsoleOverwriteMode)
@@ -161,6 +170,26 @@ struct MenuCommandModel: Equatable {
 }
 
 extension MenuCommandModel {
+    /// File ▸ Open Recent, read when it opens: the projects, then the files,
+    /// newest first, leaving out any no longer there, and Clear Menu.
+    @MainActor
+    static func recentEntries(_ model: StudioModel) -> [Entry] {
+        let (projects, files) = model.recentItemsOnDisk()
+        guard !projects.isEmpty || !files.isEmpty else {
+            return [.placeholder("No Recent Items")]
+        }
+        var entries: [Entry] = []
+        for (heading, kind, urls) in [("Projects", StudioRecentItems.Kind.project, projects), ("Files", .file, files)] where !urls.isEmpty {
+            entries.append(.heading(heading))
+            for (url, title) in zip(urls, StudioRecentItems.titles(for: urls, kind: kind)) {
+                entries.append(.item(Item(title: title, shortcut: nil, action: .openRecent(kind, url), isChecked: nil)))
+            }
+        }
+        entries.append(.separator)
+        entries.append(.item(Item(title: "Clear Menu", shortcut: nil, action: .clearRecent, isChecked: nil)))
+        return entries
+    }
+
     /// The Examples menu, mirroring `basicPrograms/demos` as a tree: a
     /// submenu per folder, at any depth, holding its subfolders and then its
     /// programs.

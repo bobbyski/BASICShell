@@ -72,6 +72,7 @@
 		74D0835107EBA56BF18A331D /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
 		74E30F5278F0970FD4856435 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
 		75807C1C239BCC9BECB786B7 /* ActiveUICode in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		78DBDBE491AB6EC5D212DEA1 /* RecentItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06907C91BE30059002468268 /* RecentItems.swift */; };
 		797CEBCC3F1A3E1385DF48F0 /* DocsPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786414E68D08A63E6898020E /* DocsPaneModel.swift */; };
 		7DBAA76766D2100EF5629E5A /* ActiveUICoreEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; };
 		8274C17D24F7C4BE5D62A5B3 /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01D222A22E3CB0848365480 /* ProjectModel.swift */; };
@@ -119,6 +120,7 @@
 		C5221EF5D5E176F1B1990362 /* StudioJITRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADBF639C0AF1EFB97031FC3 /* StudioJITRun.swift */; };
 		C60D27DD81B28FC93816AD02 /* BASICRecipes in Frameworks */ = {isa = PBXBuildFile; productRef = DDAB5E84E91AE79CFA60B441 /* BASICRecipes */; };
 		C9D09F3FC54365D4E62BAC0F /* DocsPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */; };
+		CAB6F3116F4CD607217FF15C /* RecentItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06907C91BE30059002468268 /* RecentItems.swift */; };
 		CB4C8857336B27C3D4574089 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
 		CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
 		D05ADC8871BB376F69B2C843 /* StudioActiveUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */; };
@@ -176,6 +178,7 @@
 /* Begin PBXFileReference section */
 		01076CFFB99EF0CDC95B7827 /* ActiveUICoreEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICoreEditor; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor; sourceTree = SOURCE_ROOT; };
 		011AFAC86C3D24E2C652443E /* ActiveUICode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICode; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICode; sourceTree = SOURCE_ROOT; };
+		06907C91BE30059002468268 /* RecentItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentItems.swift; sourceTree = "<group>"; };
 		0CB8284FB31709C1BD017047 /* MonacoEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonacoEditor.swift; sourceTree = "<group>"; };
 		1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioHostFlags.swift; sourceTree = "<group>"; };
 		1EB2534D1B03D7BFF565C132 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm; sourceTree = SOURCE_ROOT; };
@@ -419,6 +422,7 @@
 				77E7120C2A16D6B188200258 /* NewProjectWizardModel.swift */,
 				A01D222A22E3CB0848365480 /* ProjectModel.swift */,
 				48FFDD9C956077CA2BBAB7D6 /* PromptEditorModel.swift */,
+				06907C91BE30059002468268 /* RecentItems.swift */,
 				9028AD794558129FE62B1489 /* RenderInputs.swift */,
 				20D23305654DCC7C771397BA /* SettingsViewModel.swift */,
 				5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */,
@@ -598,6 +602,7 @@
 				C2F4002E9B0C824E4C39C745 /* ProjectModel.swift in Sources */,
 				EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */,
 				48D9ACA2F311AA58216CF400 /* PromptEditorModel.swift in Sources */,
+				CAB6F3116F4CD607217FF15C /* RecentItems.swift in Sources */,
 				44FE9EE08A4BB2C50D554C20 /* RenderInputs.swift in Sources */,
 				6095E23C83DAF700CE5333E9 /* SettingsAUI.swift in Sources */,
 				B7922A21D2E5A7B60E0CDF0D /* SettingsViewModel.swift in Sources */,
@@ -649,6 +654,7 @@
 				8274C17D24F7C4BE5D62A5B3 /* ProjectModel.swift in Sources */,
 				196B696B2A6B42F526ECD7AC /* PromptEditorAUI.swift in Sources */,
 				C5182AF195339C8C5C164CCF /* PromptEditorModel.swift in Sources */,
+				78DBDBE491AB6EC5D212DEA1 /* RecentItems.swift in Sources */,
 				62C6EF49F258F42796EE77C4 /* RenderInputs.swift in Sources */,
 				2A5E43D6901CA4826F9048B7 /* SettingsAUI.swift in Sources */,
 				290BC8E580C6DF4CD199A74B /* SettingsViewModel.swift in Sources */,

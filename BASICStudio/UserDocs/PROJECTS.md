@@ -59,6 +59,7 @@ Create stays off while the name is not a name, or a project of that name is alre
 ## Opening a project
 
 - **File ▸ Open Project…** opens a `.basproj` folder, or any folder of `.bas` files.
+- **File ▸ Open Recent** lists the projects and the files opened lately, newest first, ten of each, and opens one again. A file picked in the project sidebar is not added: the project already is. **Clear Menu** empties it.
 - **Examples** that are projects open as projects. Studio opens a copy, so the example itself is never changed:
   - On the Mac, the copy is in `Documents/BASICStudio Examples`.
   - With iCloud on, the copy is in the `Examples` folder of Studio's iCloud folder.

@@ -534,7 +534,15 @@ final class StudioActiveUIShell {
         let openProject = AUIMenuItem(ProjectModel.openProjectTitle, shortcut: AUIKeyboardShortcut("o", modifiers: [.command, .shift])) { [weak model] in
             model?.openProjectFromMenu()
         }
-        let file = AUIMenu("File", items: items(commands.fileNew, model: model) + items(commands.fileOpen, model: model) + [openProject] + items(commands.fileSave, model: model) + [
+        // Read each time it opens, so it is never out of date.
+        let recent = AUIMenu("Open Recent", items: []).dynamicItems { [weak model] in
+            MainActor.assumeIsolated {
+                guard let model else { return [] }
+                return items(MenuCommandModel.recentEntries(model), model: model)
+            }
+        }
+        let openRecent = AUIMenuItem("Open Recent", submenu: recent)
+        let file = AUIMenu("File", items: items(commands.fileNew, model: model) + items(commands.fileOpen, model: model) + [openProject, openRecent] + items(commands.fileSave, model: model) + [
             .separator(),
             .command(.closeDocument, title: "Close", shortcut: .command("w")),
         ])
@@ -570,6 +578,8 @@ final class StudioActiveUIShell {
                 let item = AUIMenuItem(text, action: {})
                 item.isEnabled = false
                 return item
+            case .heading(let text):
+                return .sectionHeader(text)
             case .submenu(let title, let entries):
                 return AUIMenuItem(title, submenu: AUIMenu(title, items: items(entries, model: model)))
             case .item(let command):

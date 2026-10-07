@@ -97,6 +97,8 @@ final class StudioModel: ObservableObject {
             saveSettings()
         }
     }
+    /// File ▸ Open Recent's projects and files (``StudioRecentItems``).
+    @Published private(set) var recentItems = StudioRecentItems()
     /// The graphics are hidden because the program stopped, not because the
     /// user hid them: only these come back on RUN or CLS.
     @Published private(set) var graphicsHiddenOnStop = false
@@ -326,6 +328,7 @@ final class StudioModel: ObservableObject {
         keepsProgramsInICloud = settings.keepsProgramsInICloud
         hidesGraphicsOnStop = settings.hidesGraphicsOnStop
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
+        recentItems = settings.recentItems
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
             let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
             projectDirectoryURL = directory
@@ -704,6 +707,7 @@ final class StudioModel: ObservableObject {
             guard let self else { return }
             do {
                 try loadProgram(from: url)
+                noteRecent(url, as: .file)
             } catch {
                 presentFileError("Unable to load \(url.lastPathComponent).", error: error)
             }
@@ -711,7 +715,8 @@ final class StudioModel: ObservableObject {
     }
 
     /// Loads `url` into the editor as the current program, as File ▸ Load…
-    /// and the project sidebar both do.
+    /// and the project sidebar both do. Only the callers that are the user
+    /// choosing a file add it to Open Recent; the sidebar does not.
     func loadProgram(from url: URL) throws {
         let source = try String(contentsOf: url, encoding: .utf8)
         programText = source
@@ -755,6 +760,7 @@ final class StudioModel: ObservableObject {
             guard let self else { return }
             do {
                 try createProgram(at: url)
+                noteRecent(url, as: .file)
             } catch {
                 presentFileError("Unable to create \(url.lastPathComponent).", error: error)
             }
@@ -809,6 +815,7 @@ final class StudioModel: ObservableObject {
         }
         openProject(at: url)
         openProjectFile("main.bas")
+        noteRecent(url, as: .project)
     }
 
     // MARK: - The New Project wizard (BASIC-24)
@@ -846,6 +853,7 @@ final class StudioModel: ObservableObject {
     func createProject(from wizard: NewProjectWizardModel) throws -> URL {
         let project = try wizard.create()
         openProjectAndEntry(at: project)
+        noteRecent(project, as: .project)
         return project
     }
 
@@ -870,6 +878,7 @@ final class StudioModel: ObservableObject {
             directory: projectDirectoryURL ?? workingDirectoryURL
         )) { [weak self] url in
             self?.openProjectAndEntry(at: url)
+            self?.noteRecent(url, as: .project)
         }
     }
 
@@ -884,6 +893,54 @@ final class StudioModel: ObservableObject {
         } catch {
             presentFileError("Unable to load \(entry.lastPathComponent).", error: error)
         }
+    }
+
+    // MARK: - Open Recent
+
+    /// Puts `url` first in File ▸ Open Recent.
+    func noteRecent(_ url: URL, as kind: StudioRecentItems.Kind) {
+        recentItems.note(url, as: kind)
+        saveSettings()
+    }
+
+    /// The recent projects and files that are still there, newest first:
+    /// what File ▸ Open Recent lists each time it opens.
+    func recentItemsOnDisk() -> (projects: [URL], files: [URL]) {
+        let fileManager = FileManager.default
+        return (
+            recentItems.projects.filter { fileManager.fileExists(atPath: $0.path) },
+            recentItems.files.filter { fileManager.fileExists(atPath: $0.path) }
+        )
+    }
+
+    /// Opens a project or file from File ▸ Open Recent, as Open Project… or
+    /// Load… would, and puts it first again. One that has gone since the
+    /// menu was drawn is taken off the list.
+    func openRecent(_ url: URL, as kind: StudioRecentItems.Kind) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            recentItems.remove(url, as: kind)
+            saveSettings()
+            showWarning("\(StudioRecentItems.name(of: url, kind: kind)) is no longer there.", message: url.path)
+            return
+        }
+        switch kind {
+        case .project:
+            openProjectAndEntry(at: url)
+        case .file:
+            do {
+                try loadProgram(from: url)
+            } catch {
+                presentFileError("Unable to load \(url.lastPathComponent).", error: error)
+                return
+            }
+        }
+        noteRecent(url, as: kind)
+    }
+
+    /// File ▸ Open Recent ▸ Clear Menu.
+    func clearRecentItems() {
+        recentItems.clear()
+        saveSettings()
     }
 
     // MARK: - Examples that are projects (BASIC-24)
@@ -929,6 +986,7 @@ final class StudioModel: ObservableObject {
             return
         }
         openProjectAndEntry(at: copy)
+        noteRecent(copy, as: .project)
     }
 
     /// Copies a project's own files, leaving out what building it left
@@ -1014,7 +1072,11 @@ final class StudioModel: ObservableObject {
             title: "Save BASIC Program",
             directory: currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
         )) { [weak self] url in
-            self?.saveProgram(to: url)
+            guard let self else { return }
+            saveProgram(to: url)
+            if currentProgramURL == url {
+                noteRecent(url, as: .file)
+            }
         }
     }
 
@@ -1050,7 +1112,17 @@ final class StudioModel: ObservableObject {
     /// Asks for a file or folder, then calls `then` with it; Cancel calls
     /// nothing. The Mac's modal panel, which answers before this returns;
     /// on iPhone and iPad ActiveUI's document picker, which answers later.
+    /// Answers file panels in place of the user, so a test can drive Load…
+    /// or Open Project…; nil is Cancel. Unset, the panel is shown.
+    var fileRequestAnswer: ((FileRequest) -> URL?)?
+
     func chooseFile(_ request: FileRequest, then: @escaping @MainActor (URL) -> Void) {
+        if let fileRequestAnswer {
+            if let url = fileRequestAnswer(request) {
+                then(url)
+            }
+            return
+        }
         #if os(macOS)
         let panel: NSSavePanel
         switch request.kind {
@@ -1090,7 +1162,15 @@ final class StudioModel: ObservableObject {
     }
 
     /// A warning with one OK: the Mac's modal alert, or ActiveUI's.
+    /// Takes warnings in place of an alert, so a test can read them. Unset,
+    /// the alert is shown.
+    var warningPresenter: ((_ title: String, _ message: String) -> Void)?
+
     func showWarning(_ title: String, message: String) {
+        if let warningPresenter {
+            warningPresenter(title, message)
+            return
+        }
         #if os(macOS)
         let alert = NSAlert()
         alert.messageText = title
@@ -1955,7 +2035,8 @@ final class StudioModel: ObservableObject {
                 projectDirectoryPath: projectDirectoryURL?.path,
                 keepsProgramsInICloud: keepsProgramsInICloud,
                 hidesGraphicsOnStop: hidesGraphicsOnStop,
-                showsGraphicsHiddenNotice: showsGraphicsHiddenNotice
+                showsGraphicsHiddenNotice: showsGraphicsHiddenNotice,
+                recentItems: recentItems
             )
         )
     }

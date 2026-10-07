@@ -87,6 +87,8 @@ struct BASICStudioApp: App {
                 Divider()
             case .placeholder(let text):
                 Text(text)
+            case .heading(let text):
+                Text(text)
             case .submenu(let title, let entries):
                 Menu(title) { submenuEntries(entries) }
             }

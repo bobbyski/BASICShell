@@ -112,6 +112,8 @@ struct StudioSettings: Codable {
     var hidesGraphicsOnStop = true
     /// Say so when that happens; off once "Don't show this message again".
     var showsGraphicsHiddenNotice = true
+    /// File ▸ Open Recent's projects and files.
+    var recentItems = StudioRecentItems()
 
     /// On by default on iPad and iPhone, where the app's own folder is
     /// otherwise the only place a program can be; off on the Mac, where
@@ -141,6 +143,7 @@ struct StudioSettings: Codable {
         case keepsProgramsInICloud
         case hidesGraphicsOnStop
         case showsGraphicsHiddenNotice
+        case recentItems
     }
 
     init(
@@ -159,7 +162,8 @@ struct StudioSettings: Codable {
         projectDirectoryPath: String? = nil,
         keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud,
         hidesGraphicsOnStop: Bool = true,
-        showsGraphicsHiddenNotice: Bool = true
+        showsGraphicsHiddenNotice: Bool = true,
+        recentItems: StudioRecentItems = StudioRecentItems()
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -177,6 +181,7 @@ struct StudioSettings: Codable {
         self.keepsProgramsInICloud = keepsProgramsInICloud
         self.hidesGraphicsOnStop = hidesGraphicsOnStop
         self.showsGraphicsHiddenNotice = showsGraphicsHiddenNotice
+        self.recentItems = recentItems
     }
 
     init(from decoder: Decoder) throws {
@@ -200,6 +205,7 @@ struct StudioSettings: Codable {
             ?? Self.defaultKeepsProgramsInICloud
         hidesGraphicsOnStop = try container.decodeIfPresent(Bool.self, forKey: .hidesGraphicsOnStop) ?? true
         showsGraphicsHiddenNotice = try container.decodeIfPresent(Bool.self, forKey: .showsGraphicsHiddenNotice) ?? true
+        recentItems = (try? container.decodeIfPresent(StudioRecentItems.self, forKey: .recentItems)) ?? StudioRecentItems()
     }
 }
 
