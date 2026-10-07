@@ -41,6 +41,8 @@ final class SourceEditorAUI {
         get { editor.onToggleBreakpoint }
         set { editor.onToggleBreakpoint = newValue }
     }
+    /// Called with the 1-based line the caret is on, each time it moves.
+    var onCaretLineChange: ((Int) -> Void)?
     /// What was last drawn.
     private(set) var drawn: EditorRenderInput?
 
@@ -52,6 +54,24 @@ final class SourceEditorAUI {
             documentIdentifier: "program.bas"
         )
         editor.onChange = { [weak self] text in self?.onTextChange?(text) }
+        editor.onSelectionChange = { [weak self] range in
+            guard let self else { return }
+            onCaretLineChange?(Self.line(at: range.location, in: editor.text))
+        }
+    }
+
+    /// Puts the caret at the start of 1-based `line`, and scrolls to it.
+    func go(toLine line: Int) {
+        editor.reveal(line: line)
+    }
+
+    /// The 1-based line UTF-16 offset `offset` is on.
+    static func line(at offset: Int, in text: String) -> Int {
+        var line = 1
+        for unit in text.utf16.prefix(max(0, offset)) where unit == 10 {
+            line += 1
+        }
+        return line
     }
 
     /// Brings the editor up to `input`, changing only what differs.
@@ -279,12 +299,25 @@ final class SourceEditorAUI {
     /// Called with a 1-based line when its gutter is clicked; not yet wired
     /// on iOS.
     var onToggleBreakpoint: ((Int) -> Void)?
+    /// Called with the 1-based line the caret is on, each time it moves.
+    var onCaretLineChange: ((Int) -> Void)?
     /// What was last drawn.
     private(set) var drawn: EditorRenderInput?
 
     init() {
         editor = AUICoreSourceEditor(text: "", language: "basic")
         editor.onChange = { [weak self] text in self?.onTextChange?(text) }
+        editor.onSelectionChange = { [weak self] selection in
+            self?.onCaretLineChange?(selection.head.line + 1)
+        }
+    }
+
+    /// Puts the caret at the start of 1-based `line`, with the line at the
+    /// top of the view.
+    func go(toLine line: Int) {
+        let zeroBased = max(0, line - 1)
+        editor.perform(.select(.init(caret: .init(line: zeroBased, column: 0))))
+        editor.scroll(toLine: zeroBased)
     }
 
     /// Brings the editor up to `input`, changing only what differs.

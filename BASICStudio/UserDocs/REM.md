@@ -14,3 +14,21 @@ print "RUNS" ' trailing apostrophe comment
 print "ALSO RUNS" // trailing slash comment
 print "COMMENTS ARE IGNORED"
 ```
+
+## MARK: groups in the editor's function menu
+
+In BASICStudio, the ribbon across the top of the editor names the function the caret is in. Click it for every function and class in the file, and choose one to go straight to it.
+
+A `MARK:` comment names a group in that menu, the way Xcode's does. A `-` before the name draws a line above it, and a `-` after it a line below:
+
+```basic
+' MARK: - Drawing -
+function DrawPlayer() as void
+end function
+
+' MARK: - Sound
+function Beep() as void
+end function
+```
+
+`' MARK: -` alone is just a line. `REM MARK:`, `// MARK:` and `# MARK:` work the same.

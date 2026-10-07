@@ -1498,6 +1498,18 @@ final class StudioModel: ObservableObject {
         }
     }
 
+    /// The program's file name, for the editor's ribbon: `main.bas`, or
+    /// "Untitled" for a program that has never been saved.
+    var editorFileName: String {
+        if let currentProgramURL {
+            return currentProgramURL.lastPathComponent
+        }
+        if let currentProgramFileName, !currentProgramFileName.isEmpty {
+            return URL(fileURLWithPath: currentProgramFileName).lastPathComponent
+        }
+        return "Untitled"
+    }
+
     private func updateWindowTitle() {
         if let currentProgramURL {
             windowTitle = "BASICStudio - \(currentProgramURL.lastPathComponent)"

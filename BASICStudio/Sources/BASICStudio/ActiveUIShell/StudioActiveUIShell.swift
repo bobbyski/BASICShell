@@ -50,6 +50,8 @@ final class StudioActiveUIShell {
 
     let console = AIBasicTerminalContainerView()
     let editor = SourceEditorAUI()
+    /// The ribbon over the editor: the file, and its functions to jump to.
+    let ribbon = EditorRibbonAUI()
     let consoleHost: AUINativeHost
     let editorHost: AUIView
     let commandBar: AUIStack
@@ -99,7 +101,16 @@ final class StudioActiveUIShell {
 
         console.attach(to: model)
         consoleHost = AUINativeHost(console)
-        editorHost = editor.editor
+        // The ribbon across the top of the editor, the editor under it; one
+        // pane, shown and hidden together.
+        let editorPane = AUIStack(.vertical, spacing: 0, alignment: .fill)
+        editorPane.wraps = false
+        editorPane.addChild(ribbon.root)
+        editorPane.addChild(AUIDivider())
+        editor.editor.flexibility = .both()
+        editorPane.addChild(editor.editor)
+        editorPane.flexibility = .both()
+        editorHost = editorPane
 
         // Both panes stay alive, and switching shows one and hides the other.
         // The SwiftUI shell rebuilds the native view on every switch.
@@ -162,6 +173,12 @@ final class StudioActiveUIShell {
 
         buildCommandBar()
         editor.onTextChange = { [weak model] text in model?.programText = text }
+        editor.onCaretLineChange = { [weak self] line in self?.ribbon.caretMoved(to: line) }
+        ribbon.text = { [weak model] in model?.programText ?? "" }
+        ribbon.onJump = { [weak self] line in
+            self?.editor.go(toLine: line)
+            self?.editor.editor.focus()
+        }
         sidebar.onSelect = { [weak self] index in
             guard let self, let rows = self.drawnProject?.rows, rows.indices.contains(index) else { return }
             self.model.openProjectFile(rows[index].path)
@@ -334,6 +351,7 @@ final class StudioActiveUIShell {
             drawnAppTheme = model.appTheme
         }
         editor.sync(StudioAppTheme.themed(.mainEditor(model), model))
+        ribbon.refresh(fileName: model.editorFileName)
         settings.refresh()
         // Only the inspector on screen reads the model.
         switch model.inspectorPane {
