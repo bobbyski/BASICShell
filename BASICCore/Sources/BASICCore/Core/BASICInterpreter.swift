@@ -2207,6 +2207,12 @@ public final class BASICInterpreter {
                         fields: fields
                     )
                     break
+                case .remark, .empty:
+                    // A comment between members, on a field or before a
+                    // method, as a program written to be read has: REM is
+                    // a remark, and a line that is only an apostrophe
+                    // comment is left empty.
+                    break
                 default:
                     throw BASICError.runtime("Unexpected statement inside TYPE \(name)")
                 }
@@ -2298,6 +2304,12 @@ public final class BASICInterpreter {
                         inheritedInterfaces: inheritedInterfaces,
                         members: members
                     )
+                    break
+                case .remark, .empty:
+                    // A comment between members, on a field or before a
+                    // method, as a program written to be read has: REM is
+                    // a remark, and a line that is only an apostrophe
+                    // comment is left empty.
                     break
                 default:
                     throw BASICError.runtime("Unexpected statement inside INTERFACE \(name)")
@@ -2395,6 +2407,12 @@ public final class BASICInterpreter {
                         methods: methods,
                         databaseTableName: databaseTableName
                     )
+                    break
+                case .remark, .empty:
+                    // A comment between members, on a field or before a
+                    // method, as a program written to be read has: REM is
+                    // a remark, and a line that is only an apostrophe
+                    // comment is left empty.
                     break
                 default:
                     throw BASICError.runtime("Unexpected statement inside CLASS \(name)")

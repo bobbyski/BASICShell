@@ -2519,6 +2519,47 @@ struct BASICCoreTests {
         #expect(diagnostics.map(\.message).allSatisfy { $0.hasPrefix("Syntax error:") })
     }
 
+    @Test("Comments between the members of a CLASS, TYPE or INTERFACE are comments")
+    func commentsInsideClassBodies() {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+
+        session.program.loadSource("""
+        INTERFACE Named
+            ' What every named thing answers.
+            FUNCTION Name$() AS STRING
+        END INTERFACE
+
+        TYPE Point
+            ' Across, then down.
+            X AS DOUBLE
+            REM And down.
+            Y AS DOUBLE
+        END TYPE
+
+        CLASS Walker
+            IMPLEMENTS Named
+            ' Where they are.
+            PUBLIC X AS DOUBLE
+
+            ' One step to the right.
+            FUNCTION Walk() AS VOID
+                ME.X = ME.X + 1
+            END FUNCTION
+            FUNCTION Name$() AS STRING
+                RETURN "walker"
+            END FUNCTION
+        END CLASS
+
+        W = NEW Walker
+        W.Walk()
+        PRINT W.X
+        PRINT W.Name$()
+        """)
+        session.submit("RUN")
+        #expect(host.output == ["1", "walker"])
+    }
+
     @Test("Diagnostics report class and interface validation errors")
     func diagnosticsReportClassAndInterfaceValidationErrors() {
         let host = TestHost()
