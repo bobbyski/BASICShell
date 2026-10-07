@@ -2,7 +2,7 @@
   "identifier": "basic.game",
   "name": "Game",
   "language": "BASIC",
-  "summary": "Someone to move around: they turn to face the way you point, walk, and run when you point harder, with the keyboard, a gamepad or a touch joystick. The start every game needs, ready to grow into yours.",
+  "summary": "Someone to move around and four targets to shoot: they turn to face the way you point, walk, run when you point harder, and fire the way they face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
   "icon": "gamecontroller",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",

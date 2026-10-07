@@ -240,7 +240,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.game",
               "name": "Game",
               "language": "BASIC",
-              "summary": "Someone to move around: they turn to face the way you point, walk, and run when you point harder, with the keyboard, a gamepad or a touch joystick. The start every game needs, ready to grow into yours.",
+              "summary": "Someone to move around and four targets to shoot: they turn to face the way you point, walk, run when you point harder, and fire the way they face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
               "icon": "gamecontroller",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -324,17 +324,19 @@ enum BASICRecipeCatalog {
                 #!/usr/bin/env BASICShell
                 ' {{NAME}} — a game to build on.
                 '
-                ' Someone to move around. Point the way and they turn to face it and walk;
-                ' point harder and they run. Let go, or bring the stick back to the middle,
-                ' and they stop. Moving well is the first thing every game needs, so that is
-                ' all this does, small enough to read in one sitting, with a comment saying
-                ' what each part is for. Add something to chase, something to avoid and a
-                ' score, and it is a game.
+                ' Someone to move around, and four targets to shoot. Point the way and they
+                ' turn to face it and walk; point harder and they run. Let go, or bring the
+                ' stick back to the middle, and they stop. Fire shoots the way they face, and
+                ' a shot flies until it hits a target, for a point, or leaves the floor.
+                ' Moving and shooting are the start of most games, so that is all this does,
+                ' small enough to read in one sitting, with a comment saying what each part
+                ' is for. Make the targets move, or shoot back, and it is a game.
                 '
-                ' Touch:   the joystick, bottom left. A little lean walks, all the way runs,
-                '          and every lean between is a speed of its own (iPad and iPhone).
-                ' Keys:    arrows or W A S D walk, hold Shift to run, P pauses, Q quits
-                ' Gamepad: d-pad or left stick walks, hold B to run, Menu pauses
+                ' Touch:   the joystick, bottom right. A little lean walks, all the way runs,
+                '          and every lean between is a speed of its own. Fire, bottom left.
+                ' Keys:    arrows or W A S D walk, hold Shift to run, Space fires,
+                '          P pauses, Q quits
+                ' Gamepad: d-pad or left stick walks, hold B to run, A fires, Menu pauses
                 '
                 ' It draws with lines, circles and vector text only, so it runs
                 ' interpreted in BASICStudio and BASICShell, and compiled with basicc.
@@ -373,6 +375,27 @@ enum BASICRecipeCatalog {
                 ' resting on the stick is never quite in the middle.
                 GLOBAL DEADZONE AS DOUBLE = 0.15
 
+                ' ---------------------------------------------------------------- shots
+                ' Shots in the air at once, each flying the way the player faced when it
+                ' was fired. shotLive is 1 for a shot in flight and 0 for a free slot.
+                GLOBAL MAXSHOTS AS INTEGER = 8
+                GLOBAL SHOTSPEED AS DOUBLE = 10
+                GLOBAL shotLive(8) AS INTEGER
+                GLOBAL shotX(8) AS DOUBLE
+                GLOBAL shotY(8) AS DOUBLE
+                GLOBAL shotVX(8) AS DOUBLE
+                GLOBAL shotVY(8) AS DOUBLE
+
+                ' ---------------------------------------------------------------- targets
+                ' Four targets that stay where they are. A hit scores a point and makes the
+                ' target flash for a few frames (targetFlash counts them down).
+                GLOBAL TARGETS AS INTEGER = 4
+                GLOBAL TARGETSIZE AS INTEGER = 18
+                GLOBAL targetX(4) AS DOUBLE
+                GLOBAL targetY(4) AS DOUBLE
+                GLOBAL targetFlash(4) AS INTEGER
+                GLOBAL score AS INTEGER
+
                 ' ---------------------------------------------------------------- input
                 ' What the controls asked for this frame: a way to go (wantX, wantY) and
                 ' how fast. A speed of 0 means stand still.
@@ -386,6 +409,10 @@ enum BASICRecipeCatalog {
                 GLOBAL padDown AS INTEGER
                 GLOBAL padRun AS INTEGER
                 GLOBAL padPause AS INTEGER
+                ' A press of Fire, waiting for the next frame to shoot it. Presses arrive as
+                ' events, so even a tap too quick for a frame to see is kept; holding Fire
+                ' down is one press, and shoots once.
+                GLOBAL firePressed AS INTEGER
 
                 ' ---------------------------------------------------------------- the game
                 GLOBAL playing AS INTEGER
@@ -425,6 +452,7 @@ enum BASICRecipeCatalog {
                     playerX = WORLDWIDTH / 2
                     playerY = WORLDHEIGHT / 2
                     facing = -PI / 2
+                    PlaceTargets()
                     playing = 1
 
                     WHILE playing = 1
@@ -438,7 +466,13 @@ enum BASICRecipeCatalog {
                         ' flickers.
                         vtg.startFrame("game")
                         IF sceneryDirty = 1 THEN DrawScenery()
-                        IF paused = 0 THEN MovePlayer()
+                        IF paused = 0 THEN
+                            MovePlayer()
+                            Shoot()
+                            MoveShots()
+                        ELSE
+                            firePressed = 0
+                        END IF
                         DrawFrame()
                         vtg.endFrame("game")
                         vtg.present()
@@ -502,9 +536,11 @@ enum BASICRecipeCatalog {
                         END IF
                     END IF
 
-                    ' Presses, as opposed to keys held, come through INKEY$, once each.
+                    ' Presses, as opposed to keys held, come through INKEY$, once each:
+                    ' Space fires.
                     LOCAL key$ = INKEY$()
                     WHILE key$ <> ""
+                        IF key$ = " " THEN firePressed = 1
                         IF key$ = "q" OR key$ = "Q" THEN playing = 0
                         IF key$ = "p" OR key$ = "P" THEN TogglePause()
                         key$ = INKEY$()
@@ -542,6 +578,8 @@ enum BASICRecipeCatalog {
                     IF event.Value > 0.5 THEN pressed = 1
                     LOCAL control$ = event.Control
                     IF control$ = "MENU" AND pressed = 1 THEN padPause = 1
+                    ' A, or the touch Fire button, which reports as A: a press fires.
+                    IF (control$ = "A" OR control$ = "RIGHT_TRIGGER") AND pressed = 1 THEN firePressed = 1
                     ' The touch joystick reports here as well, as controller -1, but only
                     ' as on or off. ReadControls asks it how far it leans instead.
                     IF event.Controller <> -1 THEN
@@ -553,11 +591,12 @@ enum BASICRecipeCatalog {
                     END IF
                 END FUNCTION
 
-                ' On an iPad or iPhone: a joystick bottom left, and a pause button. The
-                ' pause button reports as a gamepad's Menu button, so GamepadChanged reads
-                ' it. Elsewhere these calls do nothing.
+                ' On an iPad or iPhone: the joystick under the right thumb, Fire under the
+                ' left, and a pause button. Fire and pause report as a gamepad's A and Menu
+                ' buttons, so GamepadChanged reads them. Elsewhere these calls do nothing.
                 FUNCTION PlaceTouchControls() AS VOID
-                    touch.Joystick("stick", "BOTTOMLEFT", 40, 40, 170)
+                    touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 170)
+                    touch.Button("fire", "BOTTOMLEFT", 50, 50, 100, "FIRE", "#ff3b30")
                     touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
                 END FUNCTION
 
@@ -597,6 +636,72 @@ enum BASICRecipeCatalog {
                     ' The edges of the world are walls.
                     playerX = Clamp(playerX, PLAYERSIZE, WORLDWIDTH - PLAYERSIZE)
                     playerY = Clamp(playerY, PLAYERSIZE, WORLDHEIGHT - PLAYERSIZE)
+                END FUNCTION
+
+                ' ================================================================= shooting
+
+                ' A press of Fire shoots once: from the nose, the way the player faces, at
+                ' SHOTSPEED, in the first free slot. With every slot in flight, the press
+                ' does nothing.
+                FUNCTION Shoot() AS VOID
+                    IF firePressed = 0 THEN RETURN
+                    firePressed = 0
+                    LOCAL s = 0
+                    FOR s = 0 TO MAXSHOTS - 1
+                        IF shotLive(s) = 0 THEN
+                            shotLive(s) = 1
+                            shotX(s) = playerX + COS(facing) * PLAYERSIZE
+                            shotY(s) = playerY + SIN(facing) * PLAYERSIZE
+                            shotVX(s) = COS(facing) * SHOTSPEED
+                            shotVY(s) = SIN(facing) * SHOTSPEED
+                            RETURN
+                        END IF
+                    NEXT s
+                END FUNCTION
+
+                ' Each shot flies on until it hits a target, which scores a point, or
+                ' leaves the floor. Either way it is gone, and its slot is free again.
+                FUNCTION MoveShots() AS VOID
+                    LOCAL s = 0
+                    LOCAL t = 0
+                    FOR s = 0 TO MAXSHOTS - 1
+                        IF shotLive(s) = 1 THEN
+                            shotX(s) = shotX(s) + shotVX(s)
+                            shotY(s) = shotY(s) + shotVY(s)
+                            FOR t = 0 TO TARGETS - 1
+                                IF shotLive(s) = 1 AND Distance(shotX(s), shotY(s), targetX(t), targetY(t)) < TARGETSIZE THEN
+                                    FreeShot(s)
+                                    score = score + 1
+                                    targetFlash(t) = 8
+                                END IF
+                            NEXT t
+                            IF shotLive(s) = 1 AND (shotX(s) < 0 OR shotX(s) > WORLDWIDTH OR shotY(s) < 0 OR shotY(s) > WORLDHEIGHT) THEN FreeShot(s)
+                        END IF
+                    NEXT s
+                    FOR t = 0 TO TARGETS - 1
+                        IF targetFlash(t) > 0 THEN targetFlash(t) = targetFlash(t) - 1
+                    NEXT t
+                END FUNCTION
+
+                FUNCTION FreeShot(s AS INTEGER) AS VOID
+                    shotLive(s) = 0
+                    vtg.delete("shot" + Num$(s))
+                END FUNCTION
+
+                ' One in each quarter of the floor, well away from where the player starts.
+                FUNCTION PlaceTargets() AS VOID
+                    targetX(0) = 120
+                    targetY(0) = 110
+                    targetX(1) = 520
+                    targetY(1) = 110
+                    targetX(2) = 120
+                    targetY(2) = 370
+                    targetX(3) = 520
+                    targetY(3) = 370
+                END FUNCTION
+
+                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
+                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
                 END FUNCTION
 
                 ' The direction from the middle to (x, y), in radians, measured the way
@@ -693,8 +798,8 @@ enum BASICRecipeCatalog {
                 ' ================================================================= drawing
                 '
                 ' Shapes are kept by the terminal under an id: drawing an id again moves it,
-                ' and vtg.delete takes it away. Layer 1 is the floor, 2 the feet, 3 the
-                ' body, 4 the nose and the words.
+                ' and vtg.delete takes it away. Layer 1 is the floor, 2 the targets and the
+                ' feet, 3 the body and the shots, 4 the nose and the words.
 
                 ' The floor: at the start, and when the window changes size.
                 FUNCTION DrawScenery() AS VOID
@@ -711,8 +816,8 @@ enum BASICRecipeCatalog {
                     NEXT y
                     vtg.rect("edge", PixelX(0), PixelY(0), PixelLength(WORLDWIDTH), PixelLength(WORLDHEIGHT), "#475569", "none", PixelLength(2), 0, "", "", 1)
 
-                    LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - P PAUSES"
-                    IF touch.Available THEN hint$ = "LEAN THE STICK - A LITTLE WALKS - ALL THE WAY RUNS"
+                    LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - SPACE FIRES"
+                    IF touch.Available THEN hint$ = "A LITTLE LEAN WALKS - ALL THE WAY RUNS"
                     vtg.vectorPrint("hint", PixelX(16), PixelY(WORLDHEIGHT - 24), PixelLength(10), hint$, "#64748b", PixelLength(1), 4)
                     hud$ = ""
                     messageDirty = 1
@@ -720,7 +825,9 @@ enum BASICRecipeCatalog {
 
                 ' Everything that moves, every frame; the words only when they change.
                 FUNCTION DrawFrame() AS VOID
+                    DrawTargets()
                     DrawPlayer()
+                    DrawShots()
                     DrawHud()
                     IF messageDirty = 1 THEN DrawMessage()
                 END FUNCTION
@@ -746,6 +853,27 @@ enum BASICRecipeCatalog {
                     vtg.circle("nose", PixelX(noseX), PixelY(noseY), PixelLength(4), "none", "#facc15", 0, 4)
                 END FUNCTION
 
+                ' A target is two rings and a middle, bright for the frames after a hit.
+                FUNCTION DrawTargets() AS VOID
+                    LOCAL t = 0
+                    FOR t = 0 TO TARGETS - 1
+                        LOCAL ring$ = "#ef4444"
+                        IF targetFlash(t) > 0 THEN ring$ = "#fde047"
+                        LOCAL x = PixelX(targetX(t))
+                        LOCAL y = PixelY(targetY(t))
+                        vtg.circle("target" + Num$(t), x, y, PixelLength(TARGETSIZE), ring$, "#000000", PixelLength(3), 2)
+                        vtg.circle("ring" + Num$(t), x, y, PixelLength(TARGETSIZE * 0.6), ring$, "none", PixelLength(3), 2)
+                        vtg.circle("bull" + Num$(t), x, y, PixelLength(TARGETSIZE * 0.2), "none", ring$, 0, 2)
+                    NEXT t
+                END FUNCTION
+
+                FUNCTION DrawShots() AS VOID
+                    LOCAL s = 0
+                    FOR s = 0 TO MAXSHOTS - 1
+                        IF shotLive(s) = 1 THEN vtg.circle("shot" + Num$(s), PixelX(shotX(s)), PixelY(shotY(s)), PixelLength(3), "none", "#fde047", 0, 3)
+                    NEXT s
+                END FUNCTION
+
                 ' How fast, in world units a second, and what that is called. From the
                 ' middle of the stick's scale up, twice a walk, it counts as a run. Drawn
                 ' only when it changes: vector text takes longer to draw than a circle.
@@ -753,7 +881,7 @@ enum BASICRecipeCatalog {
                     LOCAL gait$ = "STANDING"
                     IF speed > 0 THEN gait$ = "WALKING"
                     IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
-                    LOCAL words$ = "SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
+                    LOCAL words$ = "SCORE " + Num$(score) + "   SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
                     IF words$ = hud$ THEN RETURN
                     hud$ = words$
                     vtg.vectorPrint("hud", PixelX(16), PixelY(12), PixelLength(14), words$, "#f8fafc", PixelLength(1), 4)

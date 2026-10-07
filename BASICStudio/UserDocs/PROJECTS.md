@@ -50,7 +50,7 @@ Create stays off while the name is not a name, or a project of that name is alre
 | --- | --- |
 | Console Program | One file that prints, loops and reads what is typed. |
 | Structured Program | FUNCTIONs with their own LOCALs, arrays and DATA. |
-| Game | Someone to move around: they turn to face the way you point and walk, or run when you point harder, with the keyboard, a gamepad or a touch joystick. |
+| Game | Someone to move around and four targets to shoot: they turn to face the way you point and walk, run when you point harder, and fire the way they face, with the keyboard, a gamepad or touch. |
 | TUI App | A full-screen TUIKit window with a menu bar, a field, a list and buttons. |
 | ActiveUI App | A to-do list in a window of its own: buttons, a field, a list and a status line. Runs in BASICStudio. |
 | Contact Book | A TUIKit contact book in six files: a model, JSON save and load, a toolbar and menus, and an unsaved-changes dialog. |
