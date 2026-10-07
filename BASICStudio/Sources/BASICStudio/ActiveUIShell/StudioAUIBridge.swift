@@ -6,6 +6,7 @@
 //
 
 import ActiveUI
+import ActiveUICharts
 #if canImport(AppKit)
 import AppKit
 #else
@@ -30,8 +31,9 @@ import Foundation
 /// because nothing is left to answer them.
 @MainActor
 final class StudioAUIBridge {
-    /// Where the user's actions go: `BASICSession.postAUIEvent`.
-    var postEvent: ((_ kind: String, _ source: Int, _ text: String, _ index: Int) -> Void)?
+    /// Where the user's actions go: `BASICSession.postAUIEvent`. `column`
+    /// is a table cell's, with `index` its row; -1 for everything else.
+    var postEvent: ((_ kind: String, _ source: Int, _ text: String, _ index: Int, _ column: Int) -> Void)?
     /// How a dialog is shown. Tests answer at once instead.
     var presentDialog: (_ title: String, _ message: String, _ buttons: [String], _ done: @escaping @MainActor (Int) -> Void) -> Void = { title, message, buttons, done in
         AUIAlert.present(title: title, message: message, buttons: buttons, completion: done)
@@ -48,6 +50,10 @@ final class StudioAUIBridge {
     private var openWindows: Set<Int> = []
     private var rows: [Int: RowStore] = [:]
     private var dialogs: [Int: Dialog] = [:]
+    private var tabs: [Int: Tabs] = [:]
+    private var pies: [Int: Pie] = [:]
+    /// The size each window asked for with `size`, if it did.
+    private var sizes: [Int: CGSize] = [:]
 
     private struct Dialog {
         var title: String
@@ -55,10 +61,49 @@ final class StudioAUIBridge {
         var buttons: [String] = []
     }
 
-    /// A list's or table's rows, read by its table's closures.
+    /// A list's or table's rows, read by its table's closures, and how each
+    /// of a table's columns shows its cells.
     @MainActor
     final class RowStore {
         var rows: [[String]] = []
+        var styles: [Int: BASICAUIColumnStyle] = [:]
+
+        func cell(_ row: Int, _ column: Int) -> String {
+            guard rows.indices.contains(row), rows[row].indices.contains(column) else { return "" }
+            return rows[row][column]
+        }
+
+        func setCell(_ row: Int, _ column: Int, _ text: String) {
+            guard rows.indices.contains(row) else { return }
+            while rows[row].count <= column { rows[row].append("") }
+            rows[row][column] = text
+        }
+    }
+
+    /// Tabs: the pages so far, and the tab view showing them, which is made
+    /// again as pages are added because an `AUITabView` takes its pages once.
+    /// `holder` is the control the program put in its window.
+    @MainActor
+    final class Tabs {
+        let holder: AUIStack
+        var pages: [(title: String, view: AUIView)] = []
+        var view: AUITabView?
+        var selected = 0
+
+        init(holder: AUIStack) {
+            self.holder = holder
+        }
+    }
+
+    /// A pie chart: its slices, which its sector mark reads.
+    @MainActor
+    final class Pie {
+        let chart: AUIChart
+        var slices: [(label: String, value: Double)] = []
+
+        init(chart: AUIChart) {
+            self.chart = chart
+        }
     }
 
     // MARK: Requests
@@ -71,8 +116,15 @@ final class StudioAUIBridge {
         case .add(let parent, let child):
             guard let childView = views[child] else { throw missing(child) }
             guard let container = windowRoots[parent] ?? (views[parent] as? AUIStack) else { throw missing(parent) }
+            childView.removeFromParent()
             container.addChild(childView)
             container.invalidateLayout()
+        case .addTab(let id, let title, let child):
+            guard let tabs = tabs[id] else { throw missing(id) }
+            guard let page = views[child] else { throw missing(child) }
+            page.removeFromParent()
+            tabs.pages.append((title, page))
+            rebuild(tabs, id: id)
         case .setText(let id, let text):
             if let window = windows[id] {
                 window.title = text
@@ -82,31 +134,98 @@ final class StudioAUIBridge {
                 button.title = text
             } else if let field = views[id] as? AUITextField {
                 field.text = text
+            } else if let picker = views[id] as? AUIDatePicker {
+                picker.date = Self.date(from: text) ?? picker.date
             } else {
                 throw missing(id)
             }
         case .text(let id):
             if let label = views[id] as? AUILabel { return .text(label.text) }
             if let field = views[id] as? AUITextField { return .text(field.text) }
+            if let picker = views[id] as? AUIDatePicker { return .text(Self.text(of: picker.date)) }
             throw missing(id)
         case .addItem(let id, let cells):
+            if let picker = views[id] as? AUIPicker {
+                picker.options.append(cells.first ?? "")
+                return .none
+            }
             guard let store = rows[id], let table = views[id] as? AUITable else { throw missing(id) }
             store.rows.append(cells)
             table.reloadData()
         case .clearItems(let id):
+            if let picker = views[id] as? AUIPicker {
+                picker.options = []
+                picker.selectedIndex = nil
+                return .none
+            }
+            if let pie = pies[id] {
+                pie.slices.removeAll()
+                pie.chart.redraw()
+                return .none
+            }
             guard let store = rows[id], let table = views[id] as? AUITable else { throw missing(id) }
             store.rows.removeAll()
+            table.selectedRows = []
             table.reloadData()
         case .itemCount(let id):
+            if let picker = views[id] as? AUIPicker { return .number(Double(picker.options.count)) }
+            if let pie = pies[id] { return .number(Double(pie.slices.count)) }
+            if let tabs = tabs[id] { return .number(Double(tabs.pages.count)) }
             guard let store = rows[id] else { throw missing(id) }
             return .number(Double(store.rows.count))
         case .selectedIndex(let id):
+            if let picker = views[id] as? AUIPicker { return .number(Double(picker.selectedIndex ?? -1)) }
+            if let tabs = tabs[id] { return .number(Double(tabs.pages.isEmpty ? -1 : tabs.selected)) }
             guard let table = views[id] as? AUITable else { throw missing(id) }
             return .number(Double(table.selectedRows.first ?? -1))
         case .selectedText(let id):
+            if let picker = views[id] as? AUIPicker {
+                guard let index = picker.selectedIndex, picker.options.indices.contains(index) else { return .text("") }
+                return .text(picker.options[index])
+            }
+            if let tabs = tabs[id] {
+                return .text(tabs.pages.indices.contains(tabs.selected) ? tabs.pages[tabs.selected].title : "")
+            }
             guard let table = views[id] as? AUITable, let store = rows[id] else { throw missing(id) }
             guard let row = table.selectedRows.first, store.rows.indices.contains(row) else { return .text("") }
             return .text(store.rows[row].first ?? "")
+        case .select(let id, let index):
+            if let picker = views[id] as? AUIPicker {
+                picker.selectedIndex = picker.options.indices.contains(index) ? index : nil
+            } else if let tabs = tabs[id] {
+                guard tabs.pages.indices.contains(index) else { return .none }
+                tabs.selected = index
+                tabs.view?.selectedTabIndex = index
+            } else if let table = views[id] as? AUITable, let store = rows[id] {
+                table.selectedRows = store.rows.indices.contains(index) ? [index] : []
+                if store.rows.indices.contains(index) { table.revealRow(index) }
+            } else {
+                throw missing(id)
+            }
+        case .setColumnStyle(let id, let column, let style):
+            guard let store = rows[id], let table = views[id] as? AUITable else { throw missing(id) }
+            store.styles[column] = style
+            table.reloadData()
+        case .cell(let id, let row, let column):
+            guard let store = rows[id] else { throw missing(id) }
+            return .text(store.cell(row, column))
+        case .setCell(let id, let row, let column, let text):
+            guard let store = rows[id], let table = views[id] as? AUITable else { throw missing(id) }
+            guard store.rows.indices.contains(row) else {
+                throw BASICError.runtime("AUITable has rows 0 to \(store.rows.count - 1), not \(row)")
+            }
+            store.setCell(row, column, text)
+            table.reloadRows([row])
+        case .addSlice(let id, let label, let value):
+            guard let pie = pies[id] else { throw missing(id) }
+            pie.slices.append((label, value))
+            pie.chart.redraw()
+        case .setSize(let id, let width, let height):
+            guard let window = windows[id] else { throw missing(id) }
+            sizes[id] = CGSize(width: width, height: height)
+            if openWindows.contains(id), showsWindows {
+                window.setContentSize(CGSize(width: width, height: height))
+            }
         case .setEnabled(let id, let enabled):
             guard let view = views[id] else { throw missing(id) }
             view.isEnabled = enabled
@@ -118,9 +237,12 @@ final class StudioAUIBridge {
             openWindows.insert(id)
             if showsWindows {
                 window.show()
-                // A program's window fits what the program put in it, at
-                // least 480 × 360 and no taller than 900.
-                if let root = windowRoots[id] {
+                // A program's window is the size it asked for, or else fits
+                // what the program put in it, at least 480 × 360 and no taller
+                // than 900.
+                if let size = sizes[id] {
+                    window.setContentSize(size)
+                } else if let root = windowRoots[id] {
                     let fitted = root.layoutSize(fitting: CGSize(width: 520, height: 10_000))
                     window.setContentSize(CGSize(width: max(480, fitted.width), height: min(900, max(360, fitted.height))))
                 }
@@ -166,6 +288,9 @@ final class StudioAUIBridge {
         windowRoots.removeAll()
         rows.removeAll()
         dialogs.removeAll()
+        tabs.removeAll()
+        pies.removeAll()
+        sizes.removeAll()
     }
 
     // MARK: Making controls
@@ -191,13 +316,13 @@ final class StudioAUIBridge {
         case .button:
             let button = AUIButton(first)
             button.onClick = { [weak self, weak button] in
-                self?.postEvent?("CLICK", id, button?.title ?? "", -1)
+                self?.postEvent?("CLICK", id, button?.title ?? "", -1, -1)
             }
             views[id] = button
         case .field:
             let field = AUITextField(first, placeholder: arguments.count > 1 ? arguments[1] : nil)
-            field.onSubmit = { [weak self] text in self?.postEvent?("SUBMIT", id, text, -1) }
-            field.onChange = { [weak self] text in self?.postEvent?("CHANGE", id, text, -1) }
+            field.onSubmit = { [weak self] text in self?.postEvent?("SUBMIT", id, text, -1, -1) }
+            field.onChange = { [weak self] text in self?.postEvent?("CHANGE", id, text, -1, -1) }
             views[id] = field
         case .list:
             let store = RowStore()
@@ -210,9 +335,8 @@ final class StudioAUIBridge {
         case .table:
             let store = RowStore()
             let columns = arguments.enumerated().map { column, title in
-                AUITableColumn(title) { row in
-                    let cells = store.rows[row]
-                    return AUILabel(cells.indices.contains(column) ? cells[column] : "")
+                AUITableColumn(title) { [weak self] row in
+                    self?.cellView(id: id, store: store, row: row, column: column) ?? AUILabel("")
                 }
             }
             let table = AUITable(columns: columns, rowCount: { store.rows.count })
@@ -221,6 +345,40 @@ final class StudioAUIBridge {
             views[id] = table
         case .dialog:
             dialogs[id] = Dialog(title: first, message: arguments.count > 1 ? arguments[1] : "")
+        case .tabs:
+            let holder = AUIStack(.vertical, spacing: 0, alignment: .fill)
+            holder.wraps = false
+            holder.flexibility = .both()
+            tabs[id] = Tabs(holder: holder)
+            views[id] = holder
+        case .picker:
+            let picker = AUIPicker(arguments, selectedIndex: arguments.isEmpty ? nil : 0)
+            picker.onSelectionChange = { [weak self, weak picker] index in
+                let options = picker?.options ?? []
+                self?.postEvent?("CHANGE", id, options.indices.contains(index) ? options[index] : "", index, -1)
+            }
+            views[id] = picker
+        case .date:
+            let picker = AUIDatePicker(date: Self.date(from: first) ?? Date())
+            picker.onChange = { [weak self] date in
+                self?.postEvent?("CHANGE", id, Self.text(of: date), -1, -1)
+            }
+            views[id] = picker
+        case .pieChart:
+            let chart = AUIChart()
+            let pie = Pie(chart: chart)
+            chart.marks = [
+                AUISectorMark(count: { pie.slices.count }) { index in
+                    AUIDataPoint(pie.slices[index].label, pie.slices[index].value)
+                }
+                .showsLabels(true)
+            ]
+            chart.title = first.isEmpty ? nil : first
+            chart.legendIsVisible = true
+            chart.minimumSize = CGSize(width: 260, height: 220)
+            chart.flexibility = .both()
+            pies[id] = pie
+            views[id] = chart
         }
         if let table = views[id] as? AUITable {
             table.minimumSize = CGSize(width: 200, height: 120)
@@ -228,17 +386,83 @@ final class StudioAUIBridge {
         }
     }
 
+    /// A table cell as its column shows it: text, a field the user types
+    /// into, or one choice of a few. What the user changes goes into the
+    /// table's rows first, so a reload shows it, then to the program.
+    private func cellView(id: Int, store: RowStore, row: Int, column: Int) -> AUIView {
+        let text = store.cell(row, column)
+        switch store.styles[column] ?? .text {
+        case .text:
+            return AUILabel(text)
+        case .editable:
+            let field = AUITextField(text)
+            field.fieldStyle = .plain
+            field.textProvider = { store.cell(row, column) }
+            field.onEndEditing = { [weak self] newText in
+                guard newText != store.cell(row, column) else { return }
+                store.setCell(row, column, newText)
+                self?.postEvent?("CHANGE", id, newText, row, column)
+            }
+            return field
+        case .choices(let choices):
+            let segments = AUISegmentedControl(choices, selectedIndex: choices.firstIndex(of: text))
+            segments.selectedIndexProvider = { choices.firstIndex(of: store.cell(row, column)) }
+            segments.onSelectionChange = { [weak self] index in
+                guard choices.indices.contains(index), choices[index] != store.cell(row, column) else { return }
+                store.setCell(row, column, choices[index])
+                self?.postEvent?("CHANGE", id, choices[index], row, column)
+            }
+            return segments
+        }
+    }
+
+    /// Makes tabs' view again with every page so far, on the same tab.
+    private func rebuild(_ tabs: Tabs, id: Int) {
+        tabs.view?.removeFromParent()
+        for page in tabs.pages { page.view.removeFromParent() }
+        let selected = min(tabs.selected, tabs.pages.count - 1)
+        let view = AUITabView(tabs.pages.map { (title: $0.title, content: $0.view) }, selectedIndex: max(0, selected))
+        view.flexibility = .both()
+        view.onTabChange = { [weak self, weak tabs] index in
+            guard let tabs else { return }
+            tabs.selected = index
+            let title = tabs.pages.indices.contains(index) ? tabs.pages[index].title : ""
+            self?.postEvent?("CHANGE", id, title, index, -1)
+        }
+        tabs.view = view
+        tabs.holder.addChild(view)
+        tabs.holder.invalidateLayout()
+    }
+
+    /// A date as AUIDate gives and takes it: `YYYY-MM-DD`, in the user's
+    /// own calendar day.
+    nonisolated static func text(of date: Date) -> String {
+        let parts = Calendar(identifier: .gregorian).dateComponents(in: .current, from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    nonisolated static func date(from text: String) -> Date? {
+        let parts = text.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var components = DateComponents()
+        components.year = parts[0]
+        components.month = parts[1]
+        components.day = parts[2]
+        components.hour = 12
+        return Calendar(identifier: .gregorian).date(from: components)
+    }
+
     /// A window went away, by the user or the program: tell the program.
     /// Not for a window closeAll put away; the program is gone by then.
     private func windowClosed(_ id: Int) {
         guard openWindows.remove(id) != nil else { return }
-        postEvent?("CLOSE", id, "", -1)
+        postEvent?("CLOSE", id, "", -1, -1)
     }
 
     private func watchSelection(of table: AUITable, id: Int, store: RowStore) {
         table.onSelectionChange = { [weak self] selected in
             guard let row = selected.first, store.rows.indices.contains(row) else { return }
-            self?.postEvent?("SELECT", id, store.rows[row].first ?? "", row)
+            self?.postEvent?("SELECT", id, store.rows[row].first ?? "", row, -1)
         }
     }
 

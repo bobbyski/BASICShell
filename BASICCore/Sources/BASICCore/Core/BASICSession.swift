@@ -1188,7 +1188,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// SELECT, SUBMIT, CHANGE or CLOSE, `source` the control's id. It reaches
     /// the control's own `on<kind>` handler, else `ON AUI <kind> CALL`, as a
     /// `BASICAUIEvent`. Unlike the other host events, none is coalesced.
-    public func postAUIEvent(kind: String, source: Int, text: String = "", index: Int = -1) {
+    /// `column` is a table cell's, with `index` its row; -1 otherwise.
+    public func postAUIEvent(kind: String, source: Int, text: String = "", index: Int = -1, column: Int = -1) {
         let normalizedKind = kind.uppercased()
         postEvent(
             selector: BASICEventSelector(type: "AUI", subtype: normalizedKind),
@@ -1198,6 +1199,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                 "source": .number(Double(source)),
                 "text": .string(BASICString(text)),
                 "index": .number(Double(index)),
+                "column": .number(Double(column)),
                 "timestamp": .number(Date().timeIntervalSince1970)
             ],
             coalesces: false

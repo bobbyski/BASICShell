@@ -61,7 +61,8 @@ final class RecordingAUIHost: BASICAUIHost, @unchecked Sendable {
         defer { lock.unlock() }
         switch request {
         case .create(let id, let kind, let arguments):
-            if kind == .label || kind == .field { texts[id] = arguments.first ?? "" }
+            if kind == .label || kind == .field || kind == .date { texts[id] = arguments.first ?? "" }
+            if kind == .picker { items[id] = arguments.map { [$0] } }
         case .setText(let id, let text):
             texts[id] = text
         case .text(let id):
@@ -75,7 +76,8 @@ final class RecordingAUIHost: BASICAUIHost, @unchecked Sendable {
         case .selectedIndex(let id):
             return .number(Double(selection[id] ?? -1))
         case .selectedText(let id):
-            guard let index = selection[id], let row = items[id]?[index] else { return .text("") }
+            guard let index = selection[id], let rows = items[id], rows.indices.contains(index) else { return .text("") }
+            let row = rows[index]
             return .text(row.first ?? "")
         case .show(let id):
             if case .create(_, .dialog, _)? = requests.first(where: { if case .create(id, _, _) = $0 { true } else { false } }) {
@@ -87,7 +89,22 @@ final class RecordingAUIHost: BASICAUIHost, @unchecked Sendable {
             openWindows.remove(id)
         case .isOpen(let id):
             return .flag(openWindows.contains(id))
-        case .add, .setEnabled, .addButton:
+        case .select(let id, let index):
+            selection[id] = index
+        case .cell(let id, let row, let column):
+            guard let cells = items[id], cells.indices.contains(row), cells[row].indices.contains(column) else { return .text("") }
+            return .text(cells[row][column])
+        case .setCell(let id, let row, let column, let text):
+            if var cells = items[id], cells.indices.contains(row) {
+                while cells[row].count <= column { cells[row].append("") }
+                cells[row][column] = text
+                items[id] = cells
+            }
+        case .addSlice(let id, let label, let value):
+            items[id, default: []].append([label, String(value)])
+        case .addTab(let id, let title, _):
+            items[id, default: []].append([title])
+        case .add, .setEnabled, .addButton, .setColumnStyle, .setSize:
             break
         }
         return .none
@@ -280,6 +297,102 @@ struct BASICActiveUITests {
         """, host: host)
         #expect(host.requests.contains(.addButton(id: 1, title: "Delete")))
         #expect(host.output == ["1"])
+    }
+
+    @Test("Grade Book · Tabs, a picker, a date and a pie chart construct and answer")
+    func pagesAndChoices() throws {
+        let (host, _) = try run("""
+        let w = AUIWindow("Grades")
+        w.size(900, 640)
+        let tabs = AUITabs()
+        let page = AUIStack()
+        tabs.addtab("Students", page)
+        tabs.addtab("Grades", AUILabel("soon"))
+        tabs.select(1)
+        w.add(tabs)
+        let term = AUIPicker("Q1", "Q2")
+        term.add("S1")
+        term.select(2)
+        let day = AUIDate("2026-10-07")
+        let pie = AUIPieChart("Grades")
+        pie.addslice("A", 3)
+        pie.addslice("B", 1)
+        print tabs.count(); " "; tabs.selectedindex(); " "; tabs.selectedtext$()
+        print term.count(); " "; term.selectedtext$()
+        print day.text$(); " "; pie.count()
+        """)
+        #expect(host.requests.contains(.setSize(id: 1, width: 900, height: 640)))
+        #expect(host.requests.contains(.addTab(id: 2, title: "Students", child: 3)))
+        #expect(host.requests.contains(.create(id: 5, kind: .picker, arguments: ["Q1", "Q2"])))
+        #expect(host.requests.contains(.create(id: 6, kind: .date, arguments: ["2026-10-07"])))
+        #expect(host.requests.contains(.addSlice(id: 7, label: "A", value: 3)))
+        #expect(host.output == ["2 1 Grades", "3 S1", "2026-10-07 2"], "\(host.output)")
+    }
+
+    @Test("Grade Book · A table's columns are named or counted; cells read and write; styles reach the host")
+    func tableCells() throws {
+        let (host, _) = try run("""
+        let t = AUITable("Student", "Points", "Status")
+        t.addrow("Ada", "18", "Present")
+        t.addrow("Grace", "", "Present")
+        t.editable("points")
+        t.choices(2, "Present", "Absent", "Tardy")
+        t.setcell(1, "Points", 20)
+        print t.cell$(1, "Points"); " "; t.cell$(0, 0)
+        """)
+        #expect(host.requests.contains(.setColumnStyle(id: 1, column: 1, style: .editable)))
+        #expect(host.requests.contains(.setColumnStyle(id: 1, column: 2, style: .choices(["Present", "Absent", "Tardy"]))))
+        #expect(host.output == ["20 Ada"])
+    }
+
+    @Test("Grade Book · Mistakes are named: an unknown column, a date not written YYYY-MM-DD, a page that is a window")
+    func newMistakes() throws {
+        func failure(_ source: String) -> String {
+            let session = BASICSession(host: RecordingAUIHost())
+            session.program.loadSource(source)
+            do {
+                try session.runProgram()
+                return "no error"
+            } catch {
+                return "\(error)"
+            }
+        }
+        #expect(failure("let t = AUITable(\"Student\", \"Points\")\nt.editable(\"Score\")")
+            .contains("AUITable has no column \"Score\"; its columns are \"Student\", \"Points\""))
+        #expect(failure("let t = AUITable(\"Student\", \"Points\")\nt.editable(2)").contains("AUITable has columns 0 to 1, not 2"))
+        #expect(failure("let d = AUIDate(\"10/7/2026\")").contains("A date is written \"YYYY-MM-DD\", as \"2026-10-07\", not \"10/7/2026\""))
+        #expect(failure("let tabs = AUITabs()\ntabs.addtab(\"No\", AUIWindow(\"W\"))").contains("AUITabs.addtab expects a control"))
+        #expect(failure("let p = AUIPieChart()\np.onclick(\"X\")").contains("AUIPieChart has no click to handle"))
+        #expect(failure("let t = AUITable(\"A\", \"B\")\nt.choices(\"B\", \"Only\")").contains("at least two choices"))
+    }
+
+    @Test("Grade Book · A table cell the user changes reaches onchange with its row, column and text")
+    func cellChange() throws {
+        let host = RecordingAUIHost()
+        let session = BASICSession(host: host)
+        host.onShow = { id in
+            session.postAUIEvent(kind: "CHANGE", source: 2, text: "17", index: 1, column: 1)
+            session.postAUIEvent(kind: "CHANGE", source: 3, text: "Q2", index: 1)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { host.close(id) }
+        }
+        session.program.loadSource("""
+        let w = AUIWindow("Grades")
+        let t = AUITable("Student", "Points")
+        let term = AUIPicker("Q1", "Q2")
+        t.onchange("Edited")
+        term.onchange("Picked")
+        w.run()
+
+        function Edited(event as BASICAUIEvent)
+            print "row"; event.Index; " column"; event.Column; " "; event.Text$
+        end function
+
+        function Picked(event as BASICAUIEvent)
+            print "term "; event.Text$; event.Column
+        end function
+        """)
+        try session.runProgram()
+        #expect(host.output == ["row1 column1 17", "term Q2-1"])
     }
 
     @Test("P6.1 · Stop reaches a program waiting in run()")

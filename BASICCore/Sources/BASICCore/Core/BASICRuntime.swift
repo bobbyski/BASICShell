@@ -59,6 +59,9 @@ final class BASICRuntime {
     // host still closing the last run's windows cannot confuse them.
     var auiObjects: [Int: BASICAUIKind] = [:]
     var auiHandlers: [String: String] = [:]
+    // Each table's column titles, so a program can name a column rather
+    // than count to it: `grid.editable("Points")`.
+    var auiTableColumns: [Int: [String]] = [:]
     var nextAUIObjectID = 1
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
@@ -80,6 +83,7 @@ final class BASICRuntime {
         richObjects.removeAll()
         auiObjects.removeAll()
         auiHandlers.removeAll()
+        auiTableColumns.removeAll()
         eventHandlers.removeAll()
         nextFileObjectID = 1
         nextVectorTerminalObjectID = 1
@@ -3260,11 +3264,14 @@ final class BASICRuntime {
             ]
         case "BASICAUIEVENT":
             // Source is the control's id (control.id()); Text$ its text, a
-            // list's selected item, or a field's contents; Index a selection.
+            // list's selected item, or a field's contents; Index a selection,
+            // or the row of a table cell that changed; Column that cell's
+            // column (-1 for every other event).
             ownFields = [
                 eventField("Source", .scalar(.integer), declaringClassName: normalized),
                 eventField("Text$", .scalar(.string), declaringClassName: normalized),
-                eventField("Index", .scalar(.integer), declaringClassName: normalized)
+                eventField("Index", .scalar(.integer), declaringClassName: normalized),
+                eventField("Column", .scalar(.integer), declaringClassName: normalized)
             ]
         default:
             ownFields = []

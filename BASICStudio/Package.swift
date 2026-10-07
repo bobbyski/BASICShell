@@ -20,6 +20,8 @@ let package = Package(
         // prebuilt frameworks.
         .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI"),
         .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUIMarkdown"),
+        // A BASIC program's own pie chart (AUIPieChart).
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUICharts"),
         // The ActiveUI shell's source editor, over SwiftyCodeEditor, whose
         // themes and highlighter types it names directly.
         .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUICode"),
@@ -37,6 +39,7 @@ let package = Package(
                 "VectorTerminalSDK",
                 .product(name: "ActiveUI", package: "ActiveUI"),
                 .product(name: "ActiveUIMarkdown", package: "ActiveUIMarkdown"),
+                .product(name: "ActiveUICharts", package: "ActiveUICharts"),
                 .product(name: "ActiveUICode", package: "ActiveUICode"),
                 .product(name: "SwiftyCodeEditor", package: "SwiftyCodeEditor")
             ],

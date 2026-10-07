@@ -3974,6 +3974,7 @@ public final class BASICInterpreter {
             fields["SOURCE"] = fieldValue("source", from: dictionary) ?? .number(0)
             fields["TEXT$"] = fieldValue("text", from: dictionary) ?? .string(BASICString(""))
             fields["INDEX"] = fieldValue("index", from: dictionary) ?? .number(-1)
+            fields["COLUMN"] = fieldValue("column", from: dictionary) ?? .number(-1)
         default:
             break
         }

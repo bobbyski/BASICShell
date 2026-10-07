@@ -188,7 +188,8 @@ public enum BASICKeywords {
     /// by name from here. One list, three readers.
     public static let activeUIClasses: [String] = [
         "AUIWindow", "AUIStack", "AUILabel", "AUIButton", "AUIField",
-        "AUIList", "AUITable", "AUIDialog",
+        "AUIList", "AUITable", "AUIDialog", "AUITabs", "AUIPicker",
+        "AUIDate", "AUIPieChart",
     ]
 
     /// The database family, from the one place it is registered (D0.5).

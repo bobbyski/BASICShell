@@ -7,6 +7,7 @@
 //
 
 import ActiveUI
+import ActiveUICharts
 import AppKit
 import BASICCore
 import Foundation
@@ -227,5 +228,111 @@ struct StudioAUIBridgeTests {
         #expect(throws: BASICError.self) { try bridge.perform(.text(id: 3)) }
         _ = try bridge.perform(.setEnabled(id: 3, enabled: false))
         #expect(bridge.views[3]?.isEnabled == false)
+    }
+
+    @Test("Grade Book · Tabs show each page under its title, and a tab the user picks reaches onchange")
+    func tabs() async throws {
+        let studio = harness("""
+        let w = AUIWindow("Book")
+        let tabs = AUITabs()
+        let first = AUILabel("first page")
+        let second = AUILabel("second page")
+        tabs.addtab("Students", first)
+        tabs.addtab("Grades", second)
+        w.add(tabs)
+        tabs.onchange("Switched")
+        w.run()
+
+        function Switched(event as BASICAUIEvent)
+            print "tab "; event.Index; " "; event.Text$; " "; tabs.selectedtext$()
+            w.close()
+        end function
+        """)
+        let bridge = studio.model.auiBridge
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the window") { (try? bridge.perform(.isOpen(id: 1))) == .flag(true) }
+        let tabView = try #require(bridge.views.values.lazy.compactMap { $0.children.first as? AUITabView }.first)
+        #expect((try? bridge.perform(.itemCount(id: 2))) == .number(2))
+        tabView.selectedTabIndex = 1
+        tabView.onTabChange?(1)
+        try await studio.waitUntilStopped()
+        #expect(studio.model.consoleText.contains("tab 1 Grades Grades"))
+    }
+
+    @Test("Grade Book · A table's editable and choice cells take what the user types or picks, and report it")
+    func editableCells() async throws {
+        let studio = harness("""
+        GLOBAL changes = 0
+        let w = AUIWindow("Grades")
+        let t = AUITable("Student", "Points", "Status")
+        t.addrow("Ada", "18", "Present")
+        t.addrow("Grace", "", "Present")
+        t.editable("Points")
+        t.choices("Status", "Present", "Absent", "Tardy")
+        w.add(t)
+        t.onchange("Changed")
+        w.run()
+        print "Grace "; t.cell$(1, "Points"); " "; t.cell$(1, "Status")
+
+        function Changed(event as BASICAUIEvent)
+            print "row"; event.Index; " column"; event.Column; " "; event.Text$
+            changes = changes + 1
+            if changes = 2 then w.close()
+        end function
+        """)
+        let bridge = studio.model.auiBridge
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the window") { (try? bridge.perform(.isOpen(id: 1))) == .flag(true) }
+        let (_, table) = try #require(control(AUITable.self, in: bridge))
+        let columns = try #require(table.columns)
+        let points = try #require(columns[1].cellContent(1) as? AUITextField)
+        let status = try #require(columns[2].cellContent(1) as? AUISegmentedControl)
+        #expect(columns[0].cellContent(0) is AUILabel)
+        #expect(status.segments == ["Present", "Absent", "Tardy"] && status.selectedIndex == 0)
+        points.onEndEditing?("20")
+        status.onSelectionChange?(2)
+        try await studio.waitUntilStopped()
+        let output = studio.model.consoleText
+        #expect(output.contains("row1 column1 20"), "\(output)")
+        #expect(output.contains("row1 column2 Tardy"), "\(output)")
+        #expect(output.contains("Grace 20 Tardy"), "\(output)")
+    }
+
+    @Test("Grade Book · A picker's options, a date, and a pie chart's slices")
+    func pickerDateAndPie() async throws {
+        let studio = harness("""
+        let w = AUIWindow("Summary")
+        let term = AUIPicker("Q1", "Q2", "S1")
+        let day = AUIDate("2026-10-07")
+        let pie = AUIPieChart("Grades")
+        pie.addslice("A", 3)
+        pie.addslice("B", 1)
+        w.add(term)
+        w.add(day)
+        w.add(pie)
+        term.onchange("Picked")
+        w.run()
+        print day.text$(); " "; pie.count(); " "; term.selectedindex()
+
+        function Picked(event as BASICAUIEvent)
+            print "picked "; event.Text$; event.Index
+            w.close()
+        end function
+        """)
+        let bridge = studio.model.auiBridge
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the window") { (try? bridge.perform(.isOpen(id: 1))) == .flag(true) }
+        let (_, picker) = try #require(control(AUIPicker.self, in: bridge))
+        let (_, date) = try #require(control(AUIDatePicker.self, in: bridge))
+        let (_, chart) = try #require(control(AUIChart.self, in: bridge))
+        #expect(picker.options == ["Q1", "Q2", "S1"])
+        #expect(StudioAUIBridge.text(of: date.date) == "2026-10-07")
+        let slices = try #require(chart.marks.first as? AUISectorMark).resolve()
+        #expect(slices.map(\.y) == [3, 1])
+        picker.selectedIndex = 2
+        picker.onSelectionChange?(2)
+        try await studio.waitUntilStopped()
+        #expect(studio.model.consoleText.contains("picked S12"))
+        #expect(studio.model.consoleText.contains("2026-10-07 2 2"))
     }
 }
