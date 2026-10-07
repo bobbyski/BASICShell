@@ -240,7 +240,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.game",
               "name": "Game",
               "language": "BASIC",
-              "summary": "Someone to move around and four targets to shoot: they turn to face the way you point, walk, run when you point harder, and fire the way they face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
+              "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
               "icon": "gamecontroller",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -324,13 +324,16 @@ enum BASICRecipeCatalog {
                 #!/usr/bin/env BASICShell
                 ' {{NAME}} — a game to build on.
                 '
-                ' Someone to move around, and four targets to shoot. Point the way and they
-                ' turn to face it and walk; point harder and they run. Let go, or bring the
-                ' stick back to the middle, and they stop. Fire shoots the way they face, and
-                ' a shot flies until it hits a target, for a point, or leaves the floor.
-                ' Moving and shooting are the start of most games, so that is all this does,
-                ' small enough to read in one sitting, with a comment saying what each part
-                ' is for. Make the targets move, or shoot back, and it is a game.
+                ' Someone to move around, four targets to shoot, and a guard on patrol.
+                ' Point the way and they turn to face it and walk; point harder and they
+                ' run. Let go, or bring the stick back to the middle, and they stop. Fire
+                ' shoots the way they face, and a shot flies until it hits something or
+                ' leaves the floor: a target is a point, the guard is ten. The guard walks
+                ' the edge of the floor clockwise, and a new one sets out from the top two
+                ' seconds after one is hit. Moving, shooting and something that moves on
+                ' its own are the start of most games, so that is all this does, small
+                ' enough to read in one sitting, with a comment saying what each part is
+                ' for. Let the guard shoot back, and it is a game.
                 '
                 ' Touch:   the joystick, bottom right. A little lean walks, all the way runs,
                 '          and every lean between is a speed of its own. Fire, bottom left.
@@ -396,6 +399,24 @@ enum BASICRecipeCatalog {
                 GLOBAL targetFlash(4) AS INTEGER
                 GLOBAL score AS INTEGER
 
+                ' ---------------------------------------------------------------- the guard
+                ' A second walker, who moves on its own: round the edge of the floor,
+                ' GUARDMARGIN in from the walls, clockwise. (guardDX, guardDY) is the way
+                ' it is walking, one of right (1, 0), down (0, 1), left (-1, 0) or up
+                ' (0, -1). guardAlive is 0 from a hit until it comes back, guardWait frames
+                ' later.
+                GLOBAL GUARDSPEED AS DOUBLE = 2
+                GLOBAL GUARDMARGIN AS INTEGER = 40
+                GLOBAL GUARDPOINTS AS INTEGER = 10
+                GLOBAL RESPAWNSECONDS AS INTEGER = 2
+                GLOBAL guardX AS DOUBLE
+                GLOBAL guardY AS DOUBLE
+                GLOBAL guardDX AS DOUBLE
+                GLOBAL guardDY AS DOUBLE
+                GLOBAL guardStride AS DOUBLE
+                GLOBAL guardAlive AS INTEGER
+                GLOBAL guardWait AS INTEGER
+
                 ' ---------------------------------------------------------------- input
                 ' What the controls asked for this frame: a way to go (wantX, wantY) and
                 ' how fast. A speed of 0 means stand still.
@@ -453,6 +474,7 @@ enum BASICRecipeCatalog {
                     playerY = WORLDHEIGHT / 2
                     facing = -PI / 2
                     PlaceTargets()
+                    SpawnGuard()
                     playing = 1
 
                     WHILE playing = 1
@@ -468,6 +490,7 @@ enum BASICRecipeCatalog {
                         IF sceneryDirty = 1 THEN DrawScenery()
                         IF paused = 0 THEN
                             MovePlayer()
+                            MoveGuard()
                             Shoot()
                             MoveShots()
                         ELSE
@@ -638,6 +661,61 @@ enum BASICRecipeCatalog {
                     playerY = Clamp(playerY, PLAYERSIZE, WORLDHEIGHT - PLAYERSIZE)
                 END FUNCTION
 
+                ' ================================================================= the guard
+
+                ' A new guard at the top of the floor, in the middle, setting out to the
+                ' right: clockwise.
+                FUNCTION SpawnGuard() AS VOID
+                    guardX = WORLDWIDTH / 2
+                    guardY = GUARDMARGIN
+                    guardDX = 1
+                    guardDY = 0
+                    guardStride = 0
+                    guardAlive = 1
+                END FUNCTION
+
+                ' Walk on; at a corner, turn a quarter turn to the right, which on this
+                ' path is always clockwise. A guard that has been hit counts down its wait
+                ' instead, and comes back when it runs out: RESPAWNSECONDS * FPS frames,
+                ' two seconds while Pace keeps the frame rate at FPS.
+                FUNCTION MoveGuard() AS VOID
+                    IF guardAlive = 0 THEN
+                        guardWait = guardWait - 1
+                        IF guardWait <= 0 THEN SpawnGuard()
+                        RETURN
+                    END IF
+                    guardX = guardX + guardDX * GUARDSPEED
+                    guardY = guardY + guardDY * GUARDSPEED
+                    LOCAL rightSide = WORLDWIDTH - GUARDMARGIN
+                    LOCAL bottomSide = WORLDHEIGHT - GUARDMARGIN
+                    IF guardX > rightSide OR guardX < GUARDMARGIN OR guardY > bottomSide OR guardY < GUARDMARGIN THEN
+                        ' Past a corner: back onto it, and turn.
+                        guardX = Clamp(guardX, GUARDMARGIN, rightSide)
+                        guardY = Clamp(guardY, GUARDMARGIN, bottomSide)
+                        TurnGuardRight()
+                    END IF
+                    guardStride = guardStride + 0.17 * SQR(GUARDSPEED)
+                END FUNCTION
+
+                ' A quarter turn to the right, on the screen, where y runs down: right
+                ' becomes down, down becomes left, left becomes up, up becomes right.
+                FUNCTION TurnGuardRight() AS VOID
+                    LOCAL wasDX = guardDX
+                    guardDX = -guardDY
+                    guardDY = wasDX
+                END FUNCTION
+
+                ' Hit: points, gone, and a new guard in RESPAWNSECONDS.
+                FUNCTION HitGuard() AS VOID
+                    score = score + GUARDPOINTS
+                    guardAlive = 0
+                    guardWait = RESPAWNSECONDS * FPS
+                    vtg.delete("guardBody")
+                    vtg.delete("guardNose")
+                    vtg.delete("guardFootLeft")
+                    vtg.delete("guardFootRight")
+                END FUNCTION
+
                 ' ================================================================= shooting
 
                 ' A press of Fire shoots once: from the nose, the way the player faces, at
@@ -659,8 +737,8 @@ enum BASICRecipeCatalog {
                     NEXT s
                 END FUNCTION
 
-                ' Each shot flies on until it hits a target, which scores a point, or
-                ' leaves the floor. Either way it is gone, and its slot is free again.
+                ' Each shot flies on until it hits the guard, a target, or leaves the
+                ' floor. Either way it is gone, and its slot is free again.
                 FUNCTION MoveShots() AS VOID
                     LOCAL s = 0
                     LOCAL t = 0
@@ -668,6 +746,10 @@ enum BASICRecipeCatalog {
                         IF shotLive(s) = 1 THEN
                             shotX(s) = shotX(s) + shotVX(s)
                             shotY(s) = shotY(s) + shotVY(s)
+                            IF guardAlive = 1 AND Distance(shotX(s), shotY(s), guardX, guardY) < PLAYERSIZE THEN
+                                FreeShot(s)
+                                HitGuard()
+                            END IF
                             FOR t = 0 TO TARGETS - 1
                                 IF shotLive(s) = 1 AND Distance(shotX(s), shotY(s), targetX(t), targetY(t)) < TARGETSIZE THEN
                                     FreeShot(s)
@@ -826,31 +908,35 @@ enum BASICRecipeCatalog {
                 ' Everything that moves, every frame; the words only when they change.
                 FUNCTION DrawFrame() AS VOID
                     DrawTargets()
-                    DrawPlayer()
+                    DrawWalker("player", playerX, playerY, facing, speed, stride, "#bfdbfe", "#2563eb")
+                    IF guardAlive = 1 THEN DrawWalker("guard", guardX, guardY, DirectionOf(guardDX, guardDY), GUARDSPEED, guardStride, "#fed7aa", "#ea580c")
                     DrawShots()
                     DrawHud()
                     IF messageDirty = 1 THEN DrawMessage()
                 END FUNCTION
 
-                ' Seen from above: two feet that swing as they go, a round body over them,
-                ' and a nose on the side they face.
-                FUNCTION DrawPlayer() AS VOID
+                ' Someone seen from above, at (wx, wy): two feet that swing as they go, a
+                ' round body over them, and a nose on the side they face. The player and
+                ' the guard are both drawn with it, in their own colors (the body's rim$
+                ' around its fill$). who$ starts each shape's id, so their shapes are their
+                ' own ("playerBody", "guardBody").
+                FUNCTION DrawWalker(who$ AS STRING, wx AS DOUBLE, wy AS DOUBLE, wFacing AS DOUBLE, wSpeed AS DOUBLE, wStride AS DOUBLE, rim$ AS STRING, fill$ AS STRING) AS VOID
                     ' Out to each side: a quarter turn from the way they face.
-                    LOCAL sideX = COS(facing + PI / 2) * 9
-                    LOCAL sideY = SIN(facing + PI / 2) * 9
+                    LOCAL sideX = COS(wFacing + PI / 2) * 9
+                    LOCAL sideY = SIN(wFacing + PI / 2) * 9
                     ' How far a foot is ahead (or, for the other foot, behind): it swings
                     ' with the stride, and further at a run.
-                    LOCAL swing = SIN(stride) * (1 + speed * 1.5)
-                    LOCAL aheadX = COS(facing) * swing
-                    LOCAL aheadY = SIN(facing) * swing
+                    LOCAL swing = SIN(wStride) * (1 + wSpeed * 1.5)
+                    LOCAL aheadX = COS(wFacing) * swing
+                    LOCAL aheadY = SIN(wFacing) * swing
                     LOCAL foot = PixelLength(5)
-                    vtg.circle("footLeft", PixelX(playerX + sideX + aheadX), PixelY(playerY + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
-                    vtg.circle("footRight", PixelX(playerX - sideX - aheadX), PixelY(playerY - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
+                    vtg.circle(who$ + "FootLeft", PixelX(wx + sideX + aheadX), PixelY(wy + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
+                    vtg.circle(who$ + "FootRight", PixelX(wx - sideX - aheadX), PixelY(wy - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
 
-                    vtg.circle("body", PixelX(playerX), PixelY(playerY), PixelLength(PLAYERSIZE), "#bfdbfe", "#2563eb", PixelLength(2), 3)
-                    LOCAL noseX = playerX + COS(facing) * PLAYERSIZE
-                    LOCAL noseY = playerY + SIN(facing) * PLAYERSIZE
-                    vtg.circle("nose", PixelX(noseX), PixelY(noseY), PixelLength(4), "none", "#facc15", 0, 4)
+                    vtg.circle(who$ + "Body", PixelX(wx), PixelY(wy), PixelLength(PLAYERSIZE), rim$, fill$, PixelLength(2), 3)
+                    LOCAL noseX = wx + COS(wFacing) * PLAYERSIZE
+                    LOCAL noseY = wy + SIN(wFacing) * PLAYERSIZE
+                    vtg.circle(who$ + "Nose", PixelX(noseX), PixelY(noseY), PixelLength(4), "none", "#facc15", 0, 4)
                 END FUNCTION
 
                 ' A target is two rings and a middle, bright for the frames after a hit.
