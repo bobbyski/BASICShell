@@ -240,7 +240,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.game",
               "name": "Game",
               "language": "BASIC",
-              "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
+              "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes in four files, ready to grow into your own game.",
               "icon": "gamecontroller",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -320,474 +320,193 @@ enum BASICRecipeCatalog {
                 }
 
                 """#),
-                ("src/main.bas", #"""
-                #!/usr/bin/env BASICShell
-                ' {{NAME}} — a game to build on.
+                ("src/Characters.bas", #"""
+                ' Characters.bas — the people in the game.
                 '
-                ' Someone to move around, four targets to shoot, and a guard on patrol.
-                ' Point the way and they turn to face it and walk; point harder and they
-                ' run. Let go, or bring the stick back to the middle, and they stop. Fire
-                ' shoots the way they face, and a shot flies until it hits something or
-                ' leaves the floor: a target is a point, the guard is ten. The guard walks
-                ' the edge of the floor clockwise, and a new one sets out from the top two
-                ' seconds after one is hit. Moving, shooting and something that moves on
-                ' its own are the start of most games, so that is all this does, small
-                ' enough to read in one sitting, with a comment saying what each part is
-                ' for. Let the guard shoot back, and it is a game.
-                '
-                ' Touch:   the joystick, bottom right. A little lean walks, all the way runs,
-                '          and every lean between is a speed of its own. Fire, bottom left.
-                ' Keys:    arrows or W A S D walk, hold Shift to run, Space fires,
-                '          P pauses, Q quits
-                ' Gamepad: d-pad or left stick walks, hold B to run, A fires, Menu pauses
-                '
-                ' It draws with lines, circles and vector text only, so it runs
-                ' interpreted in BASICStudio and BASICShell, and compiled with basicc.
+                ' A Walker is anyone who walks: where they are, which way they face, how
+                ' fast they go, and how to draw them. The Player and the Guard are both
+                ' walkers (INHERITS Walker), so they get all of that, and each adds only
+                ' what is its own: the Player goes where the controls say, the Guard walks
+                ' its patrol.
 
-                ' ---------------------------------------------------------------- the world
-                ' Everything is placed in a fixed world, 640 by 480, and scaled to fit the
-                ' window (see FitView), so it looks the same at any size.
-                GLOBAL WORLDWIDTH AS INTEGER = 640
-                GLOBAL WORLDHEIGHT AS INTEGER = 480
-                ' The floor is ruled in squares this size, so you can see how fast you go.
-                GLOBAL GRIDSIZE AS INTEGER = 40
-                ' Frames a second to aim for (see Pace).
-                GLOBAL FPS AS INTEGER = 30
-                GLOBAL PI AS DOUBLE = 3.1415927
+                ' MARK: - Walker
 
-                ' ---------------------------------------------------------------- the player
-                GLOBAL playerX AS DOUBLE
-                GLOBAL playerY AS DOUBLE
-                ' Which way they face, in radians: 0 is right, PI/2 is down (screen y runs
-                ' down), PI is left and -PI/2 is up.
-                GLOBAL facing AS DOUBLE
-                ' How fast they are going, in world units a frame. 0 is standing still.
-                GLOBAL speed AS DOUBLE
-                ' Where the feet are in their stride: once round is a step with each foot.
-                GLOBAL stride AS DOUBLE
+                CLASS Walker
+                    ' Where they are in the world.
+                    PUBLIC X AS DOUBLE
+                    PUBLIC Y AS DOUBLE
+                    ' Which way they face, in radians: 0 is right, PI/2 is down (screen y
+                    ' runs down), PI is left and -PI/2 is up.
+                    PUBLIC Facing AS DOUBLE
+                    ' How fast they are going, in world units a frame. 0 is standing still.
+                    PUBLIC Speed AS DOUBLE
+                    ' Where the feet are in their stride: once round is a step with each foot.
+                    PUBLIC Stride AS DOUBLE
+                    ' The start of each of their shapes' names, so two walkers' shapes are
+                    ' their own ("playerBody", "guardBody"), and their colors.
+                    PUBLIC Who$ AS STRING
+                    PUBLIC Rim$ AS STRING
+                    PUBLIC Fill$ AS STRING
 
-                GLOBAL PLAYERSIZE AS INTEGER = 12
-                ' A walk and a run, in world units a frame. At 30 frames a second a walk
-                ' crosses the world in about 14 seconds, and a run in under 4.
-                GLOBAL WALKSPEED AS DOUBLE = 1.5
-                GLOBAL RUNSPEED AS DOUBLE = 6
-                ' The most they turn in one frame, in radians: a half turn takes about a
-                ' quarter of a second.
-                GLOBAL TURNSPEED AS DOUBLE = 0.4
-                ' How far the stick has to lean, out of 1, before it counts. A thumb
-                ' resting on the stick is never quite in the middle.
-                GLOBAL DEADZONE AS DOUBLE = 0.15
+                    ' NEW Player("player", 320, 240, "#bfdbfe", "#2563eb") calls this.
+                    FUNCTION New(name$ AS STRING, startX AS DOUBLE, startY AS DOUBLE, rimColor$ AS STRING, fillColor$ AS STRING) AS VOID
+                        ME.Who$ = name$
+                        ME.X = startX
+                        ME.Y = startY
+                        ME.Rim$ = rimColor$
+                        ME.Fill$ = fillColor$
+                        ME.Facing = -PI / 2
+                    END FUNCTION
 
-                ' ---------------------------------------------------------------- shots
-                ' Shots in the air at once, each flying the way the player faced when it
-                ' was fired. shotLive is 1 for a shot in flight and 0 for a free slot.
-                GLOBAL MAXSHOTS AS INTEGER = 8
-                GLOBAL SHOTSPEED AS DOUBLE = 10
-                GLOBAL shotLive(8) AS INTEGER
-                GLOBAL shotX(8) AS DOUBLE
-                GLOBAL shotY(8) AS DOUBLE
-                GLOBAL shotVX(8) AS DOUBLE
-                GLOBAL shotVY(8) AS DOUBLE
-
-                ' ---------------------------------------------------------------- targets
-                ' Four targets that stay where they are. A hit scores a point and makes the
-                ' target flash for a few frames (targetFlash counts them down).
-                GLOBAL TARGETS AS INTEGER = 4
-                GLOBAL TARGETSIZE AS INTEGER = 18
-                GLOBAL targetX(4) AS DOUBLE
-                GLOBAL targetY(4) AS DOUBLE
-                GLOBAL targetFlash(4) AS INTEGER
-                GLOBAL score AS INTEGER
-
-                ' ---------------------------------------------------------------- the guard
-                ' A second walker, who moves on its own: round the edge of the floor,
-                ' GUARDMARGIN in from the walls, clockwise. (guardDX, guardDY) is the way
-                ' it is walking, one of right (1, 0), down (0, 1), left (-1, 0) or up
-                ' (0, -1). guardAlive is 0 from a hit until it comes back, guardWait frames
-                ' later.
-                GLOBAL GUARDSPEED AS DOUBLE = 2
-                GLOBAL GUARDMARGIN AS INTEGER = 40
-                GLOBAL GUARDPOINTS AS INTEGER = 10
-                GLOBAL RESPAWNSECONDS AS INTEGER = 2
-                GLOBAL guardX AS DOUBLE
-                GLOBAL guardY AS DOUBLE
-                GLOBAL guardDX AS DOUBLE
-                GLOBAL guardDY AS DOUBLE
-                GLOBAL guardStride AS DOUBLE
-                GLOBAL guardAlive AS INTEGER
-                GLOBAL guardWait AS INTEGER
-
-                ' ---------------------------------------------------------------- input
-                ' What the controls asked for this frame: a way to go (wantX, wantY) and
-                ' how fast. A speed of 0 means stand still.
-                GLOBAL wantX AS DOUBLE
-                GLOBAL wantY AS DOUBLE
-                GLOBAL wantSpeed AS DOUBLE
-                ' The gamepad, as GamepadChanged last heard it.
-                GLOBAL padLeft AS INTEGER
-                GLOBAL padRight AS INTEGER
-                GLOBAL padUp AS INTEGER
-                GLOBAL padDown AS INTEGER
-                GLOBAL padRun AS INTEGER
-                GLOBAL padPause AS INTEGER
-                ' A press of Fire, waiting for the next frame to shoot it. Presses arrive as
-                ' events, so even a tap too quick for a frame to see is kept; holding Fire
-                ' down is one press, and shoots once.
-                GLOBAL firePressed AS INTEGER
-
-                ' ---------------------------------------------------------------- the game
-                GLOBAL playing AS INTEGER
-                GLOBAL paused AS INTEGER
-                GLOBAL message$ AS STRING
-                GLOBAL messageDirty AS INTEGER
-                ' The speed line as it was last drawn (see DrawHud).
-                GLOBAL hud$ AS STRING
-
-                ' ---------------------------------------------------------------- the view
-                GLOBAL canvasWidth AS INTEGER
-                GLOBAL canvasHeight AS INTEGER
-                GLOBAL viewScale AS DOUBLE
-                GLOBAL viewX AS DOUBLE
-                GLOBAL viewY AS DOUBLE
-                GLOBAL resized AS INTEGER
-                GLOBAL sceneryDirty AS INTEGER
-
-                ' ---------------------------------------------------------------- pacing
-                GLOBAL sleepMs AS DOUBLE = 30
-                GLOBAL framesThisSecond AS INTEGER
-                GLOBAL lastSecond$ AS STRING
-                GLOBAL secondsSeen AS INTEGER
-
-                GLOBAL vtg = VectorTerminal()
-                GLOBAL touch = TouchControls()
-
-                ' ================================================================= the loop
-
-                ' Read the controls, move, draw, wait: once a frame, until Q.
-                FUNCTION Main() AS VOID
-                    CLS
-                    vtg.clear()
-                    vtg.setDefaultLayer(2)
-                    MeasureCanvas()
-                    PlaceTouchControls()
-                    playerX = WORLDWIDTH / 2
-                    playerY = WORLDHEIGHT / 2
-                    facing = -PI / 2
-                    PlaceTargets()
-                    SpawnGuard()
-                    playing = 1
-
-                    WHILE playing = 1
-                        IF resized = 1 THEN
-                            resized = 0
-                            FitView()
-                        END IF
-                        ReadControls()
-
-                        ' A frame is drawn off screen and shown all at once, so nothing
-                        ' flickers.
-                        vtg.startFrame("game")
-                        IF sceneryDirty = 1 THEN DrawScenery()
-                        IF paused = 0 THEN
-                            MovePlayer()
-                            MoveGuard()
-                            Shoot()
-                            MoveShots()
-                        ELSE
-                            firePressed = 0
-                        END IF
-                        DrawFrame()
-                        vtg.endFrame("game")
-                        vtg.present()
-
-                        Pace()
-                        LOCAL slept = AWAIT SLEEP(INT(sleepMs))
-                    WEND
-
-                    touch.Clear()
-                    vtg.clear()
-                    vtg.present()
-                    CLS
-                END FUNCTION
-
-                FUNCTION ShowMessage(words$ AS STRING) AS VOID
-                    message$ = words$
-                    messageDirty = 1
-                END FUNCTION
-
-                FUNCTION TogglePause() AS VOID
-                    IF paused = 1 THEN
-                        paused = 0
-                        ShowMessage("")
-                    ELSE
-                        paused = 1
-                        ShowMessage("PAUSED")
-                    END IF
-                END FUNCTION
-
-                ' ================================================================= controls
-
-                ' Every control comes down to the same two answers: which way, and how
-                ' fast. The touch joystick says how far it leans, so it can ask for any
-                ' speed from a walk to a run. Keys and gamepad buttons are only on or off,
-                ' so they walk, and run while Shift or B is held.
-                FUNCTION ReadControls() AS VOID
-                    wantX = 0
-                    wantY = 0
-                    wantSpeed = 0
-
-                    ' The touch joystick is asked where it is: X and Y run from -1 to 1,
-                    ' and 0, 0 is the middle, where it springs back when the finger lifts.
-                    ' How far it leans is the distance from the middle.
-                    LOCAL stickX = touch.X("stick")
-                    LOCAL stickY = touch.Y("stick")
-                    LOCAL lean = SQR(stickX * stickX + stickY * stickY)
-                    IF lean > DEADZONE THEN
-                        wantX = stickX
-                        wantY = stickY
-                        wantSpeed = SpeedForLean(lean)
-                    ELSE
-                        ' Keys and the gamepad: each direction held adds its part, so two
-                        ' at once is a diagonal.
-                        IF KEYDOWN("LEFT") OR KEYDOWN("A") OR padLeft = 1 THEN wantX = wantX - 1
-                        IF KEYDOWN("RIGHT") OR KEYDOWN("D") OR padRight = 1 THEN wantX = wantX + 1
-                        IF KEYDOWN("UP") OR KEYDOWN("W") OR padUp = 1 THEN wantY = wantY - 1
-                        IF KEYDOWN("DOWN") OR KEYDOWN("S") OR padDown = 1 THEN wantY = wantY + 1
-                        IF wantX <> 0 OR wantY <> 0 THEN
-                            wantSpeed = WALKSPEED
-                            IF KEYDOWN("SHIFT") OR padRun = 1 THEN wantSpeed = RUNSPEED
-                        END IF
-                    END IF
-
-                    ' Presses, as opposed to keys held, come through INKEY$, once each:
-                    ' Space fires.
-                    LOCAL key$ = INKEY$()
-                    WHILE key$ <> ""
-                        IF key$ = " " THEN firePressed = 1
-                        IF key$ = "q" OR key$ = "Q" THEN playing = 0
-                        IF key$ = "p" OR key$ = "P" THEN TogglePause()
-                        key$ = INKEY$()
-                    WEND
-                    IF padPause = 1 THEN
-                        padPause = 0
-                        TogglePause()
-                    END IF
-                END FUNCTION
-
-                ' How far the stick leans picks a speed between a walk and a run, on a
-                ' scale that is even in the logarithm of the speed rather than in the speed
-                ' itself: every step of lean multiplies the speed by the same amount. With
-                ' a run four times a walk:
-                '
-                '     lean    0.15 (just past the dead zone)   0.575 (halfway)    1 (all the way)
-                '     speed   1.5, a walk                      3, twice a walk    6, a run
-                '
-                ' In a straight line, halfway would already be 3.75, most of a run. Spread
-                ' this way, more of the stick is spent at the slow end, where small changes
-                ' show and fine control matters.
-                FUNCTION SpeedForLean(lean AS DOUBLE) AS DOUBLE
-                    IF lean <= DEADZONE THEN RETURN 0
-                    LOCAL t = (lean - DEADZONE) / (1 - DEADZONE)
-                    IF t > 1 THEN t = 1
-                    RETURN EXP(LOG(WALKSPEED) + t * (LOG(RUNSPEED) - LOG(WALKSPEED)))
-                END FUNCTION
-
-                ' A game controller in BASICStudio: every button and stick direction comes
-                ' as its own control, with a value from 0 (let go) to 1 (pressed). A stick's
-                ' directions come as on or off too, so the gamepad walks and runs the way
-                ' the keys do.
-                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
-                    LOCAL pressed = 0
-                    IF event.Value > 0.5 THEN pressed = 1
-                    LOCAL control$ = event.Control
-                    IF control$ = "MENU" AND pressed = 1 THEN padPause = 1
-                    ' A, or the touch Fire button, which reports as A: a press fires.
-                    IF (control$ = "A" OR control$ = "RIGHT_TRIGGER") AND pressed = 1 THEN firePressed = 1
-                    ' The touch joystick reports here as well, as controller -1, but only
-                    ' as on or off. ReadControls asks it how far it leans instead.
-                    IF event.Controller <> -1 THEN
-                        IF control$ = "DPAD_LEFT" OR control$ = "LEFT_STICK_LEFT" THEN padLeft = pressed
-                        IF control$ = "DPAD_RIGHT" OR control$ = "LEFT_STICK_RIGHT" THEN padRight = pressed
-                        IF control$ = "DPAD_UP" OR control$ = "LEFT_STICK_UP" THEN padUp = pressed
-                        IF control$ = "DPAD_DOWN" OR control$ = "LEFT_STICK_DOWN" THEN padDown = pressed
-                        IF control$ = "B" THEN padRun = pressed
-                    END IF
-                END FUNCTION
-
-                ' On an iPad or iPhone: the joystick under the right thumb, Fire under the
-                ' left, and a pause button. Fire and pause report as a gamepad's A and Menu
-                ' buttons, so GamepadChanged reads them. Elsewhere these calls do nothing.
-                FUNCTION PlaceTouchControls() AS VOID
-                    touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 170)
-                    touch.Button("fire", "BOTTOMLEFT", 50, 50, 100, "FIRE", "#ff3b30")
-                    touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
-                END FUNCTION
-
-                FUNCTION WindowResized(event AS BASICResizeEvent)
-                    canvasWidth = event.Width
-                    canvasHeight = event.Height
-                    resized = 1
-                END FUNCTION
-
-                ' ================================================================= moving
-
-                ' Go the way asked for, at the speed asked for, and turn to face it. They
-                ' move the new way at once but turn toward it over a few frames, so a
-                ' change of direction is quick and you still see them turn. No stick and
-                ' no keys is a speed of 0: they stop where they are.
-                FUNCTION MovePlayer() AS VOID
-                    speed = wantSpeed
-                    IF speed = 0 THEN
-                        stride = 0
-                    ELSE
-                        LOCAL way = DirectionOf(wantX, wantY)
-                        ' The shortest way round, and no more than TURNSPEED in a frame.
-                        LOCAL turn = Unwind(way - facing)
+                    ' Turn toward `way`, the short way round, and no more than TURNSPEED in
+                    ' one frame, so a change of direction is quick and still seen.
+                    FUNCTION TurnToward(way AS DOUBLE) AS VOID
+                        LOCAL turn = Unwind(way - ME.Facing)
                         IF turn > TURNSPEED THEN turn = TURNSPEED
                         IF turn < -TURNSPEED THEN turn = -TURNSPEED
-                        facing = Unwind(facing + turn)
+                        ME.Facing = Unwind(ME.Facing + turn)
+                    END FUNCTION
 
-                        ' A direction and a speed make a step: COS gives the part across,
-                        ' SIN the part down.
-                        playerX = playerX + COS(way) * speed
-                        playerY = playerY + SIN(way) * speed
+                    ' One step: stepX across and stepY down. The step's length is the speed,
+                    ' and faster means quicker steps as well as longer ones.
+                    FUNCTION Walk(stepX AS DOUBLE, stepY AS DOUBLE) AS VOID
+                        ME.X = ME.X + stepX
+                        ME.Y = ME.Y + stepY
+                        ME.Speed = SQR(stepX * stepX + stepY * stepY)
+                        ME.Stride = ME.Stride + 0.17 * SQR(ME.Speed)
+                    END FUNCTION
 
-                        ' Faster means quicker steps as well as longer ones.
-                        stride = stride + 0.17 * SQR(speed)
-                    END IF
+                    ' Where the nose is: a shot leaves from there.
+                    FUNCTION NoseX() AS DOUBLE
+                        RETURN ME.X + COS(ME.Facing) * WALKERSIZE
+                    END FUNCTION
 
+                    FUNCTION NoseY() AS DOUBLE
+                        RETURN ME.Y + SIN(ME.Facing) * WALKERSIZE
+                    END FUNCTION
+
+                    ' Seen from above: two feet that swing as they go, a round body over
+                    ' them, and a nose on the side they face.
+                    FUNCTION Render() AS VOID
+                        ' Out to each side: a quarter turn from the way they face.
+                        LOCAL sideX = COS(ME.Facing + PI / 2) * 9
+                        LOCAL sideY = SIN(ME.Facing + PI / 2) * 9
+                        ' How far a foot is ahead (or, for the other foot, behind): it
+                        ' swings with the stride, and further at a run.
+                        LOCAL swing = SIN(ME.Stride) * (1 + ME.Speed * 1.5)
+                        LOCAL aheadX = COS(ME.Facing) * swing
+                        LOCAL aheadY = SIN(ME.Facing) * swing
+                        LOCAL foot = theView.Pixels(5)
+                        vtg.circle(ME.Who$ + "FootLeft", theView.PixelX(ME.X + sideX + aheadX), theView.PixelY(ME.Y + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
+                        vtg.circle(ME.Who$ + "FootRight", theView.PixelX(ME.X - sideX - aheadX), theView.PixelY(ME.Y - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
+
+                        vtg.circle(ME.Who$ + "Body", theView.PixelX(ME.X), theView.PixelY(ME.Y), theView.Pixels(WALKERSIZE), ME.Rim$, ME.Fill$, theView.Pixels(2), 3)
+                        vtg.circle(ME.Who$ + "Nose", theView.PixelX(ME.NoseX()), theView.PixelY(ME.NoseY()), theView.Pixels(4), "none", "#facc15", 0, 4)
+                    END FUNCTION
+
+                    ' Off the screen: the terminal forgets their shapes.
+                    FUNCTION Remove() AS VOID
+                        vtg.delete(ME.Who$ + "Body")
+                        vtg.delete(ME.Who$ + "Nose")
+                        vtg.delete(ME.Who$ + "FootLeft")
+                        vtg.delete(ME.Who$ + "FootRight")
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Player
+
+                CLASS Player
+                    INHERITS Walker
+
+                    ' Go the way the controls ask, at the speed they ask, and turn to face
+                    ' it. No stick and no keys is a speed of 0: they stop where they are.
                     ' The edges of the world are walls.
-                    playerX = Clamp(playerX, PLAYERSIZE, WORLDWIDTH - PLAYERSIZE)
-                    playerY = Clamp(playerY, PLAYERSIZE, WORLDHEIGHT - PLAYERSIZE)
-                END FUNCTION
+                    FUNCTION MoveAsAsked(wantX AS DOUBLE, wantY AS DOUBLE, wantSpeed AS DOUBLE) AS VOID
+                        IF wantSpeed = 0 THEN
+                            ME.Speed = 0
+                            ME.Stride = 0
+                        ELSE
+                            ' A direction and a speed make a step: COS gives the part
+                            ' across, SIN the part down.
+                            LOCAL way = DirectionOf(wantX, wantY)
+                            ME.TurnToward(way)
+                            ME.Walk(COS(way) * wantSpeed, SIN(way) * wantSpeed)
+                        END IF
+                        ME.X = Clamp(ME.X, WALKERSIZE, WORLDWIDTH - WALKERSIZE)
+                        ME.Y = Clamp(ME.Y, WALKERSIZE, WORLDHEIGHT - WALKERSIZE)
+                    END FUNCTION
+                END CLASS
 
-                ' ================================================================= the guard
+                ' MARK: - Guard
 
-                ' A new guard at the top of the floor, in the middle, setting out to the
-                ' right: clockwise.
-                FUNCTION SpawnGuard() AS VOID
-                    guardX = WORLDWIDTH / 2
-                    guardY = GUARDMARGIN
-                    guardDX = 1
-                    guardDY = 0
-                    guardStride = 0
-                    guardAlive = 1
-                END FUNCTION
+                CLASS Guard
+                    INHERITS Walker
+                    ' The way it is walking: right (1, 0), down (0, 1), left (-1, 0) or up
+                    ' (0, -1).
+                    PUBLIC DX AS DOUBLE
+                    PUBLIC DY AS DOUBLE
+                    ' 1 on patrol; 0 from a hit until it comes back, Wait frames later.
+                    PUBLIC Alive AS INTEGER
+                    PUBLIC Wait AS INTEGER
 
-                ' Walk on; at a corner, turn a quarter turn to the right, which on this
-                ' path is always clockwise. A guard that has been hit counts down its wait
-                ' instead, and comes back when it runs out: RESPAWNSECONDS * FPS frames,
-                ' two seconds while Pace keeps the frame rate at FPS.
-                FUNCTION MoveGuard() AS VOID
-                    IF guardAlive = 0 THEN
-                        guardWait = guardWait - 1
-                        IF guardWait <= 0 THEN SpawnGuard()
-                        RETURN
-                    END IF
-                    guardX = guardX + guardDX * GUARDSPEED
-                    guardY = guardY + guardDY * GUARDSPEED
-                    LOCAL rightSide = WORLDWIDTH - GUARDMARGIN
-                    LOCAL bottomSide = WORLDHEIGHT - GUARDMARGIN
-                    IF guardX > rightSide OR guardX < GUARDMARGIN OR guardY > bottomSide OR guardY < GUARDMARGIN THEN
-                        ' Past a corner: back onto it, and turn.
-                        guardX = Clamp(guardX, GUARDMARGIN, rightSide)
-                        guardY = Clamp(guardY, GUARDMARGIN, bottomSide)
-                        TurnGuardRight()
-                    END IF
-                    guardStride = guardStride + 0.17 * SQR(GUARDSPEED)
-                END FUNCTION
+                    ' A new guard at the top of the floor, in the middle, setting out to
+                    ' the right: clockwise.
+                    FUNCTION Spawn() AS VOID
+                        ME.X = WORLDWIDTH / 2
+                        ME.Y = GUARDMARGIN
+                        ME.DX = 1
+                        ME.DY = 0
+                        ME.Facing = 0
+                        ME.Speed = GUARDSPEED
+                        ME.Stride = 0
+                        ME.Alive = 1
+                    END FUNCTION
 
-                ' A quarter turn to the right, on the screen, where y runs down: right
-                ' becomes down, down becomes left, left becomes up, up becomes right.
-                FUNCTION TurnGuardRight() AS VOID
-                    LOCAL wasDX = guardDX
-                    guardDX = -guardDY
-                    guardDY = wasDX
-                END FUNCTION
-
-                ' Hit: points, gone, and a new guard in RESPAWNSECONDS.
-                FUNCTION HitGuard() AS VOID
-                    score = score + GUARDPOINTS
-                    guardAlive = 0
-                    guardWait = RESPAWNSECONDS * FPS
-                    vtg.delete("guardBody")
-                    vtg.delete("guardNose")
-                    vtg.delete("guardFootLeft")
-                    vtg.delete("guardFootRight")
-                END FUNCTION
-
-                ' ================================================================= shooting
-
-                ' A press of Fire shoots once: from the nose, the way the player faces, at
-                ' SHOTSPEED, in the first free slot. With every slot in flight, the press
-                ' does nothing.
-                FUNCTION Shoot() AS VOID
-                    IF firePressed = 0 THEN RETURN
-                    firePressed = 0
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLive(s) = 0 THEN
-                            shotLive(s) = 1
-                            shotX(s) = playerX + COS(facing) * PLAYERSIZE
-                            shotY(s) = playerY + SIN(facing) * PLAYERSIZE
-                            shotVX(s) = COS(facing) * SHOTSPEED
-                            shotVY(s) = SIN(facing) * SHOTSPEED
+                    ' Walk on; at a corner, turn a quarter turn to the right, which on this
+                    ' path is always clockwise. A guard that has been hit counts down its
+                    ' wait instead, and comes back when it runs out.
+                    FUNCTION Patrol() AS VOID
+                        IF ME.Alive = 0 THEN
+                            ME.Wait = ME.Wait - 1
+                            IF ME.Wait <= 0 THEN ME.Spawn()
                             RETURN
                         END IF
-                    NEXT s
-                END FUNCTION
-
-                ' Each shot flies on until it hits the guard, a target, or leaves the
-                ' floor. Either way it is gone, and its slot is free again.
-                FUNCTION MoveShots() AS VOID
-                    LOCAL s = 0
-                    LOCAL t = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLive(s) = 1 THEN
-                            shotX(s) = shotX(s) + shotVX(s)
-                            shotY(s) = shotY(s) + shotVY(s)
-                            IF guardAlive = 1 AND Distance(shotX(s), shotY(s), guardX, guardY) < PLAYERSIZE THEN
-                                FreeShot(s)
-                                HitGuard()
-                            END IF
-                            FOR t = 0 TO TARGETS - 1
-                                IF shotLive(s) = 1 AND Distance(shotX(s), shotY(s), targetX(t), targetY(t)) < TARGETSIZE THEN
-                                    FreeShot(s)
-                                    score = score + 1
-                                    targetFlash(t) = 8
-                                END IF
-                            NEXT t
-                            IF shotLive(s) = 1 AND (shotX(s) < 0 OR shotX(s) > WORLDWIDTH OR shotY(s) < 0 OR shotY(s) > WORLDHEIGHT) THEN FreeShot(s)
+                        ME.Walk(ME.DX * GUARDSPEED, ME.DY * GUARDSPEED)
+                        LOCAL rightSide = WORLDWIDTH - GUARDMARGIN
+                        LOCAL bottomSide = WORLDHEIGHT - GUARDMARGIN
+                        IF ME.X > rightSide OR ME.X < GUARDMARGIN OR ME.Y > bottomSide OR ME.Y < GUARDMARGIN THEN
+                            ' Past a corner: back onto it, and turn.
+                            ME.X = Clamp(ME.X, GUARDMARGIN, rightSide)
+                            ME.Y = Clamp(ME.Y, GUARDMARGIN, bottomSide)
+                            ME.TurnRight()
                         END IF
-                    NEXT s
-                    FOR t = 0 TO TARGETS - 1
-                        IF targetFlash(t) > 0 THEN targetFlash(t) = targetFlash(t) - 1
-                    NEXT t
-                END FUNCTION
+                        ME.Facing = DirectionOf(ME.DX, ME.DY)
+                    END FUNCTION
 
-                FUNCTION FreeShot(s AS INTEGER) AS VOID
-                    shotLive(s) = 0
-                    vtg.delete("shot" + Num$(s))
-                END FUNCTION
+                    ' A quarter turn to the right, on the screen, where y runs down: right
+                    ' becomes down, down becomes left, left becomes up, up becomes right.
+                    FUNCTION TurnRight() AS VOID
+                        LOCAL wasDX = ME.DX
+                        ME.DX = -ME.DY
+                        ME.DY = wasDX
+                    END FUNCTION
 
-                ' One in each quarter of the floor, well away from where the player starts.
-                FUNCTION PlaceTargets() AS VOID
-                    targetX(0) = 120
-                    targetY(0) = 110
-                    targetX(1) = 520
-                    targetY(1) = 110
-                    targetX(2) = 120
-                    targetY(2) = 370
-                    targetX(3) = 520
-                    targetY(3) = 370
-                END FUNCTION
+                    ' Whether a shot at (shotX, shotY) hits it. A hit takes it off the
+                    ' floor, and a new guard comes back RESPAWNSECONDS later.
+                    FUNCTION IsHitBy(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
+                        IF ME.Alive = 0 THEN RETURN 0
+                        IF Distance(shotX, shotY, ME.X, ME.Y) >= WALKERSIZE THEN RETURN 0
+                        ME.Alive = 0
+                        ME.Wait = RESPAWNSECONDS * FPS
+                        ME.Remove()
+                        RETURN 1
+                    END FUNCTION
+                END CLASS
 
-                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
-                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
-                END FUNCTION
+                ' MARK: - Directions and distances
 
                 ' The direction from the middle to (x, y), in radians, measured the way
-                ' facing is. ATN alone gives only the right half of the circle, from -PI/2
+                ' Facing is. ATN alone gives only the right half of the circle, from -PI/2
                 ' to PI/2; a point to the left is half a turn round from that.
                 FUNCTION DirectionOf(x AS DOUBLE, y AS DOUBLE) AS DOUBLE
                     IF x > 0 THEN RETURN ATN(y / x)
@@ -816,173 +535,300 @@ enum BASICRecipeCatalog {
                     RETURN amount
                 END FUNCTION
 
-                ' ================================================================= pacing
-
-                ' A frame is its work plus a sleep. The work takes longer interpreted than
-                ' compiled, so the sleep is steered: each second, the frames counted in the
-                ' second before say how long a frame really took, and the sleep moves most
-                ' of the way toward making it 1/FPS of a second.
-                FUNCTION Pace() AS VOID
-                    framesThisSecond = framesThisSecond + 1
-                    LOCAL now$ = TIME$()
-                    IF now$ = lastSecond$ THEN RETURN
-                    IF secondsSeen >= 2 THEN
-                        LOCAL took = 1000 / framesThisSecond
-                        sleepMs = sleepMs + (1000 / FPS - took) * 0.7
-                        IF sleepMs < 1 THEN sleepMs = 1
-                        IF sleepMs > 60 THEN sleepMs = 60
-                    END IF
-                    secondsSeen = secondsSeen + 1
-                    lastSecond$ = now$
-                    framesThisSecond = 0
+                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
+                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
                 END FUNCTION
 
-                ' ================================================================= the view
-
-                ' The window's size, asked once at the start; ON RESIZE tells us after that.
-                FUNCTION MeasureCanvas() AS VOID
-                    LOCAL measured = vtg.queryCurrentCanvas(250)
-                    IF measured <> EMPTY THEN
-                        canvasWidth = measured("width")
-                        canvasHeight = measured("height")
-                    END IF
-                    FitView()
-                END FUNCTION
-
-                ' The world, as large as fits, in the middle of the window.
-                FUNCTION FitView() AS VOID
-                    IF canvasWidth < 320 OR canvasHeight < 240 THEN
-                        canvasWidth = WORLDWIDTH
-                        canvasHeight = WORLDHEIGHT
-                    END IF
-                    viewScale = canvasWidth / WORLDWIDTH
-                    IF canvasHeight / WORLDHEIGHT < viewScale THEN viewScale = canvasHeight / WORLDHEIGHT
-                    viewX = (canvasWidth - WORLDWIDTH * viewScale) / 2
-                    viewY = (canvasHeight - WORLDHEIGHT * viewScale) / 2
-                    sceneryDirty = 1
-                END FUNCTION
-
-                ' World positions to window pixels. VTG wants whole numbers, so these round.
-                FUNCTION PixelX(x AS DOUBLE) AS INTEGER
-                    RETURN INT(viewX + x * viewScale)
-                END FUNCTION
-
-                FUNCTION PixelY(y AS DOUBLE) AS INTEGER
-                    RETURN INT(viewY + y * viewScale)
-                END FUNCTION
-
-                FUNCTION PixelLength(length AS DOUBLE) AS INTEGER
-                    LOCAL scaled = INT(length * viewScale + 0.5)
-                    IF scaled < 1 THEN scaled = 1
-                    RETURN scaled
-                END FUNCTION
-
-                ' ================================================================= drawing
+                """#),
+                ("src/Screen.bas", #"""
+                ' Screen.bas — what is on the screen, and the controls.
                 '
-                ' Shapes are kept by the terminal under an id: drawing an id again moves it,
-                ' and vtg.delete takes it away. Layer 1 is the floor, 2 the targets and the
-                ' feet, 3 the body and the shots, 4 the nose and the words.
+                ' The View fits the game's fixed world to the window, draws the floor and
+                ' the words, and keeps the frames coming at an even pace. The Controls
+                ' turn the keys, a gamepad, and the on-screen joystick and buttons into
+                ' the few things the game asks: which way, how fast, and was Fire pressed.
+                ' The Inbox is where events write down what happened until the next frame.
 
-                ' The floor: at the start, and when the window changes size.
-                FUNCTION DrawScenery() AS VOID
-                    sceneryDirty = 0
-                    vtg.clear()
-                    vtg.rect("floor", 0, 0, canvasWidth, canvasHeight, "none", "#000000", 0, 0, "", "", 1)
-                    LOCAL x = 0
-                    FOR x = GRIDSIZE TO WORLDWIDTH - GRIDSIZE STEP GRIDSIZE
-                        vtg.line("across" + Num$(x), PixelX(x), PixelY(0), PixelX(x), PixelY(WORLDHEIGHT), "#1e293b", 1, "", 1)
-                    NEXT x
-                    LOCAL y = 0
-                    FOR y = GRIDSIZE TO WORLDHEIGHT - GRIDSIZE STEP GRIDSIZE
-                        vtg.line("down" + Num$(y), PixelX(0), PixelY(y), PixelX(WORLDWIDTH), PixelY(y), "#1e293b", 1, "", 1)
-                    NEXT y
-                    vtg.rect("edge", PixelX(0), PixelY(0), PixelLength(WORLDWIDTH), PixelLength(WORLDHEIGHT), "#475569", "none", PixelLength(2), 0, "", "", 1)
+                ' MARK: - Inbox
 
-                    LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - SPACE FIRES"
-                    IF touch.Available THEN hint$ = "A LITTLE LEAN WALKS - ALL THE WAY RUNS"
-                    vtg.vectorPrint("hint", PixelX(16), PixelY(WORLDHEIGHT - 24), PixelLength(10), hint$, "#64748b", PixelLength(1), 4)
-                    hud$ = ""
-                    messageDirty = 1
-                END FUNCTION
+                TYPE Inbox
+                    ' Presses waiting for the next frame. Presses arrive as events, so even
+                    ' a tap too quick for a frame to see is kept, and holding a button down
+                    ' is one press. The loop sets each back to 0 once it has used it.
+                    FirePressed AS INTEGER
+                    PausePressed AS INTEGER
+                    QuitPressed AS INTEGER
+                    ' The gamepad, as its events last said: 1 while a direction is held.
+                    PadLeft AS INTEGER
+                    PadRight AS INTEGER
+                    PadUp AS INTEGER
+                    PadDown AS INTEGER
+                    PadRun AS INTEGER
+                    ' The window's new size, when it has changed.
+                    Resized AS INTEGER
+                    NewWidth AS INTEGER
+                    NewHeight AS INTEGER
+                END TYPE
 
-                ' Everything that moves, every frame; the words only when they change.
-                FUNCTION DrawFrame() AS VOID
-                    DrawTargets()
-                    DrawWalker("player", playerX, playerY, facing, speed, stride, "#bfdbfe", "#2563eb")
-                    IF guardAlive = 1 THEN DrawWalker("guard", guardX, guardY, DirectionOf(guardDX, guardDY), GUARDSPEED, guardStride, "#fed7aa", "#ea580c")
-                    DrawShots()
-                    DrawHud()
-                    IF messageDirty = 1 THEN DrawMessage()
-                END FUNCTION
+                ' MARK: - View
 
-                ' Someone seen from above, at (wx, wy): two feet that swing as they go, a
-                ' round body over them, and a nose on the side they face. The player and
-                ' the guard are both drawn with it, in their own colors (the body's rim$
-                ' around its fill$). who$ starts each shape's id, so their shapes are their
-                ' own ("playerBody", "guardBody").
-                FUNCTION DrawWalker(who$ AS STRING, wx AS DOUBLE, wy AS DOUBLE, wFacing AS DOUBLE, wSpeed AS DOUBLE, wStride AS DOUBLE, rim$ AS STRING, fill$ AS STRING) AS VOID
-                    ' Out to each side: a quarter turn from the way they face.
-                    LOCAL sideX = COS(wFacing + PI / 2) * 9
-                    LOCAL sideY = SIN(wFacing + PI / 2) * 9
-                    ' How far a foot is ahead (or, for the other foot, behind): it swings
-                    ' with the stride, and further at a run.
-                    LOCAL swing = SIN(wStride) * (1 + wSpeed * 1.5)
-                    LOCAL aheadX = COS(wFacing) * swing
-                    LOCAL aheadY = SIN(wFacing) * swing
-                    LOCAL foot = PixelLength(5)
-                    vtg.circle(who$ + "FootLeft", PixelX(wx + sideX + aheadX), PixelY(wy + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
-                    vtg.circle(who$ + "FootRight", PixelX(wx - sideX - aheadX), PixelY(wy - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
+                CLASS View
+                    ' The window's size in pixels, and how the world fits in it: Scale
+                    ' pixels to a world unit, and the world's top left at (OffsetX, OffsetY).
+                    PUBLIC CanvasWidth AS INTEGER
+                    PUBLIC CanvasHeight AS INTEGER
+                    PUBLIC Scale AS DOUBLE
+                    PUBLIC OffsetX AS DOUBLE
+                    PUBLIC OffsetY AS DOUBLE
+                    ' Set when the floor needs drawing.
+                    PUBLIC NeedsFloor AS INTEGER
+                    ' The words as last drawn, so they are drawn again only when they change:
+                    ' vector text takes longer to draw than a circle.
+                    PUBLIC Hud$ AS STRING
+                    PUBLIC Message$ AS STRING
+                    PUBLIC MessageChanged AS INTEGER
+                    ' Pacing: how long to sleep after each frame, steered once a second.
+                    PUBLIC SleepMs AS DOUBLE
+                    PUBLIC FramesThisSecond AS INTEGER
+                    PUBLIC LastSecond$ AS STRING
+                    PUBLIC SecondsSeen AS INTEGER
 
-                    vtg.circle(who$ + "Body", PixelX(wx), PixelY(wy), PixelLength(PLAYERSIZE), rim$, fill$, PixelLength(2), 3)
-                    LOCAL noseX = wx + COS(wFacing) * PLAYERSIZE
-                    LOCAL noseY = wy + SIN(wFacing) * PLAYERSIZE
-                    vtg.circle(who$ + "Nose", PixelX(noseX), PixelY(noseY), PixelLength(4), "none", "#facc15", 0, 4)
-                END FUNCTION
+                    ' The window's size, asked once at the start; theInbox hears after that.
+                    FUNCTION Measure() AS VOID
+                        ME.SleepMs = 30
+                        LOCAL measured AS VARIANT = vtg.queryCurrentCanvas(250)
+                        IF measured <> EMPTY THEN
+                            ME.CanvasWidth = measured("width")
+                            ME.CanvasHeight = measured("height")
+                        END IF
+                        ME.Fit()
+                    END FUNCTION
 
-                ' A target is two rings and a middle, bright for the frames after a hit.
-                FUNCTION DrawTargets() AS VOID
-                    LOCAL t = 0
-                    FOR t = 0 TO TARGETS - 1
-                        LOCAL ring$ = "#ef4444"
-                        IF targetFlash(t) > 0 THEN ring$ = "#fde047"
-                        LOCAL x = PixelX(targetX(t))
-                        LOCAL y = PixelY(targetY(t))
-                        vtg.circle("target" + Num$(t), x, y, PixelLength(TARGETSIZE), ring$, "#000000", PixelLength(3), 2)
-                        vtg.circle("ring" + Num$(t), x, y, PixelLength(TARGETSIZE * 0.6), ring$, "none", PixelLength(3), 2)
-                        vtg.circle("bull" + Num$(t), x, y, PixelLength(TARGETSIZE * 0.2), "none", ring$, 0, 2)
-                    NEXT t
-                END FUNCTION
+                    ' The world, as large as fits, in the middle of the window.
+                    FUNCTION Fit() AS VOID
+                        IF ME.CanvasWidth < 320 OR ME.CanvasHeight < 240 THEN
+                            ME.CanvasWidth = WORLDWIDTH
+                            ME.CanvasHeight = WORLDHEIGHT
+                        END IF
+                        ME.Scale = ME.CanvasWidth / WORLDWIDTH
+                        IF ME.CanvasHeight / WORLDHEIGHT < ME.Scale THEN ME.Scale = ME.CanvasHeight / WORLDHEIGHT
+                        ME.OffsetX = (ME.CanvasWidth - WORLDWIDTH * ME.Scale) / 2
+                        ME.OffsetY = (ME.CanvasHeight - WORLDHEIGHT * ME.Scale) / 2
+                        ME.NeedsFloor = 1
+                    END FUNCTION
 
-                FUNCTION DrawShots() AS VOID
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLive(s) = 1 THEN vtg.circle("shot" + Num$(s), PixelX(shotX(s)), PixelY(shotY(s)), PixelLength(3), "none", "#fde047", 0, 3)
-                    NEXT s
-                END FUNCTION
+                    ' World positions and lengths to window pixels. VTG wants whole
+                    ' numbers, so these round.
+                    FUNCTION PixelX(x AS DOUBLE) AS INTEGER
+                        RETURN INT(ME.OffsetX + x * ME.Scale)
+                    END FUNCTION
 
-                ' How fast, in world units a second, and what that is called. From the
-                ' middle of the stick's scale up, twice a walk, it counts as a run. Drawn
-                ' only when it changes: vector text takes longer to draw than a circle.
-                FUNCTION DrawHud() AS VOID
-                    LOCAL gait$ = "STANDING"
-                    IF speed > 0 THEN gait$ = "WALKING"
-                    IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
-                    LOCAL words$ = "SCORE " + Num$(score) + "   SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
-                    IF words$ = hud$ THEN RETURN
-                    hud$ = words$
-                    vtg.vectorPrint("hud", PixelX(16), PixelY(12), PixelLength(14), words$, "#f8fafc", PixelLength(1), 4)
-                END FUNCTION
+                    FUNCTION PixelY(y AS DOUBLE) AS INTEGER
+                        RETURN INT(ME.OffsetY + y * ME.Scale)
+                    END FUNCTION
 
-                ' The message in the middle, or none. Vector text is erased by printing
-                ' nothing over it.
-                FUNCTION DrawMessage() AS VOID
-                    messageDirty = 0
-                    IF message$ = "" THEN
-                        vtg.vectorPrint("message", 0, 0, 10, "", "#000000", 1, 4)
-                        RETURN
+                    FUNCTION Pixels(amount AS DOUBLE) AS INTEGER
+                        LOCAL scaled = INT(amount * ME.Scale + 0.5)
+                        IF scaled < 1 THEN scaled = 1
+                        RETURN scaled
+                    END FUNCTION
+
+                    ' A frame is drawn off screen and shown all at once, so nothing
+                    ' flickers. It starts here: fitting the world again if the window has
+                    ' changed size, and drawing the floor when it needs it.
+                    FUNCTION StartFrame() AS VOID
+                        IF theInbox.Resized = 1 THEN
+                            theInbox.Resized = 0
+                            ME.CanvasWidth = theInbox.NewWidth
+                            ME.CanvasHeight = theInbox.NewHeight
+                            ME.Fit()
+                        END IF
+                        vtg.startFrame("game")
+                        IF ME.NeedsFloor = 1 THEN ME.LayFloor()
+                    END FUNCTION
+
+                    ' The floor, ruled in squares, its edge, and a hint for the controls.
+                    ' Shapes are kept by the terminal under a name: drawing a name again
+                    ' moves it, and vtg.delete takes it away. Layer 1 is the floor, 2 the
+                    ' targets and the feet, 3 the bodies and the shots, 4 the noses and the
+                    ' words.
+                    FUNCTION LayFloor() AS VOID
+                        ME.NeedsFloor = 0
+                        vtg.clear()
+                        vtg.rect("floor", 0, 0, ME.CanvasWidth, ME.CanvasHeight, "none", "#000000", 0, 0, "", "", 1)
+                        LOCAL x = 0
+                        FOR x = GRIDSIZE TO WORLDWIDTH - GRIDSIZE STEP GRIDSIZE
+                            vtg.line("across" + Num$(x), ME.PixelX(x), ME.PixelY(0), ME.PixelX(x), ME.PixelY(WORLDHEIGHT), "#1e293b", 1, "", 1)
+                        NEXT x
+                        LOCAL y = 0
+                        FOR y = GRIDSIZE TO WORLDHEIGHT - GRIDSIZE STEP GRIDSIZE
+                            vtg.line("down" + Num$(y), ME.PixelX(0), ME.PixelY(y), ME.PixelX(WORLDWIDTH), ME.PixelY(y), "#1e293b", 1, "", 1)
+                        NEXT y
+                        vtg.rect("edge", ME.PixelX(0), ME.PixelY(0), ME.Pixels(WORLDWIDTH), ME.Pixels(WORLDHEIGHT), "#475569", "none", ME.Pixels(2), 0, "", "", 1)
+
+                        LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - SPACE FIRES"
+                        IF touch.Available THEN hint$ = "A LITTLE LEAN WALKS - ALL THE WAY RUNS"
+                        vtg.vectorPrint("hint", ME.PixelX(16), ME.PixelY(WORLDHEIGHT - 24), ME.Pixels(10), hint$, "#64748b", ME.Pixels(1), 4)
+                        ' Everything on the floor was cleared with it: draw the words again.
+                        ME.Hud$ = ""
+                        ME.MessageChanged = 1
+                    END FUNCTION
+
+                    ' The score, the speed in world units a second, and what that is called.
+                    ' From twice a walk up, it counts as a run.
+                    FUNCTION ShowScore(points AS INTEGER, speed AS DOUBLE) AS VOID
+                        LOCAL gait$ = "STANDING"
+                        IF speed > 0 THEN gait$ = "WALKING"
+                        IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
+                        LOCAL words$ = "SCORE " + Num$(points) + "   SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
+                        IF words$ <> ME.Hud$ THEN
+                            ME.Hud$ = words$
+                            vtg.vectorPrint("hud", ME.PixelX(16), ME.PixelY(12), ME.Pixels(14), words$, "#f8fafc", ME.Pixels(1), 4)
+                        END IF
+                        IF ME.MessageChanged = 1 THEN ME.DrawMessage()
+                    END FUNCTION
+
+                    ' Words in the middle of the floor, such as PAUSED; "" for none.
+                    FUNCTION ShowMessage(words$ AS STRING) AS VOID
+                        ME.Message$ = words$
+                        ME.MessageChanged = 1
+                    END FUNCTION
+
+                    ' Vector text is erased by printing nothing over it.
+                    FUNCTION DrawMessage() AS VOID
+                        ME.MessageChanged = 0
+                        IF ME.Message$ = "" THEN
+                            vtg.vectorPrint("message", 0, 0, 10, "", "#000000", 1, 4)
+                            RETURN
+                        END IF
+                        LOCAL height = ME.Pixels(20)
+                        vtg.vectorPrint("message", ME.PixelX(WORLDWIDTH / 2) - LEN(ME.Message$) * height / 2, ME.PixelY(WORLDHEIGHT / 2 - 10), height, ME.Message$, "#facc15", ME.Pixels(2), 4)
+                    END FUNCTION
+
+                    ' Shows the frame, and answers how long to sleep before the next one.
+                    '
+                    ' A frame is its work plus a sleep. The work takes longer interpreted
+                    ' than compiled, so the sleep is steered: each second, the frames counted
+                    ' in the second before say how long a frame really took, and the sleep
+                    ' moves most of the way toward making it 1/FPS of a second.
+                    FUNCTION EndFrame() AS INTEGER
+                        vtg.endFrame("game")
+                        vtg.present()
+                        ME.FramesThisSecond = ME.FramesThisSecond + 1
+                        LOCAL now$ = TIME$()
+                        IF now$ <> ME.LastSecond$ THEN
+                            IF ME.SecondsSeen >= 2 THEN
+                                LOCAL took = 1000 / ME.FramesThisSecond
+                                ME.SleepMs = ME.SleepMs + (1000 / FPS - took) * 0.7
+                                IF ME.SleepMs < 1 THEN ME.SleepMs = 1
+                                IF ME.SleepMs > 60 THEN ME.SleepMs = 60
+                            END IF
+                            ME.SecondsSeen = ME.SecondsSeen + 1
+                            ME.LastSecond$ = now$
+                            ME.FramesThisSecond = 0
+                        END IF
+                        RETURN INT(ME.SleepMs)
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Controls
+
+                CLASS Controls
+                    ' What the controls ask for this frame: a way to go (WantX, WantY) and
+                    ' how fast. A speed of 0 means stand still.
+                    PUBLIC WantX AS DOUBLE
+                    PUBLIC WantY AS DOUBLE
+                    PUBLIC WantSpeed AS DOUBLE
+
+                    ' On an iPad or iPhone: the joystick under the right thumb, Fire under
+                    ' the left, and a pause button. Fire and pause report as a gamepad's A
+                    ' and Menu buttons, so NotePadControl hears them. Elsewhere these calls
+                    ' do nothing.
+                    FUNCTION PlaceOnScreen() AS VOID
+                        touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 170)
+                        touch.Button("fire", "BOTTOMLEFT", 50, 50, 100, "FIRE", "#ff3b30")
+                        touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
+                    END FUNCTION
+
+                    ' Every control comes down to the same two answers: which way, and how
+                    ' fast. The touch joystick says how far it leans, so it can ask for any
+                    ' speed from a walk to a run. Keys and gamepad buttons are only on or
+                    ' off, so they walk, and run while Shift or B is held.
+                    FUNCTION ReadKeys() AS VOID
+                        ME.WantX = 0
+                        ME.WantY = 0
+                        ME.WantSpeed = 0
+
+                        ' The touch joystick is asked where it is: X and Y run from -1 to 1,
+                        ' and 0, 0 is the middle, where it springs back when the finger
+                        ' lifts. How far it leans is the distance from the middle.
+                        LOCAL stickX = touch.X("stick")
+                        LOCAL stickY = touch.Y("stick")
+                        LOCAL lean = SQR(stickX * stickX + stickY * stickY)
+                        IF lean > DEADZONE THEN
+                            ME.WantX = stickX
+                            ME.WantY = stickY
+                            ME.WantSpeed = SpeedForLean(lean)
+                        ELSE
+                            ' Keys and the gamepad: each direction held adds its part, so
+                            ' two at once is a diagonal.
+                            IF KEYDOWN("LEFT") OR KEYDOWN("A") OR theInbox.PadLeft = 1 THEN ME.WantX = ME.WantX - 1
+                            IF KEYDOWN("RIGHT") OR KEYDOWN("D") OR theInbox.PadRight = 1 THEN ME.WantX = ME.WantX + 1
+                            IF KEYDOWN("UP") OR KEYDOWN("W") OR theInbox.PadUp = 1 THEN ME.WantY = ME.WantY - 1
+                            IF KEYDOWN("DOWN") OR KEYDOWN("S") OR theInbox.PadDown = 1 THEN ME.WantY = ME.WantY + 1
+                            IF ME.WantX <> 0 OR ME.WantY <> 0 THEN
+                                ME.WantSpeed = WALKSPEED
+                                IF KEYDOWN("SHIFT") OR theInbox.PadRun = 1 THEN ME.WantSpeed = RUNSPEED
+                            END IF
+                        END IF
+
+                        ' Presses, as opposed to keys held, come through INKEY$, once each,
+                        ' and go in the inbox with the gamepad's.
+                        LOCAL key$ = INKEY$()
+                        WHILE key$ <> ""
+                            IF key$ = " " THEN theInbox.FirePressed = 1
+                            IF key$ = "p" OR key$ = "P" THEN theInbox.PausePressed = 1
+                            IF key$ = "q" OR key$ = "Q" THEN theInbox.QuitPressed = 1
+                            key$ = INKEY$()
+                        WEND
+                    END FUNCTION
+                END CLASS
+
+                ' A game controller: every button and stick direction comes as its own
+                ' control, with a value from 0 (let go) to 1 (pressed), and is written down
+                ' in theInbox. The touch joystick reports here as well, as controller -1,
+                ' but only as on or off; ReadKeys asks it how far it leans instead.
+                FUNCTION NotePadControl(controller AS INTEGER, control$ AS STRING, value AS DOUBLE) AS VOID
+                    LOCAL pressed = 0
+                    IF value > 0.5 THEN pressed = 1
+                    IF control$ = "MENU" AND pressed = 1 THEN theInbox.PausePressed = 1
+                    ' A, or the touch Fire button, which reports as A: a press fires.
+                    IF (control$ = "A" OR control$ = "RIGHT_TRIGGER") AND pressed = 1 THEN theInbox.FirePressed = 1
+                    IF controller <> -1 THEN
+                        IF control$ = "DPAD_LEFT" OR control$ = "LEFT_STICK_LEFT" THEN theInbox.PadLeft = pressed
+                        IF control$ = "DPAD_RIGHT" OR control$ = "LEFT_STICK_RIGHT" THEN theInbox.PadRight = pressed
+                        IF control$ = "DPAD_UP" OR control$ = "LEFT_STICK_UP" THEN theInbox.PadUp = pressed
+                        IF control$ = "DPAD_DOWN" OR control$ = "LEFT_STICK_DOWN" THEN theInbox.PadDown = pressed
+                        IF control$ = "B" THEN theInbox.PadRun = pressed
                     END IF
-                    LOCAL height = PixelLength(20)
-                    vtg.vectorPrint("message", PixelX(WORLDWIDTH / 2) - LEN(message$) * height / 2, PixelY(WORLDHEIGHT / 2 - 10), height, message$, "#facc15", PixelLength(2), 4)
+                END FUNCTION
+
+                ' How far the stick leans picks a speed between a walk and a run, on a
+                ' scale that is even in the logarithm of the speed rather than in the speed
+                ' itself: every step of lean multiplies the speed by the same amount. With
+                ' a run four times a walk:
+                '
+                '     lean    0.15 (just past the dead zone)   0.575 (halfway)    1 (all the way)
+                '     speed   1.5, a walk                      3, twice a walk    6, a run
+                '
+                ' In a straight line, halfway would already be 3.75, most of a run. Spread
+                ' this way, more of the stick is spent at the slow end, where small changes
+                ' show and fine control matters.
+                FUNCTION SpeedForLean(lean AS DOUBLE) AS DOUBLE
+                    IF lean <= DEADZONE THEN RETURN 0
+                    LOCAL t = (lean - DEADZONE) / (1 - DEADZONE)
+                    IF t > 1 THEN t = 1
+                    RETURN EXP(LOG(WALKSPEED) + t * (LOG(RUNSPEED) - LOG(WALKSPEED)))
                 END FUNCTION
 
                 ' A whole number with no space in front, where STR$ leaves one.
@@ -992,7 +838,351 @@ enum BASICRecipeCatalog {
                     RETURN digits$
                 END FUNCTION
 
-                ' ================================================================= start
+                """#),
+                ("src/Shooting.bas", #"""
+                ' Shooting.bas — shots, targets, and what happens when they meet.
+                '
+                ' Shots keeps every shot in the air; Targets keeps the four targets. Each
+                ' looks after itself. CheckHits, at the bottom, is where they meet: it
+                ' asks the guard and the targets whether each shot hit them, and keeps the
+                ' score.
+
+                ' MARK: - Shots
+
+                CLASS Shots
+                    ' One place for each shot that can be in the air at once (MAXSHOTS).
+                    ' Flying is 1 for a shot in flight and 0 for a free place; X and Y are
+                    ' where it is, and VX and VY how far it goes each frame.
+                    PUBLIC Flying(8) AS INTEGER
+                    PUBLIC X(8) AS DOUBLE
+                    PUBLIC Y(8) AS DOUBLE
+                    PUBLIC VX(8) AS DOUBLE
+                    PUBLIC VY(8) AS DOUBLE
+
+                    ' A shot from (fromX, fromY) flying `way` at SHOTSPEED, in the first free
+                    ' place. With every place in flight, it does nothing.
+                    FUNCTION Fire(fromX AS DOUBLE, fromY AS DOUBLE, way AS DOUBLE) AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 0 THEN
+                                ME.Flying(s) = 1
+                                ME.X(s) = fromX
+                                ME.Y(s) = fromY
+                                ME.VX(s) = COS(way) * SHOTSPEED
+                                ME.VY(s) = SIN(way) * SHOTSPEED
+                                RETURN
+                            END IF
+                        NEXT s
+                    END FUNCTION
+
+                    ' Every shot in the air moves on; one that leaves the floor lands.
+                    FUNCTION Fly() AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 1 THEN
+                                ME.X(s) = ME.X(s) + ME.VX(s)
+                                ME.Y(s) = ME.Y(s) + ME.VY(s)
+                                IF ME.X(s) < 0 OR ME.X(s) > WORLDWIDTH OR ME.Y(s) < 0 OR ME.Y(s) > WORLDHEIGHT THEN ME.Land(s)
+                            END IF
+                        NEXT s
+                    END FUNCTION
+
+                    ' Shot `s` is done: its place is free again, and its shape is gone.
+                    FUNCTION Land(s AS INTEGER) AS VOID
+                        ME.Flying(s) = 0
+                        vtg.delete("shot" + Num$(s))
+                    END FUNCTION
+
+                    FUNCTION Render() AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 1 THEN vtg.circle("shot" + Num$(s), theView.PixelX(ME.X(s)), theView.PixelY(ME.Y(s)), theView.Pixels(3), "none", "#fde047", 0, 3)
+                        NEXT s
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Targets
+
+                CLASS Targets
+                    ' Where each target stands (TARGETCOUNT of them), and how many more
+                    ' frames it flashes after a hit.
+                    PUBLIC X(4) AS DOUBLE
+                    PUBLIC Y(4) AS DOUBLE
+                    PUBLIC Flash(4) AS INTEGER
+
+                    ' One in each quarter of the floor, well away from where the player
+                    ' starts.
+                    FUNCTION PlaceFour() AS VOID
+                        ME.X(0) = 120
+                        ME.Y(0) = 110
+                        ME.X(1) = 520
+                        ME.Y(1) = 110
+                        ME.X(2) = 120
+                        ME.Y(2) = 370
+                        ME.X(3) = 520
+                        ME.Y(3) = 370
+                    END FUNCTION
+
+                    ' Whether a shot at (shotX, shotY) hits a target. The one hit flashes.
+                    FUNCTION HitAt(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            IF Distance(shotX, shotY, ME.X(t), ME.Y(t)) < TARGETSIZE THEN
+                                ME.Flash(t) = 8
+                                RETURN 1
+                            END IF
+                        NEXT t
+                        RETURN 0
+                    END FUNCTION
+
+                    ' A frame less of flashing.
+                    FUNCTION Fade() AS VOID
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            IF ME.Flash(t) > 0 THEN ME.Flash(t) = ME.Flash(t) - 1
+                        NEXT t
+                    END FUNCTION
+
+                    ' A target is two rings and a middle, bright while it flashes.
+                    FUNCTION Render() AS VOID
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            LOCAL ring$ = "#ef4444"
+                            IF ME.Flash(t) > 0 THEN ring$ = "#fde047"
+                            LOCAL px = theView.PixelX(ME.X(t))
+                            LOCAL py = theView.PixelY(ME.Y(t))
+                            vtg.circle("target" + Num$(t), px, py, theView.Pixels(TARGETSIZE), ring$, "#000000", theView.Pixels(3), 2)
+                            vtg.circle("ring" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.6), ring$, "none", theView.Pixels(3), 2)
+                            vtg.circle("bull" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.2), "none", ring$, 0, 2)
+                        NEXT t
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - When they meet
+
+                ' Each shot in the air is asked about: the guard first, then the targets.
+                ' A shot that hits something lands, and the score goes up by what it hit.
+                ' This is a plain function rather than a method of either: it is about how
+                ' they meet, which belongs to neither.
+                FUNCTION CheckHits() AS VOID
+                    LOCAL s = 0
+                    FOR s = 0 TO MAXSHOTS - 1
+                        IF theShots.Flying(s) = 1 THEN
+                            IF theGuard.IsHitBy(theShots.X(s), theShots.Y(s)) = 1 THEN
+                                theShots.Land(s)
+                                score = score + GUARDPOINTS
+                            ELSEIF theTargets.HitAt(theShots.X(s), theShots.Y(s)) = 1 THEN
+                                theShots.Land(s)
+                                score = score + TARGETPOINTS
+                            END IF
+                        END IF
+                    NEXT s
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                #!/usr/bin/env BASICShell
+                ' {{NAME}} — a game to build on.
+                '
+                ' Someone to move around, four targets to shoot, and a guard on patrol.
+                ' Point the way and they turn to face it and walk; point harder and they
+                ' run. Let go, or bring the stick back to the middle, and they stop. Fire
+                ' shoots the way they face, and a shot flies until it hits something or
+                ' leaves the floor: a target is a point, the guard is ten. The guard walks
+                ' the edge of the floor clockwise, and a new one sets out from the top two
+                ' seconds after one is hit. Let the guard shoot back, and it is a game.
+                '
+                ' Touch:   the joystick, bottom right. A little lean walks, all the way runs,
+                '          and every lean between is a speed of its own. Fire, bottom left.
+                ' Keys:    arrows or W A S D walk, hold Shift to run, Space fires,
+                '          P pauses, Q quits
+                ' Gamepad: d-pad or left stick walks, hold B to run, A fires, Menu pauses
+                '
+                ' HOW IT IS PUT TOGETHER
+                '
+                ' Each thing in the game is an object: it keeps its own numbers, and it
+                ' knows how to move and how to show itself. This file makes them and runs
+                ' the game; the others say what each one is.
+                '
+                '     main.bas         the numbers to play with, the things in the game,
+                '                      and the loop that runs it
+                '     Characters.bas   Walker, someone who walks, and the two kinds of
+                '                      walker: the Player and the Guard
+                '     Shooting.bas     Shots and Targets, and what happens when they meet
+                '     Screen.bas       the View, which fits the game to the window and
+                '                      draws the floor and the words; the Controls; and
+                '                      the Inbox, where events wait for the next frame
+                '
+                ' An object changes only itself. When two things meet (a shot and the
+                ' guard), it is a plain function that decides what happens to each:
+                ' CheckHits, in Shooting.bas.
+                '
+                ' Events (a button pressed, the window resized) can arrive at any moment,
+                ' even halfway through moving the player. So they do not change the
+                ' objects: they are written down in theInbox, and the loop acts on them at
+                ' the start of the next frame, when nothing is halfway through.
+                '
+                ' It draws with lines, circles and vector text only, so it runs
+                ' interpreted in BASICStudio and BASICShell, and compiled with basicc.
+
+                IMPORT "Characters.bas"
+                IMPORT "Shooting.bas"
+                IMPORT "Screen.bas"
+
+                ' MARK: - The world
+
+                ' Everything is placed in a fixed world, 640 by 480, and the View scales it
+                ' to fit the window, so it looks the same at any size.
+                GLOBAL WORLDWIDTH AS INTEGER = 640
+                GLOBAL WORLDHEIGHT AS INTEGER = 480
+                ' The floor is ruled in squares this size, so you can see how fast you go.
+                GLOBAL GRIDSIZE AS INTEGER = 40
+                ' Frames a second to aim for (see View.EndFrame).
+                GLOBAL FPS AS INTEGER = 30
+                GLOBAL PI AS DOUBLE = 3.1415927
+
+                ' MARK: - The numbers to play with
+
+                ' How big someone is, from the middle to the edge.
+                GLOBAL WALKERSIZE AS INTEGER = 12
+                ' A walk and a run, in world units a frame. At 30 frames a second a walk
+                ' crosses the world in about 14 seconds, and a run in under 4.
+                GLOBAL WALKSPEED AS DOUBLE = 1.5
+                GLOBAL RUNSPEED AS DOUBLE = 6
+                ' The most anyone turns in one frame, in radians: a half turn takes about a
+                ' quarter of a second.
+                GLOBAL TURNSPEED AS DOUBLE = 0.4
+                ' How far the stick has to lean, out of 1, before it counts. A thumb
+                ' resting on the stick is never quite in the middle.
+                GLOBAL DEADZONE AS DOUBLE = 0.15
+
+                ' The guard walks this far in from the walls, at this speed, and comes back
+                ' this long after it is hit.
+                GLOBAL GUARDMARGIN AS INTEGER = 40
+                GLOBAL GUARDSPEED AS DOUBLE = 2
+                GLOBAL RESPAWNSECONDS AS INTEGER = 2
+
+                ' Shots in the air at once (Shots keeps this many places), and how fast
+                ' they fly.
+                GLOBAL MAXSHOTS AS INTEGER = 8
+                GLOBAL SHOTSPEED AS DOUBLE = 10
+                ' Targets on the floor (Targets keeps this many), and how big they are.
+                GLOBAL TARGETCOUNT AS INTEGER = 4
+                GLOBAL TARGETSIZE AS INTEGER = 18
+
+                ' What a hit is worth.
+                GLOBAL TARGETPOINTS AS INTEGER = 1
+                GLOBAL GUARDPOINTS AS INTEGER = 10
+
+                ' MARK: - The things in the game
+
+                ' One of each, made in Main. A CLASS says what a kind of thing is, and the
+                ' name with "the" in front is the one in this game: Player is what a player
+                ' is, thePlayer is the one you move. (BASIC does not tell capitals from
+                ' small letters, so the two could not both be called player.) GLOBAL so
+                ' the event handlers at the bottom can reach them as well as Main.
+                GLOBAL theView AS View
+                GLOBAL theControls AS Controls
+                GLOBAL thePlayer AS Player
+                GLOBAL theGuard AS Guard
+                GLOBAL theShots AS Shots
+                GLOBAL theTargets AS Targets
+                GLOBAL score AS INTEGER
+                GLOBAL playing AS INTEGER
+                GLOBAL paused AS INTEGER
+
+                ' What the events have said since the last frame (Inbox, in Screen.bas).
+                ' A TYPE, not a CLASS: a record of values with names and no methods.
+                GLOBAL theInbox AS Inbox
+
+                ' The terminal's graphics, and the on-screen controls of an iPad or iPhone.
+                GLOBAL vtg = VectorTerminal()
+                GLOBAL touch = TouchControls()
+
+                ' MARK: - The game
+
+                ' Make everything, then once a frame until Q: read the controls, move
+                ' everything, settle the hits, draw, and wait for the next frame.
+                FUNCTION Main() AS VOID
+                    CLS
+                    vtg.clear()
+                    vtg.setDefaultLayer(2)
+
+                    theView = NEW View
+                    theView.Measure()
+                    theControls = NEW Controls
+                    theControls.PlaceOnScreen()
+                    thePlayer = NEW Player("player", WORLDWIDTH / 2, WORLDHEIGHT / 2, "#bfdbfe", "#2563eb")
+                    theGuard = NEW Guard("guard", WORLDWIDTH / 2, GUARDMARGIN, "#fed7aa", "#ea580c")
+                    theGuard.Spawn()
+                    theShots = NEW Shots
+                    theTargets = NEW Targets
+                    theTargets.PlaceFour()
+                    playing = 1
+
+                    WHILE playing = 1
+                        theControls.ReadKeys()
+                        IF theInbox.QuitPressed = 1 THEN playing = 0
+                        IF theInbox.PausePressed = 1 THEN
+                            theInbox.PausePressed = 0
+                            TogglePause()
+                        END IF
+
+                        theView.StartFrame()
+                        IF paused = 0 THEN
+                            thePlayer.MoveAsAsked(theControls.WantX, theControls.WantY, theControls.WantSpeed)
+                            theGuard.Patrol()
+                            IF theInbox.FirePressed = 1 THEN theShots.Fire(thePlayer.NoseX(), thePlayer.NoseY(), thePlayer.Facing)
+                            theShots.Fly()
+                            CheckHits()
+                            theTargets.Fade()
+                        END IF
+                        ' A press is used once: in this frame, or not at all while paused.
+                        theInbox.FirePressed = 0
+
+                        theTargets.Render()
+                        thePlayer.Render()
+                        IF theGuard.Alive = 1 THEN theGuard.Render()
+                        theShots.Render()
+                        theView.ShowScore(score, thePlayer.Speed)
+                        LOCAL slept = AWAIT SLEEP(theView.EndFrame())
+                    WEND
+
+                    touch.Clear()
+                    vtg.clear()
+                    vtg.present()
+                    CLS
+                    PRINT "Final score: "; score
+                END FUNCTION
+
+                FUNCTION TogglePause() AS VOID
+                    IF paused = 1 THEN
+                        paused = 0
+                        theView.ShowMessage("")
+                    ELSE
+                        paused = 1
+                        theView.ShowMessage("PAUSED")
+                    END IF
+                END FUNCTION
+
+                ' MARK: - Events
+
+                ' BASICStudio calls these when something happens outside the program: a
+                ' gamepad button, or the window changing size. Each writes the news down in
+                ' theInbox, for the next frame.
+
+                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
+                    NotePadControl(event.Controller, event.Control, event.Value)
+                END FUNCTION
+
+                FUNCTION WindowResized(event AS BASICResizeEvent)
+                    theInbox.NewWidth = event.Width
+                    theInbox.NewHeight = event.Height
+                    theInbox.Resized = 1
+                END FUNCTION
+
+                ' MARK: - Start
+
                 ON GAMEPAD CALL GamepadChanged
                 ON RESIZE CALL WindowResized
                 Main()

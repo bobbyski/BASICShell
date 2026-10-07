@@ -2,7 +2,7 @@
   "identifier": "basic.game",
   "name": "Game",
   "language": "BASIC",
-  "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. The start of most games, ready to grow into yours.",
+  "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes in four files, ready to grow into your own game.",
   "icon": "gamecontroller",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",
