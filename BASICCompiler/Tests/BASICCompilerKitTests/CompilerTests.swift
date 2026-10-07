@@ -509,6 +509,29 @@ struct StarterTests {
         }
     }
 
+    /// A project whose entry is `src/main.bas` imports its neighbors by
+    /// name, as the interpreter finds them: beside the importing file. A path
+    /// from the project's root still works.
+    @Test func aProjectsImportsAreFoundBesideTheFileThatImportsThem() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-imports-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("Split.basproj")
+        try FileManager.default.createDirectory(at: project.appendingPathComponent("src/parts"), withIntermediateDirectories: true)
+        try #"{ "schemaVersion": 1, "kind": "project", "name": "Split", "entry": "src/main.bas" }"#
+            .write(to: project.appendingPathComponent("project.json"), atomically: true, encoding: .utf8)
+        try "IMPORT \"Helper.bas\"\nIMPORT \"src/parts/Deep.bas\"\nPRINT Twice(4); Deep$()\n"
+            .write(to: project.appendingPathComponent("src/main.bas"), atomically: true, encoding: .utf8)
+        try "FUNCTION Twice(N AS INTEGER) AS INTEGER\n    RETURN N * 2\nEND FUNCTION\n"
+            .write(to: project.appendingPathComponent("src/Helper.bas"), atomically: true, encoding: .utf8)
+        try "FUNCTION Deep$() AS STRING\n    RETURN \"deep\"\nEND FUNCTION\n"
+            .write(to: project.appendingPathComponent("src/parts/Deep.bas"), atomically: true, encoding: .utf8)
+        let output = root.appendingPathComponent("split").path
+        try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: project.path, output: output) }
+        let run = try runWithInput(output, "")
+        #expect(run.exitCode == 0)
+        #expect(run.stdout.contains("8deep"))
+    }
+
     @Test func aProgramCanBeWrappedInAnAppBundle() throws {
         let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-bundle-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)

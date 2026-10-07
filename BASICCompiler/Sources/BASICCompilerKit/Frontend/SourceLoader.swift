@@ -94,8 +94,7 @@ public struct SourceLoader {
                 expanded.append(line)
                 continue
             }
-            let resolved = projectRoot.map { Self.normalizedImportPath($0 + "/" + path) }
-                ?? Self.resolvedImportPath(path, relativeTo: line.fileName)
+            let resolved = resolvedImport(path, from: line.fileName)
             let location = BIRLocation(file: line.fileName, line: line.sourceLineNumber ?? 0, statement: 0, lineNumber: line.number)
             let files: [String]
             if Self.isDirectoryImportPath(path) {
@@ -183,6 +182,22 @@ public struct SourceLoader {
             .filter { $0.lowercased().hasSuffix(".bas") }
             .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             .map { root + "/" + $0.trimmingCharacters(in: CharacterSet(charactersIn: "/\\")) }
+    }
+
+    /// Where an IMPORT in `importer` points. Beside the importing file
+    /// first, as the interpreter (and so Studio) looks: a project whose entry
+    /// is `src/main.bas` imports its neighbors by name. In a project, a path
+    /// that is not there is then tried from the project's root, which a
+    /// project laid out from its root (`Sources/Reports/grades.bas`) uses.
+    private func resolvedImport(_ path: String, from importer: String?) -> String {
+        let beside = Self.resolvedImportPath(path, relativeTo: importer)
+        guard let projectRoot else { return beside }
+        let fromRoot = Self.normalizedImportPath(projectRoot + "/" + path)
+        if FileManager.default.fileExists(atPath: beside) { return beside }
+        if FileManager.default.fileExists(atPath: fromRoot) { return fromRoot }
+        // Neither is there: the root's path, as before, so a library by that
+        // name, or a foreign import, still gets its turn.
+        return fromRoot
     }
 
     static func resolvedImportPath(_ path: String, relativeTo importer: String?) -> String {
