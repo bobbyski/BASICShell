@@ -702,7 +702,7 @@ final class StudioModel: ObservableObject {
         chooseFile(FileRequest(
             kind: .openProgram,
             title: "Load BASIC Program",
-            directory: currentProgramURL?.deletingLastPathComponent() ?? workingDirectoryURL
+            directory: openPanelStartURL
         )) { [weak self] url in
             guard let self else { return }
             do {
@@ -875,7 +875,7 @@ final class StudioModel: ObservableObject {
         chooseFile(FileRequest(
             kind: .openFolder,
             title: ProjectModel.openProjectTitle,
-            directory: projectDirectoryURL ?? workingDirectoryURL
+            directory: openPanelStartURL
         )) { [weak self] url in
             self?.openProjectAndEntry(at: url)
             self?.noteRecent(url, as: .project)
@@ -896,6 +896,26 @@ final class StudioModel: ObservableObject {
     }
 
     // MARK: - Open Recent
+
+    /// Where Load… and Open Project… open: the folder the last project or
+    /// file came from, so the next one is found where the last one was.
+    /// Before there has been one, or once that folder is gone, the folder
+    /// Studio keeps programs in: its iCloud Drive folder when programs are
+    /// kept there, else Documents. Never the folder Studio happened to start
+    /// in, which nobody chose and nobody can find again.
+    var openPanelStartURL: URL {
+        if let last = recentItems.lastFolder, FileManager.default.fileExists(atPath: last.path) {
+            return last
+        }
+        if case .on(let folder) = cloudStatus {
+            return folder.standardizedFileURL
+        }
+        #if os(iOS)
+        return tildeURL()
+        #else
+        return (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? StudioHome.url).standardizedFileURL
+        #endif
+    }
 
     /// Puts `url` first in File ▸ Open Recent.
     func noteRecent(_ url: URL, as kind: StudioRecentItems.Kind) {
@@ -1151,8 +1171,8 @@ final class StudioModel: ObservableObject {
         #else
         Task { @MainActor in
             let url: URL? = switch request.kind {
-            case .openProgram: await AUIOpenPanel.show(fileTypes: ["bas"]).first
-            case .openFolder: await AUIOpenPanel.show(directories: true).first
+            case .openProgram: await AUIOpenPanel.show(fileTypes: ["bas"], directory: request.directory).first
+            case .openFolder: await AUIOpenPanel.show(directories: true, directory: request.directory).first
             case .saveProgram(let name): await AUISavePanel.show(suggestedName: name, fileTypes: ["bas"], directory: request.directory)
             case .newFolder(let name): await AUISavePanel.show(suggestedName: name, directory: request.directory)
             }

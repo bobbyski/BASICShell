@@ -42,6 +42,9 @@ struct StudioRecentItems: Codable, Equatable {
     /// moves, as it does when the app is updated.
     private(set) var projectPaths: [String] = []
     private(set) var filePaths: [String] = []
+    /// The folder the last project or file came from, where Load… and Open
+    /// Project… open next. Saved the same way as the lists.
+    private(set) var lastFolderPath: String?
 
     init() {}
 
@@ -52,6 +55,9 @@ struct StudioRecentItems: Codable, Equatable {
 
     var isEmpty: Bool { projectPaths.isEmpty && filePaths.isEmpty }
 
+    /// The folder the last project or file came from, if there has been one.
+    var lastFolder: URL? { lastFolderPath.map(Self.url(fromSaved:)) }
+
     /// Puts `url` first in its list, taking it out of where it was, and
     /// drops the oldest past ``limit``.
     mutating func note(_ url: URL, as kind: Kind) {
@@ -60,6 +66,7 @@ struct StudioRecentItems: Codable, Equatable {
         case .project: Self.putFirst(saved, in: &projectPaths)
         case .file: Self.putFirst(saved, in: &filePaths)
         }
+        lastFolderPath = Self.savedPath(for: url.standardizedFileURL.deletingLastPathComponent())
     }
 
     /// Takes `url` out of its list: it was not there when it was chosen.
@@ -74,6 +81,7 @@ struct StudioRecentItems: Codable, Equatable {
     mutating func clear() {
         projectPaths = []
         filePaths = []
+        lastFolderPath = nil
     }
 
     private static func putFirst(_ path: String, in paths: inout [String]) {
