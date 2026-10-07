@@ -112,6 +112,17 @@ extension BASICRuntime {
                 title: title, frame: Rect(x: 2, y: 1, width: 78, height: 24)
             )
             window.themeContext = ThemeContext.contentWindow
+            // Esc and the close box close the window unless the program says
+            // otherwise with `onclose`. TUIKit leaves closing to the
+            // application, and with nothing wired both did nothing: a window
+            // a beginner could not close, and Esc that never reached the
+            // shell to quit.
+            window.onCloseRequest = { [weak window, weak registry] in
+                guard let window, let registry else { return }
+                for app in registry.apps.values where app.windows.contains(where: { $0 === window }) {
+                    app.dismiss(window)
+                }
+            }
             registry.floatingWindows[id] = window
             registry.windows[id] = window
 
