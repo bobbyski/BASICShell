@@ -156,6 +156,11 @@ final class StudioActiveUIShell {
             AUISidebarHeaderAction(systemSymbol: "arrow.clockwise", tooltip: "Rescan the project") { [weak model] in
                 model?.rescanProject()
             },
+            // On iPad, where the File menu is under ···, the project's own
+            // header is where deleting it is found. It asks first.
+            AUISidebarHeaderAction(systemSymbol: "trash", tooltip: "Delete Project\u{2026}") { [weak model] in
+                model?.deleteProjectFromMenu()
+            },
         ]
         root = sidebar
         // The theme's `.window` rule: the wash and the ink of the whole
@@ -560,7 +565,15 @@ final class StudioActiveUIShell {
             }
         }
         let openRecent = AUIMenuItem("Open Recent", submenu: recent)
+        let deleteProject = AUIMenuItem("Delete Project\u{2026}") { [weak model] in
+            model?.deleteProjectFromMenu()
+        }
+        deleteProject.isEnabledProvider = { [weak model] in
+            MainActor.assumeIsolated { model?.canDeleteProject ?? false }
+        }
         let file = AUIMenu("File", items: items(commands.fileNew, model: model) + items(commands.fileOpen, model: model) + [openProject, openRecent] + items(commands.fileSave, model: model) + [
+            .separator(),
+            deleteProject,
             .separator(),
             .command(.closeDocument, title: "Close", shortcut: .command("w")),
         ])

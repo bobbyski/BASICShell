@@ -93,7 +93,7 @@ struct ProjectSidebarTests {
         // The native list holds a selection only in a window; what the
         // shell asked it to select is the projection's.
         #expect(studio.drawnProject?.selectedIndex == 0)
-        #expect(studio.sidebar.headerActions.map(\.tooltip) == [ProjectModel.openProjectTitle, "Rescan the project"])
+        #expect(studio.sidebar.headerActions.map(\.tooltip) == [ProjectModel.openProjectTitle, "Rescan the project", "Delete Project\u{2026}"])
     }
 
     @Test("M10 · New makes a program in the current directory and opens it; an existing file is opened, not overwritten")

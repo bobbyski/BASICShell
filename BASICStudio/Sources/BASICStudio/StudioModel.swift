@@ -917,6 +917,113 @@ final class StudioModel: ObservableObject {
         #endif
     }
 
+    // MARK: - Deleting a project
+
+    /// Answers the delete confirmation in place of the user, so a test can
+    /// say yes or no. Unset, the alert is shown.
+    var deleteConfirmationAnswer: ((_ title: String, _ message: String) -> Bool)?
+
+    /// Whether File ▸ Delete Project… can be chosen: a project is open, and
+    /// no program is running out of it.
+    var canDeleteProject: Bool {
+        projectDirectoryURL != nil && !isProgramRunning && !isJITRunning
+    }
+
+    /// File ▸ Delete Project…: the open project, folder and all, after an
+    /// alert that says what goes and whether it can come back. Cancel is the
+    /// safe answer and the default one; Delete Project is red.
+    func deleteProjectFromMenu() {
+        guard canDeleteProject, let project = projectDirectoryURL else { return }
+        let (title, message) = Self.deleteWarning(for: project)
+        if let deleteConfirmationAnswer {
+            if deleteConfirmationAnswer(title, message) { deleteProjectReportingErrors(project) }
+            return
+        }
+        #if os(macOS)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        let delete = alert.addButton(withTitle: "Delete Project")
+        delete.hasDestructiveAction = true
+        // Return answers Cancel, not Delete: the safe answer is the default.
+        delete.keyEquivalent = ""
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        deleteProjectReportingErrors(project)
+        #else
+        Task { @MainActor in
+            let pressed = await AUIAlert.show(title: title, message: message, buttons: [.destructive("Delete Project"), .cancel()])
+            guard pressed == 0 else { return }
+            deleteProjectReportingErrors(project)
+        }
+        #endif
+    }
+
+    private func deleteProjectReportingErrors(_ project: URL) {
+        do {
+            try deleteProject(at: project)
+        } catch {
+            presentFileError("Unable to delete \(BASICProjectFolder.displayName(ofFolder: project.lastPathComponent)).", error: error)
+        }
+    }
+
+    /// What the alert says: the project by name, its folder, how many files
+    /// go with it, and where they go.
+    static func deleteWarning(for project: URL) -> (title: String, message: String) {
+        let name = BASICProjectFolder.displayName(ofFolder: project.lastPathComponent)
+        let count = fileCount(in: project)
+        let files = count == 1 ? "1 file" : "\(count) files"
+        #if os(macOS)
+        let fate = "will be moved to the Trash."
+        #else
+        let fate = "will be deleted. This cannot be undone."
+        #endif
+        return ("Delete \u{201C}\(name)\u{201D}?",
+                "The project folder \(project.lastPathComponent) and everything in it (\(files)) \(fate)")
+    }
+
+    private static func fileCount(in folder: URL) -> Int {
+        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
+        var count = 0
+        for case let url as URL in walker where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+            count += 1
+        }
+        return count
+    }
+
+    /// Deletes the project at `url`, to the Trash on the Mac, and closes it:
+    /// the sidebar empties, the editor clears if its file was in it, and the
+    /// project and its files come off Open Recent.
+    func deleteProject(at url: URL) throws {
+        let project = url.standardizedFileURL
+        #if os(macOS)
+        try FileManager.default.trashItem(at: project, resultingItemURL: nil)
+        #else
+        try FileManager.default.removeItem(at: project)
+        #endif
+        func isInside(_ other: URL?) -> Bool {
+            guard let path = other?.standardizedFileURL.path else { return false }
+            return path == project.path || path.hasPrefix(project.path + "/")
+        }
+        if isInside(projectDirectoryURL) {
+            projectDirectoryURL = nil
+            projectFiles = []
+        }
+        if isInside(currentProgramURL) {
+            programText = ""
+            currentProgramURL = nil
+            currentProgramFileName = nil
+            updateWindowTitle()
+            rebuildProgramFromEditor()
+        }
+        if isInside(workingDirectoryURL) {
+            workingDirectoryURL = project.deletingLastPathComponent()
+        }
+        recentItems.removeEverything(under: project)
+        saveSettings()
+    }
+
     /// Puts `url` first in File ▸ Open Recent.
     func noteRecent(_ url: URL, as kind: StudioRecentItems.Kind) {
         recentItems.note(url, as: kind)

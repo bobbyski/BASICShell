@@ -78,6 +78,18 @@ struct StudioRecentItems: Codable, Equatable {
         }
     }
 
+    /// Takes off the list everything at or under `folder`: a project that
+    /// has been deleted, and the files that were in it.
+    mutating func removeEverything(under folder: URL) {
+        let root = Self.url(fromSaved: Self.savedPath(for: folder)).path
+        func isUnder(_ saved: String) -> Bool {
+            let path = Self.url(fromSaved: saved).path
+            return path == root || path.hasPrefix(root + "/")
+        }
+        projectPaths.removeAll(where: isUnder)
+        filePaths.removeAll(where: isUnder)
+    }
+
     mutating func clear() {
         projectPaths = []
         filePaths = []

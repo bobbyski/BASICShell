@@ -58,7 +58,7 @@ Create stays off while the name is not a name, or a project of that name is alre
 
 ## Opening a project
 
-- **File ▸ Open Project…** opens a `.basproj` folder, or any folder of `.bas` files.
+- **File ▸ Open Project…** opens a `.basproj` folder, or any folder of `.bas` files. It opens where the last project or file came from; the first time, in Studio's iCloud Drive folder, or Documents.
 - **File ▸ Open Recent** lists the projects and the files opened lately, newest first, ten of each, and opens one again. A file picked in the project sidebar is not added: the project already is. **Clear Menu** empties it.
 - **Examples** that are projects open as projects. Studio opens a copy, so the example itself is never changed:
   - On the Mac, the copy is in `Documents/BASICStudio Examples`.
@@ -66,6 +66,15 @@ Create stays off while the name is not a name, or a project of that name is alre
   - On iPad, the copy is in `Documents/Examples`.
 
   Opening the example again opens your copy as you left it. Delete the copy to start over.
+
+## Deleting a project
+
+**File ▸ Delete Project…**, or the trash button at the top of the project sidebar, deletes the project that is open: its folder and everything in it. It asks first, naming the project and how many files go, with Cancel as the default answer.
+
+- On the Mac the folder goes to the Trash, where it can be put back.
+- On iPad it is deleted for good.
+
+The project closes, and comes off File ▸ Open Recent with its files.
 
 ## The same project everywhere
 
