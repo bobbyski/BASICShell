@@ -35,6 +35,19 @@ final class StudioTouchControls: @unchecked Sendable {
         #endif
     }
 
+    /// Whether a color (each part 0...1) is light enough that black reads on
+    /// it better than white: its relative luminance (WCAG) is over 0.5. The
+    /// even point is nearer 0.18, but white on a strong color such as red or
+    /// blue is what people expect on a button, and still reads; it is the
+    /// pale faces, yellow, light gray and white, that need black.
+    static func isLight(red: Double, green: Double, blue: Double) -> Bool {
+        func linear(_ part: Double) -> Double {
+            part <= 0.04045 ? part / 12.92 : pow((part + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+        return luminance > 0.5
+    }
+
     /// A control as the view draws it: where it is placed, and where the
     /// finger on it has put it.
     struct Drawn: Equatable {

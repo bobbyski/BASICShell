@@ -25,6 +25,12 @@ final class StudioTouchControlsView: UIView {
         isMultipleTouchEnabled = true
         contentMode = .redraw
         accessibilityIdentifier = "TouchControls"
+        // Light and dark draw differently (`Palette`), and either can change
+        // while the program runs: from Control Center, at sunset, or by the
+        // Studio theme.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitAccessibilityContrast.self]) { (view: Self, _: UITraitCollection) in
+            view.setNeedsDisplay()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -91,28 +97,65 @@ final class StudioTouchControlsView: UIView {
 
     // MARK: - Drawing
 
+    /// What a control is drawn with. A control sits over the program's
+    /// canvas, which may be any color, and over the console around it, which
+    /// is white in light mode and black in dark: a control has to be seen
+    /// on all of them, plainly, not just found by someone who knows it is
+    /// there. So each line is the appearance's ink inside a halo of the
+    /// opposite, and each base is a plate of the opposite under a wash of
+    /// the ink: black ink on a black game still has a gray plate to show
+    /// on, and white ink on a white page the same.
+    struct Palette {
+        /// Lines and knobs: black in light mode, white in dark.
+        var ink: UIColor
+        /// Around every line: the console's own background.
+        var halo: UIColor
+
+        init(traits: UITraitCollection) {
+            ink = UIColor.label.resolvedColor(with: traits)
+            halo = UIColor.systemBackground.resolvedColor(with: traits)
+        }
+    }
+
     override func draw(_ rect: CGRect) {
         guard let controls else { return }
+        let palette = Palette(traits: traitCollection)
         for drawn in controls.snapshot() {
             let frame = StudioTouchControls.frame(of: drawn.control, in: bounds)
-            let tint = Self.color(drawn.control.color) ?? .white
+            // A color the program gave, or the ink; a button with none is red.
+            let given = Self.color(drawn.control.color)
             switch drawn.control.kind {
-            case .joystick: drawJoystick(drawn, in: frame, tint: tint)
-            case .dpad: drawDPad(drawn, in: frame, tint: tint)
-            case .wheel: drawWheel(drawn, in: frame, tint: tint)
-            case .button: drawButton(drawn, in: frame, tint: Self.color(drawn.control.color) ?? .systemRed)
+            case .joystick: drawJoystick(drawn, in: frame, tint: given ?? palette.ink, palette)
+            case .dpad: drawDPad(drawn, in: frame, tint: given ?? palette.ink, palette)
+            case .wheel: drawWheel(drawn, in: frame, tint: given ?? palette.ink, palette)
+            case .button: drawButton(drawn, in: frame, face: given ?? .systemRed, palette)
             }
         }
     }
 
+    /// A base the control's lines and knob show on, whatever is under it.
+    private func plate(_ path: UIBezierPath, _ tint: UIColor, _ palette: Palette) {
+        palette.halo.withAlphaComponent(0.5).setFill()
+        path.fill()
+        tint.withAlphaComponent(0.18).setFill()
+        path.fill()
+    }
+
+    /// `path` stroked `width` wide in `color`, inside a halo.
+    private func outline(_ path: UIBezierPath, _ color: UIColor, width: CGFloat, _ palette: Palette) {
+        path.lineWidth = width + 4
+        palette.halo.withAlphaComponent(0.9).setStroke()
+        path.stroke()
+        path.lineWidth = width
+        color.setStroke()
+        path.stroke()
+    }
+
     /// A ring to push against, and a knob where the thumb has it.
-    private func drawJoystick(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor) {
-        let base = UIBezierPath(ovalIn: frame.insetBy(dx: 1, dy: 1))
-        tint.withAlphaComponent(0.12).setFill()
-        base.fill()
-        tint.withAlphaComponent(0.45).setStroke()
-        base.lineWidth = 2
-        base.stroke()
+    private func drawJoystick(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor, _ palette: Palette) {
+        let base = UIBezierPath(ovalIn: frame.insetBy(dx: 4, dy: 4))
+        plate(base, tint, palette)
+        outline(base, tint.withAlphaComponent(0.85), width: 3, palette)
 
         let knobRadius = frame.width * 0.22
         let reach = frame.width / 2 - knobRadius
@@ -121,15 +164,16 @@ final class StudioTouchControlsView: UIView {
             y: frame.midY + CGFloat(drawn.state.y) * reach
         )
         let knob = UIBezierPath(arcCenter: center, radius: knobRadius, startAngle: 0, endAngle: .pi * 2, clockwise: true)
-        tint.withAlphaComponent(drawn.state.held ? 0.75 : 0.45).setFill()
+        tint.withAlphaComponent(drawn.state.held ? 0.95 : 0.75).setFill()
         knob.fill()
+        outline(knob, tint, width: 2, palette)
     }
 
     /// A cross; the arms pressed are lit.
-    private func drawDPad(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor) {
-        let base = UIBezierPath(ovalIn: frame.insetBy(dx: 1, dy: 1))
-        tint.withAlphaComponent(0.08).setFill()
-        base.fill()
+    private func drawDPad(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor, _ palette: Palette) {
+        let base = UIBezierPath(ovalIn: frame.insetBy(dx: 4, dy: 4))
+        plate(base, tint, palette)
+        outline(base, tint.withAlphaComponent(0.5), width: 2, palette)
 
         let arm = frame.width * 0.3
         let length = frame.width * 0.36
@@ -140,24 +184,24 @@ final class StudioTouchControlsView: UIView {
             ("RIGHT", CGRect(x: frame.midX + arm / 2, y: frame.midY - arm / 2, width: length, height: arm)),
         ]
         let hub = CGRect(x: frame.midX - arm / 2, y: frame.midY - arm / 2, width: arm, height: arm)
-        tint.withAlphaComponent(0.3).setFill()
+        tint.withAlphaComponent(0.7).setFill()
         UIBezierPath(rect: hub).fill()
         for (direction, armFrame) in arms {
             let path = UIBezierPath(roundedRect: armFrame, cornerRadius: arm * 0.2)
-            tint.withAlphaComponent(drawn.pressed.contains(direction) ? 0.8 : 0.3).setFill()
+            tint.withAlphaComponent(drawn.pressed.contains(direction) ? 0.95 : 0.7).setFill()
             path.fill()
+            outline(path, tint, width: 1.5, palette)
         }
     }
 
     /// A ring with notches that turn with the finger.
-    private func drawWheel(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor) {
+    private func drawWheel(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor, _ palette: Palette) {
         let ringWidth = frame.width * 0.16
-        let ring = UIBezierPath(ovalIn: frame.insetBy(dx: ringWidth / 2, dy: ringWidth / 2))
-        ring.lineWidth = ringWidth
-        tint.withAlphaComponent(drawn.state.held ? 0.4 : 0.25).setStroke()
-        ring.stroke()
+        let ring = UIBezierPath(ovalIn: frame.insetBy(dx: ringWidth / 2 + 2, dy: ringWidth / 2 + 2))
+        plate(UIBezierPath(ovalIn: frame.insetBy(dx: 2, dy: 2)), tint, palette)
+        outline(ring, tint.withAlphaComponent(drawn.state.held ? 0.6 : 0.45), width: ringWidth, palette)
 
-        let radius = frame.width / 2 - ringWidth / 2
+        let radius = frame.width / 2 - ringWidth / 2 - 2
         for notch in 0..<12 {
             let angle = (Double(notch) * 30 + drawn.angle) * .pi / 180
             let inner = radius - ringWidth * 0.4
@@ -166,28 +210,45 @@ final class StudioTouchControlsView: UIView {
             path.move(to: CGPoint(x: frame.midX + CGFloat(cos(angle)) * inner, y: frame.midY + CGFloat(sin(angle)) * inner))
             path.addLine(to: CGPoint(x: frame.midX + CGFloat(cos(angle)) * outer, y: frame.midY + CGFloat(sin(angle)) * outer))
             path.lineWidth = notch == 0 ? 4 : 2
-            tint.withAlphaComponent(notch == 0 ? 0.9 : 0.55).setStroke()
+            palette.halo.setStroke()
+            path.stroke()
+            tint.setStroke()
+            path.lineWidth = notch == 0 ? 3 : 1.5
             path.stroke()
         }
     }
 
-    /// A round button in its color, with its label.
-    private func drawButton(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, tint: UIColor) {
-        let face = UIBezierPath(ovalIn: frame.insetBy(dx: 1, dy: 1))
-        tint.withAlphaComponent(drawn.state.held ? 0.9 : 0.55).setFill()
-        face.fill()
-        UIColor.white.withAlphaComponent(0.6).setStroke()
-        face.lineWidth = 2
-        face.stroke()
+    /// A round button in its color, solid, with its label in whichever of
+    /// black and white reads on that color.
+    private func drawButton(_ drawn: StudioTouchControls.Drawn, in frame: CGRect, face: UIColor, _ palette: Palette) {
+        let disc = UIBezierPath(ovalIn: frame.insetBy(dx: 3, dy: 3))
+        // Held is a little darker, so a press is seen under the finger.
+        (drawn.state.held ? Self.darkened(face) : face).setFill()
+        disc.fill()
+        outline(disc, palette.ink.withAlphaComponent(0.6), width: 1.5, palette)
 
         guard !drawn.control.label.isEmpty else { return }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: max(10, frame.width * 0.22), weight: .bold),
-            .foregroundColor: UIColor.white,
+            .foregroundColor: Self.labelColor(on: face),
         ]
         let label = NSAttributedString(string: drawn.control.label, attributes: attributes)
         let size = label.size()
         label.draw(at: CGPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2))
+    }
+
+    /// Black on a light face, white on any other.
+    static func labelColor(on face: UIColor) -> UIColor {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        guard face.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return .white }
+        return StudioTouchControls.isLight(red: Double(red), green: Double(green), blue: Double(blue)) ? .black : .white
+    }
+
+    /// A press's shade of `color`.
+    static func darkened(_ color: UIColor) -> UIColor {
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        guard color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else { return color }
+        return UIColor(hue: hue, saturation: saturation, brightness: brightness * 0.75, alpha: alpha)
     }
 
     /// `#rrggbb` as a color, or nil for anything else.

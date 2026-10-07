@@ -171,6 +171,26 @@ struct StudioTouchControlsTests {
         #expect(store.isEmpty)
         #expect(recorder.events == ["BUTTON A 1"])
     }
+
+    /// A button's label is black only on a pale face: white reads on the
+    /// strong colors a program gives its buttons.
+    @Test("A button's label is black only on a pale face")
+    func labelContrast() {
+        func light(_ hex: Int) -> Bool {
+            StudioTouchControls.isLight(
+                red: Double((hex >> 16) & 0xff) / 255,
+                green: Double((hex >> 8) & 0xff) / 255,
+                blue: Double(hex & 0xff) / 255
+            )
+        }
+        #expect(!light(0xff3b30), "red")
+        #expect(!light(0x2563eb), "blue")
+        #expect(!light(0x64748b), "slate")
+        #expect(!light(0x000000), "black")
+        #expect(light(0xfde047), "yellow")
+        #expect(light(0xe2e8f0), "light gray")
+        #expect(light(0xffffff), "white")
+    }
 }
 
 /// The controls as a running program meets them in Studio.
