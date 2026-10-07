@@ -2,7 +2,7 @@
   "identifier": "basic.game",
   "name": "Game",
   "language": "BASIC",
-  "summary": "A ship that turns, thrusts and fires, and a rock to shoot: score, lives, pause and game over, played with the keyboard, a gamepad or touch, ready to grow into your own game.",
+  "summary": "Someone to move around: they turn to face the way you point, walk, and run when you point harder, with the keyboard, a gamepad or a touch joystick. The start every game needs, ready to grow into yours.",
   "icon": "gamecontroller",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",

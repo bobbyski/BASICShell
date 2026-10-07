@@ -240,7 +240,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.game",
               "name": "Game",
               "language": "BASIC",
-              "summary": "A ship that turns, thrusts and fires, and a rock to shoot: score, lives, pause and game over, played with the keyboard, a gamepad or touch, ready to grow into your own game.",
+              "summary": "Someone to move around: they turn to face the way you point, walk, and run when you point harder, with the keyboard, a gamepad or a touch joystick. The start every game needs, ready to grow into yours.",
               "icon": "gamecontroller",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -324,86 +324,76 @@ enum BASICRecipeCatalog {
                 #!/usr/bin/env BASICShell
                 ' {{NAME}} — a game to build on.
                 '
-                ' A ship that turns, thrusts and fires, and a rock to shoot. Hit the rock
-                ' for points and it jumps somewhere else; let it hit you and you lose a
-                ' ship. That is all there is to it: every part a game needs is here, small,
-                ' with a comment saying what it is for, ready to grow into your own game.
+                ' Someone to move around. Point the way and they turn to face it and walk;
+                ' point harder and they run. Let go, or bring the stick back to the middle,
+                ' and they stop. Moving well is the first thing every game needs, so that is
+                ' all this does, small enough to read in one sitting, with a comment saying
+                ' what each part is for. Add something to chase, something to avoid and a
+                ' score, and it is a game.
                 '
-                ' Keys:    Left / Right turn   Up thrusts   Space fires
-                '          P pauses   Q quits   Enter plays again once the game is over
-                ' Gamepad: d-pad or left stick turns and thrusts, A fires, Menu pauses
-                ' Touch:   a joystick on the right, Fire on the left (iPad and iPhone)
+                ' Touch:   the joystick, bottom left. A little lean walks, all the way runs,
+                '          and every lean between is a speed of its own (iPad and iPhone).
+                ' Keys:    arrows or W A S D walk, hold Shift to run, P pauses, Q quits
+                ' Gamepad: d-pad or left stick walks, hold B to run, Menu pauses
                 '
-                ' It draws with lines, rectangles, circles and vector text only, so it runs
+                ' It draws with lines, circles and vector text only, so it runs
                 ' interpreted in BASICStudio and BASICShell, and compiled with basicc.
 
                 ' ---------------------------------------------------------------- the world
                 ' Everything is placed in a fixed world, 640 by 480, and scaled to fit the
-                ' window (see FitView), so the game looks the same at any size.
+                ' window (see FitView), so it looks the same at any size.
                 GLOBAL WORLDWIDTH AS INTEGER = 640
                 GLOBAL WORLDHEIGHT AS INTEGER = 480
+                ' The floor is ruled in squares this size, so you can see how fast you go.
+                GLOBAL GRIDSIZE AS INTEGER = 40
                 ' Frames a second to aim for (see Pace).
                 GLOBAL FPS AS INTEGER = 30
                 GLOBAL PI AS DOUBLE = 3.1415927
 
-                ' ---------------------------------------------------------------- the ship
-                GLOBAL shipX AS DOUBLE
-                GLOBAL shipY AS DOUBLE
-                GLOBAL shipVX AS DOUBLE
-                GLOBAL shipVY AS DOUBLE
-                ' Which way the nose points, in radians: 0 is right, -PI/2 is up.
-                GLOBAL shipAngle AS DOUBLE
-                ' Frames left of the blinking start of a new ship, when it cannot be hit.
-                GLOBAL safeFrames AS INTEGER
+                ' ---------------------------------------------------------------- the player
+                GLOBAL playerX AS DOUBLE
+                GLOBAL playerY AS DOUBLE
+                ' Which way they face, in radians: 0 is right, PI/2 is down (screen y runs
+                ' down), PI is left and -PI/2 is up.
+                GLOBAL facing AS DOUBLE
+                ' How fast they are going, in world units a frame. 0 is standing still.
+                GLOBAL speed AS DOUBLE
+                ' Where the feet are in their stride: once round is a step with each foot.
+                GLOBAL stride AS DOUBLE
 
-                GLOBAL TURNSPEED AS DOUBLE = 0.12
-                GLOBAL THRUSTPOWER AS DOUBLE = 0.25
-                GLOBAL TOPSPEED AS DOUBLE = 6
-
-                ' ---------------------------------------------------------------- shots
-                ' A few shots in the air at once, each with a life that runs out.
-                GLOBAL MAXSHOTS AS INTEGER = 4
-                GLOBAL SHOTSPEED AS DOUBLE = 9
-                GLOBAL SHOTFRAMES AS INTEGER = 40
-                GLOBAL shotLife(4) AS INTEGER
-                GLOBAL shotX(4) AS DOUBLE
-                GLOBAL shotY(4) AS DOUBLE
-                GLOBAL shotVX(4) AS DOUBLE
-                GLOBAL shotVY(4) AS DOUBLE
-                GLOBAL fireWait AS INTEGER
-
-                ' ---------------------------------------------------------------- the rock
-                ' One thing to shoot: it drifts, wraps at the edges like the ship, and
-                ' jumps somewhere else when it is hit.
-                GLOBAL rockX AS DOUBLE
-                GLOBAL rockY AS DOUBLE
-                GLOBAL rockVX AS DOUBLE
-                GLOBAL rockVY AS DOUBLE
-                GLOBAL ROCKSIZE AS INTEGER = 26
-
-                ' ---------------------------------------------------------------- the game
-                GLOBAL score AS INTEGER
-                GLOBAL highScore AS INTEGER
-                GLOBAL lives AS INTEGER
-                GLOBAL running AS INTEGER
-                GLOBAL paused AS INTEGER
-                GLOBAL gameOver AS INTEGER
-                GLOBAL hudDirty AS INTEGER
-                GLOBAL message$ AS STRING
-                GLOBAL messageDirty AS INTEGER
+                GLOBAL PLAYERSIZE AS INTEGER = 12
+                ' A walk and a run, in world units a frame. At 30 frames a second a walk
+                ' crosses the world in about 14 seconds, and a run in under 4.
+                GLOBAL WALKSPEED AS DOUBLE = 1.5
+                GLOBAL RUNSPEED AS DOUBLE = 6
+                ' The most they turn in one frame, in radians: a half turn takes about a
+                ' quarter of a second.
+                GLOBAL TURNSPEED AS DOUBLE = 0.4
+                ' How far the stick has to lean, out of 1, before it counts. A thumb
+                ' resting on the stick is never quite in the middle.
+                GLOBAL DEADZONE AS DOUBLE = 0.15
 
                 ' ---------------------------------------------------------------- input
-                ' What the keys, gamepad and touch controls asked for this frame.
-                GLOBAL turning AS INTEGER
-                GLOBAL thrusting AS INTEGER
-                GLOBAL fireHeld AS INTEGER
-                ' The gamepad, as GamepadChanged last heard it. The touch controls report
-                ' through the same events, so they need nothing of their own.
+                ' What the controls asked for this frame: a way to go (wantX, wantY) and
+                ' how fast. A speed of 0 means stand still.
+                GLOBAL wantX AS DOUBLE
+                GLOBAL wantY AS DOUBLE
+                GLOBAL wantSpeed AS DOUBLE
+                ' The gamepad, as GamepadChanged last heard it.
                 GLOBAL padLeft AS INTEGER
                 GLOBAL padRight AS INTEGER
                 GLOBAL padUp AS INTEGER
-                GLOBAL padFire AS INTEGER
+                GLOBAL padDown AS INTEGER
+                GLOBAL padRun AS INTEGER
                 GLOBAL padPause AS INTEGER
+
+                ' ---------------------------------------------------------------- the game
+                GLOBAL playing AS INTEGER
+                GLOBAL paused AS INTEGER
+                GLOBAL message$ AS STRING
+                GLOBAL messageDirty AS INTEGER
+                ' The speed line as it was last drawn (see DrawHud).
+                GLOBAL hud$ AS STRING
 
                 ' ---------------------------------------------------------------- the view
                 GLOBAL canvasWidth AS INTEGER
@@ -423,20 +413,21 @@ enum BASICRecipeCatalog {
                 GLOBAL vtg = VectorTerminal()
                 GLOBAL touch = TouchControls()
 
-                ' ================================================================= the game loop
+                ' ================================================================= the loop
 
-                ' Read the controls, move everything, look for hits, draw, wait: once a
-                ' frame, until Q.
+                ' Read the controls, move, draw, wait: once a frame, until Q.
                 FUNCTION Main() AS VOID
                     CLS
                     vtg.clear()
                     vtg.setDefaultLayer(2)
-                    SetUpSounds()
                     MeasureCanvas()
                     PlaceTouchControls()
-                    NewGame()
+                    playerX = WORLDWIDTH / 2
+                    playerY = WORLDHEIGHT / 2
+                    facing = -PI / 2
+                    playing = 1
 
-                    WHILE running = 1
+                    WHILE playing = 1
                         IF resized = 1 THEN
                             resized = 0
                             FitView()
@@ -447,12 +438,7 @@ enum BASICRecipeCatalog {
                         ' flickers.
                         vtg.startFrame("game")
                         IF sceneryDirty = 1 THEN DrawScenery()
-                        IF paused = 0 AND gameOver = 0 THEN
-                            MoveShip()
-                            MoveShots()
-                            MoveRock()
-                            CheckHits()
-                        END IF
+                        IF paused = 0 THEN MovePlayer()
                         DrawFrame()
                         vtg.endFrame("game")
                         vtg.present()
@@ -465,26 +451,6 @@ enum BASICRecipeCatalog {
                     vtg.clear()
                     vtg.present()
                     CLS
-                    PRINT "Final score: "; score
-                END FUNCTION
-
-                FUNCTION NewGame() AS VOID
-                    score = 0
-                    lives = 3
-                    gameOver = 0
-                    paused = 0
-                    running = 1
-                    NewShip()
-                    PlaceRock()
-                    ShowMessage("")
-                    hudDirty = 1
-                END FUNCTION
-
-                ' Points, and the best so far.
-                FUNCTION AddScore(points AS INTEGER) AS VOID
-                    score = score + points
-                    IF score > highScore THEN highScore = score
-                    hudDirty = 1
                 END FUNCTION
 
                 FUNCTION ShowMessage(words$ AS STRING) AS VOID
@@ -492,57 +458,7 @@ enum BASICRecipeCatalog {
                     messageDirty = 1
                 END FUNCTION
 
-                ' ================================================================= controls
-
-                ' Held keys are read with KEYDOWN, every frame; presses with INKEY$, which
-                ' hands over each key once.
-                FUNCTION ReadControls() AS VOID
-                    turning = 0
-                    IF KEYDOWN("LEFT") OR padLeft = 1 THEN turning = turning - 1
-                    IF KEYDOWN("RIGHT") OR padRight = 1 THEN turning = turning + 1
-                    thrusting = 0
-                    IF KEYDOWN("UP") OR padUp = 1 THEN thrusting = 1
-                    fireHeld = 0
-                    IF KEYDOWN("SPACE") OR padFire = 1 THEN fireHeld = 1
-
-                    LOCAL key$ = INKEY$()
-                    WHILE key$ <> ""
-                        IF key$ = "q" OR key$ = "Q" THEN running = 0
-                        IF key$ = "p" OR key$ = "P" THEN TogglePause()
-                        IF gameOver = 1 AND (key$ = CHR$(13) OR key$ = CHR$(10)) THEN NewGame()
-                        key$ = INKEY$()
-                    WEND
-                    IF padPause = 1 THEN
-                        padPause = 0
-                        TogglePause()
-                    END IF
-                    IF gameOver = 1 AND padFire = 1 THEN NewGame()
-                END FUNCTION
-
-                ' A game controller in BASICStudio: every button and stick direction comes
-                ' as its own control, with a value from 0 (let go) to 1 (pressed).
-                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
-                    LOCAL pressed = 0
-                    IF event.Value > 0.5 THEN pressed = 1
-                    LOCAL control$ = event.Control
-                    IF control$ = "DPAD_LEFT" OR control$ = "LEFT_STICK_LEFT" THEN padLeft = pressed
-                    IF control$ = "DPAD_RIGHT" OR control$ = "LEFT_STICK_RIGHT" THEN padRight = pressed
-                    IF control$ = "DPAD_UP" OR control$ = "LEFT_STICK_UP" THEN padUp = pressed
-                    IF control$ = "A" OR control$ = "RIGHT_TRIGGER" THEN padFire = pressed
-                    IF control$ = "MENU" AND pressed = 1 THEN padPause = 1
-                END FUNCTION
-
-                ' On an iPad or iPhone: a joystick on the right and Fire on the left. They
-                ' report as a gamepad would (LEFT_STICK_…, A), so GamepadChanged reads them.
-                ' Elsewhere these calls do nothing.
-                FUNCTION PlaceTouchControls() AS VOID
-                    touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 160)
-                    touch.Button("fire", "BOTTOMLEFT", 40, 40, 100, "FIRE", "#ff3b30")
-                    touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
-                END FUNCTION
-
                 FUNCTION TogglePause() AS VOID
-                    IF gameOver = 1 THEN RETURN
                     IF paused = 1 THEN
                         paused = 0
                         ShowMessage("")
@@ -550,6 +466,99 @@ enum BASICRecipeCatalog {
                         paused = 1
                         ShowMessage("PAUSED")
                     END IF
+                END FUNCTION
+
+                ' ================================================================= controls
+
+                ' Every control comes down to the same two answers: which way, and how
+                ' fast. The touch joystick says how far it leans, so it can ask for any
+                ' speed from a walk to a run. Keys and gamepad buttons are only on or off,
+                ' so they walk, and run while Shift or B is held.
+                FUNCTION ReadControls() AS VOID
+                    wantX = 0
+                    wantY = 0
+                    wantSpeed = 0
+
+                    ' The touch joystick is asked where it is: X and Y run from -1 to 1,
+                    ' and 0, 0 is the middle, where it springs back when the finger lifts.
+                    ' How far it leans is the distance from the middle.
+                    LOCAL stickX = touch.X("stick")
+                    LOCAL stickY = touch.Y("stick")
+                    LOCAL lean = SQR(stickX * stickX + stickY * stickY)
+                    IF lean > DEADZONE THEN
+                        wantX = stickX
+                        wantY = stickY
+                        wantSpeed = SpeedForLean(lean)
+                    ELSE
+                        ' Keys and the gamepad: each direction held adds its part, so two
+                        ' at once is a diagonal.
+                        IF KEYDOWN("LEFT") OR KEYDOWN("A") OR padLeft = 1 THEN wantX = wantX - 1
+                        IF KEYDOWN("RIGHT") OR KEYDOWN("D") OR padRight = 1 THEN wantX = wantX + 1
+                        IF KEYDOWN("UP") OR KEYDOWN("W") OR padUp = 1 THEN wantY = wantY - 1
+                        IF KEYDOWN("DOWN") OR KEYDOWN("S") OR padDown = 1 THEN wantY = wantY + 1
+                        IF wantX <> 0 OR wantY <> 0 THEN
+                            wantSpeed = WALKSPEED
+                            IF KEYDOWN("SHIFT") OR padRun = 1 THEN wantSpeed = RUNSPEED
+                        END IF
+                    END IF
+
+                    ' Presses, as opposed to keys held, come through INKEY$, once each.
+                    LOCAL key$ = INKEY$()
+                    WHILE key$ <> ""
+                        IF key$ = "q" OR key$ = "Q" THEN playing = 0
+                        IF key$ = "p" OR key$ = "P" THEN TogglePause()
+                        key$ = INKEY$()
+                    WEND
+                    IF padPause = 1 THEN
+                        padPause = 0
+                        TogglePause()
+                    END IF
+                END FUNCTION
+
+                ' How far the stick leans picks a speed between a walk and a run, on a
+                ' scale that is even in the logarithm of the speed rather than in the speed
+                ' itself: every step of lean multiplies the speed by the same amount. With
+                ' a run four times a walk:
+                '
+                '     lean    0.15 (just past the dead zone)   0.575 (halfway)    1 (all the way)
+                '     speed   1.5, a walk                      3, twice a walk    6, a run
+                '
+                ' In a straight line, halfway would already be 3.75, most of a run. Spread
+                ' this way, more of the stick is spent at the slow end, where small changes
+                ' show and fine control matters.
+                FUNCTION SpeedForLean(lean AS DOUBLE) AS DOUBLE
+                    IF lean <= DEADZONE THEN RETURN 0
+                    LOCAL t = (lean - DEADZONE) / (1 - DEADZONE)
+                    IF t > 1 THEN t = 1
+                    RETURN EXP(LOG(WALKSPEED) + t * (LOG(RUNSPEED) - LOG(WALKSPEED)))
+                END FUNCTION
+
+                ' A game controller in BASICStudio: every button and stick direction comes
+                ' as its own control, with a value from 0 (let go) to 1 (pressed). A stick's
+                ' directions come as on or off too, so the gamepad walks and runs the way
+                ' the keys do.
+                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
+                    LOCAL pressed = 0
+                    IF event.Value > 0.5 THEN pressed = 1
+                    LOCAL control$ = event.Control
+                    IF control$ = "MENU" AND pressed = 1 THEN padPause = 1
+                    ' The touch joystick reports here as well, as controller -1, but only
+                    ' as on or off. ReadControls asks it how far it leans instead.
+                    IF event.Controller <> -1 THEN
+                        IF control$ = "DPAD_LEFT" OR control$ = "LEFT_STICK_LEFT" THEN padLeft = pressed
+                        IF control$ = "DPAD_RIGHT" OR control$ = "LEFT_STICK_RIGHT" THEN padRight = pressed
+                        IF control$ = "DPAD_UP" OR control$ = "LEFT_STICK_UP" THEN padUp = pressed
+                        IF control$ = "DPAD_DOWN" OR control$ = "LEFT_STICK_DOWN" THEN padDown = pressed
+                        IF control$ = "B" THEN padRun = pressed
+                    END IF
+                END FUNCTION
+
+                ' On an iPad or iPhone: a joystick bottom left, and a pause button. The
+                ' pause button reports as a gamepad's Menu button, so GamepadChanged reads
+                ' it. Elsewhere these calls do nothing.
+                FUNCTION PlaceTouchControls() AS VOID
+                    touch.Joystick("stick", "BOTTOMLEFT", 40, 40, 170)
+                    touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
                 END FUNCTION
 
                 FUNCTION WindowResized(event AS BASICResizeEvent)
@@ -560,157 +569,64 @@ enum BASICRecipeCatalog {
 
                 ' ================================================================= moving
 
-                FUNCTION NewShip() AS VOID
-                    shipX = WORLDWIDTH / 2
-                    shipY = WORLDHEIGHT / 2
-                    shipVX = 0
-                    shipVY = 0
-                    shipAngle = -PI / 2
-                    safeFrames = 60
-                END FUNCTION
+                ' Go the way asked for, at the speed asked for, and turn to face it. They
+                ' move the new way at once but turn toward it over a few frames, so a
+                ' change of direction is quick and you still see them turn. No stick and
+                ' no keys is a speed of 0: they stop where they are.
+                FUNCTION MovePlayer() AS VOID
+                    speed = wantSpeed
+                    IF speed = 0 THEN
+                        stride = 0
+                    ELSE
+                        LOCAL way = DirectionOf(wantX, wantY)
+                        ' The shortest way round, and no more than TURNSPEED in a frame.
+                        LOCAL turn = Unwind(way - facing)
+                        IF turn > TURNSPEED THEN turn = TURNSPEED
+                        IF turn < -TURNSPEED THEN turn = -TURNSPEED
+                        facing = Unwind(facing + turn)
 
-                ' Turn, thrust, coast, wrap at the edges, and fire.
-                FUNCTION MoveShip() AS VOID
-                    shipAngle = shipAngle + turning * TURNSPEED
-                    IF thrusting = 1 THEN
-                        shipVX = shipVX + COS(shipAngle) * THRUSTPOWER
-                        shipVY = shipVY + SIN(shipAngle) * THRUSTPOWER
+                        ' A direction and a speed make a step: COS gives the part across,
+                        ' SIN the part down.
+                        playerX = playerX + COS(way) * speed
+                        playerY = playerY + SIN(way) * speed
+
+                        ' Faster means quicker steps as well as longer ones.
+                        stride = stride + 0.17 * SQR(speed)
                     END IF
-                    ' A little drag, so the ship slows when you let go, and a top speed.
-                    shipVX = shipVX * 0.99
-                    shipVY = shipVY * 0.99
-                    LOCAL speed = SQR(shipVX * shipVX + shipVY * shipVY)
-                    IF speed > TOPSPEED THEN
-                        shipVX = shipVX / speed * TOPSPEED
-                        shipVY = shipVY / speed * TOPSPEED
-                    END IF
-                    shipX = WrapX(shipX + shipVX)
-                    shipY = WrapY(shipY + shipVY)
-                    IF safeFrames > 0 THEN safeFrames = safeFrames - 1
 
-                    IF fireWait > 0 THEN fireWait = fireWait - 1
-                    IF fireHeld = 1 AND fireWait = 0 THEN
-                        Fire()
-                        fireWait = 8
-                    END IF
+                    ' The edges of the world are walls.
+                    playerX = Clamp(playerX, PLAYERSIZE, WORLDWIDTH - PLAYERSIZE)
+                    playerY = Clamp(playerY, PLAYERSIZE, WORLDHEIGHT - PLAYERSIZE)
                 END FUNCTION
 
-                ' A shot from the nose, in the way the ship points, plus the ship's speed.
-                FUNCTION Fire() AS VOID
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLife(s) = 0 THEN
-                            shotLife(s) = SHOTFRAMES
-                            shotX(s) = shipX + COS(shipAngle) * 14
-                            shotY(s) = shipY + SIN(shipAngle) * 14
-                            shotVX(s) = shipVX + COS(shipAngle) * SHOTSPEED
-                            shotVY(s) = shipVY + SIN(shipAngle) * SHOTSPEED
-                            SoundShot()
-                            RETURN
-                        END IF
-                    NEXT s
+                ' The direction from the middle to (x, y), in radians, measured the way
+                ' facing is. ATN alone gives only the right half of the circle, from -PI/2
+                ' to PI/2; a point to the left is half a turn round from that.
+                FUNCTION DirectionOf(x AS DOUBLE, y AS DOUBLE) AS DOUBLE
+                    IF x > 0 THEN RETURN ATN(y / x)
+                    IF x < 0 THEN RETURN Unwind(ATN(y / x) + PI)
+                    IF y < 0 THEN RETURN -PI / 2
+                    RETURN PI / 2
                 END FUNCTION
 
-                FUNCTION MoveShots() AS VOID
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLife(s) > 0 THEN
-                            shotX(s) = WrapX(shotX(s) + shotVX(s))
-                            shotY(s) = WrapY(shotY(s) + shotVY(s))
-                            shotLife(s) = shotLife(s) - 1
-                            IF shotLife(s) = 0 THEN vtg.delete("shot" + Num$(s))
-                        END IF
-                    NEXT s
+                ' The same direction, written between -PI and PI. A turn from just above
+                ' -PI to just below PI is a small one, and this is what makes it come out
+                ' that way rather than nearly a full circle.
+                FUNCTION Unwind(angle AS DOUBLE) AS DOUBLE
+                    LOCAL a = angle
+                    WHILE a > PI
+                        a = a - 2 * PI
+                    WEND
+                    WHILE a < -PI
+                        a = a + 2 * PI
+                    WEND
+                    RETURN a
                 END FUNCTION
 
-                ' Somewhere away from the ship, drifting a random way.
-                FUNCTION PlaceRock() AS VOID
-                    rockX = WrapX(shipX + WORLDWIDTH / 2 + (RND() - 0.5) * 200)
-                    rockY = WrapY(shipY + WORLDHEIGHT / 2 + (RND() - 0.5) * 200)
-                    LOCAL heading = RND() * 2 * PI
-                    rockVX = COS(heading) * 1.5
-                    rockVY = SIN(heading) * 1.5
-                END FUNCTION
-
-                FUNCTION MoveRock() AS VOID
-                    rockX = WrapX(rockX + rockVX)
-                    rockY = WrapY(rockY + rockVY)
-                END FUNCTION
-
-                ' Off one edge, on at the other.
-                FUNCTION WrapX(x AS DOUBLE) AS DOUBLE
-                    IF x < 0 THEN RETURN x + WORLDWIDTH
-                    IF x >= WORLDWIDTH THEN RETURN x - WORLDWIDTH
-                    RETURN x
-                END FUNCTION
-
-                FUNCTION WrapY(y AS DOUBLE) AS DOUBLE
-                    IF y < 0 THEN RETURN y + WORLDHEIGHT
-                    IF y >= WORLDHEIGHT THEN RETURN y - WORLDHEIGHT
-                    RETURN y
-                END FUNCTION
-
-                ' ================================================================= hits
-
-                ' A shot on the rock scores; the rock on the ship costs a ship.
-                FUNCTION CheckHits() AS VOID
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLife(s) > 0 THEN
-                            IF Distance(shotX(s), shotY(s), rockX, rockY) < ROCKSIZE THEN
-                                shotLife(s) = 0
-                                vtg.delete("shot" + Num$(s))
-                                AddScore(100)
-                                SoundHit()
-                                PlaceRock()
-                            END IF
-                        END IF
-                    NEXT s
-                    IF safeFrames = 0 AND Distance(shipX, shipY, rockX, rockY) < ROCKSIZE + 8 THEN LoseShip()
-                END FUNCTION
-
-                FUNCTION LoseShip() AS VOID
-                    SoundCrash()
-                    lives = lives - 1
-                    hudDirty = 1
-                    IF lives <= 0 THEN
-                        gameOver = 1
-                        ShowMessage("GAME OVER - ENTER PLAYS AGAIN")
-                        RETURN
-                    END IF
-                    NewShip()
-                    PlaceRock()
-                END FUNCTION
-
-                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
-                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
-                END FUNCTION
-
-                ' ================================================================= sound
-
-                ' The BBC Micro's ENVELOPE and SOUND. An envelope shapes a sound's pitch and
-                ' loudness over time; SOUND plays a note on a channel through one. Adding 16
-                ' to the channel cuts off whatever it was playing. Channel 0 is noise.
-                '
-                '   ENVELOPE n, step, pitch changes x3, step counts x3,
-                '            attack, decay, sustain, release, attack level, decay level
-                FUNCTION SetUpSounds() AS VOID
-                    ' The shot: a quick zip down.
-                    ENVELOPE 1, 1, -10, 0, 0, 6, 0, 0, 126, -16, 0, -126, 110, 0
-                    ' A crack of noise, for a hit or a crash.
-                    ENVELOPE 2, 2, 0, 0, 0, 0, 0, 0, 126, -12, 0, -126, 110, 0
-                END FUNCTION
-
-                FUNCTION SoundShot() AS VOID
-                    SOUND 17, 1, 170, 2
-                END FUNCTION
-
-                FUNCTION SoundHit() AS VOID
-                    SOUND 16, 2, 6, 4
-                END FUNCTION
-
-                FUNCTION SoundCrash() AS VOID
-                    SOUND 16, 2, 3, 12
+                FUNCTION Clamp(amount AS DOUBLE, lowest AS DOUBLE, highest AS DOUBLE) AS DOUBLE
+                    IF amount < lowest THEN RETURN lowest
+                    IF amount > highest THEN RETURN highest
+                    RETURN amount
                 END FUNCTION
 
                 ' ================================================================= pacing
@@ -777,54 +693,70 @@ enum BASICRecipeCatalog {
                 ' ================================================================= drawing
                 '
                 ' Shapes are kept by the terminal under an id: drawing an id again moves it,
-                ' and vtg.delete takes it away. Layer 1 is the background, 2 the shots, 3
-                ' the ship and rock, 4 the words.
+                ' and vtg.delete takes it away. Layer 1 is the floor, 2 the feet, 3 the
+                ' body, 4 the nose and the words.
 
-                ' The background: at the start, and when the window changes size.
+                ' The floor: at the start, and when the window changes size.
                 FUNCTION DrawScenery() AS VOID
                     sceneryDirty = 0
                     vtg.clear()
-                    vtg.rect("space", 0, 0, canvasWidth, canvasHeight, "none", "#000000", 0, 0, "", "", 1)
-                    vtg.rect("edge", PixelX(0), PixelY(0), PixelLength(WORLDWIDTH), PixelLength(WORLDHEIGHT), "#1e293b", "none", 1, 0, "", "", 1)
-                    hudDirty = 1
+                    vtg.rect("floor", 0, 0, canvasWidth, canvasHeight, "none", "#000000", 0, 0, "", "", 1)
+                    LOCAL x = 0
+                    FOR x = GRIDSIZE TO WORLDWIDTH - GRIDSIZE STEP GRIDSIZE
+                        vtg.line("across" + Num$(x), PixelX(x), PixelY(0), PixelX(x), PixelY(WORLDHEIGHT), "#1e293b", 1, "", 1)
+                    NEXT x
+                    LOCAL y = 0
+                    FOR y = GRIDSIZE TO WORLDHEIGHT - GRIDSIZE STEP GRIDSIZE
+                        vtg.line("down" + Num$(y), PixelX(0), PixelY(y), PixelX(WORLDWIDTH), PixelY(y), "#1e293b", 1, "", 1)
+                    NEXT y
+                    vtg.rect("edge", PixelX(0), PixelY(0), PixelLength(WORLDWIDTH), PixelLength(WORLDHEIGHT), "#475569", "none", PixelLength(2), 0, "", "", 1)
+
+                    LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - P PAUSES"
+                    IF touch.Available THEN hint$ = "LEAN THE STICK - A LITTLE WALKS - ALL THE WAY RUNS"
+                    vtg.vectorPrint("hint", PixelX(16), PixelY(WORLDHEIGHT - 24), PixelLength(10), hint$, "#64748b", PixelLength(1), 4)
+                    hud$ = ""
                     messageDirty = 1
                 END FUNCTION
 
                 ' Everything that moves, every frame; the words only when they change.
                 FUNCTION DrawFrame() AS VOID
-                    DrawShip()
-                    vtg.circle("rock", PixelX(rockX), PixelY(rockY), PixelLength(ROCKSIZE), "#cbd5e1", "#475569", PixelLength(2), 3)
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF shotLife(s) > 0 THEN vtg.circle("shot" + Num$(s), PixelX(shotX(s)), PixelY(shotY(s)), PixelLength(2), "none", "#fde047", 0, 2)
-                    NEXT s
-                    IF hudDirty = 1 THEN DrawHud()
+                    DrawPlayer()
+                    DrawHud()
                     IF messageDirty = 1 THEN DrawMessage()
                 END FUNCTION
 
-                ' The ship: three lines in a dart shape around its middle, nose first. It
-                ' blinks while it cannot be hit, and is gone once the game is over.
-                FUNCTION DrawShip() AS VOID
-                    LOCAL hull$ = "#f8fafc"
-                    IF gameOver = 1 OR (safeFrames > 0 AND safeFrames MOD 10 < 5) THEN hull$ = "#000000"
-                    LOCAL noseX = shipX + COS(shipAngle) * 14
-                    LOCAL noseY = shipY + SIN(shipAngle) * 14
-                    LOCAL leftX = shipX + COS(shipAngle + 2.5) * 10
-                    LOCAL leftY = shipY + SIN(shipAngle + 2.5) * 10
-                    LOCAL rightX = shipX + COS(shipAngle - 2.5) * 10
-                    LOCAL rightY = shipY + SIN(shipAngle - 2.5) * 10
-                    LOCAL weight = PixelLength(2)
-                    vtg.line("ship1", PixelX(noseX), PixelY(noseY), PixelX(leftX), PixelY(leftY), hull$, weight, "", 3)
-                    vtg.line("ship2", PixelX(noseX), PixelY(noseY), PixelX(rightX), PixelY(rightY), hull$, weight, "", 3)
-                    vtg.line("ship3", PixelX(leftX), PixelY(leftY), PixelX(rightX), PixelY(rightY), hull$, weight, "", 3)
+                ' Seen from above: two feet that swing as they go, a round body over them,
+                ' and a nose on the side they face.
+                FUNCTION DrawPlayer() AS VOID
+                    ' Out to each side: a quarter turn from the way they face.
+                    LOCAL sideX = COS(facing + PI / 2) * 9
+                    LOCAL sideY = SIN(facing + PI / 2) * 9
+                    ' How far a foot is ahead (or, for the other foot, behind): it swings
+                    ' with the stride, and further at a run.
+                    LOCAL swing = SIN(stride) * (1 + speed * 1.5)
+                    LOCAL aheadX = COS(facing) * swing
+                    LOCAL aheadY = SIN(facing) * swing
+                    LOCAL foot = PixelLength(5)
+                    vtg.circle("footLeft", PixelX(playerX + sideX + aheadX), PixelY(playerY + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
+                    vtg.circle("footRight", PixelX(playerX - sideX - aheadX), PixelY(playerY - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
+
+                    vtg.circle("body", PixelX(playerX), PixelY(playerY), PixelLength(PLAYERSIZE), "#bfdbfe", "#2563eb", PixelLength(2), 3)
+                    LOCAL noseX = playerX + COS(facing) * PLAYERSIZE
+                    LOCAL noseY = playerY + SIN(facing) * PLAYERSIZE
+                    vtg.circle("nose", PixelX(noseX), PixelY(noseY), PixelLength(4), "none", "#facc15", 0, 4)
                 END FUNCTION
 
-                ' Score and best along the top, ships left in the corner.
+                ' How fast, in world units a second, and what that is called. From the
+                ' middle of the stick's scale up, twice a walk, it counts as a run. Drawn
+                ' only when it changes: vector text takes longer to draw than a circle.
                 FUNCTION DrawHud() AS VOID
-                    hudDirty = 0
-                    vtg.vectorPrint("score", PixelX(16), PixelY(12), PixelLength(14), "SCORE " + Num$(score), "#f8fafc", PixelLength(1), 4)
-                    vtg.vectorPrint("high", PixelX(400), PixelY(12), PixelLength(14), "HIGH " + Num$(highScore), "#94a3b8", PixelLength(1), 4)
-                    vtg.vectorPrint("lives", PixelX(16), PixelY(WORLDHEIGHT - 26), PixelLength(12), "SHIPS " + Num$(lives), "#94a3b8", PixelLength(1), 4)
+                    LOCAL gait$ = "STANDING"
+                    IF speed > 0 THEN gait$ = "WALKING"
+                    IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
+                    LOCAL words$ = "SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
+                    IF words$ = hud$ THEN RETURN
+                    hud$ = words$
+                    vtg.vectorPrint("hud", PixelX(16), PixelY(12), PixelLength(14), words$, "#f8fafc", PixelLength(1), 4)
                 END FUNCTION
 
                 ' The message in the middle, or none. Vector text is erased by printing
