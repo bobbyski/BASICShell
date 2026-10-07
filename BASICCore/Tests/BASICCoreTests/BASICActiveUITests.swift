@@ -395,6 +395,23 @@ struct BASICActiveUITests {
         #expect(host.output == ["row1 column1 17", "term Q2-1"])
     }
 
+    @Test("Grade Book · A control kept in a TYPE's field goes into a window like any other")
+    func controlInRecord() throws {
+        let (host, _) = try run("""
+        TYPE Page
+            Table AS VARIANT
+        END TYPE
+        GLOBAL thePage AS Page
+        let w = AUIWindow("W")
+        thePage.Table = AUITable("A")
+        w.add(thePage.Table)
+        thePage.Table.addrow("x")
+        print thePage.Table.count()
+        """)
+        #expect(host.requests.contains(.add(parent: 1, child: 2)))
+        #expect(host.output == ["1"])
+    }
+
     @Test("P6.1 · Stop reaches a program waiting in run()")
     func stopReachesRun() throws {
         let host = RecordingAUIHost()

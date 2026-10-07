@@ -94,15 +94,40 @@ struct BundledExample: Identifiable, Hashable {
         return Array(parts.dropLast(hasOwnFolder ? 2 : 1))
     }
 
-    /// `aui-gallery` as `Aui Gallery`: hyphens become spaces, and each word
-    /// starts in capitals.
+    /// `aui-gallery` as `Aui Gallery`, `GradeBook` as `Grade Book`: hyphens
+    /// become spaces, a name written in camel case comes apart into its
+    /// words, and each word starts in capitals.
     static func words(_ name: String) -> String {
         name.split(separator: "-")
+            .flatMap { camelWords(String($0)) }
             .map { word in
                 guard let first = word.first else { return "" }
                 return first.uppercased() + word.dropFirst()
             }
             .joined(separator: " ")
+    }
+
+    /// `ActiveUICounterDemo` as `Active`, `UI`, `Counter`, `Demo`: a word
+    /// starts at a capital after a small letter or a digit, or at the last
+    /// capital of a run that a small letter follows. A name in capitals
+    /// alone, `POS`, stays one word.
+    private static func camelWords(_ part: String) -> [String] {
+        let letters = Array(part)
+        var words: [String] = []
+        var current = ""
+        for (index, letter) in letters.enumerated() {
+            if index > 0, letter.isUppercase {
+                let before = letters[index - 1]
+                let after = index + 1 < letters.count ? letters[index + 1] : nil
+                if before.isLowercase || before.isNumber || (before.isUppercase && after?.isLowercase == true) {
+                    words.append(current)
+                    current = ""
+                }
+            }
+            current.append(letter)
+        }
+        words.append(current)
+        return words
     }
 
     /// The whole path in words, `Games / Roids`, for a message about it.

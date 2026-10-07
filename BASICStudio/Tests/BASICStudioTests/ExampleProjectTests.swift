@@ -89,4 +89,47 @@ struct ExampleProjectTests {
         #expect(!studio.sidebar.isSidebarCollapsed)
         #expect(studio.sidebar.headerTitle == "gallery")
     }
+
+    @Test("A project's programs run in the project's folder, wherever their source sits; a file outside it runs in its own")
+    func projectIsTheWorkingDirectory() throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("Kit.basproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: project.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try #"{"schemaVersion": 1, "kind": "project", "name": "Kit", "entry": "src/main.bas"}"#
+            .write(to: project.appendingPathComponent("project.json"), atomically: true, encoding: .utf8)
+        try "PRINT PWD$\n".write(to: project.appendingPathComponent("src/main.bas"), atomically: true, encoding: .utf8)
+        let loose = root.appendingPathComponent("loose.bas")
+        try "PRINT 1\n".write(to: loose, atomically: true, encoding: .utf8)
+
+        let model = StudioHarness().model
+        model.openProjectAndEntry(at: project)
+        #expect(model.currentProgramURL == project.appendingPathComponent("src/main.bas"))
+        #expect(try model.currentDirectoryPath() == project.standardizedFileURL.path)
+        try model.loadProgram(from: loose)
+        #expect(try model.currentDirectoryPath() == root.standardizedFileURL.path)
+
+        // Loaded on its own, with no project open, a project's file still
+        // runs in its project's folder.
+        let fresh = StudioHarness().model
+        try fresh.loadProgram(from: project.appendingPathComponent("src/main.bas"))
+        #expect(try fresh.currentDirectoryPath() == project.standardizedFileURL.path)
+    }
+
+    @Test("LOAD at the prompt: a project's program moves to its project's folder; any other file leaves the folder alone")
+    func consoleLoadOfAProjectFile() async throws {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("Kit.basproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: project.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "PRINT PWD$\n".write(to: project.appendingPathComponent("src/main.bas"), atomically: true, encoding: .utf8)
+        try "PRINT 1\n".write(to: root.appendingPathComponent("loose.bas"), atomically: true, encoding: .utf8)
+
+        let studio = StudioHarness()
+        try studio.model.changeDirectory(path: root.path)
+        try await studio.submit("LOAD \"loose.bas\"")
+        #expect(try studio.model.currentDirectoryPath() == root.standardizedFileURL.path)
+        try await studio.submit("LOAD \"Kit.basproj/src/main.bas\"")
+        #expect(try studio.model.currentDirectoryPath() == project.standardizedFileURL.path)
+    }
 }

@@ -340,6 +340,9 @@ final class StudioAUIBridge {
                 }
             }
             let table = AUITable(columns: columns, rowCount: { store.rows.count })
+            // A program's table is read across: titles over lined-up
+            // columns on iPad too, not list rows.
+            table.showsColumnTitles = true
             watchSelection(of: table, id: id, store: store)
             rows[id] = store
             views[id] = table
@@ -368,8 +371,10 @@ final class StudioAUIBridge {
             let chart = AUIChart()
             let pie = Pie(chart: chart)
             chart.marks = [
+                // Each slice its own series, so each has its own color and
+                // the legend names it: a pie of one color says nothing.
                 AUISectorMark(count: { pie.slices.count }) { index in
-                    AUIDataPoint(pie.slices[index].label, pie.slices[index].value)
+                    AUIDataPoint(pie.slices[index].label, pie.slices[index].value, series: pie.slices[index].label)
                 }
                 .showsLabels(true)
             ]
@@ -395,8 +400,9 @@ final class StudioAUIBridge {
         case .text:
             return AUILabel(text)
         case .editable:
+            // A box, not plain text: a cell the user can type in has to look
+            // like one.
             let field = AUITextField(text)
-            field.fieldStyle = .plain
             field.textProvider = { store.cell(row, column) }
             field.onEndEditing = { [weak self] newText in
                 guard newText != store.cell(row, column) else { return }

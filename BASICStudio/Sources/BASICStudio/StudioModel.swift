@@ -722,11 +722,32 @@ final class StudioModel: ObservableObject {
         programText = source
         currentProgramURL = url
         currentProgramFileName = url.path
-        workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
+        workingDirectoryURL = workingDirectory(for: url)
         updateWindowTitle()
         editorErrorLine = nil
         rebuildProgramFromEditor()
         selectedPane = .editor
+    }
+
+    /// The folder a program runs in once `url` is the current program: its
+    /// project's own folder, so a project's program finds its data in one
+    /// place wherever its source sits (`src/main.bas` of a `.basproj`), and
+    /// the file's folder otherwise. The project is the open one if the file is
+    /// in it, else the nearest folder above the file that is a project, so
+    /// loading `src/main.bas` on its own runs it where opening the project
+    /// would.
+    func workingDirectory(for url: URL) -> URL {
+        let folder = url.deletingLastPathComponent().standardizedFileURL
+        if let project = projectDirectoryURL?.standardizedFileURL {
+            let projectPath = project.path.hasSuffix("/") ? project.path : project.path + "/"
+            if folder.path == project.path || folder.path.hasPrefix(projectPath) { return project }
+        }
+        var candidate = folder
+        while candidate.path != "/", !candidate.path.isEmpty {
+            if BASICProjectFolder.isProject(candidate) { return candidate }
+            candidate = candidate.deletingLastPathComponent().standardizedFileURL
+        }
+        return folder
     }
 
     // MARK: - New files and projects (STUDIO_FEATURES.md M10, ruled 2026-09-29)
@@ -1617,7 +1638,7 @@ final class StudioModel: ObservableObject {
             try StudioCloudStorage.write(programText, to: url)
             currentProgramURL = url
             currentProgramFileName = url.path
-            workingDirectoryURL = url.deletingLastPathComponent().standardizedFileURL
+            workingDirectoryURL = workingDirectory(for: url)
             updateWindowTitle()
             rebuildProgramFromEditor()
         } catch {
@@ -2089,6 +2110,16 @@ final class StudioModel: ObservableObject {
             currentProgramURL = URL(fileURLWithPath: expanded)
             currentProgramFileName = expanded
             updateWindowTitle()
+            // A project's program loaded at the prompt runs where it would
+            // opened from the project: in the project's folder, with its data.
+            // A file in no project leaves the folder as it was, as LOAD
+            // always has.
+            if pathArgument(for: "LOAD", in: trimmed) != nil {
+                let folder = workingDirectory(for: URL(fileURLWithPath: expanded))
+                if folder != URL(fileURLWithPath: expanded).deletingLastPathComponent().standardizedFileURL {
+                    workingDirectoryURL = folder
+                }
+            }
         }
     }
 
