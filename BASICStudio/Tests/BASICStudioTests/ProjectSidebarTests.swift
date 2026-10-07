@@ -135,6 +135,37 @@ struct ProjectSidebarTests {
         #expect(model.programText == "PRINT 42")
     }
 
+    @Test("Run puts the sidebar away; Stop puts it back as it was")
+    func runHidesSidebar() {
+        let model = StudioHarness().model
+        let studio = StudioActiveUIShell(model: model)
+        studio.sidebar.isSidebarCollapsed = false
+
+        model.isProgramRunning = true
+        studio.refresh()
+        #expect(studio.sidebar.isSidebarCollapsed)
+
+        // Stopped at a breakpoint is still running.
+        model.isProgramRunning = false
+        model.isProgramPaused = true
+        studio.refresh()
+        #expect(studio.sidebar.isSidebarCollapsed)
+
+        model.isProgramPaused = false
+        studio.refresh()
+        #expect(!studio.sidebar.isSidebarCollapsed)
+
+        // Closed when Run was pressed, closed after Stop, even if it was
+        // opened while the program ran.
+        studio.sidebar.isSidebarCollapsed = true
+        model.isJITRunning = true
+        studio.refresh()
+        studio.sidebar.isSidebarCollapsed = false
+        model.isJITRunning = false
+        studio.refresh()
+        #expect(studio.sidebar.isSidebarCollapsed)
+    }
+
     @Test("P3.7 · View ▸ Toggle Sidebar collapses it")
     func toggle() {
         let studio = StudioActiveUIShell(model: StudioHarness().model)

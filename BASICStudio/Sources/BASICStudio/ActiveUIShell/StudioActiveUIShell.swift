@@ -77,6 +77,10 @@ final class StudioActiveUIShell {
     /// The model's ``StudioModel/projectOpenCount`` when the sidebar was
     /// last shown for it: a project restored at launch does not count.
     private var drawnProjectOpenCount = 0
+    /// Whether the sidebar was collapsed when the program now running was
+    /// started; nil while nothing runs. Run puts the sidebar away so the
+    /// program has the room, and Stop puts it back as it was.
+    private var sidebarCollapsedBeforeRun: Bool?
     /// The New Project wizard while its sheet is up; New Project… again
     /// meanwhile does nothing.
     private(set) var newProjectWizard: NewProjectWizardAUI?
@@ -357,6 +361,17 @@ final class StudioActiveUIShell {
         if model.projectOpenCount != drawnProjectOpenCount {
             drawnProjectOpenCount = model.projectOpenCount
             sidebar.isSidebarCollapsed = false
+        }
+        // Run closes the sidebar; when the program stops it is put back as
+        // it was when Run was pressed. A program stopped at a breakpoint is
+        // still running, so the sidebar stays away while it is debugged.
+        let programIsRunning = model.isProgramRunning || model.isProgramPaused || model.isJITRunning
+        if programIsRunning, sidebarCollapsedBeforeRun == nil {
+            sidebarCollapsedBeforeRun = sidebar.isSidebarCollapsed
+            sidebar.isSidebarCollapsed = true
+        } else if !programIsRunning, let collapsed = sidebarCollapsedBeforeRun {
+            sidebarCollapsedBeforeRun = nil
+            sidebar.isSidebarCollapsed = collapsed
         }
         if model.windowTitle != drawnTitle {
             AUIApplication.mainWindowTitle = model.windowTitle
