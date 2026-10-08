@@ -3980,6 +3980,25 @@ struct BASICCoreTests {
         #expect(host.output.isEmpty)
     }
 
+    @Test("BACKGROUND starts an ASYNC FUNCTION that returns nothing, and its work still runs")
+    func backgroundStartsVoidAsyncFunction() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        background RecordTelemetry()
+        print "The caller does not wait"
+        ignored = await Sleep(50)
+
+        async function RecordTelemetry()
+            ignored = await Sleep(10)
+            print "Background work completed"
+        end function
+        """)
+        try session.runProgram()
+        #expect(host.output.contains("The caller does not wait"))
+        #expect(host.output.contains("Background work completed"))
+    }
+
     @Test("Unawaited retained tasks produce an end-of-run diagnostic")
     func unawaitedRetainedTasksProduceEndOfRunDiagnostic() throws {
         let host = TestHost()

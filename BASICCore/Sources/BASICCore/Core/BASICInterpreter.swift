@@ -1634,7 +1634,10 @@ public final class BASICInterpreter {
             }
             return .next
         case .background(let expression):
-            let value = try evaluate(expression)
+            // As a statement, not a value: an ASYNC FUNCTION with no result
+            // (`background RecordTelemetry()`) still starts a task, and
+            // BACKGROUND exists to start it and not wait.
+            let value = try evaluateStandaloneExpression(expression)
             guard case .task(let handle) = value,
                   taskScheduler?.markBackground(id: handle.id) == true else {
                 throw BASICError.runtime("BACKGROUND requires an async task")
