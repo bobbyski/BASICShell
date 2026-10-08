@@ -75,6 +75,6 @@ struct DocsPaneModelTests {
         #expect(pane.menuTitle == "Beginner's Guide to BASIC")
         let tutorials = pane.sections.first { $0.title == "Tutorials" }?.items.map(\.title) ?? []
         #expect(tutorials.first == "Beginner's Guide to BASIC")
-        #expect(tutorials.count == 5, "\(tutorials)")
+        #expect(tutorials.count == 6, "\(tutorials)")
     }
 }

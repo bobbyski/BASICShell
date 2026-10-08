@@ -610,3 +610,7 @@ basicshell basicPrograms/demos/tui/gallery.basproj/main.bas
 
 `basicPrograms/demos/tui/tui-controls.bas` is a shorter list of the common
 controls (fields, lists, tables, check boxes), each with a comment.
+
+For real windows instead of ones drawn in the terminal, the
+[ActiveUI Tutorial](TUTORIAL_ACTIVEUI.md) builds a to-do list the same way:
+build, show, then wait while the person uses it.
