@@ -1,6 +1,6 @@
 # BASICrc Tutorial
 
-![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen) ![BASICStudio](https://img.shields.io/badge/BASICStudio-not%20read-lightgrey)
+![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen) ![BASICStudio](https://img.shields.io/badge/BASICStudio-not%20read-lightgray)
 
 This tutorial writes a *startup file* for BASICShell: a short list of
 instructions it carries out every time it starts, so that you never have to
