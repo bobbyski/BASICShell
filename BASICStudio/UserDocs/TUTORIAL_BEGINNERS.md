@@ -256,6 +256,7 @@ If a program seems stuck, click **Stop**. The debugger (the bug button) lets you
 - [Graphics Tutorial](TUTORIAL_GRAPHICS.md): draw shapes, colors and a clickable calculator.
 - [TUIKit Tutorial](TUTORIAL_TUIKIT.md): build windows, buttons and menus in the terminal.
 - [ActiveUI Tutorial](TUTORIAL_ACTIVEUI.md): build a to-do list in a real window of its own.
+- [Database Tutorial](TUTORIAL_DATABASE.md): keep a reading list in a database file that remembers it between runs.
 - [Async Programming Tutorial](TUTORIAL_ASYNC.md): do several things at once.
 - [BASICrc Tutorial](TUTORIAL_BASICRC.md): set BASICShell up the way you like it.
 

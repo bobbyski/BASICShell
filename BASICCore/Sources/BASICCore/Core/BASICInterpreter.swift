@@ -840,7 +840,13 @@ public final class BASICInterpreter {
             guard let url = try evaluate(arguments[0]).string else {
                 throw BASICError.runtime(pseudoClass.constructorDescription)
             }
-            return try runtime.dataRuntime.makeSQLDatabase(url: url.description)
+            // A file named without a folder is in the program's folder, the one
+            // PWD$ names, as OPEN finds files (BASICSQLiteProvider.resolving).
+            var location = url.description
+            if let fileHost = host as? BASICFileHost, let directory = try? fileHost.currentDirectoryPath() {
+                location = BASICSQLiteProvider.resolving(location, against: directory)
+            }
+            return try runtime.dataRuntime.makeSQLDatabase(url: location)
         case "DOCUMENTDATABASE":
             guard let url = try evaluate(arguments[0]).string else {
                 throw BASICError.runtime(pseudoClass.constructorDescription)

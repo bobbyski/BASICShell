@@ -111,6 +111,30 @@ public final class BASICSQLiteProvider: BASICSQLProvider, @unchecked Sendable {
         return true
     }
 
+    /// `url` with a file named without a folder put in `directory`: the folder
+    /// the program runs in, which `PWD$` names, as every other file a program
+    /// opens is found there. SQLite alone takes such a name from the process's
+    /// folder, which in BASICStudio is not the program's and on iPad cannot be
+    /// written to. Absolute paths, `~`, `:memory:` and `file:` URIs are left as
+    /// they are, as is anything that is not a SQLite connection string.
+    public static func resolving(_ url: String, against directory: String) -> String {
+        guard handles(url), !directory.isEmpty else { return url }
+        let lowered = url.lowercased()
+        if lowered == ":memory:" || lowered.hasPrefix("file:") { return url }
+        let prefix: String
+        if lowered.hasPrefix("sqlite://") {
+            prefix = String(url.prefix("sqlite://".count))
+        } else if lowered.hasPrefix("sqlite:") {
+            prefix = String(url.prefix("sqlite:".count))
+        } else {
+            prefix = ""
+        }
+        let path = String(url.dropFirst(prefix.count))
+        if path.isEmpty || path.hasPrefix("/") || path.hasPrefix("~") || path == ":memory:" { return url }
+        let folder = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
+        return prefix + folder + "/" + path
+    }
+
     /// Reads a path out of any of the accepted connection-string shapes.
     static func path(from url: String) -> String {
         if url.lowercased().hasPrefix("sqlite://") { return String(url.dropFirst("sqlite://".count)) }

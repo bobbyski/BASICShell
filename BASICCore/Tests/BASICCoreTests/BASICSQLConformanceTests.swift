@@ -356,3 +356,48 @@ struct BASICSQLiteTests {
         await reader.close()
     }
 }
+
+@Suite("A SQLite file named without a folder is in the program's folder")
+struct BASICSQLiteLocationTests {
+    @Test("Bare names and sqlite: names go into the folder; absolute, ~, memory and file: URIs are left alone")
+    func resolving() {
+        let folder = "/Users/ada/Projects/Books.basproj"
+        #expect(BASICSQLiteProvider.resolving("books.sqlite", against: folder) == folder + "/books.sqlite")
+        #expect(BASICSQLiteProvider.resolving("data/books.db", against: folder + "/") == folder + "/data/books.db")
+        #expect(BASICSQLiteProvider.resolving("sqlite:books.sqlite", against: folder) == "sqlite:" + folder + "/books.sqlite")
+        #expect(BASICSQLiteProvider.resolving("sqlite://books.sqlite", against: folder) == "sqlite://" + folder + "/books.sqlite")
+        #expect(BASICSQLiteProvider.resolving("/tmp/books.sqlite", against: folder) == "/tmp/books.sqlite")
+        #expect(BASICSQLiteProvider.resolving("~/books.sqlite", against: folder) == "~/books.sqlite")
+        #expect(BASICSQLiteProvider.resolving(":memory:", against: folder) == ":memory:")
+        #expect(BASICSQLiteProvider.resolving("file:books.sqlite?mode=ro", against: folder) == "file:books.sqlite?mode=ro")
+        #expect(BASICSQLiteProvider.resolving("memory:", against: folder) == "memory:", "not SQLite")
+    }
+
+    @Test("A program's bare file name opens in the host's folder, not the process's")
+    func programOpensInItsFolder() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sqlite-where-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let host = FolderHost(folder: folder.path)
+        let session = BASICSession(host: host)
+        session.program.loadSource("""
+        LET db = SqlDatabase("books.sqlite")
+        db.Execute("CREATE TABLE Book (Title TEXT)")
+        db.Close()
+        """)
+        try session.runProgram()
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("books.sqlite").path))
+    }
+}
+
+/// A host whose folder is not the process's, as BASICStudio's is not.
+private final class FolderHost: BASICFileHost, @unchecked Sendable {
+    let folder: String
+    init(folder: String) { self.folder = folder }
+    func print(_ text: String, terminator: String) {}
+    func printLine(_ text: String) {}
+    func readLine(prompt: String) -> String? { nil }
+    func currentDirectoryPath() throws -> String { folder }
+    func loadTextFile(path: String) throws -> String { throw BASICError.runtime("no files") }
+    func saveTextFile(path: String, text: String) throws {}
+}
