@@ -114,7 +114,45 @@ struct UserDoc: Identifiable, Hashable {
     /// what a newcomer should read before anything else.
     static let startPageID = "TUTORIAL_BEGINNERS.md"
 
-    static func loadAll() -> [UserDoc] {
+    /// Pages about the shell (BASICShell and its startup file), which mean
+    /// nothing where there is no shell: iPhone and iPad today, Android when
+    /// Studio runs there. Add a page here to keep it to the desktop.
+    static let shellOnlyPageIDs: Set<String> = ["TUTORIAL_BASICRC.md"]
+
+    /// Whether this platform has a shell for the shell's pages to describe.
+    static var platformHasShell: Bool {
+        #if os(iOS) || os(Android)
+        return false
+        #else
+        return true
+        #endif
+    }
+
+    /// The pages this platform shows: without a shell, the shell's pages are
+    /// left out, and so is any list item that only links to one of them (the
+    /// Beginner's Guide's "Where to Go Next"), so no link leads nowhere.
+    static func available(_ docs: [UserDoc], hasShell: Bool) -> [UserDoc] {
+        guard !hasShell else { return docs }
+        return docs
+            .filter { !shellOnlyPageIDs.contains($0.id) }
+            .map { doc in
+                let lines = doc.content.split(separator: "\n", omittingEmptySubsequences: false)
+                let kept = lines.filter { line in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") else { return true }
+                    return !shellOnlyPageIDs.contains { trimmed.contains("](\($0))") }
+                }
+                guard kept.count != lines.count else { return doc }
+                return UserDoc(id: doc.id, title: doc.title, category: doc.category, content: kept.joined(separator: "\n"))
+            }
+    }
+
+    static func loadAll(hasShell: Bool = platformHasShell) -> [UserDoc] {
+        available(loadEverything(), hasShell: hasShell)
+    }
+
+    /// Every page the manual has, whatever the platform.
+    private static func loadEverything() -> [UserDoc] {
         guard let library = try? DocumentLibrary(searching: sources(), extension: "md") else {
             return []
         }

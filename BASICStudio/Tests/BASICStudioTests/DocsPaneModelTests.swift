@@ -77,4 +77,23 @@ struct DocsPaneModelTests {
         #expect(tutorials.first == "Beginner's Guide to BASIC")
         #expect(tutorials.count == 7, "\(tutorials)")
     }
+
+    @Test("Without a shell (iPhone, iPad, Android) the BASICrc tutorial is left out, and so is the link to it")
+    func shellPagesStayOnTheDesktop() throws {
+        let desktop = UserDoc.loadAll(hasShell: true)
+        let touch = UserDoc.loadAll(hasShell: false)
+        #expect(desktop.contains { $0.id == "TUTORIAL_BASICRC.md" })
+        #expect(!touch.contains { $0.id == "TUTORIAL_BASICRC.md" })
+        #expect(touch.count == desktop.count - 1)
+
+        let guide = try #require(touch.first { $0.id == UserDoc.startPageID })
+        #expect(!guide.content.contains("TUTORIAL_BASICRC.md"), "no link leads to a page that is not there")
+        #expect(guide.content.contains("(TUTORIAL_TUIKIT.md)"), "the other tutorials are still listed")
+        let desktopGuide = try #require(desktop.first { $0.id == UserDoc.startPageID })
+        #expect(desktopGuide.content.contains("(TUTORIAL_BASICRC.md)"))
+
+        let tutorials = DocsPaneModel(docs: touch, selectedID: nil).sections.first { $0.title == "Tutorials" }?.items.map(\.title) ?? []
+        #expect(!tutorials.contains("BASICrc Tutorial"))
+        #expect(tutorials.count == 6, "\(tutorials)")
+    }
 }
