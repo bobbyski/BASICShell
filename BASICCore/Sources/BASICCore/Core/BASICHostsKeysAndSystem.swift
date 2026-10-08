@@ -1305,12 +1305,41 @@ public enum BASICSystemCommand {
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
 
+        let terminal = STDIN_FILENO
+        let ownForeground: pid_t = isatty(terminal) == 1 && tcgetpgrp(terminal) == getpgrp() ? getpgrp() : -1
+        var savedTermios = termios()
+        let savedTermiosIsValid = ownForeground > 0 && tcgetattr(terminal, &savedTermios) == 0
+
         do {
             try process.run()
         } catch {
             throw BASICError.runtime("Could not execute process: \(error.localizedDescription)")
         }
         let processGroupID = configureProcessGroup(for: process)
+
+        // Hand the terminal over, as BASICJIT.run does and for the same
+        // reason. The child is in a process group of its own, and a group
+        // that is not the terminal's foreground group is stopped by SIGTTOU
+        // or SIGTTIN the moment it sets up or reads the terminal: an editor,
+        // a pager, another BASICShell. It would never move again, and this
+        // would wait for it forever. SIGCONT covers the child that got to the
+        // terminal before this did. Only a host that has the terminal hands it
+        // on; one running in the background has nothing to give.
+        var handedOver = false
+        let childGroup = getpgid(process.processIdentifier)
+        if ownForeground > 0, childGroup > 0, childGroup != ownForeground {
+            handedOver = withSIGTTOUIgnored { tcsetpgrp(terminal, childGroup) == 0 }
+            if handedOver { _ = killpg(childGroup, SIGCONT) }
+        }
+        defer {
+            if handedOver {
+                _ = withSIGTTOUIgnored { tcsetpgrp(terminal, ownForeground) }
+            }
+            if savedTermiosIsValid {
+                _ = tcsetattr(terminal, TCSADRAIN, &savedTermios)
+            }
+        }
+
         let snapshot = BASICForegroundProcessSnapshot(
             processID: process.processIdentifier,
             processGroupID: processGroupID,
@@ -1441,6 +1470,16 @@ public enum BASICSystemCommand {
             try? pipe.fileHandleForWriting.close()
             group.leave()
         }
+    }
+
+    /// `tcsetpgrp` from a group that is not the foreground one signals
+    /// `SIGTTOU` at the caller, which would stop the very host taking its
+    /// terminal back. The signal is turned off around the call, as a shell
+    /// does.
+    private static func withSIGTTOUIgnored<T>(_ body: () -> T) -> T {
+        let previous = signal(SIGTTOU, SIG_IGN)
+        defer { _ = signal(SIGTTOU, previous) }
+        return body()
     }
 
     private static func configureProcessGroup(for process: Process) -> Int32 {
