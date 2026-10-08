@@ -2036,8 +2036,13 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         eventPollLock.unlock()
         guard isEnabled else { return }
 
+        // Reading the events reads the keys too: they share stdin. A key read
+        // here is kept for INKEY$, not dropped, or a program that waits for
+        // one with ON MOUSE registered never gets it.
         while let bytes = readTerminalEventBytes(timeoutMilliseconds: 0) {
-            _ = handleTerminalEventBytes(bytes)
+            if !handleTerminalEventBytes(bytes) {
+                pushPendingKeyInput(String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(bytes[0])))
+            }
         }
     }
 
@@ -2166,6 +2171,8 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
             if bytes.count > 8192 { return bytes }
             var nextPollFD = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
             guard poll(&nextPollFD, 1, terminalEscapeContinuationTimeoutMilliseconds(for: bytes)) > 0 else {
+                // Esc on its own, with nothing after it: the Esc key.
+                guard isPartialTerminalEscape(bytes) else { return bytes }
                 bufferPartialTerminalEscape(bytes, source: "poll")
                 return nil
             }
