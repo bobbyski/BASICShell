@@ -493,6 +493,11 @@ extension StudioModel {
             WasmSpike.running = nil
             guard let self else { return }
             self.appendJITOutput(self.prompt)
+            // On an iPad the window is a scene of its own, in front of the
+            // console: close it after a moment so the findings can be seen.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                _ = try? bridge.perform(.close(id: 9_043_001))
+            }
         }
     }
 }
