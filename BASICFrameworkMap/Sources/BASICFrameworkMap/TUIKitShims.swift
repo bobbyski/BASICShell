@@ -2,6 +2,7 @@
 // async methods. Nothing here is hand-written; see SwiftAsyncShim.
 import Foundation
 import TUIKit
+import BASICRTSwift
 
 /// The runtime's error raiser, declared by symbol rather than
 /// imported: the shim compiles against the *framework*, and adding
@@ -3175,13 +3176,6 @@ public func basic_handler_TUIView_drawTranslucentWindowSurface(_ me: UnsafeMutab
     return MainActor.assumeIsolated { object.drawTranslucentWindowSurface(b0, s1, key: t2) }
 }
 
-@_cdecl("basic_new_App_1")
-public func basic_new_App_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-    let q0 = basicPayloadIn_ANSIDriver_Presentation(a0)
-    let made: App? = MainActor.assumeIsolated { App(presentation: q0) }
-    return made.map { Unmanaged.passRetained($0).toOpaque() }
-}
-
 @_cdecl("basic_new_App_2")
 public func basic_new_App_2(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     let p0 = Unmanaged<AnyObject>.fromOpaque(a0!).takeUnretainedValue() as! TerminalDriver
@@ -3192,6 +3186,13 @@ public func basic_new_App_2(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableR
     } else {
         made = MainActor.assumeIsolated { App(driver: p0, timerSource: p1!) }
     }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_App_1")
+public func basic_new_App_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let q0 = basicPayloadIn_ANSIDriver_Presentation(a0)
+    let made: App? = MainActor.assumeIsolated { App(presentation: q0) }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -3312,11 +3313,26 @@ public func basic_new_CompletionList_1(_ a0: UnsafeMutableRawPointer?) -> Unsafe
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
+@_cdecl("basic_new_DatePicker_1")
+public func basic_new_DatePicker_1(_ a0: Int) -> UnsafeMutableRawPointer? {
+    let e0 = basicEnumIn_DatePicker_Mode(a0)
+    let made: DatePicker? = MainActor.assumeIsolated { DatePicker(mode: e0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_new_Dialog_2")
 public func basic_new_Dialog_2(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     let t0 = basicStringIn(a0)
     let t1 = basicStringIn(a1)
     let made: Dialog? = MainActor.assumeIsolated { Dialog(title: t0, message: t1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_DirectoryList_4")
+public func basic_new_DirectoryList_4(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?, _ a2: Swift.Bool, _ a3: Swift.Bool) -> UnsafeMutableRawPointer? {
+    let t0 = basicStringIn(a0)
+    let p1 = Unmanaged<AnyObject>.fromOpaque(a1!).takeUnretainedValue() as! FileSystemProvider
+    let made: DirectoryList? = MainActor.assumeIsolated { DirectoryList(directory: t0, fileSystem: p1, showsFiles: a2, selectsFirstEntryOnReload: a3) }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -3342,6 +3358,16 @@ public func basic_new_Divider_1(_ a0: Int) -> UnsafeMutableRawPointer? {
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
+@_cdecl("basic_new_FileDialog_5")
+public func basic_new_FileDialog_5(_ a0: Int, _ a1: UnsafeMutableRawPointer?, _ a2: UnsafeMutableRawPointer?, _ a3: Swift.Bool, _ a4: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let e0 = basicEnumIn_FileDialog_Mode(a0)
+    let t1 = basicStringIn(a1)
+    let t4 = basicStringIn(a4)
+    let p2 = Unmanaged<AnyObject>.fromOpaque(a2!).takeUnretainedValue() as! FileSystemProvider
+    let made: FileDialog? = MainActor.assumeIsolated { FileDialog(mode: e0, root: t1, fileSystem: p2, showsHiddenFiles: a3, wildcard: t4) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_new_FloatingWindow_5")
 public func basic_new_FloatingWindow_5(_ a0: UnsafeMutableRawPointer?, _ a1_0: Swift.Int, _ a1_1: Swift.Int, _ a1_2: Swift.Int, _ a1_3: Swift.Int) -> UnsafeMutableRawPointer? {
     let t0 = basicStringIn(a0)
@@ -3357,6 +3383,12 @@ public func basic_new_Gauge_2(_ a0: Swift.Double, _ a1: Int) -> UnsafeMutableRaw
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
+@_cdecl("basic_new_HexView_0")
+public func basic_new_HexView_0() -> UnsafeMutableRawPointer? {
+    let made: HexView? = MainActor.assumeIsolated { HexView() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_new_ImageView_1")
 public func basic_new_ImageView_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     let t0 = basicStringIn(a0)
@@ -3369,6 +3401,14 @@ public func basic_new_ImageViewer_5(_ a0: UnsafeMutableRawPointer?, _ a1_0: Swif
     let o0 = Unmanaged<ImageView>.fromOpaque(a0!).takeUnretainedValue()
     let s1 = Rect(x: a1_0, y: a1_1, width: a1_2, height: a1_3)
     let made: ImageViewer? = MainActor.assumeIsolated { ImageViewer(image: o0, frame: s1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_Label_2")
+public func basic_new_Label_2(_ a0: UnsafeMutableRawPointer?, _ a1: Int) -> UnsafeMutableRawPointer? {
+    let e1 = basicEnumIn_TextAlignment(a1)
+    let t0 = basicStringIn(a0)
+    let made: Label? = MainActor.assumeIsolated { Label(t0, alignment: e1) }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -9587,6 +9627,7 @@ private let basicClassIndex_TUIKit: [ObjectIdentifier: Int] = [
     ObjectIdentifier(HeadlessDriver.self): 104,
     ObjectIdentifier(SceneRenderer.self): 105,
     ObjectIdentifier(TUIView.self): 106,
+    ObjectIdentifier(BASICOpaque.self): -2,
 ]
 @_cdecl("basic_classid_TUIKit")
 public func basic_classid_TUIKit(_ me: UnsafeMutableRawPointer?) -> Int {

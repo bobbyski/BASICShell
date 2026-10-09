@@ -1,3 +1,4 @@
+import BASICRTSwift
 import BASICWasmRunner
 import Foundation
 
@@ -45,6 +46,13 @@ public enum BASICFrameworkMap {
                 Unmanaged<AnyObject>.fromOpaque(object).release()
             }
             return 0
+        }
+        // A box's type and text (P1.3e), which BASICRTSwift answers.
+        all["basic_rt_opaque_type_index"] = WasmEntryPoint(arity: 1) { a in
+            Double(basic_rt_opaque_type_index(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))
+        }
+        all["basic_rt_opaque_text"] = WasmEntryPoint(arity: 1) { a in
+            Double(UInt(bitPattern: basic_rt_opaque_text(UnsafeMutableRawPointer(bitPattern: UInt(a[0])))))
         }
         return all
     }

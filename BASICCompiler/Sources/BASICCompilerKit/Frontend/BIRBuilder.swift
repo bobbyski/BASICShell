@@ -137,7 +137,10 @@ public struct BIRBuilder {
         // which would work interpreted and silently do nothing compiled.
         // An ActiveUI control does the same (`button.onclick("Saved")`).
         if Self.usesTUI(lines) || Self.usesNamedCallback(lines) || (hostedActiveUI && Self.usesActiveUI(lines)) {
-            for index in module.functions.indices where module.functions[index].parameters.count <= 1 && !module.functions[index].isAsync {
+            // Not an imported framework's members: they have no BASIC body,
+            // and no string in a program can name one (BASIC-45).
+            for index in module.functions.indices where module.functions[index].parameters.count <= 1
+                && !module.functions[index].isAsync && !module.functions[index].isExternal {
                 module.functions[index].isEventHandler = true
                 let name = module.functions[index].name
                 module.namedHandlers.append((name: model.functions[name]?.displayName ?? name, function: name))

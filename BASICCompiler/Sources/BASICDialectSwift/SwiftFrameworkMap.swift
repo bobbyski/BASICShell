@@ -112,15 +112,21 @@ public enum SwiftFrameworkMap {
                     index += 2
                     continue
                 }
-                arguments.append(argument(type, "a[\(slot)]"))
+                // Read now, on the run's thread: the import's arguments are
+                // the next import's once a callback runs during the call.
+                prelude.append("let p\(slot) = \(argument(type, "a[\(slot)]"))")
+                arguments.append("p\(slot)")
                 slot += 1
                 index += 1
             }
             // The arguments are read on the run's thread; the shim runs on
-            // the main thread, which its main-actor isolation asserts.
+            // the main thread, which its main-actor isolation asserts. Not
+            // the class index, which touches no framework state and is asked
+            // at every copy and release of any object.
             let call = "\(signature.name)(\(arguments.joined(separator: ", ")))"
             let inner = result(signature.returns, call)
-            let body = (prelude + ["return WasmMainThread.run { \(inner) }"]).joined(separator: "; ")
+            let isClassIndex = signature.name.hasPrefix("basic_classid_")
+            let body = (prelude + [isClassIndex ? inner : "return WasmMainThread.run { \(inner) }"]).joined(separator: "; ")
             lines.append("    \"\(signature.name)\": WasmEntryPoint(arity: \(slot)) { a in \(body) },")
         }
         lines.append("]")

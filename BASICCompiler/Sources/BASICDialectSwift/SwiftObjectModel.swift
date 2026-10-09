@@ -107,6 +107,14 @@ public struct SwiftObjectModel: ObjectModel {
     /// emitting a name that might not link.
     public let probed: SwiftManglingProbe.Symbols
 
+    /// Whether the frameworks are reached through a framework map
+    /// (BASIC-45): every member through its C shim, compiled into the app
+    /// that runs the program, which answers them by name — so the module
+    /// names no Swift symbol, no metadata and no Swift calling convention,
+    /// and can run as WebAssembly. The program's own classes stay the
+    /// runtime's records; nothing here needs swiftc.
+    public let isMapped: Bool
+
     /// Analyses `module` and lays out every class that qualifies.
     /// Classes whose base is an imported Swift class, compiled as Swift (R1.5).
     private let hosted: [SwiftHostedClasses.Entry]
@@ -114,8 +122,9 @@ public struct SwiftObjectModel: ObjectModel {
     private var hostedPrecise: Set<String> { Set(hosted.map(\.klass.precise)) }
 
     public init(module: BIRModule, imports: [String: SwiftAPI] = [:], probed: SwiftManglingProbe.Symbols = .init(),
-                hosted: [SwiftHostedClasses.Entry] = []) {
-        self.hosted = hosted
+                hosted: [SwiftHostedClasses.Entry] = [], mapped: Bool = false) {
+        self.isMapped = mapped
+        self.hosted = mapped ? [] : hosted
         self.probed = probed
         self.module = module
         self.imports = imports
@@ -134,6 +143,9 @@ public struct SwiftObjectModel: ObjectModel {
         self.importedByName = imported
         self.refusals = Self.refusals(module, imported: Set(imported.keys))
         var (accepted, notes) = Self.analyze(module, hosted: Set(hosted.map(\.composite.name)))
+        // Mapped, a program's own class is the runtime's record, by design
+        // rather than for want of a probe.
+        if mapped { (accepted, notes) = ([], []) }
         // A class whose symbols the probe did not report cannot be emitted:
         // its name would be a guess, and a guessed symbol either fails to
         // link or resolves to the wrong thing.
@@ -583,6 +595,9 @@ public struct SwiftObjectModel: ObjectModel {
         // The bridge belongs to whichever path is present; when both are, it
         // is emitted here and the import path leaves it alone.
         guard hasSwiftObjects || !importedByName.isEmpty else { return "" }
+        // Mapped, an object is retained and released by the host, and every
+        // value crosses through a shim in the runtime's own form.
+        if isMapped { return "declare void @swift_retain(ptr)\ndeclare void @swift_release(ptr)\n" }
         guard hasSwiftObjects else { return Self.bridgeDeclarations }
         let root = SwiftObjectLowering.basicObject
         let rootMangled = (try? SwiftMangling.mangleClass(module: root.module, name: root.name)) ?? ""
@@ -603,6 +618,14 @@ public struct SwiftObjectModel: ObjectModel {
 
     public func definitions(for module: BIRModule) -> String {
         guard hasSwiftObjects else { return "" }
+        if isMapped {
+            var out = "; ---- imported Swift frameworks, through their map (BASIC-45) ----\n"
+            out += mappedDeclarations()
+            for name in importedByName.keys.sorted() { out += perImportedClass(importedByName[name]!) }
+            for key in imports.keys.sorted() { out += perImportedEnumMembers(imports[key]!) }
+            out += helpers()
+            return out
+        }
         var out = "; ---- Rev 2: classes as Swift objects ----\n"
         var shared = Set<String>()
         var used: [String] = []
@@ -741,6 +764,98 @@ public struct SwiftObjectModel: ObjectModel {
             }
         }
         return out
+    }
+
+    /// The shims a mapped module calls (BASIC-45): every member's, under the
+    /// names the map compiled them with, in their C signatures — the same
+    /// ones the native path declares for the members it shims.
+    func mappedDeclarations() -> String {
+        var out = ""
+        var seen = Set<String>()
+        func declare(_ name: String, _ line: String) { if seen.insert(name).inserted { out += line + "\n" } }
+        if importedByName.values.contains(where: { $0.klass.isOpaque }) {
+            declare("basic_rt_opaque_type_index", "declare i64 @basic_rt_opaque_type_index(ptr)")
+            declare("basic_rt_opaque_text", "declare ptr @basic_rt_opaque_text(ptr)")
+        }
+        for module in Set(importedByName.values.map(\.module)).sorted() {
+            let classIndex = Self.classIndexSymbol(module)
+            declare(classIndex, "declare i64 @\(classIndex)(ptr)")
+        }
+        for (_, entry) in importedByName.sorted(by: { $0.key < $1.key }) {
+            for initializer in entry.klass.initializers {
+                let shim = "basic_new_\(entry.klass.name)_\(Self.basicArity(initializer, in: entry.api))"
+                // A box's NEW also takes its CLASS's type index, which the box carries.
+                let parameters = Self.shimParameters(initializer.passed, in: entry.api) + (entry.klass.isOpaque ? ["i64"] : [])
+                declare(shim, "declare ptr @\(shim)(\(parameters.joined(separator: ", ")))")
+            }
+            for (method, owner) in Self.methodsWithOwners(of: entry.klass, in: entry.api) {
+                let shim = Self.shimSymbol(method, of: owner)
+                let parameters = ["ptr"] + Self.shimParameters(method.passed, in: entry.api)
+                    + (Self.returnsPayload(method) ? ["i64"] : [])
+                declare(shim, "declare \(Self.shimAbiReturn(method.returns)) @\(shim)(\(parameters.joined(separator: ", ")))")
+            }
+            for field in entry.type.fields {
+                guard let property = Self.property(named: field.name, of: entry.klass, in: entry.api) else { continue }
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                let getter = "basic_get_\(owner)_\(property.name)", setter = "basic_set_\(owner)_\(property.name)"
+                switch property.type {
+                case .handler:
+                    declare(setter, "declare void @\"\(setter)\"(ptr, ptr, ptr)")
+                case .opaque, .structure, .payloadEnumeration:
+                    declare(getter, "declare ptr @\"\(getter)\"(ptr, i64)")
+                    if property.isSettable { declare(setter, "declare void @\"\(setter)\"(ptr, ptr)") }
+                case .enumeration:
+                    declare(getter, "declare i64 @\"\(getter)\"(ptr)")
+                    if property.isSettable { declare(setter, "declare void @\"\(setter)\"(ptr, i64)") }
+                default:
+                    let type = Self.mappedPlainType(property.type)
+                    declare(getter, "declare \(type) @\"\(getter)\"(ptr)")
+                    if property.isSettable { declare(setter, "declare void @\"\(setter)\"(ptr, \(type))") }
+                }
+            }
+        }
+        return out
+    }
+
+    /// The map's shim answering which of a module's classes an object is
+    /// (``SwiftAsyncShim``'s class index): -1 for anything else, -2 a box.
+    public static func classIndexSymbol(_ module: String) -> String {
+        "basic_classid_\(module.replacingOccurrences(of: ".", with: "_"))"
+    }
+
+    /// A plain property's form in a map's accessor shims: numbers as doubles,
+    /// truth values as themselves, strings and objects as pointers.
+    static func mappedPlainType(_ type: SwiftAPI.ValueType) -> String {
+        switch type {
+        case .double, .cgFloat, .int: return "double"
+        case .bool: return "i1"
+        default: return "ptr"
+        }
+    }
+
+    /// A member's arguments in its shim's C signature: a struct as its
+    /// leaves, a String as the runtime's pointer.
+    static func shimParameters(_ passed: [SwiftAPI.Parameter], in api: SwiftAPI) -> [String] {
+        passed.flatMap { parameter -> [String] in
+            if case .structure = parameter.type {
+                return (api.leaves(of: parameter.type) ?? []).map { shimAbiType($0) }
+            }
+            return [shimAbiType(parameter.type)]
+        }
+    }
+
+    /// Every method a class answers to, its own and its bases', each with the
+    /// class that declares it — the one its shim is generated for.
+    static func methodsWithOwners(of klass: SwiftAPI.Class, in api: SwiftAPI) -> [(SwiftAPI.Function, String)] {
+        var methods: [(SwiftAPI.Function, String)] = []
+        var walk: SwiftAPI.Class? = klass
+        while let here = walk {
+            for method in here.methods where !methods.contains(where: { $0.0.name == method.name }) {
+                methods.append((method, here.name))
+            }
+            walk = here.superclassPrecise.flatMap { api.class(precise: $0) }
+        }
+        return methods
     }
 
     /// How many arguments BASIC passes to a member: one per scalar, and one
@@ -1097,6 +1212,9 @@ public struct SwiftObjectModel: ObjectModel {
                 // closure is retained because the framework keeps it past
                 // this call — an event handler outlives the statement that
                 // installed it.
+                // Mapped, the host makes the pair from the closure, and keeps
+                // it (BASIC-45): there is no native trampoline to name.
+                if isMapped { return "ptr null, ptr \(value)" }
                 body += "  call void @basic_rt_closure_retain(ptr \(value))\n"
                 return "ptr @basic_rt_closure_invoke_void, ptr \(value)"
             case .array, .payloadEnumeration, .object, .void, .unsupported: return "ptr \(value)"
@@ -1188,7 +1306,7 @@ public struct SwiftObjectModel: ObjectModel {
             var body = ""
             var arguments: [String] = []
             let (parameters, slots) = basicParameters(initializer.passed)
-            let viaShim = Self.needsInitializerShim(initializer) || entry.klass.isOpaque
+            let viaShim = isMapped || Self.needsInitializerShim(initializer) || entry.klass.isOpaque
             for (index, parameter) in initializer.passed.enumerated() {
                 if case .structure = parameter.type {
                     // Each leaf goes across on its own; the shim rebuilds.
@@ -1300,6 +1418,19 @@ public struct SwiftObjectModel: ObjectModel {
                 }
                 continue
             }
+            if isMapped {
+                // Through the map's accessor shims, in the runtime's forms:
+                // what the getter hands back is owned, as Swift's is.
+                let owner = Self.propertyOwner(named: field.name, of: entry.klass, in: entry.api)?.name ?? entry.klass.name
+                let type = Self.mappedPlainType(property.type)
+                out += "define \(type) @\"\(name).get.\(index)\"(ptr %o) {\n"
+                out += "  %r = call \(type) @\"basic_get_\(owner)_\(property.name)\"(ptr %o)\n  ret \(type) %r\n}\n"
+                if property.isSettable {
+                    out += "define void @\"\(name).set.\(index)\"(ptr %o, \(type) %v) {\n"
+                    out += "  call void @\"basic_set_\(owner)_\(property.name)\"(ptr %o, \(type) %v)\n  ret void\n}\n"
+                }
+                continue
+            }
             counter = 0
             var body = ""
             let raw = temp()
@@ -1344,13 +1475,8 @@ public struct SwiftObjectModel: ObjectModel {
         // Method thunks, named as the traditional lowering names a method.
         // Every method the class answers to, its own and its bases', because
         // BIR names a method on the class it was called on.
-        var methods: [SwiftAPI.Function] = []
-        var walk: SwiftAPI.Class? = entry.klass
-        while let here = walk {
-            for method in here.methods where !methods.contains(where: { $0.name == method.name }) { methods.append(method) }
-            walk = here.superclassPrecise.flatMap { entry.api.class(precise: $0) }
-        }
-        for method in methods {
+        let owned = Self.methodsWithOwners(of: entry.klass, in: entry.api)
+        for (method, owner) in owned {
             guard let function = module.functions.first(where: { $0.name == "\(name).\(method.name.uppercased())" }) else { continue }
             // A hosted class's own methods are BASIC bodies, lowered as
             // BASIC; only what the framework supplies gets a thunk (R1.5).
@@ -1360,7 +1486,7 @@ public struct SwiftObjectModel: ObjectModel {
             var arguments: [String] = []
             let (declared, slots) = basicParameters(method.passed)
             var parameters = ["ptr %me"] + declared
-            let viaShim = Self.needsShim(method)
+            let viaShim = isMapped || Self.needsShim(method)
             for (index, parameter) in method.passed.enumerated() {
                 if case .structure = parameter.type {
                     // Each leaf goes across on its own; the shim rebuilds.
@@ -1371,8 +1497,10 @@ public struct SwiftObjectModel: ObjectModel {
             }
             // An async method goes through its shim, which takes the
             // receiver as an ordinary first argument and no swiftself.
-            if Self.needsShim(method) {
-                let shim = Self.shimSymbol(method, of: entry.klass.name)
+            if viaShim {
+                // Mapped, the shim is the declaring class's: the map has one
+                // per member, where it was declared (BASIC-45).
+                let shim = Self.shimSymbol(method, of: isMapped ? owner : entry.klass.name)
                 if case .payloadEnumeration(let precise) = method.returns { arguments.append("i64 \(payloadTypeIndex(precise))") }
                 if case .structure(let precise) = method.returns { arguments.append("i64 \(structTypeIndex(precise))") }
                 if case .opaque(let precise, _) = method.returns { arguments.append("i64 \(opaqueTypeIndex(precise))") }
@@ -1828,6 +1956,49 @@ public struct SwiftObjectModel: ObjectModel {
 
     // MARK: - Module helpers
 
+    /// `obj.classOf` for a mapped module (BASIC-45): each framework's class
+    /// index shim says which of its classes the object is, nearest first, and
+    /// that becomes the nearest class this program declares. The object's
+    /// memory is never read here — in WebAssembly it is not the module's.
+    func mappedClassOf(imported: [(module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)],
+                       boxLabel: Int?) -> String {
+        let label = Dictionary(imported.enumerated().map { ("\($0.element.module).\($0.element.klass.precise)", $0.offset) }) { first, _ in first }
+        var out = """
+        ; Which of this module's classes an object is: each framework's map
+        ; answers for its own classes, -1 for the runtime's records.
+        define i64 @"obj.classOf"(ptr %o) {
+        entry:
+          %isnull = icmp eq ptr %o, null
+          br i1 %isnull, label %none, label %m0
+
+        """
+        // Every framework the program declares a class of, boxes included:
+        // any one of them recognizes a box.
+        let modules = Set(importedByName.values.map(\.module)).sorted()
+        var found = Set<Int>()
+        for (position, module) in modules.enumerated() {
+            guard let api = imports[module] else { continue }
+            var cases: [(Int, Int)] = []
+            // The map's order: its classes that are not boxes, as the API has them.
+            for (index, klass) in api.classes.filter({ !$0.isOpaque }).enumerated() {
+                var walk: SwiftAPI.Class? = klass
+                while let here = walk {
+                    if let target = label["\(module).\(here.precise)"] { cases.append((index, target)); break }
+                    walk = here.superclassPrecise.flatMap { api.class(precise: $0) }
+                }
+            }
+            if position == 0, let boxLabel { cases.append((-2, boxLabel)) }
+            let next = position + 1 < modules.count ? "m\(position + 1)" : "none"
+            out += "m\(position):\n"
+            out += "  %k\(position) = call i64 @\(Self.classIndexSymbol(module))(ptr %o)\n"
+            out += "  switch i64 %k\(position), label %\(next) [ " + cases.map { "i64 \($0.0), label %found\($0.1)" }.joined(separator: " ") + " ]\n"
+            found.formUnion(cases.map(\.1))
+        }
+        for target in found.sorted() { out += "found\(target):\n  ret i64 \(target)\n" }
+        out += "none:\n  ret i64 -1\n}\n\n"
+        return out
+    }
+
     /// The whole-object operations that decide representation at run time.
     func helpers() -> String {
         // Imported classes join the run-time switch, but with reference
@@ -1852,6 +2023,16 @@ public struct SwiftObjectModel: ObjectModel {
           ret ptr %s
         }
 
+
+        """
+        var probes: [(label: Int, metadata: String)] = classes.map { ($0.ordinal, "\($0.mangled)N") }
+        probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
+        let boxLabel: Int? = hasBoxes ? probes.count : nil
+        if let boxLabel { probes.append((boxLabel, Self.opaqueMetadata)) }
+        if isMapped {
+            out += mappedClassOf(imported: imported, boxLabel: boxLabel)
+        } else {
+        out += """
         ; Which of this module's classes an object is, walking the metadata
         ; chain from its dynamic type — so an instance of a Swift subclass
         ; answers with its nearest BASIC ancestor. -1 for the runtime's records.
@@ -1868,10 +2049,6 @@ public struct SwiftObjectModel: ObjectModel {
           br i1 %end, label %none, label %check0
 
         """
-        var probes: [(label: Int, metadata: String)] = classes.map { ($0.ordinal, "\($0.mangled)N") }
-        probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
-        let boxLabel: Int? = hasBoxes ? probes.count : nil
-        if let boxLabel { probes.append((boxLabel, Self.opaqueMetadata)) }
         let accessed = Set(imported.filter { hostedPrecise.contains($0.klass.precise) }.map { "\($0.klass.symbol)N" })
         for (k, metadata) in probes {
             out += "check\(k):\n"
@@ -1890,6 +2067,7 @@ public struct SwiftObjectModel: ObjectModel {
         out += "step:\n  %superp = getelementptr inbounds i8, ptr %isa, i64 8\n  %next = load ptr, ptr %superp, align 8\n  br label %loop\n"
         for (k, _) in probes { out += "found\(k):\n  ret i64 \(k)\n" }
         out += "none:\n  ret i64 -1\n}\n\n"
+        }
 
         // What each dispatcher does for a box (P1.3e): a Swift object like any
         // other for its lifetime, and asked for its type and text, which every

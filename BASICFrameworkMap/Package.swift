@@ -41,6 +41,9 @@ let package = Package(
             dependencies: [
                 "BASICFrameworkMap",
                 .product(name: "BASICDialectSwift", package: "BASICCompiler"),
+                .product(name: "BASICCompilerKit", package: "BASICCompiler"),
+                .product(name: "BASICWasm", package: "BASICCompiler"),
+                .product(name: "BASICWasmRunner", package: "BASICCompiler"),
                 .product(name: "BASICRTSwift", package: "BASICCompiler"),
                 .product(name: "BASICRT", package: "BASICCompiler"),
                 .product(name: "ActiveUI", package: "ActiveUI"),

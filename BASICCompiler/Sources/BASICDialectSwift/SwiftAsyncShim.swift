@@ -384,6 +384,11 @@ public struct SwiftAsyncShim {
             "// async methods. Nothing here is hand-written; see SwiftAsyncShim.",
             "import Foundation",
             "import \(module)",
+        ]
+        // A map's shims are compiled beside the runtime's Swift half, which
+        // they name for the box class (BASIC-45); R4's never import it.
+        if !mappedClasses.isEmpty { lines.append("import BASICRTSwift") }
+        lines += [
             "",
             "/// The runtime's error raiser, declared by symbol rather than",
             "/// imported: the shim compiles against the *framework*, and adding",
@@ -1230,6 +1235,8 @@ public struct SwiftAsyncShim {
         for (index, name) in mappedClasses.enumerated() {
             lines.append("    ObjectIdentifier(\(name).self): \(index),")
         }
+        // Every box is one class of the runtime's (P1.3e), told apart by -2.
+        lines.append("    ObjectIdentifier(BASICOpaque.self): -2,")
         lines += [
             "]",
             "@_cdecl(\"basic_classid_\(stem)\")",

@@ -224,6 +224,7 @@ extension SwiftInterfaceEmitter {
     /// `swiftc` reports as missing.
     /// Runs `xcrun` and returns its output, or "" if it could not be run.
     static func run(_ arguments: [String]) -> String {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = arguments
@@ -234,6 +235,10 @@ extension SwiftInterfaceEmitter {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
+        #else
+        // No toolchain to ask where there are no processes (iOS).
+        return ""
+        #endif
     }
 
     public static var hostTarget: String {

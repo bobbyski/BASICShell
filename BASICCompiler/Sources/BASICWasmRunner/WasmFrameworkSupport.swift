@@ -11,28 +11,46 @@ import Foundation
 // runs on a thread of its own, as the interpreter's do, so each call is
 // carried to the main thread and waited for. The framework calls BASIC back
 // on the main thread too, and the module is busy on its own; so those calls
-// are queued, and the run's thread makes them at its next event drain, the
-// way an ActiveUI click reaches a handler. Only the run's thread ever
-// executes the module, and the main thread never waits for it.
+// are queued, and the run's thread makes them: while it waits for a call
+// that keeps the main thread (a TUIKit `App.run` firing a scheduled
+// handler), or else at its next event drain, the way an ActiveUI click
+// reaches a handler. Only the run's thread ever executes the module, and the
+// main thread never waits for it.
 
 /// The main thread, for a framework call.
 public enum WasmMainThread {
     final class Call: @unchecked Sendable {
         let body: () -> Double
         var result = 0.0
+        var code: Int32 = 0
+        let done = DispatchSemaphore(value: 0)
         init(body: @escaping () -> Double) { self.body = body }
     }
 
     /// Runs `body` on the main thread and answers its result. A BASIC error
     /// it raises there is caught in a protected frame of the main thread's
     /// own, and raised again here — never unwound across threads.
+    ///
+    /// A block of the main run loop's, not of the main queue: a call that
+    /// awaits (R3.3) turns the run loop until it is done, and inside a
+    /// main-queue block that would never run the main actor's jobs — a
+    /// TUIKit `App.run` would never start.
     public static func run(_ body: @escaping () -> Double) -> Double {
         if Thread.isMainThread { return body() }
         let call = Call(body: body)
-        let code = DispatchQueue.main.sync {
-            basic_wasm_protected(runOnMain, Unmanaged.passUnretained(call).toOpaque())
+        let main = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
+            call.code = basic_wasm_protected(runOnMain, Unmanaged.passUnretained(call).toOpaque())
+            call.done.signal()
         }
-        if code != 0 { basic_wasm_unwind(code) }
+        CFRunLoopWakeUp(main)
+        // BASIC the framework calls back meanwhile runs here, on the run's
+        // thread, which is the module's: a call that keeps the main thread
+        // may be waiting for it.
+        while call.done.wait(timeout: .now() + .milliseconds(2)) == .timedOut {
+            WasmCallbacks.runQueued()
+        }
+        if call.code != 0 { basic_wasm_unwind(call.code) }
         return call.result
     }
 }
@@ -107,6 +125,18 @@ extension WasmCallbacks {
             RTEvents.post(type: "CALLBACK", subtype: "", fields: [
                 "call": .number(Double(UInt(bitPattern: Unmanaged.passRetained(call).toOpaque()))),
             ], handler: RTEventHandler(trampoline: makeQueuedCall, typeIndex: -1))
+        }
+    }
+
+    /// Makes every queued call now, on the run's thread, in order: while it
+    /// waits for a framework call that keeps the main thread.
+    static func runQueued() {
+        queueLock.lock()
+        let calls = queued
+        queued = []
+        queueLock.unlock()
+        for call in calls {
+            _ = WasmRunner.current?.call(tableIndex: call.tableIndex, shape: .ptrDouble, argument: call.environment)
         }
     }
 

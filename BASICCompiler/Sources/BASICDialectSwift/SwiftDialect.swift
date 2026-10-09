@@ -68,12 +68,26 @@ public struct SwiftDialect: DialectCompiler {
     /// Creates the Swift dialect.
     public init() {}
 
+    /// Whether the frameworks come from a framework map (BASIC-45): every
+    /// member reached through a shim the running app contains, by name, so
+    /// the IR names no Swift symbol and can run as WebAssembly. Nothing is
+    /// probed or built, and the program's own classes are runtime records.
+    public var isMapped = false
+
     /// Creates the dialect with frameworks already resolved.
     public init(imports: [String: SwiftAPI]) {
         self.imports = imports
     }
 
+    /// Creates the dialect for frameworks read from a map
+    /// (``SwiftMappedImports``).
+    public init(mappedImports imports: [String: SwiftAPI]) {
+        self.imports = imports
+        self.isMapped = true
+    }
+
     public func lower(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
+        if isMapped { return try lowerMapped(module, options: options) }
         // Shared, not copied. A fork of Rev 1's lowering would drift from it
         // silently, and the two dialects are meant to compile the same
         // language — the divergence is the object model, and it is added
@@ -111,6 +125,23 @@ public struct SwiftDialect: DialectCompiler {
         }
         let base = try TraditionalDialect().lower(module, options: options, objectModel: objects)
         return LoweredModule(name: base.name, llvmIR: base.llvmIR, extraObjects: hostedObjects)
+    }
+
+    /// The mapped lowering: the traditional dialect's, with an object model
+    /// that reaches every framework member through the map's shims.
+    private func lowerMapped(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
+        // A BASIC class inheriting a framework class is written as Swift and
+        // compiled by swiftc natively (R1.5); there is none here.
+        if let found = SwiftHostedClasses.find(in: module, imports: imports).first {
+            throw CompileError(
+                "CLASS \(found.composite.displayName) INHERITS \(found.baseClass.name): a class inheriting a framework class "
+                    + "cannot run as WebAssembly yet (BASIC-45 slice 11d)",
+                at: nil)
+        }
+        let objects = SwiftObjectModel(module: module, imports: imports, mapped: true)
+        if !objects.refusals.isEmpty { throw CompileError(objects.refusals) }
+        let base = try TraditionalDialect().lower(module, options: options, objectModel: objects)
+        return LoweredModule(name: base.name, llvmIR: base.llvmIR, extraObjects: [])
     }
 
     public func runtimeLibrary(for target: TargetTriple) -> RuntimeLibrary {

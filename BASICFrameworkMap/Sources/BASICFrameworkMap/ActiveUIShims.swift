@@ -2,6 +2,7 @@
 // async methods. Nothing here is hand-written; see SwiftAsyncShim.
 import Foundation
 import ActiveUI
+import BASICRTSwift
 
 /// The runtime's error raiser, declared by symbol rather than
 /// imported: the shim compiles against the *framework*, and adding
@@ -284,6 +285,36 @@ private func basicEnumOut_AUIControlGroup_Axis(_ value: AUIControlGroup.Axis) ->
     switch value {
     case .`horizontal`: return 0
     case .`vertical`: return 1
+    }
+}
+
+private func basicEnumIn_AUIDatePicker_Components(_ value: Int) -> AUIDatePicker.Components {
+    switch value {
+    case 0: return .`date`
+    case 1: return .`time`
+    case 2: return .`dateAndTime`
+    default: basicAwaitRaise(BASICEnumRange(description: "AUIDatePicker.Components has no member \(value)"))
+    }
+}
+private func basicEnumOut_AUIDatePicker_Components(_ value: AUIDatePicker.Components) -> Int {
+    switch value {
+    case .`date`: return 0
+    case .`time`: return 1
+    case .`dateAndTime`: return 2
+    }
+}
+
+private func basicEnumIn_AUIDatePicker_Style(_ value: Int) -> AUIDatePicker.Style {
+    switch value {
+    case 0: return .`field`
+    case 1: return .`graphical`
+    default: basicAwaitRaise(BASICEnumRange(description: "AUIDatePicker.Style has no member \(value)"))
+    }
+}
+private func basicEnumOut_AUIDatePicker_Style(_ value: AUIDatePicker.Style) -> Int {
+    switch value {
+    case .`field`: return 0
+    case .`graphical`: return 1
     }
 }
 
@@ -6792,6 +6823,14 @@ public func basic_new_AUIConversationView_0() -> UnsafeMutableRawPointer? {
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
+@_cdecl("basic_new_AUIDatePicker_2")
+public func basic_new_AUIDatePicker_2(_ a0: Int, _ a1: Int) -> UnsafeMutableRawPointer? {
+    let e0 = basicEnumIn_AUIDatePicker_Components(a0)
+    let e1 = basicEnumIn_AUIDatePicker_Style(a1)
+    let made: AUIDatePicker? = MainActor.assumeIsolated { AUIDatePicker(components: e0, style: e1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_new_AUIDivider_0")
 public func basic_new_AUIDivider_0() -> UnsafeMutableRawPointer? {
     let made: AUIDivider? = MainActor.assumeIsolated { AUIDivider() }
@@ -6921,6 +6960,12 @@ public func basic_new_AUIGauge_2(_ a0: Swift.Double, _ a1: Int) -> UnsafeMutable
 @_cdecl("basic_new_AUIGradientRing_0")
 public func basic_new_AUIGradientRing_0() -> UnsafeMutableRawPointer? {
     let made: AUIGradientRing? = MainActor.assumeIsolated { AUIGradientRing() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_AUIHexView_0")
+public func basic_new_AUIHexView_0() -> UnsafeMutableRawPointer? {
+    let made: AUIHexView? = MainActor.assumeIsolated { AUIHexView() }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -7086,6 +7131,12 @@ public func basic_new_AUIReadOnlyDocument_1(_ a0: UnsafeMutableRawPointer?) -> U
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
+@_cdecl("basic_new_AUIScoreMeter_0")
+public func basic_new_AUIScoreMeter_0() -> UnsafeMutableRawPointer? {
+    let made: AUIScoreMeter? = MainActor.assumeIsolated { AUIScoreMeter() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_new_AUIScroller_1")
 public func basic_new_AUIScroller_1(_ a0: Int) -> UnsafeMutableRawPointer? {
     let e0 = basicEnumIn_AUIScroller_Orientation(a0)
@@ -7149,6 +7200,12 @@ public func basic_new_AUITextEditor_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeM
 public func basic_new_AUITextField_2(_ a0: UnsafeMutableRawPointer?, _ a1: Swift.Bool) -> UnsafeMutableRawPointer? {
     let t0 = basicStringIn(a0)
     let made: AUITextField? = MainActor.assumeIsolated { AUITextField(t0, secure: a1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_AUITimelineBand_0")
+public func basic_new_AUITimelineBand_0() -> UnsafeMutableRawPointer? {
+    let made: AUITimelineBand? = MainActor.assumeIsolated { AUITimelineBand() }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -18813,6 +18870,7 @@ private let basicClassIndex_ActiveUI: [ObjectIdentifier: Int] = [
     ObjectIdentifier(AUIToolbarItem.self): 165,
     ObjectIdentifier(AUIToolbar.self): 166,
     ObjectIdentifier(AUIToolbarGlyphButton.self): 167,
+    ObjectIdentifier(BASICOpaque.self): -2,
 ]
 @_cdecl("basic_classid_ActiveUI")
 public func basic_classid_ActiveUI(_ me: UnsafeMutableRawPointer?) -> Int {

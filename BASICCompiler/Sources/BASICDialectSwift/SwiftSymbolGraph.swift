@@ -433,6 +433,8 @@ public struct SwiftAPI: Sendable {
 
         var api = SwiftAPI(module: module, classes: [], functions: [], skipped: [])
         var sourceLines: [String: [Substring]] = [:]
+        // How many of each class's initializers are its own, not an extension's.
+        var ownInitializers: [Int: Int] = [:]
         // Core Graphics' geometry, which no framework's graph describes: C
         // structs, identified by Clang (`c:@S@CGRect`), from another module.
         // Seeded with the fields their initializers take, so R4.4 flattens a
@@ -630,7 +632,21 @@ public struct SwiftAPI: Sendable {
                 } else if isStatic {
                     api.skipped.append(Skip(member: path, reason: "a static member of something that is not a class or an imported enum"))
                 } else if let owner = memberOf[precise], let index = classIndex[owner] {
-                    if isInit { api.classes[index].initializers.append(function) } else { api.classes[index].methods.append(function) }
+                    if isInit, symbol["swiftExtension"] == nil {
+                        // The class's own initializers come before any an
+                        // extension adds, whatever the graph's order: BASIC's
+                        // one NEW is the first, and the class's own — its
+                        // designated ones — are what it is made with.
+                        // `TUIKit.App(presentation:)` is a convenience in
+                        // App+ANSI.swift, and took NEW from `App(driver:…)`.
+                        let insertAt = ownInitializers[index, default: 0]
+                        api.classes[index].initializers.insert(function, at: insertAt)
+                        ownInitializers[index] = insertAt + 1
+                    } else if isInit {
+                        api.classes[index].initializers.append(function)
+                    } else {
+                        api.classes[index].methods.append(function)
+                    }
                 } else if kind(of: symbol) == "swift.func" {
                     api.functions.append(function)
                 } else {
@@ -986,14 +1002,28 @@ public struct SwiftAPI: Sendable {
                     return true
                 }
             }
-            api.classes[index].methods = klass.methods.filter { method in
+            // A defaulted struct parameter BASIC cannot spell is left to
+            // Swift's default, as a defaulted CGRect is: `Label(_:style:)`
+            // was dropped whole over a `style: CellStyle = .default` no BASIC
+            // program passes.
+            func leavingOut(_ function: Function) -> Function {
+                var function = function
+                for position in function.parameters.indices where function.parameters[position].hasDefault {
+                    if case .structure(let precise) = function.parameters[position].type,
+                       api.leaves(of: function.parameters[position].type) == nil {
+                        function.parameters[position].type = .unsupported(api.structures[precise]?.name ?? precise)
+                    }
+                }
+                return function
+            }
+            api.classes[index].methods = klass.methods.map(leavingOut).filter { method in
                 if let bad = api.unflattenable(in: method) {
                     api.skipped.append(Skip(member: "\(klass.name).\(method.name)", reason: bad))
                     return false
                 }
                 return true
             }
-            api.classes[index].initializers = klass.initializers.filter { initializer in
+            api.classes[index].initializers = klass.initializers.map(leavingOut).filter { initializer in
                 if let bad = api.unflattenable(in: initializer) {
                     api.skipped.append(Skip(member: "\(klass.name).init", reason: bad))
                     return false
