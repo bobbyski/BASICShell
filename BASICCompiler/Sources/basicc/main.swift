@@ -1,6 +1,7 @@
 import BASICCompilerKit
 import BASICDialectSwift
 import BASICDialectTraditional
+import BASICWasm
 import Foundation
 
 // basicc — the CLI driver.
@@ -37,6 +38,8 @@ func printUsage() {
                            Package.swift builds as swift unless this says otherwise
       --emit-bir           print the compiler's IR instead of building
       --emit-llvm          print the LLVM IR instead of building
+      --target <t>         llvm (default) or wasm: a WebAssembly module for
+                           JavaScriptCore, from the same IR (traditional dialect)
       --emit-asm           write assembly to -o instead of linking (SwiftPM plugin)
       -O, -O0..-O3         optimization level for the generated code (default -O0)
       -g, -g0              DWARF for lldb: BASIC lines, functions, variables (default -g)
@@ -64,6 +67,8 @@ struct Invocation {
     var emitDebugInfo = true
     var kind: String?
     var bundle = false
+    /// `llvm` (the default) or `wasm` (BASIC-45).
+    var target = "llvm"
 
     init(_ arguments: [String]) {
         command = arguments.first ?? "help"
@@ -91,6 +96,12 @@ struct Invocation {
             case "-g0": emitDebugInfo = false
             case "--json-diagnostics": jsonDiagnostics = true
             case "--bundle": bundle = true
+            case "--target":
+                index += 1
+                guard index < arguments.count, ["llvm", "wasm"].contains(arguments[index]) else {
+                    fail("--target takes llvm or wasm", code: 2)
+                }
+                target = arguments[index]
             case "--kind":
                 index += 1
                 guard index < arguments.count else { fail("--kind needs a name") }
@@ -202,6 +213,10 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
         // used to leave the binary and a `<name>.build` directory of
         // intermediates sitting next to the .bas file it came from.
         let output = invocation.output ?? Compilation.defaultOutputPath(for: source)
+        if invocation.target == "wasm" {
+            try buildWasm(invocation, source: source, output: output, thenRun: thenRun)
+            return
+        }
         if invocation.emitAssembly {
             try compilation.buildAssembly(sourcePath: source, output: output)
             return
@@ -236,6 +251,32 @@ func buildCommand(_ invocation: Invocation, thenRun: Bool) {
     } catch {
         fail("\(error)")
     }
+}
+
+/// `--target wasm`: the LLVM IR the LLVM path would compile, without debug
+/// info, translated to WebAssembly (BASIC-45). Only the traditional dialect:
+/// the Swift dialect needs the Swift runtime and swiftc.
+func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun: Bool) throws {
+    var compilation = compilation(for: invocation)
+    guard type(of: compilation.dialect).identity.identifier == TraditionalDialect.identity.identifier else {
+        fail("--target wasm builds the traditional dialect only", code: 2)
+    }
+    compilation = Compilation(dialect: compilation.dialect, options: CompileOptions(
+        target: compilation.options.target,
+        optimizationLevel: compilation.options.optimizationLevel,
+        emitDebugInfo: false
+    ))
+    let program = try WasmTranslator.translate(llvmIR: try compilation.llvmIR(sourcePath: source))
+    let path = output.hasSuffix(".wasm") ? output : output + ".wasm"
+    let directory = (path as NSString).deletingLastPathComponent
+    if !directory.isEmpty {
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+    try Data(program.bytes).write(to: URL(fileURLWithPath: path))
+    if thenRun {
+        fail("basicc run --target wasm needs the WebAssembly runner, which this build does not have")
+    }
+    print("wrote \(path) (\(program.bytes.count) bytes, \(program.imports.count) imports)")
 }
 
 let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))

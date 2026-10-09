@@ -45,6 +45,10 @@ let package = Package(
         // Rev 2. A peer of the traditional dialect, never a replacement:
         // both ship, both are maintained, and `traditional` stays default.
         .library(name: "BASICDialectSwift", targets: ["BASICDialectSwift"]),
+        // BASIC-45: basicc's LLVM IR, translated to WebAssembly for
+        // JavaScriptCore. Reads the text the LLVM path writes; changes nothing
+        // about how it is written.
+        .library(name: "BASICWasm", targets: ["BASICWasm"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
         // Rev 2's root class. Small on purpose: it exists so every BASIC
         // class has a real Swift class above it (see BASICObject).
@@ -76,6 +80,7 @@ let package = Package(
             ]
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
+        .target(name: "BASICWasm"),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         // BASICSound is the interpreter's own sound model — events, the music
         // macro language, timing, and the synthesizer — so SOUND and PLAY
@@ -98,7 +103,7 @@ let package = Package(
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm"]
         ),
         .executableTarget(
             name: "BASICLintCLI",
@@ -112,7 +117,7 @@ let package = Package(
         ),
         .testTarget(
             name: "BASICCompilerKitTests",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm"]
         ),
     ]
 )
