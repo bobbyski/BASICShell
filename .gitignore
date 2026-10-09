@@ -51,3 +51,5 @@ BASICCompiler/Examples/ActiveUICatalog/Program/Build/
 BASICCore/BASICCore.xcodeproj/
 BASICCore/.xcode-derived/
 BASICCore/Build/
+# xcodebuild of the BASICCompiler package (its iOS build) puts products here
+/Build
