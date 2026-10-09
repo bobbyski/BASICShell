@@ -336,6 +336,7 @@ enum RTKeys {
     /// that is a terminal event — a VTG response, a mouse report — is posted
     /// as an event and read past, the way the Shell reads its own.
     static func inkey() -> String {
+        if let inkey = RTHosted.inkey { return inkey() }
         let raw: String? = withRawTerminal(blocking: false) { fd -> String? in
             while true {
                 var byte: UInt8 = 0
@@ -469,6 +470,9 @@ enum RTKeys {
 
     static func readField(prompt: String, exitOnSpecialKey: Bool, fieldLength: Int?, maxLength: Int?, defaultText: String?) -> (text: String, exitKey: String?) {
         func limited(_ value: String) -> String { maxLength.map { String(value.prefix($0)) } ?? value }
+        if let readLine = RTHosted.readLine {
+            return (limited(readLine(prompt) ?? defaultText ?? ""), nil)
+        }
         fflush(stdout)
         guard isatty(STDIN_FILENO) == 1 else {
             RTConsole.write(prompt)
@@ -617,6 +621,10 @@ public func basic_rt_files_list() {
 /// with COLUMNS/LINES set, stdout and stderr combined; owned.
 @_cdecl("basic_rt_system")
 public func basic_rt_system(_ command: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    #if os(iOS)
+    // The interpreter's BASICPlatform message: an iPad starts no programs.
+    basic_rt_fail("SYSTEM is not available on iPad/iPhone")
+    #else
     let process = Process()
     let pipe = Pipe()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -637,6 +645,7 @@ public func basic_rt_system(_ command: UnsafeMutableRawPointer?) -> UnsafeMutabl
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return rtOwned(String(decoding: data, as: UTF8.self))
+    #endif
 }
 
 /// The `SYSTEM` statement: runs the command and prints what it wrote.

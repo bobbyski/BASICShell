@@ -8,6 +8,11 @@ import Foundation
 
 @_cdecl("basic_rt_start")
 public func basic_rt_start() {
+    if RTHosted.isActive {
+        // In an app: the app's stdout and signals are not the program's, and
+        // the last run's state is not this one's.
+        RTHosted.reset()
+    } else {
     // On a terminal, text is line-buffered as the Shell's is (VTG bytes go
     // straight to the descriptor, so they interleave the same way); the
     // reads flush first. On a pipe, buffer for speed.
@@ -17,6 +22,7 @@ public func basic_rt_start() {
         setvbuf(stdout, nil, _IOFBF, 1 << 16)
     }
     RTSignals.install()
+    }
     // The two hooks BASICRTSwift needs to convert strings at a framework
     // boundary. They live here because only BASICRT knows what an RTString
     // is, and BASICRTSwift must not depend on it.

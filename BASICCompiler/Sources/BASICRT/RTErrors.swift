@@ -43,6 +43,7 @@ enum RTError {
         if let boundary = RTTasks.boundaries.last {
             RTTasks.boundaryError = (prefix.map { "\($0): " } ?? "") + message
             RTTasks.boundaryNumber = number
+            if let unwind = RTHosted.unwind { unwind(.landed) }
             rt_longjmp(boundary, 1)
         }
         lastNumber = number
@@ -53,6 +54,7 @@ enum RTError {
         if let jumpBuffer, handler >= 0, !isHandling {
             isHandling = true
             faultStatement = statement
+            if let unwind = RTHosted.unwind { unwind(.landed) }
             rt_longjmp(jumpBuffer, 1)
         }
         // A program that dies mid-draw owes the terminal the same tidy-up
@@ -65,11 +67,12 @@ enum RTError {
             // The interpreter's BASICError.located: the statement's line, a
             // caret under where it starts, and the message with its line.
             let marker = String(here.source.prefix(max(0, here.column)).map { $0 == "\t" ? "\t" : " " }) + "^"
-            fputs("\(here.source)\n\(marker)\n\(text) at \(here.line)\n", stdout)
+            RTHosted.write("\(here.source)\n\(marker)\n\(text) at \(here.line)\n")
         } else {
-            fputs(text + "\n", stdout)
+            RTHosted.write(text + "\n")
         }
         fflush(stdout)
+        if let unwind = RTHosted.unwind { unwind(.fatal) }
         exit(1)
     }
 }

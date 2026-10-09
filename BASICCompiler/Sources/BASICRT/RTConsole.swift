@@ -23,7 +23,7 @@ enum RTConsole {
             }
             return
         }
-        fputs(text, stdout)
+        RTHosted.write(text)
         if let lastNewline = text.lastIndex(of: "\n") {
             column = text.distance(from: text.index(after: lastNewline), to: text.endIndex)
         } else {
@@ -35,7 +35,7 @@ enum RTConsole {
     /// COLOR's SGR without updating its column).
     static func writeRaw(_ text: String) {
         if RTCapture.active { RTCapture.text += text; return }
-        fputs(text, stdout)
+        RTHosted.write(text)
     }
 
     /// The column PRINT's `,` and TAB measure against: the capture's while
@@ -86,6 +86,12 @@ public func basic_rt_print_newline() {
 /// Shows the prompt and reads one line; nil at end of input.
 private func readInputLine(prompt: UnsafeMutableRawPointer?, defaultPrompt: String) -> String? {
     let promptText = prompt.map { rtString($0).description } ?? defaultPrompt
+    if let readLine = RTHosted.readLine {
+        // Hosted: the host shows the prompt and the line as it is typed.
+        let line = readLine(promptText)
+        RTConsole.column = 0
+        return line
+    }
     if isatty(STDIN_FILENO) == 1 {
         // On a terminal the Shell reads through its line editor.
         let result = RTKeys.readField(prompt: promptText, exitOnSpecialKey: false, fieldLength: nil, maxLength: nil, defaultText: nil)
