@@ -61,6 +61,9 @@ public struct WasmHostServices {
     public var keyDown: ((String) -> Bool?)?
     /// The next key, waiting for one (INPUT$); nil when Stop cancelled the wait.
     public var readKey: (() -> String?)?
+    /// Entries for imports the runtime does not answer: a framework map's
+    /// shims (BASIC-45), by name.
+    public var entries: [String: WasmEntryPoint] = [:]
     /// Where TUIKit applications draw; nil, and a terminal on stdout.
     public var tui: BASICTUIPresentationHost?
 
@@ -139,10 +142,11 @@ public final class WasmRunner: @unchecked Sendable {
         return stopRequested
     }
 
-    /// Runtime functions the program imports that this runner cannot answer.
-    public static func missingImports(of program: WasmProgram) -> [String] {
+    /// Runtime functions the program imports that this runner cannot answer,
+    /// with `extra` entries a host supplies.
+    public static func missingImports(of program: WasmProgram, extra: [String: WasmEntryPoint] = [:]) -> [String] {
         program.imports.map(\.name).filter { name in
-            name != WasmTranslator.pollImport && RTEntryPoints.table[name] == nil && intrinsics[name] == nil
+            name != WasmTranslator.pollImport && RTEntryPoints.table[name] == nil && intrinsics[name] == nil && extra[name] == nil
         }
     }
 
@@ -168,11 +172,12 @@ public final class WasmRunner: @unchecked Sendable {
     /// Runs the program to its end. Call it on a thread with a large stack:
     /// the runtime and JavaScriptCore both recurse.
     public func run(host: WasmHost) -> WasmRunOutcome {
-        let missing = Self.missingImports(of: program)
+        let extra = host.services.entries
+        let missing = Self.missingImports(of: program, extra: extra)
         guard missing.isEmpty else {
             return .notLoaded("this program uses \(missing.joined(separator: ", ")), which programs compiled to WebAssembly cannot use yet")
         }
-        entries = program.imports.map { RTEntryPoints.table[$0.name] ?? Self.intrinsics[$0.name] }
+        entries = program.imports.map { RTEntryPoints.table[$0.name] ?? Self.intrinsics[$0.name] ?? extra[$0.name] }
         pollIndex = program.imports.firstIndex { $0.name == WasmTranslator.pollImport } ?? -1
 
         Self.current = self
@@ -185,12 +190,20 @@ public final class WasmRunner: @unchecked Sendable {
         }
         RTHosted.isStopRequested = { [unowned self] in self.isStopRequested }
         let services = host.services
+        WasmCallbacks.clearQueued()
         RTHostHosted.install(
             windows: services.windows, touchControls: services.touchControls,
             canvas: services.canvas, canvasSize: services.canvasSize,
             screenSize: services.screenSize, keyDown: services.keyDown, readKey: services.readKey,
             tui: services.tui
         )
+        // Calls a framework queued for BASIC run at the drain, with the
+        // program's other events (BASIC-45).
+        let collectHosted = RTHosted.collectEvents
+        RTHosted.collectEvents = {
+            collectHosted?()
+            WasmCallbacks.collectQueued()
+        }
         WasmCallbacks.reset()
         basic_wasm_set_dispatchers(dispatchPtrVoid, dispatchPtrPtr, dispatchVoidPtr, dispatchPtrDouble)
         defer {
@@ -201,6 +214,7 @@ public final class WasmRunner: @unchecked Sendable {
             RTHosted.checkStop = nil
             RTHosted.isStopRequested = nil
             RTHostHosted.uninstall()
+            WasmCallbacks.clearQueued()
             WasmCallbacks.reset()
             Self.current = nil
             context = nil
@@ -328,7 +342,11 @@ public final class WasmRunner: @unchecked Sendable {
     /// argument. An exception unwinds the runtime frames between here and
     /// the import that led here, and goes on from there.
     func callback(_ shape: WasmCallbacks.Shape, slot: Int, argument: UnsafeMutableRawPointer?) -> Double {
-        let tableIndex = WasmCallbacks.tableIndex(shape, slot: slot)
+        call(tableIndex: WasmCallbacks.tableIndex(shape, slot: slot), shape: shape, argument: argument)
+    }
+
+    /// Calls the module's function at `tableIndex`, of `shape`, with `argument`.
+    func call(tableIndex: Double, shape: WasmCallbacks.Shape, argument: UnsafeMutableRawPointer?) -> Double {
         var arguments: [Any] = [tableIndex]
         if shape != .voidPtr { arguments.append(Double(UInt(bitPattern: argument))) }
         let dispatcher = callbackExports[shape.rawValue]
@@ -419,7 +437,7 @@ private let dispatchPtrDouble: basic_wasm_dispatch_ptr_double = { slot, argument
 }
 
 /// Native trampolines handed to the runtime for the module's functions.
-enum WasmCallbacks {
+public enum WasmCallbacks {
     enum Shape: Int {
         case ptrVoid = 0, ptrPtr = 1, voidPtr = 2, ptrDouble = 3
     }

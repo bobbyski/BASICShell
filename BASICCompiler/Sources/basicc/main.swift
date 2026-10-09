@@ -319,6 +319,79 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
     #endif
 }
 
+/// `basicc framework-map <out> <Module>=<package folder> ...` (BASIC-45).
+///
+/// What Studio needs to let a program it runs IMPORT a framework Studio
+/// contains, generated once, on a Mac: each module's symbol graph and
+/// exported symbols (for the compiler Studio carries), R4's shims for every
+/// member, and the entries that call them by name. Read before the ordinary
+/// arguments, which take one source file and nothing else.
+func frameworkMap() -> Never {
+    // basicc framework-map <out> <Module>=<package folder> ... (BASIC-45)
+    //
+    // What Studio needs to let a program it runs IMPORT a framework Studio
+    // contains, generated once, on a Mac: each module's symbol graph and
+    // exported symbols (for the compiler Studio carries), R4's shims for
+    // every member, and the entries that call them by name.
+    let rest = Array(CommandLine.arguments.dropFirst(2))
+    guard rest.count >= 2 else {
+        fail("framework-map takes an output folder and one or more <Module>=<package folder>", code: 2)
+    }
+    let out = rest[0]
+    do {
+        let resources = (out as NSString).appendingPathComponent("Resources")
+        try FileManager.default.createDirectory(atPath: resources, withIntermediateDirectories: true)
+        for pair in rest.dropFirst() {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { fail("\(pair): expected <Module>=<package folder>", code: 2) }
+            let (module, package) = (parts[0], parts[1])
+            let resolved = try SwiftPackageResolver(programDirectory: package).resolve(module)
+            var api = try SwiftAPI.read(fileAt: resolved.symbolGraph)
+            guard !resolved.exported.isEmpty else { fail("\(module): its exported symbols could not be read") }
+            // Only the symbols the API was checked against, and found: what
+            // the compiler Studio carries needs to get the same API again.
+            var found = Set<String>()
+            api.keepOnly { symbol in
+                for name in [String(symbol.dropFirst(2)), symbol] where resolved.exported.contains(name) {
+                    found.insert(name)
+                    return true
+                }
+                return false
+            }
+            try (found.sorted().joined(separator: "\n") + "\n")
+                .write(toFile: (resources as NSString).appendingPathComponent("\(module).exported"), atomically: true, encoding: .utf8)
+            // The graph without what only a reader wants: documentation.
+            let data = try Data(contentsOf: URL(fileURLWithPath: resolved.symbolGraph))
+            guard var graph = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  var symbols = graph["symbols"] as? [[String: Any]] else { fail("\(resolved.symbolGraph): not a symbol graph") }
+            for index in symbols.indices {
+                symbols[index]["docComment"] = nil
+                if var names = symbols[index]["names"] as? [String: Any] {
+                    names["subHeading"] = nil
+                    names["navigator"] = nil
+                    symbols[index]["names"] = names
+                }
+            }
+            graph["symbols"] = symbols
+            try JSONSerialization.data(withJSONObject: graph, options: [.sortedKeys])
+                .write(to: URL(fileURLWithPath: (resources as NSString).appendingPathComponent("\(module).symbols.json")))
+            let shims = SwiftPackageResolver.shimModel(for: api, mapped: true).source() ?? ""
+            try shims.write(toFile: (out as NSString).appendingPathComponent("\(module)Shims.swift"), atomically: true, encoding: .utf8)
+            let signatures = SwiftFrameworkMap.signatures(in: shims)
+            try SwiftFrameworkMap.entriesSource(module: module, signatures: signatures)
+                .write(toFile: (out as NSString).appendingPathComponent("\(module)Entries.swift"), atomically: true, encoding: .utf8)
+            print("framework-map: \(module): \(api.classes.count) classes, \(signatures.count) shims")
+        }
+    } catch let failure as SwiftPackageResolver.Failure {
+        fail(failure.description)
+    } catch {
+        fail("\(error)")
+    }
+    exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "framework-map" { frameworkMap() }
+
 let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
 case "--version", "-v":

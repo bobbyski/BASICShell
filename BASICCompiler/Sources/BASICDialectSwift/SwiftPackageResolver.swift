@@ -129,6 +129,31 @@ public struct SwiftPackageResolver {
     /// Compiles the async shim for `api`, or nil when it has no async
     /// methods. The object joins the program's link line.
     public func buildAsyncShim(for api: SwiftAPI, package: ResolvedPackage) throws -> String? {
+        guard let source = Self.shimModel(for: api).source() else { return nil }
+
+        let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let file = (directory as NSString).appendingPathComponent("\(api.module)Await.swift")
+        try source.write(toFile: file, atomically: true, encoding: .utf8)
+        let object = (directory as NSString).appendingPathComponent("\(api.module)Await.o")
+
+        // Built against the framework's own module, and against BASICRTSwift
+        // for the error raiser a failing await hands its error to.
+        var arguments = ["swiftc", "-parse-as-library", "-emit-object", "-O", file, "-o", object]
+        for modules in Self.moduleSearchPaths(package: package) { arguments += ["-I", modules] }
+        for map in Self.moduleMapFiles(package: package) { arguments += ["-Xcc", "-fmodule-map-file=\(map)"] }
+        let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
+        guard result.exitCode == 0 else {
+            throw Failure(importName: api.module, problem: "the await shim did not compile: \(result.stderr)")
+        }
+        return object
+    }
+
+    /// What `api`'s shims are: the members a program's IR cannot call
+    /// directly — or, `mapped`, every member, for a framework map that is
+    /// compiled into Studio and called by name (BASIC-45). The same selection
+    /// the object model makes, asked once in both places.
+    public static func shimModel(for api: SwiftAPI, mapped: Bool = false) -> SwiftAsyncShim {
         var methods: [SwiftAsyncShim.Method] = []
         for klass in api.classes {
             // Awaited methods, and methods taking a handler: the two shapes
@@ -140,7 +165,7 @@ public struct SwiftPackageResolver {
                 // the shim generator each decided this for themselves they
                 // disagreed, and a disagreement here is a call to a symbol
                 // nothing defines.
-                guard SwiftObjectModel.needsShim(method) else { continue }
+                guard mapped || SwiftObjectModel.needsShim(method) else { continue }
                 guard method.returns.isSupported else { continue }
                 var shim = SwiftAsyncShim.Method(
                     className: klass.name, name: method.name,
@@ -222,7 +247,7 @@ public struct SwiftPackageResolver {
             for initializer in klass.initializers {
                 let passed = initializer.passed
                 // A box's NEW always goes through its shim, which boxes the value.
-                guard SwiftObjectModel.needsInitializerShim(initializer) || klass.isOpaque else { continue }
+                guard mapped || SwiftObjectModel.needsInitializerShim(initializer) || klass.isOpaque else { continue }
                 let arity = SwiftObjectModel.basicArity(initializer, in: api)
                 guard emittedNew.insert("\(klass.name).\(arity)").inserted else { continue }
                 var shim = SwiftAsyncShim.Method(
@@ -389,28 +414,37 @@ public struct SwiftPackageResolver {
                                                                       isSettable: property.isSettable))
             }
         }
-        guard let source = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
-                                          payloadProperties: payloadProperties,
-                                          handlerProperties: handlerProperties,
-                                          structProperties: structProperties,
-                                          opaqueProperties: opaqueProperties).source() else { return nil }
-
-        let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
-        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        let file = (directory as NSString).appendingPathComponent("\(api.module)Await.swift")
-        try source.write(toFile: file, atomically: true, encoding: .utf8)
-        let object = (directory as NSString).appendingPathComponent("\(api.module)Await.o")
-
-        // Built against the framework's own module, and against BASICRTSwift
-        // for the error raiser a failing await hands its error to.
-        var arguments = ["swiftc", "-parse-as-library", "-emit-object", "-O", file, "-o", object]
-        for modules in Self.moduleSearchPaths(package: package) { arguments += ["-I", modules] }
-        for map in Self.moduleMapFiles(package: package) { arguments += ["-Xcc", "-fmodule-map-file=\(map)"] }
-        let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
-        guard result.exitCode == 0 else {
-            throw Failure(importName: api.module, problem: "the await shim did not compile: \(result.stderr)")
+        var shim = SwiftAsyncShim(module: api.module, methods: methods, properties: properties,
+                                  payloadProperties: payloadProperties,
+                                  handlerProperties: handlerProperties,
+                                  structProperties: structProperties,
+                                  opaqueProperties: opaqueProperties)
+        guard mapped else { return shim }
+        // Plain properties, which R4 reaches by their accessors' symbols.
+        for klass in api.classes where !klass.isOpaque {
+            for property in klass.properties {
+                let kind: SwiftAsyncShim.PlainProperty.Kind
+                switch property.type {
+                case .double: kind = .double
+                case .cgFloat: kind = .cgFloat
+                case .int: kind = .int
+                case .bool: kind = .bool
+                case .string: kind = .string
+                case .object(let precise):
+                    guard let target = api.class(precise: precise), !target.isOpaque else { continue }
+                    kind = .object(target.name)
+                case .protocolType(let precise):
+                    guard let name = api.protocols[precise] else { continue }
+                    kind = .protocolType(name)
+                default: continue
+                }
+                shim.plainProperties.append(SwiftAsyncShim.PlainProperty(
+                    className: klass.name, name: property.name, kind: kind,
+                    isSettable: property.isSettable, isActor: klass.isActor))
+            }
         }
-        return object
+        shim.mappedClasses = api.classes.filter { !$0.isOpaque }.map(\.name)
+        return shim
     }
 
     /// An expression that rebuilds `type` from the flattened arguments named

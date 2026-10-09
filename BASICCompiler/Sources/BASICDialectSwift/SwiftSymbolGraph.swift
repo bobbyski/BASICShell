@@ -432,6 +432,7 @@ public struct SwiftAPI: Sendable {
         else { throw ReadError(path: path, problem: "missing module, symbols or relationships") }
 
         var api = SwiftAPI(module: module, classes: [], functions: [], skipped: [])
+        var sourceLines: [String: [Substring]] = [:]
         // Core Graphics' geometry, which no framework's graph describes: C
         // structs, identified by Clang (`c:@S@CGRect`), from another module.
         // Seeded with the fields their initializers take, so R4.4 flattens a
@@ -708,6 +709,7 @@ public struct SwiftAPI: Sendable {
                 // check dropping a setter that does not exist; a struct's
                 // mutability (P1.3e) had no such rescue.
                 let readOnly = isLet || fragments.map(\.spelling).joined().contains("{ get }")
+                    || Self.restrictsSetter(symbol, sources: &sourceLines)
                 let isStaticProperty = kind(of: symbol) == "swift.type.property"
                 if let owner = memberOf[precise], api.enumerations[owner] != nil {
                     guard type.isSupported else {
@@ -1101,7 +1103,14 @@ public struct SwiftAPI: Sendable {
     /// symbol table must not look like an empty framework.
     public mutating func keepOnly(exported: Set<String>) {
         guard !exported.isEmpty else { return }
-        func has(_ symbol: String) -> Bool { exported.contains(String(symbol.dropFirst(2))) || exported.contains(symbol) }
+        keepOnly { exported.contains(String($0.dropFirst(2))) || exported.contains($0) }
+    }
+
+    /// ``keepOnly(exported:)`` with the question asked of `has`: whether the
+    /// framework exports a symbol. A framework map (BASIC-45) records the
+    /// symbols it said yes to, so the same API can be had again where the
+    /// framework itself is not.
+    public mutating func keepOnly(where has: (String) -> Bool) {
 
         // A class whose *metadata* is not exported cannot be constructed or
         // recognized at run time. A generic class is the usual reason —
@@ -1214,6 +1223,24 @@ public struct SwiftAPI: Sendable {
     // MARK: - Graph pieces
 
     struct Fragment { let kind: String; let spelling: String; let precise: String? }
+
+    /// Whether a property's setter is less visible than the property — `public
+    /// internal(set) var` — which the graph does not say: it writes `{ get set
+    /// }` for one. Read from the declaration's own line when the source is
+    /// there (it is wherever a graph is made). A call by symbol used to reach
+    /// such a setter, which a testing build exports; a shim's source cannot,
+    /// and BASIC should not set what Swift code outside the module cannot.
+    static func restrictsSetter(_ symbol: [String: Any], sources: inout [String: [Substring]]) -> Bool {
+        guard let location = symbol["location"] as? [String: Any], let uri = location["uri"] as? String,
+              let line = (location["position"] as? [String: Any])?["line"] as? Int,
+              let url = URL(string: uri), url.isFileURL else { return false }
+        if sources[uri] == nil {
+            sources[uri] = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n", omittingEmptySubsequences: false) ?? []
+        }
+        guard let lines = sources[uri], line < lines.count else { return false }
+        let text = lines[line]
+        return ["internal(set)", "private(set)", "fileprivate(set)", "package(set)"].contains { text.contains($0) }
+    }
 
     static func kind(of symbol: [String: Any]) -> String { (symbol["kind"] as? [String: Any])?["identifier"] as? String ?? "" }
     static func precise(of symbol: [String: Any]) -> String? { (symbol["identifier"] as? [String: Any])?["precise"] as? String }
