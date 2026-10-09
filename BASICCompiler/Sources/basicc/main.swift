@@ -273,7 +273,9 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
     // none, and says so when a program asks for one, as the interpreter does.
     options.hostedActiveUI = true
     compilation = Compilation(dialect: compilation.dialect, options: options)
+    let started = DispatchTime.now()
     let program = try WasmTranslator.translate(llvmIR: try compilation.llvmIR(sourcePath: source))
+    let translated = DispatchTime.now()
     let path = output.hasSuffix(".wasm") ? output : output + ".wasm"
     let directory = (path as NSString).deletingLastPathComponent
     if !directory.isEmpty {
@@ -297,6 +299,14 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
     }
     let outcome = WasmRunner(program: program).run(host: Console())
     fflush(stdout)
+    // With BASICC_WASM_TIMING set, how long each step took, on stderr: the
+    // speed table (WASM_BACKEND.md) wants the run without the compile.
+    if ProcessInfo.processInfo.environment["BASICC_WASM_TIMING"] != nil {
+        func milliseconds(_ from: DispatchTime, _ to: DispatchTime) -> String {
+            String(format: "%.1f", Double(to.uptimeNanoseconds - from.uptimeNanoseconds) / 1_000_000)
+        }
+        fputs("basicc timing: compile and translate \(milliseconds(started, translated)) ms, run \(milliseconds(translated, DispatchTime.now())) ms\n", stderr)
+    }
     switch outcome {
     case .finished(let code): exit(code)
     case .failed: exit(1)

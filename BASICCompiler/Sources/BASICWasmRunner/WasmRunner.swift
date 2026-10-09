@@ -273,15 +273,20 @@ public final class WasmRunner: @unchecked Sendable {
 
     // MARK: Imports
 
+    /// The import being called: one, reused for every call, so a call
+    /// allocates nothing. Nesting is safe: an entry point reads its
+    /// arguments before it calls the runtime, which is the only place a
+    /// callback (and so another import) can happen, and `callFrame` keeps
+    /// the entry and writes the result itself, after the runtime returns.
     final class Frame {
-        let entry: RTEntryPoint
-        var arguments: [Double]
+        var entry: RTEntryPoint?
+        let arguments = UnsafeMutablePointer<Double>.allocate(capacity: Frame.capacity)
         var result: Double = 0
-        init(entry: RTEntryPoint, arguments: [Double]) {
-            self.entry = entry
-            self.arguments = arguments
-        }
+        /// The most arguments a runtime function takes, with room to spare.
+        static let capacity = 32
+        deinit { arguments.deallocate() }
     }
+    private let frame = Frame()
 
     func callImport(_ ctx: JSContextRef, _ count: Int, _ arguments: UnsafePointer<JSValueRef?>,
                     _ exception: UnsafeMutablePointer<JSValueRef?>?) -> JSValueRef? {
@@ -294,13 +299,12 @@ public final class WasmRunner: @unchecked Sendable {
             exception?.pointee = JSValueMakeString(ctx, JSStringCreateWithUTF8CString("no entry point \(index)"))
             return JSValueMakeUndefined(ctx)
         }
-        var values = [Double](repeating: 0, count: max(1, entry.arity))
-        for position in 0..<min(entry.arity, count - 1) {
-            values[position] = JSValueToNumber(ctx, arguments[position + 1], nil)
+        let given = count - 1
+        for position in 0..<min(entry.arity, Frame.capacity) {
+            frame.arguments[position] = position < given ? JSValueToNumber(ctx, arguments[position + 1], nil) : 0
         }
-        let frame = Frame(entry: entry, arguments: values)
+        frame.entry = entry
         let code = basic_wasm_protected(callFrame, Unmanaged.passUnretained(frame).toOpaque())
-        withExtendedLifetime(frame) {}
         switch code {
         case 0:
             return JSValueMakeNumber(ctx, frame.result)
@@ -386,7 +390,9 @@ public final class WasmRunner: @unchecked Sendable {
 
 private let callFrame: basic_wasm_body = { context in
     let frame = Unmanaged<WasmRunner.Frame>.fromOpaque(context!).takeUnretainedValue()
-    frame.result = frame.arguments.withUnsafeBufferPointer { frame.entry.call($0.baseAddress!) }
+    let entry = frame.entry!
+    let result = entry.call(frame.arguments)
+    frame.result = result
 }
 
 private let importCallback: JSObjectCallAsFunctionCallback = { ctx, _, _, count, arguments, exception in
