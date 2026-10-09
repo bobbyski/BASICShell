@@ -28,6 +28,7 @@
 		1F6398E9170B3A403AE8EEB9 /* NewProjectWizardAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D399DBC0E9401FA67A1A5471 /* NewProjectWizardAUI.swift */; };
 		2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
 		26AFE5ECDC44878B0F8A5621 /* DebugPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB11C8419064B3C77C66BF2 /* DebugPaneAUI.swift */; };
+		28F614C694D58F79EFACED2A /* WasmSpike.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E48E5947FE92F192A3E861E /* WasmSpike.swift */; };
 		290BC8E580C6DF4CD199A74B /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D23305654DCC7C771397BA /* SettingsViewModel.swift */; };
 		2A28D7C1DE29AE611A5FCB7E /* StudioFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38AB3D82C7A880B72971A1D /* StudioFonts.swift */; };
 		2A5E43D6901CA4826F9048B7 /* SettingsAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */; };
@@ -144,6 +145,7 @@
 		ECF7D8CEC70DC840D841CFC7 /* SwiftyCodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 955277B154524A585B8D179D /* SwiftyCodeEditor */; };
 		EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
 		F0E7956231640CDEC7C34663 /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
+		F528E93C26ADEDD5A8D50EED /* WasmSpike.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E48E5947FE92F192A3E861E /* WasmSpike.swift */; };
 		FBC538EBADE880382929DBAA /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 50B80D301CFFA94A39A1AF20 /* DocumentArchive */; };
 		FC80337FBB3440DB92ED692B /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4FCF7AE734FDC4B7B917BBD7 /* SwiftTerm */; };
 		FD6F88DDA2245FADC64D7A83 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
@@ -206,6 +208,7 @@
 		474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAUI.swift; sourceTree = "<group>"; };
 		48FFDD9C956077CA2BBAB7D6 /* PromptEditorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEditorModel.swift; sourceTree = "<group>"; };
 		4D7759E2A1D726D749736552 /* StudioAUIBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAUIBridge.swift; sourceTree = "<group>"; };
+		4E48E5947FE92F192A3E861E /* WasmSpike.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WasmSpike.swift; sourceTree = "<group>"; };
 		4FB11C8419064B3C77C66BF2 /* DebugPaneAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPaneAUI.swift; sourceTree = "<group>"; };
 		5472221B9FB79FDAA9BB355A /* StudioSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioSettings.swift; sourceTree = "<group>"; };
 		5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioShellModel.swift; sourceTree = "<group>"; };
@@ -412,6 +415,7 @@
 				E0BE4DFD00F4A6EE959D4034 /* StudioView.swift */,
 				7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */,
 				22C134A50A2186A84C4E7BDE /* UserDocumentationPane.swift */,
+				4E48E5947FE92F192A3E861E /* WasmSpike.swift */,
 				636267F024623759EAFAB5A6 /* ActiveUIShell */,
 				BE666396AA58CBDE82B152A4 /* NerdPromptEditorView */,
 				33D3943C856DFB9A192C4330 /* Resources */,
@@ -652,6 +656,7 @@
 				986C8F3DCC540D2F65EF5187 /* StudioView.swift in Sources */,
 				A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */,
 				123CBE58C61DD88B7D7D1E3A /* UserDocumentationPane.swift in Sources */,
+				F528E93C26ADEDD5A8D50EED /* WasmSpike.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -704,6 +709,7 @@
 				0F1F3E09500DA103690EB456 /* StudioTypes.swift in Sources */,
 				00924436B19B72D30F51108C /* SwiftTermGraphicsConsole.swift in Sources */,
 				1D0ABCD72B7C3DAF6ABE7A94 /* UserDocumentationPane.swift in Sources */,
+				28F614C694D58F79EFACED2A /* WasmSpike.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

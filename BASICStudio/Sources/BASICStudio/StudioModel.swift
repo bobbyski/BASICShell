@@ -401,6 +401,11 @@ final class StudioModel: ObservableObject {
             // After the run, which shows the console: the walk's pane wins.
             if let pane { selectedPane = pane }
         }
+        #if DEBUG
+        if CommandLine.arguments.contains("--wasm-spike") {
+            runWasmSpike()
+        }
+        #endif
         guard shouldRunStartupProgram else { return }
         shouldRunStartupProgram = false
         runEditorProgram()
@@ -1776,6 +1781,14 @@ final class StudioModel: ObservableObject {
             selectedPane = .editor
             return
         }
+
+        #if DEBUG
+        // BASIC-43's spike: WebAssembly in JavaScriptCore (WasmSpike.swift).
+        if trimmed.uppercased() == "WASMSPIKE" {
+            runWasmSpike()
+            return
+        }
+        #endif
 
         if let startLine = runStartLine(from: trimmed) {
             startProgramRun(startLine: startLine, command: .run)
