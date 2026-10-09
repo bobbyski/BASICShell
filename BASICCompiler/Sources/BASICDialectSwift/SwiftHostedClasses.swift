@@ -215,6 +215,7 @@ public struct SwiftHostedClasses: Sendable {
             "-emit-symbol-graph", "-emit-symbol-graph-dir", directory, file,
         ]
         for path in Set(found.flatMap(\.baseAPI.searchPaths)).sorted() { arguments += ["-I", path] }
+        for map in Set(found.flatMap(\.baseAPI.moduleMaps)).sorted() { arguments += ["-Xcc", "-fmodule-map-file=\(map)"] }
         let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
         guard result.exitCode == 0 else {
             throw CompileError("a class that inherits a Swift class did not compile as Swift (\(file)): \(result.stderr)", at: nil)

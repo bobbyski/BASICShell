@@ -374,7 +374,8 @@ public struct SwiftPackageResolver {
             for property in klass.properties {
                 guard case .structure = property.type, let type = Self.recordStruct(property.type, in: api) else { continue }
                 structProperties.append(SwiftAsyncShim.StructProperty(className: klass.name, name: property.name,
-                                                                      type: type, isSettable: property.isSettable))
+                                                                      type: type, isSettable: property.isSettable,
+                                                                      isActor: klass.isActor))
             }
         }
         // Properties whose immutable struct crosses in a box (P1.3e).
@@ -404,6 +405,7 @@ public struct SwiftPackageResolver {
         // for the error raiser a failing await hands its error to.
         var arguments = ["swiftc", "-parse-as-library", "-emit-object", "-O", file, "-o", object]
         for modules in Self.moduleSearchPaths(package: package) { arguments += ["-I", modules] }
+        for map in Self.moduleMapFiles(package: package) { arguments += ["-Xcc", "-fmodule-map-file=\(map)"] }
         let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
         guard result.exitCode == 0 else {
             throw Failure(importName: api.module, problem: "the await shim did not compile: \(result.stderr)")
@@ -526,6 +528,20 @@ public struct SwiftPackageResolver {
             paths += extra.split(separator: ":").map(String.init)
         }
         return paths
+    }
+
+    /// The module maps SwiftPM generated for the package's C modules, from
+    /// the first build that has any (two builds' maps for one module would
+    /// define it twice). Without them a framework with a C target — ActiveUI
+    /// and `ActiveUITextStorage` — cannot be imported by generated Swift.
+    static func moduleMapFiles(package: ResolvedPackage) -> [String] {
+        for build in [".build-basicc", ".build"] {
+            let directory = "\(package.path)/\(build)/out/Intermediates.noindex/GeneratedModuleMaps"
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
+            let maps = names.filter { $0.hasSuffix(".modulemap") }.sorted().map { "\(directory)/\($0)" }
+            if !maps.isEmpty { return maps }
+        }
+        return []
     }
 
     /// The tail of a tool's output. A failing SwiftPM run prints its whole

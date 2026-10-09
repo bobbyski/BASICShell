@@ -221,11 +221,15 @@ public struct SwiftAsyncShim {
         public let name: String
         public let type: RecordStruct
         public let isSettable: Bool
-        public init(className: String, name: String, type: RecordStruct, isSettable: Bool) {
+        /// An actor's property is read with `await` from outside it, and is
+        /// never set from outside: TUIKit's drivers are actors.
+        public let isActor: Bool
+        public init(className: String, name: String, type: RecordStruct, isSettable: Bool, isActor: Bool = false) {
             self.className = className
             self.name = name
             self.type = type
             self.isSettable = isSettable
+            self.isActor = isActor
         }
         public var getter: String { "basic_get_\(className)_\(name)" }
         public var setter: String { "basic_set_\(className)_\(name)" }
@@ -756,18 +760,22 @@ public struct SwiftAsyncShim {
                 lines.append("    } catch {")
                 lines.append("        basicAwaitRaise(error)")
                 lines.append("    }")
-            } else if method.isThrowing {
-                lines.append("    do {")
-                let called = "try \(invocation)"
-                lines.append(method.returns == nil ? "        _ = \(called)" : "        return \(handOut(called))")
-                lines.append("    } catch {")
-                lines.append("        basicAwaitRaise(error)")
-                lines.append("    }")
-            } else if method.isInitializer, method.opaqueResult != nil {
+            } else {
+            // A member that throws is reached exactly as one that does not —
+            // isolated to the main actor, its result handed out the same way —
+            // with `try` on the call, `try` on `assumeIsolated` (which
+            // rethrows), and the whole body in a `do` whose `catch` raises the
+            // error in BASIC. Calling it outside the isolation, as this once
+            // did, is refused for a main-actor framework; and an initializer
+            // that throws was written as a call on an `object` there is none of.
+            let isolate = method.isThrowing ? "try MainActor.assumeIsolated" : "MainActor.assumeIsolated"
+            let attempt = method.isThrowing ? "try " : ""
+            let bodyStart = lines.count
+            if method.isInitializer, method.opaqueResult != nil {
                 // A boxed struct's NEW (P1.3e stage 2): the value is made and
                 // boxed inside the isolated closure, and carried out as a bit
                 // pattern — the struct need not be Sendable.
-                lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(\(method.className)(\(labeled)), ti)) }")
+                lines.append("    let bits = \(isolate) { Int(bitPattern: basicOpaqueMake(\(attempt)\(method.className)(\(labeled)), ti)) }")
                 lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
             } else if method.isInitializer {
                 // Retained: the object is new and BASIC holds the only
@@ -776,7 +784,7 @@ public struct SwiftAsyncShim {
                 // keeps it alive rather than handing back a corpse.
                 let suffix = method.defaultedPointerSuffix
                 if suffix == 0 {
-                    lines.append("    let made = MainActor.assumeIsolated { \(method.className)(\(labeled)) }")
+                    lines.append("    let made = \(isolate) { \(attempt)\(method.className)(\(labeled)) }")
                 } else {
                     // NULL for a defaulted trailing object means Swift's own
                     // default: the longest run of trailing NULLs picks the
@@ -787,16 +795,16 @@ public struct SwiftAsyncShim {
                             let argument = index >= count - suffix ? callArguments[index] + "!" : callArguments[index]
                             return method.labels[index].map { "\($0): \(argument)" } ?? argument
                         }
-                        return "\(method.className)(\(arguments.joined(separator: ", ")))"
+                        return "\(attempt)\(method.className)(\(arguments.joined(separator: ", ")))"
                     }
                     lines.append("    let made: \(method.className)")
                     for omitted in stride(from: suffix, through: 1, by: -1) {
                         let test = ((count - omitted)..<count).map { "a\($0) == nil" }.joined(separator: " && ")
                         lines.append("    \(omitted == suffix ? "if" : "} else if") \(test) {")
-                        lines.append("        made = MainActor.assumeIsolated { \(call(keeping: count - omitted)) }")
+                        lines.append("        made = \(isolate) { \(call(keeping: count - omitted)) }")
                     }
                     lines.append("    } else {")
-                    lines.append("        made = MainActor.assumeIsolated { \(call(keeping: count)) }")
+                    lines.append("        made = \(isolate) { \(call(keeping: count)) }")
                     lines.append("    }")
                 }
                 lines.append("    return Unmanaged.passRetained(made).toOpaque()")
@@ -809,53 +817,63 @@ public struct SwiftAsyncShim {
                 // true; stating it is what lets a main-actor framework be
                 // imported at all. It traps rather than corrupts if a future
                 // caller is ever elsewhere.
-                let called = "\(invocation)"
+                let called = "\(attempt)\(invocation)"
                 if method.discardsResult {
                     // Dropped *inside* the isolated closure, deliberately:
                     // `assumeIsolated` hands its result back across the
                     // isolation boundary and so demands a Sendable one, which
                     // a framework's own result type need not be.
-                    lines.append("    MainActor.assumeIsolated { _ = \(called) }")
+                    lines.append("    \(isolate) { _ = \(called) }")
                 } else if method.returns == nil {
-                    lines.append("    MainActor.assumeIsolated { \(called) }")
+                    lines.append("    \(isolate) { \(called) }")
                 } else if method.durationResult {
-                    lines.append("    return basicMilliseconds(MainActor.assumeIsolated { \(called) })")
+                    lines.append("    return basicMilliseconds(\(isolate) { \(called) })")
                 } else if let boxed = method.opaqueResult {
                     // A box, made inside the isolated closure and carried out as
                     // a bit pattern, as a record is. Nil is the zero pattern,
                     // which comes back out as NULL.
                     if boxed.hasSuffix("?") {
-                        lines.append("    let bits = MainActor.assumeIsolated { (\(called)).map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }")
+                        lines.append("    let bits = \(isolate) { (\(called)).map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }")
                         lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)")
                     } else {
-                        lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(\(called), ti)) }")
+                        lines.append("    let bits = \(isolate) { Int(bitPattern: basicOpaqueMake(\(called), ti)) }")
                         lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
                     }
                 } else if let type = method.structResult {
                     // A record, built inside the isolated closure and carried out
                     // as a bit pattern, as a payload enum's is.
-                    lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicStructOut_\(type.stem)(\(called), ti)) }")
+                    lines.append("    let bits = \(isolate) { Int(bitPattern: basicStructOut_\(type.stem)(\(called), ti)) }")
                     lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
                 } else if let type = method.payloadResult {
                     // Built inside the isolated closure and carried out as a
                     // bit pattern: assumeIsolated wants a Sendable result, and
                     // neither the enum nor a raw pointer is one.
-                    lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicPayloadOut_\(type.stem)(\(called), ti)) }")
+                    lines.append("    let bits = \(isolate) { Int(bitPattern: basicPayloadOut_\(type.stem)(\(called), ti)) }")
                     lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
                 } else if let type = method.enumResult {
                     // Converted inside the isolated closure: assumeIsolated
                     // wants a Sendable result, and the ordinal is one where a
                     // public enum from another module need not be.
-                    lines.append("    return MainActor.assumeIsolated { basicEnumOut_\(type.stem)(\(called)) }")
+                    lines.append("    return \(isolate) { basicEnumOut_\(type.stem)(\(called)) }")
                 } else if method.objectResult != nil || method.arrayResult != nil || method.stringResult {
                     // The pointer is made *outside* the isolated closure: a
                     // raw pointer is explicitly not Sendable, and returning
                     // one across that boundary is an error in Swift 6.
-                    lines.append("    let result = MainActor.assumeIsolated { \(called) }")
+                    lines.append("    let result = \(isolate) { \(called) }")
                     lines.append("    return \(handOut("result"))")
                 } else {
-                    lines.append("    return MainActor.assumeIsolated { \(called) }")
+                    lines.append("    return \(isolate) { \(called) }")
                 }
+            }
+            if method.isThrowing {
+                let body = lines[bodyStart...].map { "    " + $0 }
+                lines.removeSubrange(bodyStart...)
+                lines.append("    do {")
+                lines += body
+                lines.append("    } catch {")
+                lines.append("        basicAwaitRaise(error)")
+                lines.append("    }")
+            }
             }
             lines.append("}")
             lines.append("")
@@ -1031,11 +1049,20 @@ public struct SwiftAsyncShim {
             lines.append("@_cdecl(\"\(property.getter)\")")
             lines.append("public func \(property.getter)(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer {")
             lines.append("    let object = Unmanaged<\(property.className)>.fromOpaque(me).takeUnretainedValue()")
-            lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicStructOut_\(property.type.stem)(object.`\(property.name)`, ti)) }")
-            lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
+            if property.isActor {
+                lines.append("    do {")
+                lines.append("        let bits = try basicAwait { Int(bitPattern: basicStructOut_\(property.type.stem)(await object.`\(property.name)`, ti)) }")
+                lines.append("        return UnsafeMutableRawPointer(bitPattern: bits)!")
+                lines.append("    } catch {")
+                lines.append("        basicAwaitRaise(error)")
+                lines.append("    }")
+            } else {
+                lines.append("    let bits = MainActor.assumeIsolated { Int(bitPattern: basicStructOut_\(property.type.stem)(object.`\(property.name)`, ti)) }")
+                lines.append("    return UnsafeMutableRawPointer(bitPattern: bits)!")
+            }
             lines.append("}")
             lines.append("")
-            guard property.isSettable else { continue }
+            guard property.isSettable, !property.isActor else { continue }
             lines.append("@_cdecl(\"\(property.setter)\")")
             lines.append("public func \(property.setter)(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {")
             lines.append("    let object = Unmanaged<\(property.className)>.fromOpaque(me).takeUnretainedValue()")

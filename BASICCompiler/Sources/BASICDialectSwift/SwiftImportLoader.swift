@@ -64,6 +64,7 @@ public struct SwiftImportLoader {
                 let package = try resolver.resolve(name)
                 var api = try SwiftAPI.read(fileAt: package.symbolGraph)
                 api.searchPaths = SwiftPackageResolver.moduleSearchPaths(package: package)
+                api.moduleMaps = SwiftPackageResolver.moduleMapFiles(package: package)
                 // What the binary exports decides what can be called (R4.3).
                 api.keepOnly(exported: package.exported)
                 collected.imports[api.module] = api

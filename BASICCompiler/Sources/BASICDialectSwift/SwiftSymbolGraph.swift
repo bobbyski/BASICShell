@@ -344,6 +344,11 @@ public struct SwiftAPI: Sendable {
     /// it later — a BASIC class inheriting one of its classes (R1.5) — can
     /// be compiled with the same search paths the shims use.
     public var searchPaths: [String] = []
+    /// The Clang module maps of the framework's C modules — ActiveUI's
+    /// `ActiveUITextStorage` — which importing its Swift module needs as
+    /// well. SwiftPM generates them with absolute paths and a name of their
+    /// own, so `-I` does not find them; each is passed as a module map file.
+    public var moduleMaps: [String] = []
     /// Protocol names, by precise identifier.
     public var protocols: [String: String] = [:]
     /// Which protocols each class conforms to, by precise identifier.
@@ -1272,7 +1277,15 @@ public struct SwiftAPI: Sendable {
             // it is exactly one type identifier. Taking the first identifier
             // and ignoring what surrounds it made `[Shape]` import as
             // `Shape` — a parameter that would take the array's element.
-            let afterColon = fragments.drop { !$0.spelling.contains(":") }.dropFirst()
+            var afterColon = Array(fragments.drop { !$0.spelling.contains(":") }.dropFirst())
+            // `any TerminalDriver` — Swift 6's spelling of an existential —
+            // is the protocol R4.7 already takes, and `some TerminalDriver`
+            // is one any conforming value can be passed to. The keyword and
+            // its space are dropped so the protocol reads as it always did;
+            // TUIKit's `App(driver:timerSource:)` was withdrawn without this.
+            if let first = afterColon.first, first.kind == "keyword", first.spelling == "any" || first.spelling == "some" {
+                afterColon = Array(afterColon.dropFirst().drop { $0.kind == "text" && $0.spelling.trimmingCharacters(in: .whitespaces).isEmpty })
+            }
             // The declared type as written, which is the only way to tell a
             // *function* type apart: its single `typeIdentifier` is the
             // result, so `() -> Void` looks exactly like `Void` if you read
@@ -1331,8 +1344,13 @@ public struct SwiftAPI: Sendable {
     }
     static func returnType(of symbol: [String: Any]) -> ValueType {
         let signature = symbol["functionSignature"] as? [String: Any]
-        let fragments = fragments(of: signature?["returns"])
+        var fragments = fragments(of: signature?["returns"])
         if fragments.isEmpty || fragments.map(\.spelling).joined() == "()" { return .void }
+        // An `any P` result is the protocol, as a parameter's is. (`some P`
+        // is not: an opaque result's concrete type is the callee's secret.)
+        if let first = fragments.first, first.kind == "keyword", first.spelling == "any" {
+            fragments = Array(fragments.dropFirst().drop { $0.kind == "text" && $0.spelling.trimmingCharacters(in: .whitespaces).isEmpty })
+        }
         // A bare type identifier is the whole return type; anything wrapped
         // (`[Shape]`, `Shape?`) is more than one fragment and unsupported.
         if let array = arrayType(fragments) { return array }
