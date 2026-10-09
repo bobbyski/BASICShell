@@ -28,7 +28,10 @@ let vectorTerminalSDKPath = ProcessInfo.processInfo.environment["VECTORTERMINALS
 // published by the BASICCore package. Nothing is fetched from the network.
 let package = Package(
     name: "BASICCompiler",
-    platforms: [.macOS("16.0")],
+    // iOS for the compiler core alone: BASICStudio compiles in process on an
+    // iPad and runs the result as WebAssembly (BASIC-42). Nothing that starts
+    // clang or swiftc runs there; see ProcessRunner.
+    platforms: [.macOS("16.0"), .iOS("17.0")],
     products: [
         .executable(name: "basicc", targets: ["basicc"]),
         .executable(name: "basictest", targets: ["basictest"]),

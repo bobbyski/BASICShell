@@ -9,6 +9,9 @@ let package = Package(
         .package(path: "../BASICCore"),
         // New-project recipes, shared with basicc and the IDEs (BASIC-24).
         .package(path: "../BASICRecipes"),
+        // The compiler core, in process: on an iPad a program is compiled to
+        // WebAssembly and run in JavaScriptCore (BASIC-42).
+        .package(path: "../BASICCompiler"),
         .package(path: "../DocumentArchive"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         // The local checkout, on develop: the only SwiftTerm with an iOS
@@ -33,6 +36,8 @@ let package = Package(
             dependencies: [
                 "BASICCore",
                 "BASICRecipes",
+                .product(name: "BASICCompilerKit", package: "BASICCompiler"),
+                .product(name: "BASICDialectTraditional", package: "BASICCompiler"),
                 "DocumentArchive",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",

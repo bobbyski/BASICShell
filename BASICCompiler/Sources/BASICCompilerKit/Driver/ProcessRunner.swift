@@ -20,6 +20,7 @@ public enum ProcessRunner {
     /// Runs an executable and waits for it, capturing both streams through
     /// files so a chatty tool cannot deadlock on a full pipe buffer.
     public static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, workingDirectory: String? = nil) throws -> Result {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -61,5 +62,20 @@ public enum ProcessRunner {
             stdout: String(decoding: outData, as: UTF8.self),
             stderr: String(decoding: errData, as: UTF8.self)
         )
+        #else
+        // iPhone and iPad start no other programs, so there is no clang,
+        // swiftc or xcrun to run: the compiler's front end and lowering
+        // work there, and the steps after them answer this.
+        throw Unavailable(tool: (executable as NSString).lastPathComponent, arguments: arguments)
+        #endif
+    }
+
+    /// The error on a platform that cannot start another program.
+    public struct Unavailable: Error, CustomStringConvertible {
+        public let tool: String
+        public let arguments: [String]
+        public var description: String {
+            "\((arguments.first.map { [tool, $0] } ?? [tool]).joined(separator: " ")) cannot run here: this platform does not start other programs"
+        }
     }
 }

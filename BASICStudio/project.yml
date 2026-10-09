@@ -10,6 +10,10 @@ packages:
   # New-project recipes, shared with basicc and the IDEs (BASIC-24).
   BASICRecipes:
     path: ../BASICRecipes
+  # The compiler core, in process: on an iPad a program is compiled to
+  # WebAssembly and run in JavaScriptCore (BASIC-42).
+  BASICCompiler:
+    path: ../BASICCompiler
   # The local checkout, on develop: the only SwiftTerm with an iOS
   # VectorTerminalView (merged 96c3973, in no tag yet).
   SwiftTerm:
@@ -74,6 +78,10 @@ targets:
         product: BASICCore
       - package: BASICRecipes
         product: BASICRecipes
+      - package: BASICCompiler
+        product: BASICCompilerKit
+      - package: BASICCompiler
+        product: BASICDialectTraditional
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK
@@ -160,6 +168,10 @@ targets:
         product: BASICCore
       - package: BASICRecipes
         product: BASICRecipes
+      - package: BASICCompiler
+        product: BASICCompilerKit
+      - package: BASICCompiler
+        product: BASICDialectTraditional
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK
