@@ -100,6 +100,8 @@ public func basic_rt_host_tui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, 
             typeName: type, id: id, method: name,
             arguments: values, invokeHandler: invokeNamedHandler
         )
+        // A Stop ends a hosted application's `run`; the run ends here with it.
+        RTHosted.checkStop?()
         return rtOwned(runtimeValue(answer))
     } catch let failure as BASICCompiledTUI.Failure {
         basic_rt_fail(failure.message)

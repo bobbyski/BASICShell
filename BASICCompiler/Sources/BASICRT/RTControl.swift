@@ -196,6 +196,10 @@ public func basic_rt_time() -> UnsafeMutableRawPointer {
 @_cdecl("basic_rt_sleep")
 public func basic_rt_sleep(_ milliseconds: Double) -> Double {
     fflush(stdout)
+    if RTHosted.checkStop != nil {
+        RTHosted.sleep(milliseconds: max(0, Int(milliseconds.rounded())))
+        return 0
+    }
     usleep(UInt32(max(0, milliseconds.rounded())) * 1000)
     return 0
 }

@@ -62,6 +62,11 @@ extension StudioModel {
     /// Stops a compiled run, as Stop does an interpreted one.
     func stopJITProgram() {
         wasmRun?.stop()
+        // A TUI program run as WebAssembly sits in `app.run` as an
+        // interpreted one does, and Stop reaches it the same way.
+        if wasmRun != nil, activeTUIDriver != nil {
+            BASICTUIApplications.stopAll()
+        }
         #if os(macOS)
         jitProcess?.terminate()
         #endif

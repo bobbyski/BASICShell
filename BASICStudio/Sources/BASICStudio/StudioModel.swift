@@ -299,13 +299,7 @@ final class StudioModel: ObservableObject {
         persistsSettings = launch.persistsSettings
         walk = launch.walk
         auiBridge.postEvent = { [weak self] kind, source, text, index, column in
-            guard let self else { return }
-            // A program running as WebAssembly has its own queue (BASIC-45).
-            if self.wasmRun != nil {
-                BASICCompiledAUI.post(kind: kind, source: source, text: text, index: index, column: column)
-            } else {
-                self.session.postAUIEvent(kind: kind, source: source, text: text, index: index, column: column)
-            }
+            self?.session.postAUIEvent(kind: kind, source: source, text: text, index: index, column: column)
         }
         gamepadInputCoordinator.eventHandler = { [weak self] subtype, controller, control, value in
             Task { @MainActor [weak self] in
@@ -1437,6 +1431,43 @@ final class StudioModel: ObservableObject {
 
     func toggleGraphicsLayersVisible() {
         setGraphicsLayersVisible(!areGraphicsLayersVisible)
+    }
+
+    // MARK: A WebAssembly run's graphics (BASIC-45)
+
+    /// A canvas for a program Studio runs as WebAssembly: the console's own
+    /// VTG view, as an interpreted program's, fed in order from the
+    /// program's thread.
+    nonisolated func makeCompiledRunCanvas() -> VectorTerminalCanvas {
+        VectorTerminalCanvas.hostValidated(output: ClosureVTGOutput { [weak self] data in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.programDrewGraphics = true
+                    self?.vtgDataSink?(data)
+                }
+            }
+        })
+    }
+
+    /// The console canvas's size now, for a compiled run.
+    nonisolated func compiledRunCanvasSize() -> (width: Int, height: Int) {
+        let size = valueOnMainSync { liveVTGCanvasSize }
+        return (size.width, size.height)
+    }
+
+    /// RUN's graphics bookkeeping, as a compiled run starts.
+    func beginCompiledRunGraphics() {
+        restoreGraphicsHiddenOnStop()
+        programDrewGraphics = false
+    }
+
+    /// The end of a compiled run: its windows and on-screen controls go with
+    /// it, and a run that stopped short hides its graphics, as an
+    /// interpreted one does.
+    func endCompiledRunGraphics(stoppedShort: Bool) {
+        auiBridge.closeAll()
+        touchControls.clear()
+        if stoppedShort { hideGraphicsAfterStop() }
     }
 
     /// A program stopped on a break or an error: its graphics would cover the

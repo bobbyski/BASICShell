@@ -299,7 +299,7 @@ enum RTGraphics {
     /// when anything was drawn, the canvas is cleared.
     static func finish() {
         rtHostFinish()
-        guard didUse, availability == true else { return }
+        guard didUse, availability == true, !RTHosted.keepsGraphicsAtEnd else { return }
         rtHostClear()
         rtHostPresent()
         didUse = false

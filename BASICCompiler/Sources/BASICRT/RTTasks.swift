@@ -79,7 +79,13 @@ enum RTTasks {
     static func run(_ task: RTTask) {
         guard task.state == .running || task.state == .ready else { return }
         if let milliseconds = task.sleepMilliseconds {
-            if milliseconds > 0 { usleep(UInt32(min(milliseconds, 1_000_000)) * 1000) }
+            if milliseconds > 0 {
+                if RTHosted.checkStop != nil {
+                    RTHosted.sleep(milliseconds: min(milliseconds, 1_000_000))
+                } else {
+                    usleep(UInt32(min(milliseconds, 1_000_000)) * 1000)
+                }
+            }
             task.result = .number(Double(milliseconds))
             task.state = .completed
             return

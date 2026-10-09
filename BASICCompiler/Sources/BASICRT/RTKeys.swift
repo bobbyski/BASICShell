@@ -471,7 +471,9 @@ enum RTKeys {
     static func readField(prompt: String, exitOnSpecialKey: Bool, fieldLength: Int?, maxLength: Int?, defaultText: String?) -> (text: String, exitKey: String?) {
         func limited(_ value: String) -> String { maxLength.map { String(value.prefix($0)) } ?? value }
         if let readLine = RTHosted.readLine {
-            return (limited(readLine(prompt) ?? defaultText ?? ""), nil)
+            let line = readLine(prompt)
+            if line == nil { RTHosted.checkStop?() }
+            return (limited(line ?? defaultText ?? ""), nil)
         }
         fflush(stdout)
         guard isatty(STDIN_FILENO) == 1 else {
@@ -674,6 +676,8 @@ public func basic_rt_inkey() -> UnsafeMutableRawPointer {
 public func basic_rt_keydown(_ pointer: UnsafeMutableRawPointer?) -> Double {
     let key = rtText(pointer)
     guard let name = RTKeys.keyName(key) else { basic_rt_fail("KEYDOWN does not know the key \"\(key)\"") }
+    // A host that sees keys come up says; otherwise INKEY$'s estimate.
+    if let held = RTHosted.keyDown?(name) ?? nil { return held ? 1 : 0 }
     return RTKeys.isKeyDown(name) ? 1 : 0
 }
 
@@ -685,6 +689,7 @@ public func basic_rt_key_mode(_ mode: Int) {
 
 /// The Shell's `terminalSize`: 80×25 when the query fails, else at least 1×1.
 func rtTerminalSize() -> (columns: Int, rows: Int) {
+    if let hosted = RTHosted.screenSize?() { return (max(1, hosted.columns), max(1, hosted.rows)) }
     var size = winsize()
     guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 else { return (80, 25) }
     return (max(1, Int(size.ws_col)), max(1, Int(size.ws_row)))

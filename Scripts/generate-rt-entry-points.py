@@ -48,15 +48,21 @@ def argument(type_, index, function):
     if type_ == "Double": return a
     if type_ in ("Int", "Int64", "Int32", "UInt8", "UInt64"): return f"{type_}({a})"
     if type_ == "Bool": return f"{a} != 0"
+    # A pointer the Swift signature calls non-optional is passed as the bits
+    # the module gave, null included, exactly as a native call passes it: a
+    # call with no arguments may hand over a null argument array, which the
+    # callee never reads. Unwrapping would trap where native code does not;
+    # the optional and the pointer have one layout, so the cast is the bits.
     if type_ == "UnsafeMutableRawPointer?": return f"UnsafeMutableRawPointer(bitPattern: UInt({a}))"
-    if type_ == "UnsafeMutableRawPointer": return f"UnsafeMutableRawPointer(bitPattern: UInt({a}))!"
+    if type_ == "UnsafeMutableRawPointer": return f"unsafeBitCast(UnsafeMutableRawPointer(bitPattern: UInt({a})), to: UnsafeMutableRawPointer.self)"
     if type_ == "UnsafeRawPointer?": return f"UnsafeRawPointer(bitPattern: UInt({a}))"
-    if type_ == "UnsafeRawPointer": return f"UnsafeRawPointer(bitPattern: UInt({a}))!"
+    if type_ == "UnsafeRawPointer": return f"unsafeBitCast(UnsafeRawPointer(bitPattern: UInt({a})), to: UnsafeRawPointer.self)"
     m = re.fullmatch(r"(UnsafePointer|UnsafeMutablePointer)<(.+)>(\??)", type_)
     if m:
         kind, element, optional = m.groups()
-        expression = f"{kind}<{element}>(OpaquePointer(bitPattern: UInt({a})))"
-        return expression if optional else expression + "!"
+        if optional:
+            return f"{kind}<{element}>(OpaquePointer(bitPattern: UInt({a})))"
+        return f"unsafeBitCast({kind}<{element}>(bitPattern: UInt({a})), to: {kind}<{element}>.self)"
     sys.exit(f"generate-rt-entry-points: {function} takes a {type_}, which this script does not know")
 
 def result(type_, call):

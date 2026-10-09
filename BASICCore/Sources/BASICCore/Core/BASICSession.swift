@@ -202,6 +202,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// Host callback queue for future async completions and Shell/Studio event-loop integration.
     public let eventLoop: BASICEventLoop
     private let hostEventLock = NSLock()
+    private var hostEventsGoToCompiledProgram = false
     private var pendingHostEvents: [BASICEventSelector: BASICValue] = [:]
     private var pendingHostEventOrder: [(selector: BASICEventSelector, sequence: Int)] = []
     /// Events that must each arrive, in order: two clicks are two clicks.
@@ -1085,7 +1086,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     ) {
         let normalizedSubtype = subtype.uppercased()
         let selector = BASICEventSelector(type: "MOUSE", subtype: normalizedSubtype)
-        guard runtime.isHostInputEnabled(for: selector) else { return }
+        // A compiled program keeps its own handlers, and drops what it has none for.
+        guard sendsHostEventsToCompiledProgram || runtime.isHostInputEnabled(for: selector) else { return }
         postEvent(
             selector: selector,
             fields: [
@@ -1113,7 +1115,8 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     ) {
         let normalizedSubtype = subtype.uppercased()
         let selector = BASICEventSelector(type: "GAMEPAD", subtype: normalizedSubtype)
-        guard runtime.isHostInputEnabled(for: selector) else { return }
+        // A compiled program keeps its own handlers, and drops what it has none for.
+        guard sendsHostEventsToCompiledProgram || runtime.isHostInputEnabled(for: selector) else { return }
         // Never merged: a press and its release can both arrive between two
         // statements, and merging them would keep only the release.
         postEvent(
@@ -1328,7 +1331,28 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
         }
     }
 
+    /// While true, what the host posts goes to a program compiled to
+    /// WebAssembly (BASIC-45) rather than to this session's: Studio is
+    /// running one, and its mouse, resizes, gamepads and ActiveUI clicks are
+    /// that program's. Set by Studio for the length of the run.
+    public var sendsHostEventsToCompiledProgram: Bool {
+        get {
+            hostEventLock.lock()
+            defer { hostEventLock.unlock() }
+            return hostEventsGoToCompiledProgram
+        }
+        set {
+            hostEventLock.lock()
+            hostEventsGoToCompiledProgram = newValue
+            hostEventLock.unlock()
+        }
+    }
+
     private func postEvent(selector: BASICEventSelector, fields: [String: BASICValue], coalesces: Bool = true) {
+        if sendsHostEventsToCompiledProgram {
+            BASICCompiledEvents.post(type: selector.type, subtype: selector.subtype ?? "", fields: fields, coalesces: coalesces)
+            return
+        }
         guard !eventLoop.hasPendingError else {
             if selector.type == "TIMER" {
                 logTimerTarget("timer event purged selector=\(selector.description) reason=pending-error")

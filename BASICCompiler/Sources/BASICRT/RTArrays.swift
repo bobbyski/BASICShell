@@ -16,7 +16,7 @@ package final class RTArray {
     var upperBounds: [Int]
     let isDynamic: Bool
     let element: RTTypeRef
-    var values: [RTValue]
+    package var values: [RTValue]
 
     /// A default-filled array of the declared shape.
     convenience init(element: RTTypeRef, dims: [Int?]) {

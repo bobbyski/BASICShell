@@ -87,8 +87,11 @@ public func basic_rt_print_newline() {
 private func readInputLine(prompt: UnsafeMutableRawPointer?, defaultPrompt: String) -> String? {
     let promptText = prompt.map { rtString($0).description } ?? defaultPrompt
     if let readLine = RTHosted.readLine {
-        // Hosted: the host shows the prompt and the line as it is typed.
+        // Hosted: the host shows the prompt and the line as it is typed. No
+        // line can be a Stop, which ends the run here, as the interpreter's
+        // INPUT ends with Break.
         let line = readLine(promptText)
+        if line == nil { RTHosted.checkStop?() }
         RTConsole.column = 0
         return line
     }
@@ -185,6 +188,18 @@ public func basic_rt_capture_end() -> UnsafeMutableRawPointer {
 @_cdecl("basic_rt_input_chars")
 public func basic_rt_input_chars(_ countValue: Double) -> UnsafeMutableRawPointer {
     let count = max(0, Int(countValue.rounded()))
+    if let readKey = RTHosted.readKey {
+        // The host's blocking read, as the interpreter's keyboard host waits.
+        var text = ""
+        while text.count < count {
+            guard let key = readKey() else {
+                RTHosted.checkStop?()
+                break
+            }
+            text += key
+        }
+        return rtOwned(text)
+    }
     var original = termios()
     guard isatty(STDIN_FILENO) == 1, tcgetattr(STDIN_FILENO, &original) == 0 else { return rtOwned("") }
     var raw = original

@@ -90,6 +90,7 @@ let package = Package(
         .target(name: "BASICWasmRunner", dependencies: [
             "BASICWasm", "BASICRT", "BASICRTHost", "BASICWasmHostC",
             .product(name: "BASICCore", package: "BASICCore"),
+            .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"),
         ]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         // BASICSound is the interpreter's own sound model — events, the music
@@ -118,6 +119,7 @@ let package = Package(
             dependencies: [
                 "BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner",
                 .product(name: "BASICCore", package: "BASICCore"),
+                .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"),
             ]
         ),
         .executableTarget(

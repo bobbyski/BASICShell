@@ -35,6 +35,11 @@ public enum BASICCompiledTUI {
         public let message: String
     }
 
+    /// Where a hosted run's applications draw (BASIC-45): BASICStudio's
+    /// console, through the driver it gives the interpreter's. Nil: an
+    /// `ANSIDriver` on the terminal, as a native program has.
+    nonisolated(unsafe) public static var presentationHost: BASICTUIPresentationHost?
+
     /// Builds a pseudo-class handle: the id, and the kind it was made as.
     public static func make(typeName: String, arguments: [Value]) throws -> Int {
         let runtime = BASICRuntime()
@@ -76,8 +81,12 @@ public enum BASICCompiledTUI {
                 bridge.invokeHandler = wrapped
                 defer { bridge.invokeHandler = previous }
                 // A compiled program is its own host: an ANSIDriver and
-                // nothing else a `BASICHost` would answer.
-                try BASICTUIRuntimeBridge.runBlocking(appID: id, windowID: windowID, driver: ANSIDriver())
+                // nothing else a `BASICHost` would answer. Hosted, the host's.
+                if let presentationHost {
+                    try BASICTUIRuntimeBridge.runBlocking(appID: id, windowID: windowID, host: presentationHost)
+                } else {
+                    try BASICTUIRuntimeBridge.runBlocking(appID: id, windowID: windowID, driver: ANSIDriver())
+                }
                 if let failure = bridge.takeFailure() {
                     throw failure
                 }
@@ -103,7 +112,7 @@ public enum BASICCompiledTUI {
             let answer = try runtime.callTUIMethod(
                 typeName: typeName, id: id, method: method,
                 arguments: arguments.map(basicValue),
-                presentationHost: nil,
+                presentationHost: presentationHost,
                 invokeHandler: wrapped
             )
             return bridgeValue(answer)

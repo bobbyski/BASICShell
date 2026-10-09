@@ -10,8 +10,10 @@
 //
 //  The console is the interpreter's: text goes through the model's print,
 //  INPUT through its readLine (so the same line editing and Stop), INKEY$
-//  through its key queue. So are the windows: a program's AUIWindow is made
-//  by the same bridge, and what the user does goes to the program's queue.
+//  through its key queue. So is the rest of what an interpreted program has:
+//  its windows (the same AUI bridge), its canvas (the console's VTG view),
+//  its touch controls and held keys, and what the user does, which the
+//  session sends to the compiled program for the length of the run.
 //
 
 import BASICCompilerKit
@@ -19,6 +21,7 @@ import BASICCore
 import BASICWasm
 import BASICWasmRunner
 import Foundation
+import VectorTerminalSDK
 
 extension StudioModel {
     /// Compiles the editor's program to WebAssembly and runs it. `echo` is the
@@ -34,6 +37,10 @@ extension StudioModel {
         wasmRun = run
         isJITRunning = true
         setCompiledRunInputActive(true)
+        beginCompiledRunGraphics()
+        // The console's mouse, resizes, gamepads and the program's windows
+        // post to the session; for this run they are the compiled program's.
+        session.sendsHostEventsToCompiledProgram = true
         run.start()
     }
 
@@ -42,8 +49,8 @@ extension StudioModel {
         wasmRun = nil
         isJITRunning = false
         setCompiledRunInputActive(false)
-        // Its windows go with it: nothing is left to answer them.
-        auiBridge.closeAll()
+        session.sendsHostEventsToCompiledProgram = false
+        endCompiledRunGraphics(stoppedShort: ending != .finished)
         switch ending {
         case .finished, .failed, .stopped:
             break
@@ -65,6 +72,8 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     }
 
     private weak var model: StudioModel?
+    /// The console's canvas, for this run's graphics.
+    private let canvas: VectorTerminalCanvas
     private let source: String
     private let name: String
     private let directory: String
@@ -74,6 +83,7 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
 
     init(model: StudioModel, source: String, name: String, directory: String) {
         self.model = model
+        canvas = model.makeCompiledRunCanvas()
         self.source = source
         self.name = name
         self.directory = directory
@@ -104,10 +114,15 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
 
     private func go() -> Ending {
         let program: WasmProgram
+        let started = DispatchTime.now()
+        var translated = started
         do {
             // Its ActiveUI windows are Studio's.
             let ir = try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true)
+            let compiled = DispatchTime.now()
             program = try WasmTranslator.translate(llvmIR: ir)
+            translated = DispatchTime.now()
+            Self.time("compile \(Self.milliseconds(started, compiled)) ms, translate \(Self.milliseconds(compiled, translated)) ms")
         } catch let error as CompileError {
             return .refused(error.diagnostics.map(\.rendered))
         } catch {
@@ -126,13 +141,27 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         FileManager.default.changeCurrentDirectoryPath(directory)
         defer { FileManager.default.changeCurrentDirectoryPath(previous) }
 
-        switch runner.run(host: self) {
+        let outcome = runner.run(host: self)
+        Self.time("run \(Self.milliseconds(translated, DispatchTime.now())) ms")
+        switch outcome {
         case .finished: return .finished
         case .failed: return .failed
         case .stopped: return .stopped
         case .notLoaded(let reason): return .refused(["WebAssembly: \(reason)"])
         case .trapped(let reason): return .refused(["WebAssembly: the module failed: \(reason)"])
         }
+    }
+
+    /// With `BASICSTUDIO_WASM_TIMING` set, how long each step took, on
+    /// stderr: for comparing engines and devices (WASM_BACKEND.md), never
+    /// in the console.
+    private static func time(_ text: String) {
+        guard ProcessInfo.processInfo.environment["BASICSTUDIO_WASM_TIMING"] != nil else { return }
+        FileHandle.standardError.write(Data("BASIC-45 timing: \(text)\n".utf8))
+    }
+
+    private static func milliseconds(_ from: DispatchTime, _ to: DispatchTime) -> String {
+        String(format: "%.1f", Double(to.uptimeNanoseconds - from.uptimeNanoseconds) / 1_000_000)
     }
 
     // MARK: WasmHost — the interpreter's console
@@ -149,8 +178,19 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         model?.readKey() ?? ""
     }
 
-    /// Studio's windows, which the interpreter's programs use too.
-    var activeUIHost: BASICAUIHost? {
-        model
+    /// Studio's windows, canvas, touch controls and keys, which the
+    /// interpreter's programs use too.
+    var services: WasmHostServices {
+        guard let model else { return WasmHostServices() }
+        return WasmHostServices(
+            windows: model,
+            touchControls: model,
+            canvas: canvas,
+            canvasSize: { [weak model] in model?.compiledRunCanvasSize() ?? (width: 0, height: 0) },
+            screenSize: { [weak model] in (columns: model?.screenColumns() ?? 80, rows: model?.screenRows() ?? 25) },
+            keyDown: { [weak model] name in model?.isKeyDown(name) ?? nil },
+            readKey: { [weak model] in model?.readBlockingKey() },
+            tui: model
+        )
     }
 }

@@ -89,7 +89,7 @@ struct WasmActiveUITests {
         func write(_ text: String) { output += text }
         func readLine(prompt: String) -> String? { nil }
         func inkey() -> String { "" }
-        var activeUIHost: BASICAUIHost? { windows }
+        var services: WasmHostServices { WasmHostServices(windows: windows) }
     }
 
     /// Compiles `source` as Studio does for a WebAssembly run, and runs it
@@ -219,6 +219,30 @@ struct WasmActiveUITests {
         """, windows: windows)
         #expect(outcome == .finished(0))
         #expect(output == "picked Grace at 1\nclosed\nafter run, clicks 2\n", "\(output)")
+    }
+
+    @Test("A timer's handler runs while run() waits, and can close the window")
+    func timerClosesWindow() throws {
+        let (outcome, output) = try Self.run("""
+        GLOBAL w = AUIWindow("Timed")
+        w.onclose("Closed")
+        let timer = SecondsTimer(0.2)
+        timer.start()
+        on timer gosub TimeUp
+        w.run()
+        print "run returned"
+
+        function TimeUp(event as variant)
+            print "time up"
+            w.close()
+        end function
+
+        function Closed()
+            print "closed"
+        end function
+        """)
+        #expect(outcome == .finished(0))
+        #expect(output == "time up\nrun returned\n", "\(output)")
     }
 
     @Test("A dialog's show answers the button pressed")

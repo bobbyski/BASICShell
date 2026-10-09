@@ -6,6 +6,7 @@ import BASICWasm
 import BASICWasmHostC
 import Foundation
 import JavaScriptCore
+import VectorTerminalSDK
 
 // Runs a program basicc compiled to WebAssembly, in JavaScriptCore, with the
 // native BASICRT answering its imports (BASIC-45; Documents/WASM_BACKEND.md).
@@ -33,13 +34,55 @@ public protocol WasmHost: AnyObject {
     func readLine(prompt: String) -> String?
     /// The next key pressed, or "" when none is waiting.
     func inkey() -> String
-    /// The windows the program's ActiveUI controls go in, or nil when this
-    /// host has none: then a control says so, as the interpreter's does.
-    var activeUIHost: BASICAUIHost? { get }
+    /// What else the host has for the program: none, by default.
+    var services: WasmHostServices { get }
 }
 
 extension WasmHost {
-    public var activeUIHost: BASICAUIHost? { nil }
+    public var services: WasmHostServices { WasmHostServices() }
+}
+
+/// What a host gives a program beyond its console: BASICStudio's windows,
+/// canvas, touch controls and keys, which its interpreted programs use too.
+/// Anything nil is what a program has without a host.
+public struct WasmHostServices {
+    /// Where ActiveUI controls go; nil, and a control says so, as the
+    /// interpreter's does.
+    public var windows: BASICAUIHost?
+    /// The touch screen `TouchControls` puts its controls on.
+    public var touchControls: BASICTouchControlsHost?
+    /// The VTG canvas graphics draw on; nil, and a terminal on stdout.
+    public var canvas: VectorTerminalCanvas?
+    /// The canvas's size, in its own units.
+    public var canvasSize: (() -> (width: Int, height: Int))?
+    /// The console's size in characters, for SCREENWIDTH and SCREENHEIGHT.
+    public var screenSize: (() -> (columns: Int, rows: Int))?
+    /// Whether a key, by its canonical name, is held; nil when unknown.
+    public var keyDown: ((String) -> Bool?)?
+    /// The next key, waiting for one (INPUT$); nil when Stop cancelled the wait.
+    public var readKey: (() -> String?)?
+    /// Where TUIKit applications draw; nil, and a terminal on stdout.
+    public var tui: BASICTUIPresentationHost?
+
+    public init(
+        windows: BASICAUIHost? = nil,
+        touchControls: BASICTouchControlsHost? = nil,
+        canvas: VectorTerminalCanvas? = nil,
+        canvasSize: (() -> (width: Int, height: Int))? = nil,
+        screenSize: (() -> (columns: Int, rows: Int))? = nil,
+        keyDown: ((String) -> Bool?)? = nil,
+        readKey: (() -> String?)? = nil,
+        tui: BASICTUIPresentationHost? = nil
+    ) {
+        self.windows = windows
+        self.touchControls = touchControls
+        self.canvas = canvas
+        self.canvasSize = canvasSize
+        self.screenSize = screenSize
+        self.keyDown = keyDown
+        self.readKey = readKey
+        self.tui = tui
+    }
 }
 
 /// How a run ended.
@@ -140,7 +183,14 @@ public final class WasmRunner: @unchecked Sendable {
         RTHosted.checkStop = { [unowned self] in
             if self.isStopRequested { basic_wasm_unwind(Self.stopCode) }
         }
-        if let windows = host.activeUIHost { RTHostAUI.install(host: windows) }
+        RTHosted.isStopRequested = { [unowned self] in self.isStopRequested }
+        let services = host.services
+        RTHostHosted.install(
+            windows: services.windows, touchControls: services.touchControls,
+            canvas: services.canvas, canvasSize: services.canvasSize,
+            screenSize: services.screenSize, keyDown: services.keyDown, readKey: services.readKey,
+            tui: services.tui
+        )
         WasmCallbacks.reset()
         basic_wasm_set_dispatchers(dispatchPtrVoid, dispatchPtrPtr, dispatchVoidPtr, dispatchPtrDouble)
         defer {
@@ -149,7 +199,8 @@ public final class WasmRunner: @unchecked Sendable {
             RTHosted.inkey = nil
             RTHosted.unwind = nil
             RTHosted.checkStop = nil
-            RTHostAUI.uninstall()
+            RTHosted.isStopRequested = nil
+            RTHostHosted.uninstall()
             WasmCallbacks.reset()
             Self.current = nil
             context = nil

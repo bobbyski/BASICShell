@@ -120,6 +120,48 @@ struct StudioWasmRunTests {
         #expect(bridge.views.isEmpty, "the program's controls go when it ends")
     }
 
+    /// What the console's VTG view was sent, as text.
+    private final class Drawn {
+        var data = Data()
+        var text: String { String(decoding: data, as: UTF8.self) }
+    }
+
+    @Test("Graphics go to the console's canvas, its mouse reaches the program, and touch controls are Studio's")
+    func graphicsMouseAndTouch() async throws {
+        let studio = StudioHarness(program: """
+        GLOBAL clicked = 0
+        let vtg = VectorTerminal()
+        let touch = TouchControls()
+        touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 160)
+        vtg.line("diagonal", 10, 20, 300, 200, "#5eead4", 3)
+        vtg.present()
+        on mouse down call Pressed
+        print "ready"
+        while clicked = 0
+            yield
+        wend
+        print "clicked at "; clicked
+
+        function Pressed(e as BASICMouseEvent)
+            clicked = e.x
+        end function
+        """)
+        let drawn = Drawn()
+        studio.model.vtgDataSink = { drawn.data.append($0) }
+        studio.model.compiledRunTarget = .webAssembly
+        studio.model.jitEditorProgram()
+        try await studio.waitUntil("the program to be ready", timeout: .seconds(60)) {
+            studio.model.consoleText.contains("ready\n")
+        }
+        #expect(studio.model.touchControls.snapshot().map(\.control.id) == ["stick"])
+        studio.model.postVTGMouseEvent(subtype: "DOWN", x: 42, y: 7, button: 0, buttons: 1, duration: 0)
+        try await waitUntilFinished(studio)
+        #expect(studio.model.consoleText.contains("clicked at 42"), "\(studio.model.consoleText.suffix(300))")
+        try await studio.waitUntil("the drawing to reach the console") { drawn.text.contains("_VTG;line,id=diagonal") }
+        #expect(studio.model.touchControls.isEmpty, "the program's controls go when it ends")
+        #expect(!studio.model.session.sendsHostEventsToCompiledProgram, "the interpreter has its events back")
+    }
+
     @Test("On the Mac the choice is the person's, and LLVM is the default")
     func choice() {
         #expect(StudioCompiledRunTarget.isChoosable)

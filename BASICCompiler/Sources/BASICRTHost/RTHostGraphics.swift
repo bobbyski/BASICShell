@@ -13,6 +13,33 @@ enum RTHostCanvas {
     /// Where the live size came from, for the dictionary a query returns.
     nonisolated(unsafe) static var liveSource: String?
     nonisolated(unsafe) static var liveRawResponse: String?
+    /// The size of a host's canvas, for a hosted run (BASIC-45); nil when
+    /// the canvas is a terminal on stdout.
+    nonisolated(unsafe) static var hostedSize: (() -> (width: Int, height: Int))?
+
+    /// Whether the canvas is a host's (BASICStudio's) rather than a terminal's.
+    static var isHosted: Bool { hostedSize != nil }
+
+    /// Draws on `canvas`, a host's, for the run about to start: no probe,
+    /// and the size is the host's to say.
+    static func installHosted(_ canvas: VectorTerminalCanvas, size: @escaping () -> (width: Int, height: Int)) {
+        self.canvas = canvas
+        probed = true
+        hostedSize = size
+        liveSize = size()
+        liveSource = "canvas"
+        liveRawResponse = nil
+    }
+
+    /// The run is over: the next one probes, or is given a canvas, afresh.
+    static func uninstallHosted() {
+        canvas = nil
+        probed = false
+        hostedSize = nil
+        liveSize = (0, 0)
+        liveSource = nil
+        liveRawResponse = nil
+    }
 
     /// The Shell's probe: a terminal on stdout that answers `capabilities?`
     /// within 750 ms, else no graphics.

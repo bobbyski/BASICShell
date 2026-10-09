@@ -31,6 +31,9 @@ enum RTSound {
         #else
         let session = BASICSoundSession.forProgram(output: nil)
         #endif
+        // Hosted, Stop interrupts a note being waited for, as the
+        // interpreter's break request does; natively nothing does.
+        session.interrupted = { RTHosted.isStopRequested?() ?? false }
         current = session
         return session
     }
@@ -46,6 +49,8 @@ enum RTSound {
         do {
             try body()
         } catch let error as BASICSoundError {
+            // A Stop, hosted: the notes are silenced, and the run ends with Break.
+            if error == .interrupted { RTHosted.checkStop?() }
             basic_rt_fail(error.message)
         } catch {
             basic_rt_fail("\(error)")

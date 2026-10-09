@@ -6,53 +6,16 @@ import Foundation
 //
 // The windows are the app's: BASICStudio's, which answer the interpreter's
 // own requests. What a control takes and does is BASICCore's, as for TUIKit;
-// this is the thin part: the values crossing, the errors coming back, and
-// what the user did, carried into the program's event queue so its handlers
-// run on its own thread, between statements and while a window's `run`
-// waits, as the interpreter runs them.
+// this is the thin part: the values crossing and the errors coming back.
+// What the user does reaches the program's handlers through RTHostHosted's
+// event collection, between statements and while a window's `run` waits.
 
-/// The windows a run has, and the user's actions on their way to it.
-public enum RTHostAUI {
+/// The windows a run has. Installed with the rest of a hosted run's
+/// services (`RTHostHosted`).
+enum RTHostAUI {
     /// The app's windows, for the run in progress. Nil: a control says what
     /// the interpreter says when its host has none.
     nonisolated(unsafe) static var host: BASICAUIHost?
-
-    /// Gives the next run `host`'s windows, with nothing left from the last.
-    public static func install(host: BASICAUIHost) {
-        BASICCompiledAUI.reset()
-        self.host = host
-        RTHosted.collectEvents = collect
-    }
-
-    /// The run is over: no windows, and nothing waiting for it.
-    public static func uninstall() {
-        host = nil
-        RTHosted.collectEvents = nil
-        BASICCompiledAUI.reset()
-    }
-
-    /// Queues what the user did: for the control's own handler when it named
-    /// one, else for `ON AUI <kind> CALL`. A handler named but not in the
-    /// program does nothing, as the interpreter's does.
-    static func collect() {
-        for event in BASICCompiledAUI.takeEvents() {
-            let fields: [String: RTValue] = [
-                "type": .string(RTText("AUI")),
-                "subtype": .string(RTText(event.kind)),
-                "source": .number(Double(event.source)),
-                "text": .string(RTText(event.text)),
-                "index": .number(Double(event.index)),
-                "column": .number(Double(event.column)),
-                "timestamp": .number(Date().timeIntervalSince1970),
-            ]
-            var handler: RTEventHandler?
-            if let name = BASICCompiledAUI.handler(id: event.source, kind: event.kind) {
-                guard let trampoline = RTTUIHandlers.trampolines[name.uppercased()] else { continue }
-                handler = RTEventHandler(trampoline: trampoline, typeIndex: RTTypes.index(ofType: "BASICAUIEVENT") ?? -1)
-            }
-            RTEvents.post(type: "AUI", subtype: event.kind, fields: fields, handler: handler)
-        }
-    }
 }
 
 // MARK: - The two value shapes

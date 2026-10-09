@@ -236,6 +236,7 @@ enum RTSystem {
     /// arguments as the interpreter does and shows nothing, and every poll
     /// reads a control at rest.
     static func callTouchControls(method: String, arguments: [RTValue]) -> RTValue {
+        if let hosted = RTHosted.touchControls { return hosted(method, arguments) }
         func expect(_ count: Int, _ name: String) {
             guard arguments.count == count else { basic_rt_fail("\(name) expects \(count) argument\(count == 1 ? "" : "s")") }
         }

@@ -14,36 +14,20 @@ import Foundation
 /// control takes, what a table's column may be called and what `run` waits
 /// for were settled in the interpreter's runtime; this calls that code
 /// rather than repeating it, so the two engines cannot disagree. Only the
-/// values crossing between the two runtimes, and the user's actions on their
-/// way back, are handled here.
+/// values crossing between the two runtimes are handled here; what the user
+/// does comes back through ``BASICCompiledEvents``.
 public enum BASICCompiledAUI {
     /// A value crossing between the two runtimes: the TUI binding's shapes.
     public typealias Value = BASICCompiledTUI.Value
     /// What went wrong, as the interpreter would have said it.
     public typealias Failure = BASICCompiledTUI.Failure
 
-    /// One thing the user did to a control, as the host posts it: the
-    /// interpreter's `postAUIEvent`.
-    public struct Event: Sendable, Equatable {
-        public let kind: String
-        public let source: Int
-        public let text: String
-        public let index: Int
-        public let column: Int
-    }
-
-    private static let lock = NSLock()
     /// The controls and their handlers, on the program's thread.
     nonisolated(unsafe) private static var runtime = BASICRuntime()
-    /// What the user did, from the host's thread to the program's.
-    nonisolated(unsafe) private static var events: [Event] = []
 
-    /// A new run: no controls, no handlers, nothing waiting.
+    /// A new run: no controls, no handlers.
     public static func reset() {
-        lock.lock()
-        defer { lock.unlock() }
         runtime = BASICRuntime()
-        events = []
     }
 
     /// Makes control `typeName(arguments…)` on `host`'s windows; its id.
@@ -90,20 +74,18 @@ public enum BASICCompiledAUI {
         runtime.auiHandler(id: id, kind: kind)
     }
 
-    /// Queues what the user did. Safe from any thread.
+    /// Queues what the user did, as ``BASICSession/postAUIEvent(kind:source:text:index:column:)``
+    /// does for the interpreter. Safe from any thread.
     public static func post(kind: String, source: Int, text: String = "", index: Int = -1, column: Int = -1) {
-        lock.lock()
-        defer { lock.unlock() }
-        events.append(Event(kind: kind.uppercased(), source: source, text: text, index: index, column: column))
-    }
-
-    /// Everything queued since the last call, oldest first.
-    public static func takeEvents() -> [Event] {
-        lock.lock()
-        defer { lock.unlock() }
-        let taken = events
-        events = []
-        return taken
+        BASICCompiledEvents.post(type: "AUI", subtype: kind, fields: [
+            "type": .string("AUI"),
+            "subtype": .string(kind.uppercased()),
+            "source": .number(Double(source)),
+            "text": .string(text),
+            "index": .number(Double(index)),
+            "column": .number(Double(column)),
+            "timestamp": .number(Date().timeIntervalSince1970),
+        ])
     }
 
     // MARK: - The two value shapes

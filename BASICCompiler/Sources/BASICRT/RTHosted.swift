@@ -43,9 +43,27 @@ public enum RTHosted {
     /// otherwise. For a wait inside the runtime — an ActiveUI window's
     /// `run` — where the compiled code's own loop checks never come.
     nonisolated(unsafe) public static var checkStop: (() -> Void)?
+    /// Whether the host was asked to stop the run, for a wait that must tidy
+    /// up before it ends: a PLAY silences its notes, then `checkStop` ends it.
+    nonisolated(unsafe) public static var isStopRequested: (() -> Bool)?
     /// Brings events the host collected on other threads into the queue: an
     /// ActiveUI click. Called at every drain, before the queue is read.
     nonisolated(unsafe) public static var collectEvents: (() -> Void)?
+    /// The next key pressed, waiting for one, for INPUT$(n); nil when the
+    /// wait was cancelled (Stop). Nil: the terminal on stdin.
+    nonisolated(unsafe) public static var readKey: (() -> String?)?
+    /// Whether the key with this canonical name is held, or nil when the host
+    /// cannot tell, for KEYDOWN. Nil: what INKEY$ has seen.
+    nonisolated(unsafe) public static var keyDown: ((String) -> Bool?)?
+    /// The console's size in characters, for SCREENWIDTH and SCREENHEIGHT.
+    /// Nil: the terminal on stdout.
+    nonisolated(unsafe) public static var screenSize: (() -> (columns: Int, rows: Int))?
+    /// Whether the picture stays when the program ends. A terminal's is
+    /// cleared, as the Shell clears it for its prompt; Studio's canvas keeps
+    /// it, as it does an interpreted program's.
+    nonisolated(unsafe) public static var keepsGraphicsAtEnd = false
+    /// The host's `TouchControls`. Nil: none, as a terminal has.
+    nonisolated(unsafe) package static var touchControls: ((_ method: String, _ arguments: [RTValue]) -> RTValue)?
 
     /// Whether a host has the runtime.
     public static var isActive: Bool { unwind != nil }
@@ -61,6 +79,21 @@ public enum RTHosted {
         RTSound.finish()
         RTGraphics.finish()
         RTTasks.finish()
+    }
+
+    /// SLEEP, hosted: in short slices, with Stop checked between them, as the
+    /// interpreter's SLEEP sees a Stop. A game sleeping each frame would
+    /// otherwise reach the compiled code's loop check only every few minutes.
+    static func sleep(milliseconds: Int) {
+        guard let checkStop else { return }
+        var left = milliseconds
+        checkStop()
+        while left > 0 {
+            let slice = min(left, 10)
+            usleep(UInt32(slice) * 1000)
+            left -= slice
+            checkStop()
+        }
     }
 
     /// Writes console text where the host wants it, or to stdout.

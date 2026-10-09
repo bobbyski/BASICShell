@@ -23,7 +23,8 @@ enum RTHostVTG {
     }
 
     static func startPolling(_ canvas: VectorTerminalCanvas) {
-        guard !pollingEnabled, isatty(STDIN_FILENO) == 1 else { return }
+        // A hosted run's events come from its host, not a terminal on stdin.
+        guard !pollingEnabled, !RTHostCanvas.isHosted, isatty(STDIN_FILENO) == 1 else { return }
         var original = termios()
         if tcgetattr(STDIN_FILENO, &original) == 0 {
             var raw = original
@@ -81,6 +82,30 @@ enum RTHostVTG {
     static func optionalInteger(_ arguments: [RTValue], _ index: Int) -> Int? {
         present(arguments, index) ? integer(arguments[index]) : nil
     }
+    /// `draw`'s points, as the interpreter's `vtgPoints` reads them: an array
+    /// of x, y pairs, or the same in a string separated by commas, spaces
+    /// or semicolons.
+    static func points(_ value: RTValue) -> [VTGPoint] {
+        let numbers: [Int]
+        switch value {
+        case .array(let array):
+            guard array.values.count >= 4, array.values.count.isMultiple(of: 2) else {
+                basic_rt_fail("draw points array must contain x,y pairs")
+            }
+            numbers = array.values.map(integer)
+        case .string(let text):
+            numbers = text.description
+                .split { $0 == "," || $0 == " " || $0 == ";" }
+                .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            guard numbers.count >= 4, numbers.count.isMultiple(of: 2) else {
+                basic_rt_fail("draw points string must contain x,y pairs")
+            }
+        default:
+            basic_rt_fail("draw points must be an array or x,y string")
+        }
+        return stride(from: 0, to: numbers.count, by: 2).map { VTGPoint(x: numbers[$0], y: numbers[$0 + 1]) }
+    }
+
     static func color(_ value: String?) -> VTGColor? {
         guard let value, value.lowercased() != "none" else { return nil }
         return VTGColor(value)
@@ -158,6 +183,11 @@ enum RTHostVTG {
             let style = lineStyle(arguments)
             canvas.line(id: string(arguments[0]), x1: integer(arguments[1]), y1: integer(arguments[2]), x2: integer(arguments[3]), y2: integer(arguments[4]),
                         stroke: VTGColor(string(arguments[5])), width: optionalInteger(arguments, 6) ?? 1, lineCap: lineCap(style.lineCap), layer: style.layer)
+        case "DRAW":
+            count(arguments, 3...7, "draw")
+            canvas.draw(id: string(arguments[0]), points: points(arguments[1]), stroke: VTGColor(string(arguments[2])),
+                        width: optionalInteger(arguments, 3) ?? 1, lineCap: lineCap(optionalString(arguments, 4)),
+                        lineJoin: lineJoin(optionalString(arguments, 5)), layer: optionalInteger(arguments, 6))
         case "RECT":
             count(arguments, 5...12, "rect")
             let style = rectStyle(arguments)
@@ -204,6 +234,12 @@ enum RTHostVTG {
             // The Shell answers a zero timeout from the size the terminal
             // last reported rather than asking it again.
             guard timeout > 0 else { return liveCanvasValue() }
+            // A host's canvas cannot be asked over a stream; the host says.
+            if let hostedSize = RTHostCanvas.hostedSize {
+                RTHostCanvas.liveSize = hostedSize()
+                RTHostCanvas.liveSource = "canvas"
+                return liveCanvasValue()
+            }
             let queried: VTGCanvas?
             switch method.uppercased() {
             case "QUERYCURRENTCANVAS": queried = canvas.queryCurrentCanvas(timeoutMilliseconds: timeout)
@@ -258,6 +294,12 @@ public func basic_rt_host_gfx_finish() {
 @_cdecl("basic_rt_host_mouse_reporting")
 public func basic_rt_host_mouse_reporting(_ enabled: Bool) {
     guard let canvas = RTHostCanvas.probe() else { return }
+    // A host's canvas takes the VTG request only: there is no terminal to
+    // put into raw mode, and no ANSI mouse modes to set.
+    if RTHostCanvas.isHosted {
+        if enabled { canvas.enableMouseReporting(mode: "all") } else { canvas.disableMouseReporting() }
+        return
+    }
     if enabled {
         // The Shell's `requireVectorTerminal`: a program reading events keeps
         // the terminal raw, so a report is never held back by the line
