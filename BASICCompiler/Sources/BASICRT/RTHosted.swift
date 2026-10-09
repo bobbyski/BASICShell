@@ -43,6 +43,19 @@ public enum RTHosted {
     /// Whether a host has the runtime.
     public static var isActive: Bool { unwind != nil }
 
+    /// What a Stop says: the interpreter's, and a native program's on Ctrl-C.
+    public static func breakMessage() -> String {
+        "Break at \(RTLocations.current()?.line ?? RTError.line)"
+    }
+
+    /// The runtime's end-of-program tidy-up, for a run that was stopped or
+    /// failed before compiled code reached its own `basic_rt_finish`.
+    public static func finish() {
+        RTSound.finish()
+        RTGraphics.finish()
+        RTTasks.finish()
+    }
+
     /// Writes console text where the host wants it, or to stdout.
     static func write(_ text: String) {
         if let output {

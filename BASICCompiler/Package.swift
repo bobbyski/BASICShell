@@ -49,6 +49,9 @@ let package = Package(
         // JavaScriptCore. Reads the text the LLVM path writes; changes nothing
         // about how it is written.
         .library(name: "BASICWasm", targets: ["BASICWasm"]),
+        // Runs such a module in JavaScriptCore, the native BASICRT answering
+        // its imports, inside an app (Apple platforms).
+        .library(name: "BASICWasmRunner", targets: ["BASICWasmRunner"]),
         .library(name: "BASICRT", type: .static, targets: ["BASICRT"]),
         // Rev 2's root class. Small on purpose: it exists so every BASIC
         // class has a real Swift class above it (see BASICObject).
@@ -81,6 +84,10 @@ let package = Package(
         ),
         .target(name: "BASICDialectTraditional", dependencies: ["BASICCompilerKit"]),
         .target(name: "BASICWasm"),
+        .target(name: "BASICWasmHostC"),
+        // The whole runtime, host half included (databases, rich text, VTG,
+        // TUIKit), as a native program links it.
+        .target(name: "BASICWasmRunner", dependencies: ["BASICWasm", "BASICRT", "BASICRTHost", "BASICWasmHostC"]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         // BASICSound is the interpreter's own sound model — events, the music
         // macro language, timing, and the synthesizer — so SOUND and PLAY
@@ -98,12 +105,14 @@ let package = Package(
             .product(name: "BASICCore", package: "BASICCore"),
             // MongoDB (D8, DB11): the host half links the driver, so a
             // compiled program reaches the same databases the shell does.
-            .product(name: "BASICMongo", package: "BASICCore"),
+            // Not on iOS: MongoKitten does not build there, and an iPad's
+            // programs reach SQLite and data stores, not a MongoDB server.
+            .product(name: "BASICMongo", package: "BASICCore", condition: .when(platforms: [.macOS, .linux])),
         ]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner"]
         ),
         .executableTarget(
             name: "BASICLintCLI",
@@ -113,11 +122,11 @@ let package = Package(
         .plugin(name: "BASICBuildPlugin", capability: .buildTool(), dependencies: ["basicc"]),
         .executableTarget(
             name: "basictest",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner"]
         ),
         .testTarget(
             name: "BASICCompilerKitTests",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm"]
+            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner"]
         ),
     ]
 )

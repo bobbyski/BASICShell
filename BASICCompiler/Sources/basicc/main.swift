@@ -2,6 +2,9 @@ import BASICCompilerKit
 import BASICDialectSwift
 import BASICDialectTraditional
 import BASICWasm
+#if canImport(JavaScriptCore)
+import BASICWasmRunner
+#endif
 import Foundation
 
 // basicc — the CLI driver.
@@ -273,10 +276,33 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     }
     try Data(program.bytes).write(to: URL(fileURLWithPath: path))
-    if thenRun {
-        fail("basicc run --target wasm needs the WebAssembly runner, which this build does not have")
+    guard thenRun else {
+        print("wrote \(path) (\(program.bytes.count) bytes, \(program.imports.count) imports)")
+        return
     }
-    print("wrote \(path) (\(program.bytes.count) bytes, \(program.imports.count) imports)")
+    #if canImport(JavaScriptCore)
+    // basicc is the host: the program's console is basicc's own.
+    final class Console: WasmHost {
+        func write(_ text: String) { fputs(text, stdout) }
+        func readLine(prompt: String) -> String? {
+            fputs(prompt, stdout)
+            fflush(stdout)
+            return Swift.readLine(strippingNewline: true)
+        }
+        func inkey() -> String { "" }
+    }
+    let outcome = WasmRunner(program: program).run(host: Console())
+    fflush(stdout)
+    switch outcome {
+    case .finished(let code): exit(code)
+    case .failed: exit(1)
+    case .stopped: exit(130)
+    case .notLoaded(let reason): fail(reason)
+    case .trapped(let reason): fail("the WebAssembly module failed: \(reason)", code: 70)
+    }
+    #else
+    fail("basicc run --target wasm needs JavaScriptCore")
+    #endif
 }
 
 let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))

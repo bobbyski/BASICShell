@@ -1,6 +1,10 @@
 import BASICCompilerKit
 import BASICDialectSwift
 import BASICDialectTraditional
+import BASICWasm
+#if canImport(JavaScriptCore)
+import BASICWasmRunner
+#endif
 import Foundation
 
 // basictest — the conformance runner (BASIC_COMPILER.md, Phase 4.8).
@@ -26,6 +30,9 @@ struct Options {
     var interpreter: String?
     var dialect: String?
     var update = false
+    /// `llvm` (native binaries, the default) or `wasm` (BASIC-45: each
+    /// program translated to WebAssembly and run here, in JavaScriptCore).
+    var target = "llvm"
 
     init(_ arguments: [String]) {
         var index = 0
@@ -39,6 +46,9 @@ struct Options {
                 dialect = arguments[index]
             case "--update":
                 update = true
+            case "--target":
+                index += 1
+                target = arguments[index]
             case let path:
                 directory = URL(fileURLWithPath: path).standardizedFileURL.path
             }
@@ -59,6 +69,34 @@ func run(_ executable: String, _ arguments: [String]) throws -> (stdout: String,
     let data = out.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return (String(decoding: data, as: UTF8.self), process.terminationStatus)
+}
+
+/// The program's output, compiled to WebAssembly and run in JavaScriptCore
+/// in this process with no input, as a native one is run with none.
+func runAsWebAssembly(_ path: String) throws -> String {
+    #if canImport(JavaScriptCore)
+    final class Capture: WasmHost {
+        var output = ""
+        func write(_ text: String) { output += text }
+        func readLine(prompt: String) -> String? { output += prompt; return nil }
+        func inkey() -> String { "" }
+    }
+    let ir = try Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false)).llvmIR(sourcePath: path)
+    let program = try WasmTranslator.translate(llvmIR: ir)
+    let capture = Capture()
+    switch WasmRunner(program: program).run(host: capture) {
+    case .notLoaded(let reason): throw WebAssemblyRunError(reason: "not loaded: \(reason)")
+    case .trapped(let reason): throw WebAssemblyRunError(reason: "trapped: \(reason)")
+    default: return capture.output
+    }
+    #else
+    throw WebAssemblyRunError(reason: "no JavaScriptCore")
+    #endif
+}
+
+struct WebAssemblyRunError: Error, CustomStringConvertible {
+    let reason: String
+    var description: String { reason }
 }
 
 let options = Options(Array(CommandLine.arguments.dropFirst()))
@@ -96,8 +134,13 @@ for program in programs {
     }
 
     do {
-        try Compilation(dialect: dialect).build(sourcePath: path, output: binary)
-        let compiled = try run(binary, []).stdout
+        let compiled: String
+        if options.target == "wasm" {
+            compiled = try runAsWebAssembly(path)
+        } else {
+            try Compilation(dialect: dialect).build(sourcePath: path, output: binary)
+            compiled = try run(binary, []).stdout
+        }
         if let expected = try? String(contentsOfFile: expectedPath, encoding: .utf8) {
             verdicts.append(compiled == expected ? "expected ✓" : "expected ✗")
         } else {

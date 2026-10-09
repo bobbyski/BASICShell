@@ -1,5 +1,7 @@
 import BASICCore
+#if canImport(BASICMongo)
 import BASICMongo
+#endif
 import BASICRT
 import BASICSyntax
 import Foundation
@@ -66,7 +68,9 @@ private let installMigrationInvoker: Void = {
     // a compiled program recognizes `mongodb://` exactly as the shell does. Done
     // on the same first-use path, so a program that never opens a database pays
     // nothing for it.
+    #if canImport(BASICMongo)
     BASICMongoProvider.register()
+    #endif
     BASICCompiledData.setMigrationInvoker { name in
         guard RTTUIHandlers.has(name) else {
             throw BASICCompiledData.Failure(
