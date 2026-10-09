@@ -112,6 +112,9 @@ struct StudioSettings: Codable {
     var hidesGraphicsOnStop = true
     /// Say so when that happens; off once "Don't show this message again".
     var showsGraphicsHiddenNotice = true
+    /// A program's on-screen game controls are shown (Console ▸ Show
+    /// On-Screen Game Controls).
+    var showsGameControls = true
     /// File ▸ Open Recent's projects and files.
     var recentItems = StudioRecentItems()
     /// How ⚡ builds a program on the Mac (BASIC-45). iPhone and iPad always
@@ -146,6 +149,7 @@ struct StudioSettings: Codable {
         case keepsProgramsInICloud
         case hidesGraphicsOnStop
         case showsGraphicsHiddenNotice
+        case showsGameControls
         case recentItems
         case compiledRunTarget
     }
@@ -167,6 +171,7 @@ struct StudioSettings: Codable {
         keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud,
         hidesGraphicsOnStop: Bool = true,
         showsGraphicsHiddenNotice: Bool = true,
+        showsGameControls: Bool = true,
         recentItems: StudioRecentItems = StudioRecentItems(),
         compiledRunTarget: StudioCompiledRunTarget = .llvm
     ) {
@@ -186,6 +191,7 @@ struct StudioSettings: Codable {
         self.keepsProgramsInICloud = keepsProgramsInICloud
         self.hidesGraphicsOnStop = hidesGraphicsOnStop
         self.showsGraphicsHiddenNotice = showsGraphicsHiddenNotice
+        self.showsGameControls = showsGameControls
         self.recentItems = recentItems
         self.compiledRunTarget = compiledRunTarget
     }
@@ -211,6 +217,7 @@ struct StudioSettings: Codable {
             ?? Self.defaultKeepsProgramsInICloud
         hidesGraphicsOnStop = try container.decodeIfPresent(Bool.self, forKey: .hidesGraphicsOnStop) ?? true
         showsGraphicsHiddenNotice = try container.decodeIfPresent(Bool.self, forKey: .showsGraphicsHiddenNotice) ?? true
+        showsGameControls = try container.decodeIfPresent(Bool.self, forKey: .showsGameControls) ?? true
         recentItems = (try? container.decodeIfPresent(StudioRecentItems.self, forKey: .recentItems)) ?? StudioRecentItems()
         compiledRunTarget = (try? container.decodeIfPresent(StudioCompiledRunTarget.self, forKey: .compiledRunTarget)) ?? .llvm
     }

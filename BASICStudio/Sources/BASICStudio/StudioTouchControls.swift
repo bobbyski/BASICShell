@@ -84,6 +84,31 @@ final class StudioTouchControls: @unchecked Sendable {
     private var controls: [BASICTouchControl] = []
     private var live: [String: Live] = [:]
     private var fingers: [Int: Finger] = [:]
+    private var shown = true
+
+    /// Whether the controls are on screen: Console ▸ Show On-Screen Game
+    /// Controls, for someone who would rather steer by touch or keyboard.
+    /// Hidden, nothing is drawn, every touch is the console's, the program is
+    /// told there is no touch screen to put controls on, and a finger that was
+    /// on one lets go. What the program placed is kept, for when they return.
+    var isShown: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return shown
+        }
+        set {
+            lock.lock()
+            let changedNow = shown != newValue
+            shown = newValue
+            if !newValue {
+                fingers.removeAll()
+                for id in live.keys { live[id] = Live() }
+            }
+            lock.unlock()
+            if changedNow { changed() }
+        }
+    }
 
     // MARK: - The program's side
 
@@ -139,16 +164,18 @@ final class StudioTouchControls: @unchecked Sendable {
     func snapshot() -> [Drawn] {
         lock.lock()
         defer { lock.unlock() }
+        guard shown else { return [] }
         return controls.map { control in
             let now = live[control.id] ?? Live()
             return Drawn(control: control, state: now.state, pressed: now.pressed, angle: now.angle)
         }
     }
 
+    /// Nothing on screen: none placed, or all of them hidden.
     var isEmpty: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return controls.isEmpty
+        return controls.isEmpty || !shown
     }
 
     private func changed() {
@@ -189,7 +216,8 @@ final class StudioTouchControls: @unchecked Sendable {
     }
 
     private func controlLocked(at point: CGPoint, in bounds: CGRect) -> BASICTouchControl? {
-        controls.last { control in
+        guard shown else { return nil }
+        return controls.last { control in
             let frame = Self.frame(of: control, in: bounds)
             let distance = hypot(point.x - frame.midX, point.y - frame.midY)
             return distance <= frame.width / 2

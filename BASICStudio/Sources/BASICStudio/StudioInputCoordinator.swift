@@ -401,7 +401,8 @@ extension StudioModel: BASICKeyStateHost {
 /// The program's on-screen controls: drawn on iPhone and iPad, kept but never
 /// shown on the Mac, which has no touch screen and says so.
 extension StudioModel: BASICTouchControlsHost {
-    nonisolated var touchControlsAvailable: Bool { StudioTouchControls.screenHasTouch }
+    /// A touch screen, with its controls not turned off from the Console menu.
+    nonisolated var touchControlsAvailable: Bool { StudioTouchControls.screenHasTouch && touchControls.isShown }
 
     nonisolated func placeTouchControl(_ control: BASICTouchControl) {
         touchControls.place(control)

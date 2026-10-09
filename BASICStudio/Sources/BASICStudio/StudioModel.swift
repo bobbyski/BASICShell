@@ -89,6 +89,17 @@ final class StudioModel: ObservableObject {
             saveSettings()
         }
     }
+    /// A program's on-screen game controls are shown (Console ▸ Show
+    /// On-Screen Game Controls). Off, programs are told there is no touch
+    /// screen, and play by touch as a mouse, a keyboard or a game controller.
+    @Published var showsGameControls = true {
+        didSet {
+            guard showsGameControls != oldValue else { return }
+            touchControls.isShown = showsGameControls
+            guard !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
     /// How ⚡ builds a program on the Mac (BASIC-45).
     @Published var compiledRunTarget: StudioCompiledRunTarget = .llvm {
         didSet {
@@ -341,6 +352,7 @@ final class StudioModel: ObservableObject {
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
         keepsProgramsInICloud = settings.keepsProgramsInICloud
         hidesGraphicsOnStop = settings.hidesGraphicsOnStop
+        showsGameControls = settings.showsGameControls
         compiledRunTarget = settings.compiledRunTarget
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         recentItems = settings.recentItems
@@ -2302,6 +2314,7 @@ final class StudioModel: ObservableObject {
                 keepsProgramsInICloud: keepsProgramsInICloud,
                 hidesGraphicsOnStop: hidesGraphicsOnStop,
                 showsGraphicsHiddenNotice: showsGraphicsHiddenNotice,
+                showsGameControls: showsGameControls,
                 recentItems: recentItems,
                 compiledRunTarget: compiledRunTarget
             )

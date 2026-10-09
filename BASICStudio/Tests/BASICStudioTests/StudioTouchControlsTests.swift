@@ -172,6 +172,21 @@ struct StudioTouchControlsTests {
         #expect(recorder.events == ["BUTTON A 1"])
     }
 
+    @Test("Hidden from the Console menu, the controls draw nothing, take no finger, and let go of a held stick")
+    func hidden() {
+        let (store, _) = store(stick, fire)
+        store.touchBegan(1, at: point(stick, 0.8, 0), in: screen)
+        #expect(store.state(id: "stick").x > 0.5)
+        store.isShown = false
+        #expect(store.snapshot().isEmpty)
+        #expect(store.isEmpty, "the keyboard comes back")
+        #expect(store.control(at: point(fire), in: screen) == nil, "a touch on where it was is the console's")
+        #expect(!store.touchBegan(2, at: point(fire), in: screen))
+        #expect(store.state(id: "stick") == BASICTouchControlState(), "the stick does not stay leaned")
+        store.isShown = true
+        #expect(store.snapshot().map(\.control.id) == ["stick", "fire"], "what the program placed comes back")
+    }
+
     /// A button's label is black only on a pale face: white reads on the
     /// strong colors a program gives its buttons.
     @Test("A button's label is black only on a pale face")
@@ -197,6 +212,30 @@ struct StudioTouchControlsTests {
 @MainActor
 @Suite("Touch controls in a running program", .serialized)
 struct StudioTouchControlsProgramTests {
+    @MainActor
+    @Test("Console ▸ Show On-Screen Game Controls turns them off and on, and is kept with the settings")
+    func menuToggle() throws {
+        let studio = StudioHarness()
+        let model = studio.model
+        #expect(model.showsGameControls)
+        #expect(MenuCommandModel.isChecked(.showGameControls, in: model) == true)
+        MenuCommandModel.perform(.showGameControls, on: model)
+        #expect(!model.showsGameControls)
+        #expect(!model.touchControls.isShown)
+        #expect(MenuCommandModel.isChecked(.showGameControls, in: model) == false)
+        #expect(!model.touchControlsAvailable, "a program is told there are none")
+        MenuCommandModel.perform(.showGameControls, on: model)
+        #expect(model.touchControls.isShown)
+
+        // Only where there is a touch screen to put them on.
+        #expect(MenuCommandModel.gameControlsEntries(model, screenHasTouch: false).isEmpty)
+        #expect(MenuCommandModel.gameControlsEntries(model, screenHasTouch: true).count == 1)
+
+        let saved = try JSONEncoder().encode(StudioSettings(showsGameControls: false))
+        #expect(try JSONDecoder().decode(StudioSettings.self, from: saved).showsGameControls == false)
+        #expect(try JSONDecoder().decode(StudioSettings.self, from: Data("{}".utf8)).showsGameControls == true, "on, unless turned off")
+    }
+
     @Test("A program's button reports through ON GAMEPAD as controller -1, and goes when the program ends")
     func throughOnGamepad() async throws {
         let studio = StudioHarness(program: """

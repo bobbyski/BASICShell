@@ -32,6 +32,7 @@ import Foundation
 ///                Games ▸ Roids, Apps ▸ Contacts, …
 ///   Console      ✓ Overwrite Mode      ⌃I             menus[1]
 ///                ✓ Show Graphics       ⇧⌘G
+///                ✓ Show On-Screen Game Controls      (touch screens only)
 ///   Debug        Show Debugger         ⇧⌘D            menus[2]
 /// ```
 struct MenuCommandModel: Equatable {
@@ -44,7 +45,7 @@ struct MenuCommandModel: Equatable {
         case openRecent(StudioRecentItems.Kind, URL)
         case clearRecent
         case find, findAndReplace
-        case overwriteMode, showGraphics
+        case overwriteMode, showGraphics, showGameControls
         case showDebugger
     }
 
@@ -126,7 +127,7 @@ struct MenuCommandModel: Equatable {
             Menu(title: "Console", entries: [
                 .item(Item(title: "Overwrite Mode", shortcut: Shortcut(key: "i", modifiers: [.control]), action: .overwriteMode, isChecked: Self.isChecked(.overwriteMode, in: model))),
                 .item(Item(title: "Show Graphics", shortcut: Shortcut(key: "g", modifiers: [.command, .shift]), action: .showGraphics, isChecked: Self.isChecked(.showGraphics, in: model))),
-            ]),
+            ] + Self.gameControlsEntries(model)),
             Menu(title: "Debug", entries: [
                 .item(Item(title: "Show Debugger", shortcut: Shortcut(key: "d", modifiers: [.command, .shift]), action: .showDebugger, isChecked: nil)),
             ]),
@@ -139,6 +140,7 @@ struct MenuCommandModel: Equatable {
         switch action {
         case .overwriteMode: return model.isConsoleOverwriteMode
         case .showGraphics: return model.areGraphicsLayersVisible
+        case .showGameControls: return model.showsGameControls
         default: return nil
         }
     }
@@ -164,8 +166,18 @@ struct MenuCommandModel: Equatable {
         case .findAndReplace: model.showFindAndReplace()
         case .overwriteMode: model.setConsoleOverwriteMode(!model.isConsoleOverwriteMode)
         case .showGraphics: model.setGraphicsLayersVisible(!model.areGraphicsLayersVisible)
+        case .showGameControls: model.showsGameControls.toggle()
         case .showDebugger: model.openDebugger()
         }
+    }
+
+    /// The on-screen game controls' toggle, where there is a touch screen to
+    /// put them on; the Mac never shows them, so it has no item.
+    @MainActor
+    static func gameControlsEntries(_ model: StudioModel, screenHasTouch: Bool = StudioTouchControls.screenHasTouch) -> [Entry] {
+        guard screenHasTouch else { return [] }
+        return [.item(Item(title: "Show On-Screen Game Controls", shortcut: nil, action: .showGameControls,
+                           isChecked: Self.isChecked(.showGameControls, in: model)))]
     }
 }
 
