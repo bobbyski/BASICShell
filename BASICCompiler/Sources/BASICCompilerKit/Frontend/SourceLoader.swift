@@ -45,6 +45,17 @@ public struct SourceLoader {
         return try parse(expanded)
     }
 
+    /// Loads program text as the file at `path`: an editor's, which may not
+    /// be saved. Its imports are found beside `path`, as `load(path:)` finds
+    /// a file's, and as the interpreter finds the same program's in Studio.
+    public func load(source: String, path: String) throws -> [ParsedLine] {
+        let lines = ProgramLine.parse(source, fileName: path, isImported: false)
+        var importedPaths: Set<String> = []
+        var activeImports: [String] = []
+        let expanded = try expand(lines, importedPaths: &importedPaths, activeImports: &activeImports)
+        return try parse(expanded)
+    }
+
     /// Parses program text as if it came from `fileName`, without imports.
     public func parse(_ source: String, fileName: String?) throws -> [ParsedLine] {
         try parse(ProgramLine.parse(source, fileName: fileName, isImported: false))

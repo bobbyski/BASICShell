@@ -33,7 +33,14 @@ extension StudioModel {
         echoConsoleCommandForRun(echo)
         let source = BASICJIT.text(of: session.program)
         let name = currentProgramURL.map { $0.deletingPathExtension().lastPathComponent } ?? "program"
-        let run = StudioWasmRun(model: self, source: source, name: name, directory: programWorkingDirectoryPath)
+        // Where the text belongs, so its IMPORTs are found as the
+        // interpreter finds them, and the project it is in.
+        let path = compiledRunSourcePath
+        let projectRoot = projectDirectoryURL.flatMap { project in
+            path.hasPrefix(project.standardizedFileURL.path + "/") ? project.path : nil
+        }
+        let run = StudioWasmRun(model: self, source: source, name: name, path: path, projectRoot: projectRoot,
+                                directory: programWorkingDirectoryPath)
         wasmRun = run
         isJITRunning = true
         setCompiledRunInputActive(true)
@@ -76,16 +83,21 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     private let canvas: VectorTerminalCanvas
     private let source: String
     private let name: String
+    /// The file the source belongs to, and the project it is in, for IMPORT.
+    private let path: String
+    private let projectRoot: String?
     private let directory: String
     private let lock = NSLock()
     private var runner: WasmRunner?
     private var stopped = false
 
-    init(model: StudioModel, source: String, name: String, directory: String) {
+    init(model: StudioModel, source: String, name: String, path: String, projectRoot: String?, directory: String) {
         self.model = model
         canvas = model.makeCompiledRunCanvas()
         self.source = source
         self.name = name
+        self.path = path
+        self.projectRoot = projectRoot
         self.directory = directory
     }
 
@@ -118,7 +130,8 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         var translated = started
         do {
             // Its ActiveUI windows are Studio's.
-            let ir = try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true)
+            let ir = try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true,
+                                               path: path, projectRoot: projectRoot)
             let compiled = DispatchTime.now()
             program = try WasmTranslator.translate(llvmIR: ir)
             translated = DispatchTime.now()

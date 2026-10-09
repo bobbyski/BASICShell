@@ -26,11 +26,17 @@ enum StudioCompiler {
     /// `hostedActiveUI` is for a run Studio hosts: the program's ActiveUI
     /// windows are Studio's, so it may make them (basicc refuses them
     /// otherwise, as a native build has none).
-    static func llvmIR(source: String, name: String, hostedActiveUI: Bool = false) throws -> String {
+    ///
+    /// `path` is the file the text belongs to, so its `IMPORT`s are found
+    /// beside it as the interpreter finds them; `projectRoot`, the project it
+    /// is in. Without a path the text is compiled on its own, imports refused.
+    static func llvmIR(source: String, name: String, hostedActiveUI: Bool = false,
+                       path: String? = nil, projectRoot: String? = nil) throws -> String {
         var options = CompileOptions(emitDebugInfo: false)
         options.hostedActiveUI = hostedActiveUI
         let compilation = Compilation(dialect: TraditionalDialect(), options: options)
-        let module = try compilation.bir(source: source, name: name)
+        let module = try path.map { try compilation.bir(source: source, path: $0, projectRoot: projectRoot) }
+            ?? compilation.bir(source: source, name: name)
         return try compilation.dialect.lower(module, options: compilation.options).llvmIR
     }
 }

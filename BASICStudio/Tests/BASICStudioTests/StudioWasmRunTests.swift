@@ -162,6 +162,27 @@ struct StudioWasmRunTests {
         #expect(!studio.model.session.sendsHostEventsToCompiledProgram, "the interpreter has its events back")
     }
 
+    @Test("A bundled example's IMPORTs are found as the interpreter finds them: Data ▸ gradebook prints the same")
+    func gradebook() async throws {
+        let studio = StudioHarness()
+        let model = studio.model
+        let example = try #require(model.bundledExamples.first { $0.path == "data/gradebook" })
+        model.loadBundledExample(example)
+        model.runEditorProgram()
+        try await studio.waitUntilStopped()
+        let interpreted = model.consoleText
+        let start = try #require(interpreted.range(of: "TEACHER GRADE BOOK"))
+        let expected = String(interpreted[start.lowerBound...]).components(separatedBy: model.prompt).first ?? ""
+        #expect(expected.contains("Intro to BASIC"), "\(interpreted.suffix(400))")
+
+        model.compiledRunTarget = .webAssembly
+        model.jitEditorProgram()
+        try await waitUntilFinished(studio)
+        let compiled = model.consoleText
+        let tail = String(compiled[try #require(compiled.range(of: "TEACHER GRADE BOOK", options: .backwards)).lowerBound...])
+        #expect(tail.components(separatedBy: model.prompt).first == expected, "\(compiled.suffix(600))")
+    }
+
     @Test("On the Mac the choice is the person's, and LLVM is the default")
     func choice() {
         #expect(StudioCompiledRunTarget.isChoosable)

@@ -53,6 +53,25 @@ public struct Compilation: Sendable {
         return try BIRBuilder(hostedActiveUI: options.hostedActiveUI).build(lines, moduleName: Self.moduleName(for: sourcePath))
     }
 
+    /// The BIR for program text that belongs to the file at `path`, imports
+    /// and all: an editor's text, saved or not (BASICStudio's compiled runs).
+    /// A project's root and libraries come from its manifest, as for
+    /// `bir(sourcePath:)`, when `projectRoot` names one.
+    public func bir(source: String, path: String, projectRoot: String? = nil) throws -> BIRModule {
+        var loader = SourceLoader()
+        var name = Self.moduleName(for: path)
+        var stringSubstitution = true
+        if let projectRoot, let project = try ProjectManifest.load(at: projectRoot) {
+            let libraries = try LibraryIndex.build(root: project.root, declared: project.libraries ?? [])
+            loader = SourceLoader(projectRoot: project.root, libraries: libraries)
+            name = project.name
+            stringSubstitution = project.stringSubstitution
+        }
+        let lines = try loader.load(source: source, path: path)
+        return try BIRBuilder(defaultStringSubstitution: stringSubstitution, hostedActiveUI: options.hostedActiveUI)
+            .build(lines, moduleName: name)
+    }
+
     /// The BIR for program text, for tests.
     public func bir(source: String, name: String) throws -> BIRModule {
         let lines = try SourceLoader().parse(source, fileName: name + ".bas")

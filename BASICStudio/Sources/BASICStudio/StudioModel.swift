@@ -1773,6 +1773,21 @@ final class StudioModel: ObservableObject {
     /// relative to.
     var programWorkingDirectoryPath: String { workingDirectoryURL.path }
 
+    /// The file a compiled run's text belongs to, so its IMPORTs are found as
+    /// the interpreter finds them (BASIC-45): the program's own file; for a
+    /// bundled example, its file in the app's demos, which is where the
+    /// interpreter falls back to; otherwise its name in the working folder.
+    var compiledRunSourcePath: String {
+        if let currentProgramURL { return currentProgramURL.path }
+        let fileName = currentProgramFileName ?? "program.bas"
+        if fileName.hasPrefix("/") { return fileName }
+        if let demos = Self.demosFolder {
+            let bundled = demos.appendingPathComponent(fileName).path
+            if FileManager.default.fileExists(atPath: bundled) { return bundled }
+        }
+        return (programWorkingDirectoryPath as NSString).appendingPathComponent(fileName)
+    }
+
     /// A compiled run's console input: its keys are the program's while it
     /// runs, and Stop wakes an INPUT that is waiting.
     /// A line typed in the command bar, for a compiled run's INPUT.
