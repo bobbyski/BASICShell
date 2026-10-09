@@ -43,6 +43,8 @@ final class SettingsAUI {
     let tabIndentSwitch: AUISwitch
     let newLineIndentSwitch: AUISwitch
     let indentPicker: AUIPicker
+    /// How ⚡ builds a program (BASIC-45): fixed to WebAssembly on iPad.
+    let compiledRunPicker: AUIPicker
     let themePicker: AUIPicker
     let lineNumbersSwitch: AUISwitch
     let fontPicker: AUIPicker
@@ -102,7 +104,17 @@ final class SettingsAUI {
         graphicsGroup.addRow(SettingsViewModel.showsGraphicsHiddenNoticeTitle,
                              description: "",
                              accessory: graphicsNoticeSwitch)
-        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote), graphicsGroup])
+        let targets = StudioCompiledRunTarget.allCases
+        compiledRunPicker = AUIPicker(targets.map(\.label),
+                                      selectedIndex: targets.firstIndex(of: model.effectiveCompiledRunTarget)) { [weak model] index in
+            model?.compiledRunTarget = targets[index]
+        }
+        compiledRunPicker.isEnabled = StudioCompiledRunTarget.isChoosable
+        let compiledGroup = AUISettingsGroup(title: SettingsViewModel.compiledRunsSectionTitle)
+        compiledGroup.addRow(SettingsViewModel.compiledRunTargetTitle,
+                             description: SettingsViewModel.compiledRunTargetNote,
+                             accessory: compiledRunPicker)
+        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote), graphicsGroup, compiledGroup])
 
         // Editor: what Studio takes from FreebirdStudio's Editing and Display
         // pages, which drive the same SwiftyCodeEditor. What it leaves out,
@@ -265,6 +277,10 @@ final class SettingsAUI {
         }
         if graphicsNoticeSwitch.isOn != model.showsGraphicsHiddenNotice {
             graphicsNoticeSwitch.isOn = model.showsGraphicsHiddenNotice
+        }
+        let compiledIndex = StudioCompiledRunTarget.allCases.firstIndex(of: model.effectiveCompiledRunTarget)
+        if compiledRunPicker.selectedIndex != compiledIndex {
+            compiledRunPicker.selectedIndex = compiledIndex
         }
         let settings = SettingsViewModel(model)
         guard settings != drawn else { return }

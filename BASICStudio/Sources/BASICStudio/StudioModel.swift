@@ -89,6 +89,20 @@ final class StudioModel: ObservableObject {
             saveSettings()
         }
     }
+    /// How ⚡ builds a program on the Mac (BASIC-45).
+    @Published var compiledRunTarget: StudioCompiledRunTarget = .llvm {
+        didSet {
+            guard compiledRunTarget != oldValue, !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
+    /// What actually runs a compiled program here: the choice on the Mac,
+    /// WebAssembly on iPhone and iPad, where nothing else can.
+    var effectiveCompiledRunTarget: StudioCompiledRunTarget {
+        StudioCompiledRunTarget.isChoosable ? compiledRunTarget : .webAssembly
+    }
+    /// The WebAssembly run in progress (StudioWasmRun.swift).
+    var wasmRun: StudioWasmRun?
     /// Say so when that happens, once a launch; off for good after "Don't
     /// show this message again".
     @Published var showsGraphicsHiddenNotice = true {
@@ -327,6 +341,7 @@ final class StudioModel: ObservableObject {
         consoleScrollbackLines = StudioSettings.clampedConsoleScrollbackLines(settings.consoleScrollbackLines)
         keepsProgramsInICloud = settings.keepsProgramsInICloud
         hidesGraphicsOnStop = settings.hidesGraphicsOnStop
+        compiledRunTarget = settings.compiledRunTarget
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         recentItems = settings.recentItems
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
@@ -1337,10 +1352,17 @@ final class StudioModel: ObservableObject {
 
     func runEditorProgram() {
         guard !isProgramRunning else { return }
+        #if os(iOS)
+        // On iPhone and iPad a program runs as WebAssembly in JavaScriptCore,
+        // never in the interpreter (BASIC-42).
+        runAsWebAssembly(echo: "RUN")
+        return
+        #else
         rebuildProgramFromEditor()
         selectedPane = .console
         echoConsoleCommand("RUN")
         startProgramRun(startLine: nil)
+        #endif
     }
 
     func listProgram() {
@@ -1691,6 +1713,30 @@ final class StudioModel: ObservableObject {
     /// Echoes `JIT` at the prompt, as Run echoes `RUN`.
     func echoConsoleCommandForJIT() {
         echoConsoleCommand("JIT")
+    }
+
+    /// Echoes a command at the prompt, for runs made outside this file.
+    func echoConsoleCommandForRun(_ command: String) {
+        echoConsoleCommand(command)
+    }
+
+    /// The program's working folder, which a compiled run's files are
+    /// relative to.
+    var programWorkingDirectoryPath: String { workingDirectoryURL.path }
+
+    /// A compiled run's console input: its keys are the program's while it
+    /// runs, and Stop wakes an INPUT that is waiting.
+    /// A line typed in the command bar, for a compiled run's INPUT.
+    func submitCompiledRunLine(_ line: String) {
+        if inputCoordinator.awaitingLineInput() { inputCoordinator.submitLine(line) }
+    }
+
+    nonisolated func setCompiledRunInputActive(_ active: Bool) {
+        inputCoordinator.setProgramRunning(active)
+        if !active {
+            inputCoordinator.cancelLineInput()
+            inputCoordinator.endRawKeyInput()
+        }
     }
 
     private func appendConsoleOutput(_ text: String, terminator: String = "\n") {
@@ -2219,7 +2265,8 @@ final class StudioModel: ObservableObject {
                 keepsProgramsInICloud: keepsProgramsInICloud,
                 hidesGraphicsOnStop: hidesGraphicsOnStop,
                 showsGraphicsHiddenNotice: showsGraphicsHiddenNotice,
-                recentItems: recentItems
+                recentItems: recentItems,
+                compiledRunTarget: compiledRunTarget
             )
         )
     }

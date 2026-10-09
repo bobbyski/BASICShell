@@ -114,6 +114,9 @@ struct StudioSettings: Codable {
     var showsGraphicsHiddenNotice = true
     /// File ▸ Open Recent's projects and files.
     var recentItems = StudioRecentItems()
+    /// How ⚡ builds a program on the Mac (BASIC-45). iPhone and iPad always
+    /// use WebAssembly.
+    var compiledRunTarget: StudioCompiledRunTarget = .llvm
 
     /// On by default on iPad and iPhone, where the app's own folder is
     /// otherwise the only place a program can be; off on the Mac, where
@@ -144,6 +147,7 @@ struct StudioSettings: Codable {
         case hidesGraphicsOnStop
         case showsGraphicsHiddenNotice
         case recentItems
+        case compiledRunTarget
     }
 
     init(
@@ -163,7 +167,8 @@ struct StudioSettings: Codable {
         keepsProgramsInICloud: Bool = StudioSettings.defaultKeepsProgramsInICloud,
         hidesGraphicsOnStop: Bool = true,
         showsGraphicsHiddenNotice: Bool = true,
-        recentItems: StudioRecentItems = StudioRecentItems()
+        recentItems: StudioRecentItems = StudioRecentItems(),
+        compiledRunTarget: StudioCompiledRunTarget = .llvm
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -182,6 +187,7 @@ struct StudioSettings: Codable {
         self.hidesGraphicsOnStop = hidesGraphicsOnStop
         self.showsGraphicsHiddenNotice = showsGraphicsHiddenNotice
         self.recentItems = recentItems
+        self.compiledRunTarget = compiledRunTarget
     }
 
     init(from decoder: Decoder) throws {
@@ -206,6 +212,32 @@ struct StudioSettings: Codable {
         hidesGraphicsOnStop = try container.decodeIfPresent(Bool.self, forKey: .hidesGraphicsOnStop) ?? true
         showsGraphicsHiddenNotice = try container.decodeIfPresent(Bool.self, forKey: .showsGraphicsHiddenNotice) ?? true
         recentItems = (try? container.decodeIfPresent(StudioRecentItems.self, forKey: .recentItems)) ?? StudioRecentItems()
+        compiledRunTarget = (try? container.decodeIfPresent(StudioCompiledRunTarget.self, forKey: .compiledRunTarget)) ?? .llvm
+    }
+}
+
+/// How a compiled run (⚡) builds the program (BASIC-45).
+enum StudioCompiledRunTarget: String, Codable, CaseIterable, Sendable {
+    /// basicc and clang: a native program, run as its own process.
+    case llvm
+    /// basicc's core in Studio, translated to WebAssembly and run in
+    /// JavaScriptCore. The only way on iPhone and iPad.
+    case webAssembly
+
+    var label: String {
+        switch self {
+        case .llvm: return "LLVM: a native program"
+        case .webAssembly: return "WebAssembly, in JavaScriptCore"
+        }
+    }
+
+    /// Whether this platform lets a person choose; iPhone and iPad cannot.
+    static var isChoosable: Bool {
+        #if os(iOS)
+        false
+        #else
+        true
+        #endif
     }
 }
 

@@ -45,6 +45,13 @@ struct SettingsViewModel: Equatable {
     static let graphicsSectionTitle = "Graphics"
     static let hidesGraphicsOnStopTitle = "Hide graphics when a program stops on a break or an error"
     static let showsGraphicsHiddenNoticeTitle = "Say so when they are hidden"
+    static let compiledRunsSectionTitle = "Compiled runs"
+    static let compiledRunTargetTitle = "⚡ builds with"
+    #if os(iOS)
+    static let compiledRunTargetNote = "On iPad and iPhone every program is compiled to WebAssembly and run by JavaScriptCore; nothing else may run it here."
+    #else
+    static let compiledRunTargetNote = "LLVM makes a native program, the fastest. WebAssembly runs inside Studio in JavaScriptCore, as every program runs on iPad: choose it to compare the two."
+    #endif
     static let hidesGraphicsOnStopNote = "So the error and the prompt can be read. RUN or CLS shows the graphics again; graphics you hid yourself stay hidden."
     static let scrollbackRange = StudioSettings.consoleScrollbackRange
     static let scrollbackStep = 100

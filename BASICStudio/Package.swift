@@ -38,6 +38,8 @@ let package = Package(
                 "BASICRecipes",
                 .product(name: "BASICCompilerKit", package: "BASICCompiler"),
                 .product(name: "BASICDialectTraditional", package: "BASICCompiler"),
+                .product(name: "BASICWasm", package: "BASICCompiler"),
+                .product(name: "BASICWasmRunner", package: "BASICCompiler"),
                 "DocumentArchive",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",

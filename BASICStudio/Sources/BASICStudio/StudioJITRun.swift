@@ -32,6 +32,10 @@ extension StudioModel {
     ///   shell without one.
     func jitEditorProgram() {
         guard !isProgramRunning, jitProcess == nil else { return }
+        if effectiveCompiledRunTarget == .webAssembly {
+            runAsWebAssembly(echo: "JIT")
+            return
+        }
         rebuildProgramFromEditor()
         selectedPane = .console
         echoConsoleCommandForJIT()
@@ -57,6 +61,7 @@ extension StudioModel {
 
     /// Stops a compiled run, as Stop does an interpreted one.
     func stopJITProgram() {
+        wasmRun?.stop()
         #if os(macOS)
         jitProcess?.terminate()
         #endif
@@ -121,6 +126,10 @@ extension StudioModel {
     /// Sends a console line to a running compiled program, so `INPUT`
     /// works: the console is the program's terminal for as long as it runs.
     func sendLineToJITProgram(_ line: String) {
+        if wasmRun != nil {
+            submitCompiledRunLine(line)
+            return
+        }
         guard let input = jitInput else { return }
         input.fileHandleForWriting.write(Data((line + "\n").utf8))
     }

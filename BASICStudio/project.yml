@@ -82,6 +82,10 @@ targets:
         product: BASICCompilerKit
       - package: BASICCompiler
         product: BASICDialectTraditional
+      - package: BASICCompiler
+        product: BASICWasm
+      - package: BASICCompiler
+        product: BASICWasmRunner
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK
@@ -172,6 +176,10 @@ targets:
         product: BASICCompilerKit
       - package: BASICCompiler
         product: BASICDialectTraditional
+      - package: BASICCompiler
+        product: BASICWasm
+      - package: BASICCompiler
+        product: BASICWasmRunner
       - package: SwiftTerm
         product: SwiftTerm
       - package: VectorTerminalSDK
