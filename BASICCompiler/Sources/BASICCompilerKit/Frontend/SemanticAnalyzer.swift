@@ -601,7 +601,7 @@ struct SemanticAnalyzer {
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true,
                known != .dictionary, known != .variant,
-               !(SemanticModel.isSystemClass(name.normalized) && known == nil) {
+               !(model.isSystemClassHere(name.normalized) && known == nil) {
                 note(name, .array(arguments.count), at: line, in: function, changed: &changed)
             }
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
@@ -726,7 +726,7 @@ struct SemanticAnalyzer {
             return type
         case .null: return .variant
         case .newObject(let name, _):
-            if SemanticModel.isSystemClass(name.uppercased()), model.types[name.uppercased()] == nil { return .system(SemanticModel.systemTypeName(name.uppercased())) }
+            if model.isSystemClassHere(name.uppercased()), model.types[name.uppercased()] == nil { return .system(SemanticModel.systemTypeName(name.uppercased())) }
             return model.types[name.uppercased()].map { _ in .composite(name.uppercased()) }
         case .methodCall(let reference, let method, let arguments):
             if reference.base.normalized == "FILE", model.info("FILE", in: function) == nil {
@@ -783,7 +783,7 @@ struct SemanticAnalyzer {
             if ["MKI$", "MKS$", "MKD$", "INPUT$", "INKEY$", "FIELDNAME$", "FIELDVALUE$", "TASKSTATUS$", "TASKERROR$"].contains(name.normalized) { return .string }
             if ["CVI", "CVS", "CVD", "SEEK", "FIELDCOUNT"].contains(name.normalized) { return .number }
             if ["FIELDMETA", "FIELDVALUE", "SETFIELD", "ASYNCVALUE", "SLEEP"].contains(name.normalized) { return .variant }
-            if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: function) == nil { return .system(SemanticModel.systemTypeName(name.normalized)) }
+            if model.isSystemClassHere(name.normalized), model.info(name.normalized, in: function) == nil { return .system(SemanticModel.systemTypeName(name.normalized)) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
@@ -814,9 +814,11 @@ struct SemanticAnalyzer {
     /// unknown type, neither of which says what is wrong.
     ///
     /// Not when the name is a type the program imported: `IMPORT "ActiveUI"`
-    /// brings ActiveUI's own Swift classes, which basicc compiles.
+    /// brings ActiveUI's own Swift classes, which basicc compiles. Not when
+    /// the host running the program provides the windows (BASIC-45):
+    /// BASICStudio, running it as WebAssembly.
     func refuseActiveUI(_ name: String, at line: ParsedLine) throws {
-        guard model.types[name.uppercased()] == nil else { return }
+        guard model.types[name.uppercased()] == nil, !model.hostedActiveUI else { return }
         let refused = BASICKeywords.activeUIClasses + ["BASICAUIEvent"]
         guard let canonical = refused.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else { return }
         throw CompileError(
@@ -862,6 +864,12 @@ struct SemanticAnalyzer {
             ("Route", .scalar(.string)), ("Query", .scalar(.string)), ("Body", .scalar(.string)),
             ("Status", .scalar(.integer)),
         ]),
+        // Only a program whose host provides ActiveUI can name it; for any
+        // other, `refuseActiveUI` says why first.
+        "BASICAUIEVENT": ("BASICAUIEvent", [
+            ("Source", .scalar(.integer)), ("Text$", .scalar(.string)), ("Index", .scalar(.integer)),
+            ("Column", .scalar(.integer)),
+        ]),
         "BASICNETWORKEVENT": ("BASICNetworkEvent", [
             ("Operation", .scalar(.string)), ("Url", .scalar(.string)), ("Status", .scalar(.integer)),
             ("Bytes", .scalar(.integer)), ("Error", .scalar(.string)), ("RequestID", .scalar(.string)),
@@ -893,6 +901,8 @@ struct SemanticAnalyzer {
     /// time a program names one. A program that names none pays nothing.
     mutating func declareBuiltInEventType(_ normalized: String) {
         guard model.types[normalized] == nil, let shape = Self.builtInEventFields[normalized] else { return }
+        // Left undeclared, so `refuseActiveUI` still refuses it by name.
+        if normalized == "BASICAUIEVENT", !model.hostedActiveUI { return }
         if normalized != "BASICEVENT" { declareBuiltInEventType("BASICEVENT") }
         let index = (model.types.values.map(\.index).max() ?? -1) + 1
         let own = normalized == "BASICEVENT" ? Self.builtInEventBaseFields : shape.fields
@@ -940,7 +950,7 @@ struct SemanticAnalyzer {
             }
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
             try refuseActiveUI(typeName, at: line)
-            if SemanticModel.isSystemClass(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
+            if model.isSystemClassHere(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
             guard model.types[typeName.uppercased()] != nil else {
                 throw CompileError("\(name) AS \(typeName): unknown TYPE, CLASS, or INTERFACE", at: Self.location(of: line))
             }

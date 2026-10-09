@@ -299,7 +299,13 @@ final class StudioModel: ObservableObject {
         persistsSettings = launch.persistsSettings
         walk = launch.walk
         auiBridge.postEvent = { [weak self] kind, source, text, index, column in
-            self?.session.postAUIEvent(kind: kind, source: source, text: text, index: index, column: column)
+            guard let self else { return }
+            // A program running as WebAssembly has its own queue (BASIC-45).
+            if self.wasmRun != nil {
+                BASICCompiledAUI.post(kind: kind, source: source, text: text, index: index, column: column)
+            } else {
+                self.session.postAUIEvent(kind: kind, source: source, text: text, index: index, column: column)
+            }
         }
         gamepadInputCoordinator.eventHandler = { [weak self] subtype, controller, control, value in
             Task { @MainActor [weak self] in

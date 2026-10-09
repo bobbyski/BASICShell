@@ -333,6 +333,7 @@ public final class SemanticModel {
     public static func systemMember(_ member: String, of typeName: String) -> (parameters: Int?, returns: BIRType)? {
         if richClassNames[typeName] != nil { return richMembers[member] ?? richMembers["*"] }
         if typeName == "TUI" || supportedTUIClasses.contains(typeName) { return tuiMembers[member] ?? tuiMembers["*"] }
+        if typeName == "AUI" || activeUIClassNames.contains(typeName) { return tuiMembers["*"] }
         let name = typeName == "VTG" ? "VECTORTERMINAL" : typeName
         return systemClasses[name]?[member] ?? systemClasses[name]?["*"]
     }
@@ -343,8 +344,15 @@ public final class SemanticModel {
     /// calls is looked up on the object, not on the name.
     public static func systemTypeName(_ className: String) -> String {
         if supportedTUIClasses.contains(className) { return "TUI" }
+        if activeUIClassNames.contains(className) { return "AUI" }
         return className == "VTG" ? "VECTORTERMINAL" : className
     }
+
+    /// ActiveUI's pseudo classes, normalized. Like the TUI classes, every
+    /// one shares the static type `AUI` and answers a VARIANT: the
+    /// interpreter's binding decides what each method gives back. Only a
+    /// program whose host provides windows may name them (`hostedActiveUI`).
+    public static let activeUIClassNames: Set<String> = Set(BASICKeywords.activeUIClasses.map { $0.uppercased() })
 
     /// Whether a name constructs a system object.
     public static func isSystemClass(_ name: String) -> Bool {
@@ -425,6 +433,18 @@ public final class SemanticModel {
     /// Members on imported enums (E5): normalized enum name, then member.
     /// Set by the builder from what the importer declared.
     public internal(set) var enumMembers: [String: [String: EnumMemberRef]] = [:]
+
+    /// Whether the program's ActiveUI windows come from the host running it
+    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly. Off, a
+    /// program that names an AUI class is refused, as it always was; on,
+    /// the AUI classes are system classes like the TUI ones.
+    public internal(set) var hostedActiveUI = false
+
+    /// Whether a name constructs a system object in this program: the
+    /// shared classes, and ActiveUI's when the host provides it.
+    func isSystemClassHere(_ name: String) -> Bool {
+        Self.isSystemClass(name) || (hostedActiveUI && Self.activeUIClassNames.contains(name))
+    }
 
     /// `B.inner`, `B.blended(x)` or `Tint.favorite` as the call to the free
     /// function the importer declared for that member, or nil (E5).

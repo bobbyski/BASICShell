@@ -47,6 +47,23 @@ public func basic_rt_handler_register(_ name: UnsafePointer<CChar>, _ handler: U
     rtHostHandlerRegister(name, handler)
 }
 
+/// The host's ActiveUI bridge (BASICRTHost) — or the stub that says no. Only
+/// a program whose host provides windows is compiled with AUI classes in it
+/// (BASIC-45).
+@_silgen_name("basic_rt_host_aui_new") func rtHostAUINew(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
+@_silgen_name("basic_rt_host_aui_call") func rtHostAUICall(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
+
+/// A handle to an ActiveUI control the host holds: the interpreter's
+/// `.systemObject(kind, id)`.
+package final class RTAUIHandle {
+    package let id: Int
+    package let typeName: String
+    package init(id: Int, typeName: String) {
+        self.id = id
+        self.typeName = typeName
+    }
+}
+
 /// The host's RichSwift bridge (BASICRTHost) — or the stub that says no.
 @_silgen_name("basic_rt_host_rich_new") func rtHostRichNew(_ typeName: UnsafePointer<CChar>) -> UnsafeMutableRawPointer
 @_silgen_name("basic_rt_host_rich_call") func rtHostRichCall(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer
@@ -179,6 +196,18 @@ enum RTSystem {
                 handle.typeName.withCString { type in
                     method.withCString { name in
                         rtHostTUICall(type, handle.id, name, buffer.count, buffer.baseAddress!)
+                    }
+                }
+            }
+            defer { basic_rt_value_release(result) }
+            return rtValue(result)
+        case let handle as RTAUIHandle:
+            var boxes = arguments.map { Optional(rtOwned($0)) }
+            defer { boxes.forEach { basic_rt_value_release($0) } }
+            let result = boxes.withUnsafeBufferPointer { buffer in
+                handle.typeName.withCString { type in
+                    method.withCString { name in
+                        rtHostAUICall(type, handle.id, name, buffer.count, buffer.baseAddress!)
                     }
                 }
             }
@@ -551,6 +580,15 @@ public func basic_rt_system_new(_ typeName: UnsafePointer<CChar>, _ count: Int, 
             let handle = name.withCString { rtHostRichNew($0) }
             defer { basic_rt_value_release(handle) }
             return rtOwned(.system(RTSystemObject(typeName: name, payload: RTRichHandle(id: Int(rtValue(handle).number ?? 0), typeName: name))))
+        }
+        if name.uppercased().hasPrefix("AUI") {
+            var boxes = values.map { Optional(rtOwned($0)) }
+            defer { boxes.forEach { basic_rt_value_release($0) } }
+            let handle = boxes.withUnsafeBufferPointer { buffer in
+                name.withCString { rtHostAUINew($0, buffer.count, buffer.baseAddress!) }
+            }
+            defer { basic_rt_value_release(handle) }
+            return rtOwned(.system(RTSystemObject(typeName: name, payload: RTAUIHandle(id: Int(rtValue(handle).number ?? 0), typeName: name))))
         }
         if name.uppercased().hasPrefix("TUI") {
             var boxes = values.map { Optional(rtOwned($0)) }

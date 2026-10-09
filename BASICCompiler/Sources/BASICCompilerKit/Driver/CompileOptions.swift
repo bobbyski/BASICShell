@@ -19,6 +19,12 @@ public struct CompileOptions: Sendable {
     /// does.
     public var omitsEntryPoint: Bool = false
 
+    /// Whether the host running the program provides its ActiveUI windows
+    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly. A
+    /// native build never does — it has no windows to give — so there the
+    /// AUI classes are refused at compile time, as they always were.
+    public var hostedActiveUI: Bool = false
+
     /// Creates compile options; the defaults are a debug build for the host.
     public init(
         target: TargetTriple = .host,

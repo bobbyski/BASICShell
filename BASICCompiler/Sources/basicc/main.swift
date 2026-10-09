@@ -264,11 +264,15 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
     guard type(of: compilation.dialect).identity.identifier == TraditionalDialect.identity.identifier else {
         fail("--target wasm builds the traditional dialect only", code: 2)
     }
-    compilation = Compilation(dialect: compilation.dialect, options: CompileOptions(
+    var options = CompileOptions(
         target: compilation.options.target,
         optimizationLevel: compilation.options.optimizationLevel,
         emitDebugInfo: false
-    ))
+    )
+    // A module's windows are its host's: BASICStudio's. basicc's own run has
+    // none, and says so when a program asks for one, as the interpreter does.
+    options.hostedActiveUI = true
+    compilation = Compilation(dialect: compilation.dialect, options: options)
     let program = try WasmTranslator.translate(llvmIR: try compilation.llvmIR(sourcePath: source))
     let path = output.hasSuffix(".wasm") ? output : output + ".wasm"
     let directory = (path as NSString).deletingLastPathComponent

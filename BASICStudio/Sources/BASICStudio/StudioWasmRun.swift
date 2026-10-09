@@ -10,7 +10,8 @@
 //
 //  The console is the interpreter's: text goes through the model's print,
 //  INPUT through its readLine (so the same line editing and Stop), INKEY$
-//  through its key queue.
+//  through its key queue. So are the windows: a program's AUIWindow is made
+//  by the same bridge, and what the user does goes to the program's queue.
 //
 
 import BASICCompilerKit
@@ -41,6 +42,8 @@ extension StudioModel {
         wasmRun = nil
         isJITRunning = false
         setCompiledRunInputActive(false)
+        // Its windows go with it: nothing is left to answer them.
+        auiBridge.closeAll()
         switch ending {
         case .finished, .failed, .stopped:
             break
@@ -102,7 +105,8 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     private func go() -> Ending {
         let program: WasmProgram
         do {
-            let ir = try StudioCompiler.llvmIR(source: source, name: name)
+            // Its ActiveUI windows are Studio's.
+            let ir = try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true)
             program = try WasmTranslator.translate(llvmIR: ir)
         } catch let error as CompileError {
             return .refused(error.diagnostics.map(\.rendered))
@@ -143,5 +147,10 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
 
     func inkey() -> String {
         model?.readKey() ?? ""
+    }
+
+    /// Studio's windows, which the interpreter's programs use too.
+    var activeUIHost: BASICAUIHost? {
+        model
     }
 }

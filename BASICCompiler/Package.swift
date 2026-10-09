@@ -87,7 +87,10 @@ let package = Package(
         .target(name: "BASICWasmHostC"),
         // The whole runtime, host half included (databases, rich text, VTG,
         // TUIKit), as a native program links it.
-        .target(name: "BASICWasmRunner", dependencies: ["BASICWasm", "BASICRT", "BASICRTHost", "BASICWasmHostC"]),
+        .target(name: "BASICWasmRunner", dependencies: [
+            "BASICWasm", "BASICRT", "BASICRTHost", "BASICWasmHostC",
+            .product(name: "BASICCore", package: "BASICCore"),
+        ]),
         .target(name: "BASICDialectSwift", dependencies: ["BASICCompilerKit", "BASICDialectTraditional"]),
         // BASICSound is the interpreter's own sound model — events, the music
         // macro language, timing, and the synthesizer — so SOUND and PLAY
@@ -112,7 +115,10 @@ let package = Package(
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
         .executableTarget(
             name: "basicc",
-            dependencies: ["BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner"]
+            dependencies: [
+                "BASICCompilerKit", "BASICDialectTraditional", "BASICDialectSwift", "BASICWasm", "BASICWasmRunner",
+                .product(name: "BASICCore", package: "BASICCore"),
+            ]
         ),
         .executableTarget(
             name: "BASICLintCLI",

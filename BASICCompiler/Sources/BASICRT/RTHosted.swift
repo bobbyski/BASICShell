@@ -39,6 +39,13 @@ public enum RTHosted {
     nonisolated(unsafe) public static var inkey: (() -> String)?
     /// Gives control back to the host. Must not return.
     nonisolated(unsafe) public static var unwind: ((Unwind) -> Never)?
+    /// Ends the run here if the host was asked to stop it, and returns
+    /// otherwise. For a wait inside the runtime — an ActiveUI window's
+    /// `run` — where the compiled code's own loop checks never come.
+    nonisolated(unsafe) public static var checkStop: (() -> Void)?
+    /// Brings events the host collected on other threads into the queue: an
+    /// ActiveUI click. Called at every drain, before the queue is read.
+    nonisolated(unsafe) public static var collectEvents: (() -> Void)?
 
     /// Whether a host has the runtime.
     public static var isActive: Bool { unwind != nil }

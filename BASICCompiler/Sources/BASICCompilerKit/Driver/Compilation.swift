@@ -46,16 +46,17 @@ public struct Compilation: Sendable {
         if let project = try ProjectManifest.load(at: sourcePath) {
             let libraries = try LibraryIndex.build(root: project.root, declared: project.libraries ?? [])
             let lines = try SourceLoader(projectRoot: project.root, libraries: libraries).load(path: project.entryPath)
-            return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution).build(lines, moduleName: project.name)
+            return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution, hostedActiveUI: options.hostedActiveUI)
+                .build(lines, moduleName: project.name)
         }
         let lines = try SourceLoader().load(path: sourcePath)
-        return try BIRBuilder().build(lines, moduleName: Self.moduleName(for: sourcePath))
+        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI).build(lines, moduleName: Self.moduleName(for: sourcePath))
     }
 
     /// The BIR for program text, for tests.
     public func bir(source: String, name: String) throws -> BIRModule {
         let lines = try SourceLoader().parse(source, fileName: name + ".bas")
-        return try BIRBuilder().build(lines, moduleName: name)
+        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI).build(lines, moduleName: name)
     }
 
     /// The LLVM IR for a source file, for `--emit-llvm`.

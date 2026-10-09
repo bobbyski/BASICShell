@@ -61,6 +61,16 @@ public func basic_rt_host_tui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, 
     rtStubFail("TUI applications are not supported by this host")
 }
 
+@_cdecl("basic_rt_host_aui_new")
+public func basic_rt_host_aui_new(_ typeName: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("ActiveUI windows are not supported by this host")
+}
+
+@_cdecl("basic_rt_host_aui_call")
+public func basic_rt_host_aui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
+    rtStubFail("ActiveUI windows are not supported by this host")
+}
+
 @_cdecl("basic_rt_host_handler_register")
 public func basic_rt_host_handler_register(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer) {}
 

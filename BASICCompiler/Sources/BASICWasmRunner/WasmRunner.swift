@@ -1,5 +1,7 @@
 #if canImport(JavaScriptCore)
+import BASICCore
 import BASICRT
+import BASICRTHost
 import BASICWasm
 import BASICWasmHostC
 import Foundation
@@ -31,6 +33,13 @@ public protocol WasmHost: AnyObject {
     func readLine(prompt: String) -> String?
     /// The next key pressed, or "" when none is waiting.
     func inkey() -> String
+    /// The windows the program's ActiveUI controls go in, or nil when this
+    /// host has none: then a control says so, as the interpreter's does.
+    var activeUIHost: BASICAUIHost? { get }
+}
+
+extension WasmHost {
+    public var activeUIHost: BASICAUIHost? { nil }
 }
 
 /// How a run ended.
@@ -128,6 +137,10 @@ public final class WasmRunner: @unchecked Sendable {
         RTHosted.readLine = { [unowned host] prompt in host.readLine(prompt: prompt) }
         RTHosted.inkey = { [unowned host] in host.inkey() }
         RTHosted.unwind = { kind in basic_wasm_unwind(kind.rawValue) }
+        RTHosted.checkStop = { [unowned self] in
+            if self.isStopRequested { basic_wasm_unwind(Self.stopCode) }
+        }
+        if let windows = host.activeUIHost { RTHostAUI.install(host: windows) }
         WasmCallbacks.reset()
         basic_wasm_set_dispatchers(dispatchPtrVoid, dispatchPtrPtr, dispatchVoidPtr, dispatchPtrDouble)
         defer {
@@ -135,6 +148,8 @@ public final class WasmRunner: @unchecked Sendable {
             RTHosted.readLine = nil
             RTHosted.inkey = nil
             RTHosted.unwind = nil
+            RTHosted.checkStop = nil
+            RTHostAUI.uninstall()
             WasmCallbacks.reset()
             Self.current = nil
             context = nil
@@ -244,6 +259,8 @@ public final class WasmRunner: @unchecked Sendable {
             exception?.pointee = pending
             if let pending { JSValueUnprotect(ctx, pending) }
             pending = nil
+        case Self.stopCode:
+            exception?.pointee = stopValue.jsValueRef
         default:
             exception?.pointee = fatalValue.jsValueRef
         }

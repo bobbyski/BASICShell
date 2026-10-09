@@ -268,7 +268,7 @@ final class RTCompositeType {
     }
 }
 
-enum RTTypes {
+package enum RTTypes {
     /// Print tables for payload ENUM record types, by type index (E3), read
     /// from the `enum` key of a type's descriptor as it is registered.
     nonisolated(unsafe) static var enumTables: [Int: String] = [:]

@@ -22,8 +22,14 @@ enum StudioCompiler {
     /// The program's LLVM IR, as `basicc build --emit-llvm -g0` prints it:
     /// what the WebAssembly translator reads. The text is the LLVM path's own;
     /// nothing here changes how it is made.
-    static func llvmIR(source: String, name: String) throws -> String {
-        let compilation = Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false))
+    ///
+    /// `hostedActiveUI` is for a run Studio hosts: the program's ActiveUI
+    /// windows are Studio's, so it may make them (basicc refuses them
+    /// otherwise, as a native build has none).
+    static func llvmIR(source: String, name: String, hostedActiveUI: Bool = false) throws -> String {
+        var options = CompileOptions(emitDebugInfo: false)
+        options.hostedActiveUI = hostedActiveUI
+        let compilation = Compilation(dialect: TraditionalDialect(), options: options)
         let module = try compilation.bir(source: source, name: name)
         return try compilation.dialect.lower(module, options: compilation.options).llvmIR
     }

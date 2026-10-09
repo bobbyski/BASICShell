@@ -27,22 +27,31 @@ final class RTEvent {
     let type: String
     let subtype: String
     let fields: [String: RTValue]
+    /// The handler it goes to, when the host already knows: an ActiveUI
+    /// control's own (`button.onclick("Saved")`). Otherwise the selector's.
+    let handler: RTEventHandler?
 
-    init(type: String, subtype: String, fields: [String: RTValue]) {
+    init(type: String, subtype: String, fields: [String: RTValue], handler: RTEventHandler? = nil) {
         self.type = type
         self.subtype = subtype
         self.fields = fields
+        self.handler = handler
     }
 }
 
 /// A registered handler: the trampoline the compiler emitted, and the type
 /// index of the event object it wants (-1 for a VARIANT/DICTIONARY).
-struct RTEventHandler {
+package struct RTEventHandler {
     let trampoline: RTEventTrampoline
     let typeIndex: Int
+
+    package init(trampoline: RTEventTrampoline, typeIndex: Int) {
+        self.trampoline = trampoline
+        self.typeIndex = typeIndex
+    }
 }
 
-typealias RTEventTrampoline = @convention(c) (UnsafeMutableRawPointer?) -> Void
+package typealias RTEventTrampoline = @convention(c) (UnsafeMutableRawPointer?) -> Void
 
 /// A `SecondsTimer` object's state.
 package final class RTTimer {
@@ -61,7 +70,7 @@ package final class RTTimer {
     }
 }
 
-enum RTEvents {
+package enum RTEvents {
     nonisolated(unsafe) static var handlers: [String: RTEventHandler] = [:]
     nonisolated(unsafe) static var queue: [RTEvent] = []
     nonisolated(unsafe) static var timers: [Int: RTTimer] = [:]
@@ -86,6 +95,16 @@ enum RTEvents {
         let event = RTEvent(type: type.uppercased(), subtype: subtype.uppercased(), fields: fields)
         guard handler(for: event) != nil else { return }
         queue.append(event)
+    }
+
+    /// Posts an event from the host: to `handler` when the host names one,
+    /// else to the selector's, as `post` does.
+    package static func post(type: String, subtype: String, fields: [String: RTValue], handler: RTEventHandler?) {
+        guard let handler else {
+            post(type: type, subtype: subtype, fields: fields)
+            return
+        }
+        queue.append(RTEvent(type: type.uppercased(), subtype: subtype.uppercased(), fields: fields, handler: handler))
     }
 
     /// Seconds on a clock that does not jump.
@@ -148,7 +167,10 @@ enum RTEvents {
         var byName: [String: RTValue] = [:]
         for (name, value) in event.fields { byName[name.uppercased()] = value }
         for (slot, field) in type.fields.enumerated() {
-            guard let value = byName[field.name] else { continue }
+            // `BASICAUIEvent.Text$` carries its sigil, where the payload's
+            // key is the interpreter's `text`.
+            let bare = event.type == "AUI" && field.name.hasSuffix("$") ? String(field.name.dropLast()) : field.name
+            guard let value = byName[field.name] ?? byName[bare] else { continue }
             guard let coerced = try? RTCoerce.coerce(value, to: field.type, name: field.displayName) else { continue }
             composite.fields[slot] = coerced
         }
@@ -156,9 +178,10 @@ enum RTEvents {
     }
 
     /// Runs up to `limit` queued events. Timers come due here too.
-    static func drain(limit: Int) {
+    package static func drain(limit: Int) {
         guard !dispatching else { return }
-        guard !handlers.isEmpty else { return }
+        RTHosted.collectEvents?()
+        guard !handlers.isEmpty || !queue.isEmpty else { return }
         dispatching = true
         defer { dispatching = false }
         postDueTimerEvents()
@@ -166,7 +189,7 @@ enum RTEvents {
         while delivered < limit, !queue.isEmpty {
             let event = queue.removeFirst()
             delivered += 1
-            guard let handler = handler(for: event) else { continue }
+            guard let handler = event.handler ?? handler(for: event) else { continue }
             let box = rtOwned(payload(for: event, typeIndex: handler.typeIndex))
             defer { basic_rt_value_release(box) }
             handler.trampoline(box)

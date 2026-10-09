@@ -28,15 +28,20 @@ public struct BIRBuilder {
     private let externalFunctions: Set<String>
     /// Which of those functions each enum member is (E5).
     private let enumMembers: [String: [String: SemanticModel.EnumMemberRef]]
+    /// Whether the host running the program provides its ActiveUI windows
+    /// (BASIC-45). See `CompileOptions.hostedActiveUI`.
+    private let hostedActiveUI: Bool
 
     /// Creates a builder; `defaultStringSubstitution` is how OPTION
     /// STRING-SUB starts (the shell's default is on).
     public init(defaultStringSubstitution: Bool = true, externalClasses: [String: String] = [:],
-                externalFunctions: Set<String> = [], enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:]) {
+                externalFunctions: Set<String> = [], enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:],
+                hostedActiveUI: Bool = false) {
         self.defaultStringSubstitution = defaultStringSubstitution
         self.externalClasses = externalClasses
         self.externalFunctions = externalFunctions
         self.enumMembers = enumMembers
+        self.hostedActiveUI = hostedActiveUI
     }
 
     /// Builds the module for a program.
@@ -54,6 +59,7 @@ public struct BIRBuilder {
         }
         var analyzer = SemanticAnalyzer(lines: lines)
         analyzer.model.enumMembers = enumMembers
+        analyzer.model.hostedActiveUI = hostedActiveUI
         let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
         module.sourceFile = lines.first { !$0.isImported }?.fileName
@@ -129,7 +135,8 @@ public struct BIRBuilder {
         // every function such a string could reach. Resolved here, at build
         // time, from a known set -- never discovered by convention at run time,
         // which would work interpreted and silently do nothing compiled.
-        if Self.usesTUI(lines) || Self.usesNamedCallback(lines) {
+        // An ActiveUI control does the same (`button.onclick("Saved")`).
+        if Self.usesTUI(lines) || Self.usesNamedCallback(lines) || (hostedActiveUI && Self.usesActiveUI(lines)) {
             for index in module.functions.indices where module.functions[index].parameters.count <= 1 && !module.functions[index].isAsync {
                 module.functions[index].isEventHandler = true
                 let name = module.functions[index].name
@@ -166,6 +173,28 @@ public struct BIRBuilder {
                     return true
                 }
             }
+        }
+        return false
+    }
+
+    /// Whether a program makes an ActiveUI control: `AUIButton("OK")` or
+    /// `NEW AUIButton("OK")`.
+    static func usesActiveUI(_ lines: [ParsedLine]) -> Bool {
+        var found = false
+        func note(_ expression: Expression) {
+            guard !found else { return }
+            switch expression {
+            case .callOrArray(let name, _), .functionCall(let name, _):
+                if SemanticModel.activeUIClassNames.contains(name.normalized) { found = true }
+            case .newObject(let className, _):
+                if SemanticModel.activeUIClassNames.contains(className.uppercased()) { found = true }
+            default:
+                break
+            }
+        }
+        for line in lines {
+            for expression in Self.expressions(in: line.statement) { note(expression) }
+            if found { return true }
         }
         return false
     }
@@ -370,13 +399,15 @@ final class FunctionBuilder {
         return lines.indices.filter { owner[$0] == nil && !lines[$0].isImported }
     }
 
-    /// Whether the program registers any event handler at all.
+    /// Whether the program registers any event handler at all. A program
+    /// whose host provides ActiveUI has its controls' handlers to run too,
+    /// between statements as the interpreter runs them (BASIC-45).
     private lazy var programUsesEvents: Bool = lines.contains { line in
         switch line.statement {
         case .onEventCall, .onTimerEvent: return true
         default: return false
         }
-    }
+    } || (model.hostedActiveUI && BIRBuilder.usesActiveUI(lines))
 
     /// The statements being built: the program's, or a closure body's.
     private var sourceLines: [ParsedLine] { closureLines ?? lines }
@@ -1383,7 +1414,10 @@ final class FunctionBuilder {
         if let count = member.parameters, count != arguments.count {
             throw CompileError("\(method.name.lowercased()) expects \(count) argument\(count == 1 ? "" : "s")", at: location)
         }
-        return .systemCall(receiver, method: method.normalized, try arguments.map { try lowerExpression($0) }, returns: member.returns)
+        // An ActiveUI control's errors name the method as the program wrote
+        // it, as the interpreter's do; the binding reads it in any case.
+        let name = typeName == "AUI" ? method.name : method.normalized
+        return .systemCall(receiver, method: name, try arguments.map { try lowerExpression($0) }, returns: member.returns)
     }
 
     /// Stores into any place with the operation its shape needs.
@@ -2097,7 +2131,7 @@ final class FunctionBuilder {
         case .closure(let parameters, let returnType, let captures, let body):
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .newObject(let className, let arguments):
-            if SemanticModel.isSystemClass(className.uppercased()), model.types[className.uppercased()] == nil {
+            if model.isSystemClassHere(className.uppercased()), model.types[className.uppercased()] == nil {
                 let systemClass = className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased()
                 return .systemNew(systemClass, try arguments.map { try lowerExpression($0) }, type: SemanticModel.systemTypeName(systemClass))
             }
@@ -2493,7 +2527,7 @@ final class FunctionBuilder {
             return .valueIndex(.load(keyed), try arguments.map { try lowerExpression($0) }, name: name.name)
         }
         if let host = try lowerHostBuiltin(name, arguments) { return host }
-        if SemanticModel.isSystemClass(name.normalized), model.info(name.normalized, in: functionName) == nil {
+        if model.isSystemClassHere(name.normalized), model.info(name.normalized, in: functionName) == nil {
             let systemClass = name.normalized == "VTG" ? "VECTORTERMINAL" : name.normalized
             return .systemNew(systemClass, try arguments.map { try lowerExpression($0) }, type: SemanticModel.systemTypeName(systemClass))
         }
