@@ -183,6 +183,74 @@ struct StudioWasmRunTests {
         #expect(tail.components(separatedBy: model.prompt).first == expected, "\(compiled.suffix(600))")
     }
 
+    @Test("IMPORT \"ActiveUI\": its own classes, a BASIC handler, and AUIApplication.run in a window of Studio's")
+    func importActiveUI() async throws {
+        let studio = StudioHarness(program: """
+        IMPORT "ActiveUI"
+        GLOBAL clicks = 0
+        DIM Caption AS AUILabel
+        Caption = NEW AUILabel("Ready")
+        DIM Go AS AUIButton
+        Go = NEW AUIButton("Count")
+        FUNCTION Clicked() AS DOUBLE
+          clicks = clicks + 1
+          Caption.text = "clicked"
+          RETURN 0
+        END FUNCTION
+        Go.onClick = FUNCTION() AS DOUBLE = Clicked()
+        DIM Column AS AUIStack
+        Column = NEW AUIStack(AUIStack_Axis.vertical, 12, AUIStack_CrossAxisAlignment.leading, AUIStack_LayoutMode.flow)
+        Column.addChild(Caption)
+        Column.addChild(Go)
+        PRINT "label "; Caption.text
+        AUIApplication.run(Column, AUIRootPlacement.centered)
+        PRINT "closed with "; clicks; " clicks, label "; Caption.text
+        """)
+        let bridge = studio.model.auiBridge
+        bridge.showsWindows = false
+        studio.model.compiledRunTarget = .webAssembly
+        studio.model.jitEditorProgram()
+        try await studio.waitUntil("the app's window", timeout: .seconds(60)) { bridge.appWindows.count == 1 }
+        let app = try #require(bridge.appWindows.first)
+        let button = try #require(app.root.children.compactMap { $0 as? AUIButton }.first)
+        let label = try #require(app.root.children.compactMap { $0 as? AUILabel }.first)
+        #expect(studio.model.consoleText.contains("label Ready"), "\(studio.model.consoleText.suffix(300))")
+        button.onClick?()
+        button.onClick?()
+        try await studio.waitUntil("the handler") { label.text == "clicked" }
+        bridge.closeAppWindow(app.window)
+        try await waitUntilFinished(studio)
+        #expect(studio.model.consoleText.contains("closed with 2 clicks, label clicked"), "\(studio.model.consoleText.suffix(300))")
+        #expect(bridge.appWindows.isEmpty)
+    }
+
+    @Test("IMPORT \"TUIKit\": an App on a headless terminal calls BASIC back inside run, and stops")
+    func importTUIKit() async throws {
+        let studio = start("""
+        IMPORT "TUIKit"
+        DIM D AS HeadlessDriver
+        D = NEW HeadlessDriver(40, 8, FALSE)
+        DIM A AS App
+        A = NEW App(D, NULL)
+        DIM W AS Window
+        W = NEW Window(0, 0, 40, 8)
+        FUNCTION Finish() AS DOUBLE
+          W.showTooltip("Hello from BASIC", 2, 2)
+          A.stop()
+          RETURN 0
+        END FUNCTION
+        A.schedule(50, FUNCTION() AS DOUBLE = Finish())
+        A.run(W)
+        DIM Lines AS VARIANT
+        Lines = D.snapshotText()
+        FOR I = 0 TO LEN(Lines) - 1
+          PRINT "|"; Lines(I); "|"
+        NEXT I
+        """)
+        try await waitUntilFinished(studio)
+        #expect(studio.model.consoleText.contains("│ Hello from BASIC │"), "\(studio.model.consoleText.suffix(600))")
+    }
+
     @Test("On the Mac the choice is the person's, and LLVM is the default")
     func choice() {
         #expect(StudioCompiledRunTarget.isChoosable)

@@ -14,6 +14,10 @@ packages:
   # WebAssembly and run in JavaScriptCore (BASIC-42).
   BASICCompiler:
     path: ../BASICCompiler
+  # IMPORT of the frameworks Studio contains, in its WebAssembly runs: a shim
+  # for every ActiveUI and TUIKit member (BASIC-45).
+  BASICFrameworkMap:
+    path: ../BASICFrameworkMap
   # The local checkout, on develop: the only SwiftTerm with an iOS
   # VectorTerminalView (merged 96c3973, in no tag yet).
   SwiftTerm:
@@ -82,6 +86,10 @@ targets:
         product: BASICCompilerKit
       - package: BASICCompiler
         product: BASICDialectTraditional
+      - package: BASICCompiler
+        product: BASICDialectSwift
+      - package: BASICFrameworkMap
+        product: BASICFrameworkMap
       - package: BASICCompiler
         product: BASICWasm
       - package: BASICCompiler
@@ -176,6 +184,10 @@ targets:
         product: BASICCompilerKit
       - package: BASICCompiler
         product: BASICDialectTraditional
+      - package: BASICCompiler
+        product: BASICDialectSwift
+      - package: BASICFrameworkMap
+        product: BASICFrameworkMap
       - package: BASICCompiler
         product: BASICWasm
       - package: BASICCompiler

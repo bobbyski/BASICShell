@@ -34,7 +34,9 @@ let package = Package(
                 // The runtime's half of a shim: strings, records, errors.
                 .product(name: "BASICRTSwift", package: "BASICCompiler"),
             ],
-            resources: [.copy("Resources")]
+            // `Map`, not `Resources`: an iOS bundle whose top folder is called
+            // that is read as a malformed Mac one, and will not sign.
+            resources: [.copy("Map")]
         ),
         .testTarget(
             name: "BASICFrameworkMapTests",

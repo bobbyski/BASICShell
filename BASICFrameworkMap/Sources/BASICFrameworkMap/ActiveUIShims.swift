@@ -386,44 +386,6 @@ private func basicEnumOut_AUIFolderOverflow(_ value: AUIFolderOverflow) -> Int {
     }
 }
 
-private func basicEnumIn_AUIFont_Design(_ value: Int) -> AUIFont.Design {
-    switch value {
-    case 0: return .`default`
-    case 1: return .`rounded`
-    case 2: return .`serif`
-    case 3: return .`monospaced`
-    default: basicAwaitRaise(BASICEnumRange(description: "AUIFont.Design has no member \(value)"))
-    }
-}
-private func basicEnumOut_AUIFont_Design(_ value: AUIFont.Design) -> Int {
-    switch value {
-    case .`default`: return 0
-    case .`rounded`: return 1
-    case .`serif`: return 2
-    case .`monospaced`: return 3
-    }
-}
-
-private func basicEnumIn_AUIFont_Weight(_ value: Int) -> AUIFont.Weight {
-    switch value {
-    case 0: return .`light`
-    case 1: return .`regular`
-    case 2: return .`medium`
-    case 3: return .`semibold`
-    case 4: return .`bold`
-    default: basicAwaitRaise(BASICEnumRange(description: "AUIFont.Weight has no member \(value)"))
-    }
-}
-private func basicEnumOut_AUIFont_Weight(_ value: AUIFont.Weight) -> Int {
-    switch value {
-    case .`light`: return 0
-    case .`regular`: return 1
-    case .`medium`: return 2
-    case .`semibold`: return 3
-    case .`bold`: return 4
-    }
-}
-
 private func basicEnumIn_AUIGauge_Fill(_ value: Int) -> AUIGauge.Fill {
     switch value {
     case 0: return .`progress`
@@ -1742,12 +1704,6 @@ public func basic_handler_AUIView_focus(_ me: UnsafeMutableRawPointer) -> Swift.
 public func basic_handler_AUIView_undoGrouped(_ me: UnsafeMutableRawPointer, _ fn0: @convention(c) (UnsafeMutableRawPointer?) -> Void, _ ctx0: UnsafeMutableRawPointer?) {
     let object = Unmanaged<AUIView>.fromOpaque(me).takeUnretainedValue()
     MainActor.assumeIsolated { object.undoGrouped({ fn0(ctx0) }) }
-}
-
-@_cdecl("basic_handler_AUIView_snapshot")
-public func basic_handler_AUIView_snapshot(_ me: UnsafeMutableRawPointer) {
-    let object = Unmanaged<AUIView>.fromOpaque(me).takeUnretainedValue()
-    MainActor.assumeIsolated { _ = object.snapshot() }
 }
 
 @_cdecl("basic_handler_AUIView_matchedStyleRules")
@@ -3173,13 +3129,6 @@ public func basic_handler_AUILabel_preferredSize(_ me: UnsafeMutableRawPointer, 
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
-@_cdecl("basic_handler_AUILabel_place")
-public func basic_handler_AUILabel_place(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ a0_2: CGFloat, _ a0_3: CGFloat) {
-    let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
-    let s0 = CGRect(origin: CGPoint(x: a0_0, y: a0_1), size: CGSize(width: a0_2, height: a0_3))
-    MainActor.assumeIsolated { object.place(in: s0) }
-}
-
 @_cdecl("basic_handler_AUILabel_refreshSelf")
 public func basic_handler_AUILabel_refreshSelf(_ me: UnsafeMutableRawPointer) {
     let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
@@ -3353,14 +3302,6 @@ public func basic_handler_AUILabel_multilineTextAlignment(_ me: UnsafeMutableRaw
 public func basic_handler_AUILabel_wraps(_ me: UnsafeMutableRawPointer, _ a0: Swift.Bool) -> UnsafeMutableRawPointer {
     let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
     let result = MainActor.assumeIsolated { object.wraps(a0) }
-    return Unmanaged.passRetained(result).toOpaque()
-}
-
-@_cdecl("basic_handler_AUILabel_font")
-public func basic_handler_AUILabel_font(_ me: UnsafeMutableRawPointer, _ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
-    let b0 = basicOpaqueValue(a0) as! AUIFont
-    let result = MainActor.assumeIsolated { object.font(b0) }
     return Unmanaged.passRetained(result).toOpaque()
 }
 
@@ -3692,13 +3633,6 @@ public func basic_handler_AUIOutlineView_applyThemeBackground(_ me: UnsafeMutabl
     MainActor.assumeIsolated { object.applyThemeBackground(b0) }
 }
 
-@_cdecl("basic_handler_AUIOutlineView_layoutChildren")
-public func basic_handler_AUIOutlineView_layoutChildren(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ a0_2: CGFloat, _ a0_3: CGFloat) {
-    let object = Unmanaged<AUIOutlineView>.fromOpaque(me).takeUnretainedValue()
-    let s0 = CGRect(origin: CGPoint(x: a0_0, y: a0_1), size: CGSize(width: a0_2, height: a0_3))
-    MainActor.assumeIsolated { object.layoutChildren(in: s0) }
-}
-
 @_cdecl("basic_handler_AUIPageDots_styleTraitsDidChange")
 public func basic_handler_AUIPageDots_styleTraitsDidChange(_ me: UnsafeMutableRawPointer) {
     let object = Unmanaged<AUIPageDots>.fromOpaque(me).takeUnretainedValue()
@@ -3792,14 +3726,6 @@ public func basic_handler_AUIPicker_isBordered(_ me: UnsafeMutableRawPointer, _ 
 public func basic_handler_AUIPicker_showsIndicator(_ me: UnsafeMutableRawPointer, _ a0: Swift.Bool) -> UnsafeMutableRawPointer {
     let object = Unmanaged<AUIPicker>.fromOpaque(me).takeUnretainedValue()
     let result = MainActor.assumeIsolated { object.showsIndicator(a0) }
-    return Unmanaged.passRetained(result).toOpaque()
-}
-
-@_cdecl("basic_handler_AUIPicker_font")
-public func basic_handler_AUIPicker_font(_ me: UnsafeMutableRawPointer, _ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    let object = Unmanaged<AUIPicker>.fromOpaque(me).takeUnretainedValue()
-    let b0 = a0.map { basicOpaqueValue($0) as! AUIFont }
-    let result = MainActor.assumeIsolated { object.font(b0) }
     return Unmanaged.passRetained(result).toOpaque()
 }
 
@@ -4091,12 +4017,6 @@ public func basic_handler_AUIRangeSlider_thumbDiameter(_ me: UnsafeMutableRawPoi
     return Unmanaged.passRetained(result).toOpaque()
 }
 
-@_cdecl("basic_handler_AUIReadOnlyDocument_reloadStyles")
-public func basic_handler_AUIReadOnlyDocument_reloadStyles(_ me: UnsafeMutableRawPointer) {
-    let object = Unmanaged<AUIReadOnlyDocument>.fromOpaque(me).takeUnretainedValue()
-    MainActor.assumeIsolated { object.reloadStyles() }
-}
-
 @_cdecl("basic_handler_AUIScoreMeter_styleTraitsDidChange")
 public func basic_handler_AUIScoreMeter_styleTraitsDidChange(_ me: UnsafeMutableRawPointer) {
     let object = Unmanaged<AUIScoreMeter>.fromOpaque(me).takeUnretainedValue()
@@ -4155,14 +4075,6 @@ public func basic_handler_AUISegmentedControl_setWidth(_ me: UnsafeMutableRawPoi
 public func basic_handler_AUISegmentedControl_refreshSelf(_ me: UnsafeMutableRawPointer) {
     let object = Unmanaged<AUISegmentedControl>.fromOpaque(me).takeUnretainedValue()
     MainActor.assumeIsolated { object.refreshSelf() }
-}
-
-@_cdecl("basic_handler_AUISegmentedControl_font")
-public func basic_handler_AUISegmentedControl_font(_ me: UnsafeMutableRawPointer, _ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    let object = Unmanaged<AUISegmentedControl>.fromOpaque(me).takeUnretainedValue()
-    let b0 = a0.map { basicOpaqueValue($0) as! AUIFont }
-    let result = MainActor.assumeIsolated { object.font(b0) }
-    return Unmanaged.passRetained(result).toOpaque()
 }
 
 @_cdecl("basic_handler_AUISegmentedControl_selectedSegmentColor")
@@ -4403,13 +4315,6 @@ public func basic_handler_AUITable_applySelectionColor(_ me: UnsafeMutableRawPoi
     MainActor.assumeIsolated { object.applySelectionColor(b0) }
 }
 
-@_cdecl("basic_handler_AUITable_layoutChildren")
-public func basic_handler_AUITable_layoutChildren(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ a0_2: CGFloat, _ a0_3: CGFloat) {
-    let object = Unmanaged<AUITable>.fromOpaque(me).takeUnretainedValue()
-    let s0 = CGRect(origin: CGPoint(x: a0_0, y: a0_1), size: CGSize(width: a0_2, height: a0_3))
-    MainActor.assumeIsolated { object.layoutChildren(in: s0) }
-}
-
 @_cdecl("basic_handler_AUITable_rowPadding")
 public func basic_handler_AUITable_rowPadding(_ me: UnsafeMutableRawPointer, _ a0: CGFloat) -> UnsafeMutableRawPointer {
     let object = Unmanaged<AUITable>.fromOpaque(me).takeUnretainedValue()
@@ -4478,14 +4383,6 @@ public func basic_handler_AUITextEditor_text(_ me: UnsafeMutableRawPointer, _ a0
     let object = Unmanaged<AUITextEditor>.fromOpaque(me).takeUnretainedValue()
     let t0 = basicStringIn(a0)
     let result = MainActor.assumeIsolated { object.text(t0) }
-    return Unmanaged.passRetained(result).toOpaque()
-}
-
-@_cdecl("basic_handler_AUITextEditor_font")
-public func basic_handler_AUITextEditor_font(_ me: UnsafeMutableRawPointer, _ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    let object = Unmanaged<AUITextEditor>.fromOpaque(me).takeUnretainedValue()
-    let b0 = a0.map { basicOpaqueValue($0) as! AUIFont }
-    let result = MainActor.assumeIsolated { object.font(b0) }
     return Unmanaged.passRetained(result).toOpaque()
 }
 
@@ -5949,12 +5846,6 @@ public func basic_handler_AUIMenu_addItem(_ me: UnsafeMutableRawPointer, _ a0: U
     MainActor.assumeIsolated { object.addItem(o0) }
 }
 
-@_cdecl("basic_handler_AUIMenu_makeNativeMenu")
-public func basic_handler_AUIMenu_makeNativeMenu(_ me: UnsafeMutableRawPointer) {
-    let object = Unmanaged<AUIMenu>.fromOpaque(me).takeUnretainedValue()
-    MainActor.assumeIsolated { _ = object.makeNativeMenu() }
-}
-
 @_cdecl("basic_handler_AUIMindMap_load")
 public func basic_handler_AUIMindMap_load(_ me: UnsafeMutableRawPointer, _ r0_0: UnsafeMutableRawPointer?) {
     let object = Unmanaged<AUIMindMap>.fromOpaque(me).takeUnretainedValue()
@@ -6330,13 +6221,6 @@ public func basic_handler_AUISidebarList_applySelectionColor(_ me: UnsafeMutable
     MainActor.assumeIsolated { object.applySelectionColor(b0) }
 }
 
-@_cdecl("basic_handler_AUISidebarList_layoutChildren")
-public func basic_handler_AUISidebarList_layoutChildren(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ a0_2: CGFloat, _ a0_3: CGFloat) {
-    let object = Unmanaged<AUISidebarList>.fromOpaque(me).takeUnretainedValue()
-    let s0 = CGRect(origin: CGPoint(x: a0_0, y: a0_1), size: CGSize(width: a0_2, height: a0_3))
-    MainActor.assumeIsolated { object.layoutChildren(in: s0) }
-}
-
 @_cdecl("basic_handler_AUISidebarList_preferredSize")
 public func basic_handler_AUISidebarList_preferredSize(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ ti: Int) -> UnsafeMutableRawPointer {
     let object = Unmanaged<AUISidebarList>.fromOpaque(me).takeUnretainedValue()
@@ -6497,20 +6381,6 @@ public func basic_handler_AUIToolboxDock_undock(_ me: UnsafeMutableRawPointer) {
     MainActor.assumeIsolated { _ = object.undock() }
 }
 
-@_cdecl("basic_handler_AUIToolboxDock_tearOffForTesting")
-public func basic_handler_AUIToolboxDock_tearOffForTesting(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat) {
-    let object = Unmanaged<AUIToolboxDock>.fromOpaque(me).takeUnretainedValue()
-    let s0 = CGPoint(x: a0_0, y: a0_1)
-    MainActor.assumeIsolated { _ = object.tearOffForTesting(at: s0) }
-}
-
-@_cdecl("basic_handler_AUIToolboxDock_dropForTesting")
-public func basic_handler_AUIToolboxDock_dropForTesting(_ me: UnsafeMutableRawPointer, _ a0: Int) {
-    let object = Unmanaged<AUIToolboxDock>.fromOpaque(me).takeUnretainedValue()
-    let e0 = basicEnumIn_AUIFolderEdge(a0)
-    MainActor.assumeIsolated { object.dropForTesting(on: e0) }
-}
-
 @_cdecl("basic_handler_AUIToolboxDock_layoutChildren")
 public func basic_handler_AUIToolboxDock_layoutChildren(_ me: UnsafeMutableRawPointer, _ a0_0: CGFloat, _ a0_1: CGFloat, _ a0_2: CGFloat, _ a0_3: CGFloat) {
     let object = Unmanaged<AUIToolboxDock>.fromOpaque(me).takeUnretainedValue()
@@ -6562,22 +6432,10 @@ public func basic_handler_AUIWindow_setContentSize(_ me: UnsafeMutableRawPointer
     MainActor.assumeIsolated { object.setContentSize(s0, animated: a1) }
 }
 
-@_cdecl("basic_handler_AUIPasteboard_write")
-public func basic_handler_AUIPasteboard_write(_ me: UnsafeMutableRawPointer) {
-    let object = Unmanaged<AUIPasteboard>.fromOpaque(me).takeUnretainedValue()
-    MainActor.assumeIsolated { object.write() }
-}
-
 @_cdecl("basic_handler_AUIPasteboard_clear")
 public func basic_handler_AUIPasteboard_clear(_ me: UnsafeMutableRawPointer) {
     let object = Unmanaged<AUIPasteboard>.fromOpaque(me).takeUnretainedValue()
     MainActor.assumeIsolated { object.clear() }
-}
-
-@_cdecl("basic_handler_AUINativeHost_didAttach")
-public func basic_handler_AUINativeHost_didAttach(_ me: UnsafeMutableRawPointer) {
-    let object = Unmanaged<AUINativeHost>.fromOpaque(me).takeUnretainedValue()
-    MainActor.assumeIsolated { object.didAttach() }
 }
 
 @_cdecl("basic_handler_AUINativeHost_preferredSize")
@@ -6772,13 +6630,6 @@ public func basic_new_AUIStatusItem_0() -> UnsafeMutableRawPointer? {
 @_cdecl("basic_new_AUIActivitySpinner_1")
 public func basic_new_AUIActivitySpinner_1(_ a0: Swift.Bool) -> UnsafeMutableRawPointer? {
     let made: AUIActivitySpinner? = MainActor.assumeIsolated { AUIActivitySpinner(animating: a0) }
-    return made.map { Unmanaged.passRetained($0).toOpaque() }
-}
-
-@_cdecl("basic_new_AUIAvatarView_1")
-public func basic_new_AUIAvatarView_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-    let t0 = basicStringIn(a0)
-    let made: AUIAvatarView? = MainActor.assumeIsolated { AUIAvatarView(name: t0) }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -6977,24 +6828,11 @@ public func basic_new_AUIIconStrip_3(_ a0: UnsafeMutableRawPointer?, _ a1: Unsaf
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
-@_cdecl("basic_new_AUIImageView_1")
-public func basic_new_AUIImageView_1(_ a0: Int) -> UnsafeMutableRawPointer? {
-    let e0 = basicEnumIn_AUIImageView_Scaling(a0)
-    let made: AUIImageView? = MainActor.assumeIsolated { AUIImageView(scaling: e0) }
-    return made.map { Unmanaged.passRetained($0).toOpaque() }
-}
-
 @_cdecl("basic_new_AUIImageView_2")
 public func basic_new_AUIImageView_2(_ a0: UnsafeMutableRawPointer?, _ a1: Int) -> UnsafeMutableRawPointer? {
     let e1 = basicEnumIn_AUIImageView_Scaling(a1)
     let t0 = basicStringIn(a0)
     let made: AUIImageView? = MainActor.assumeIsolated { AUIImageView(systemSymbol: t0, scaling: e1) }
-    return made.map { Unmanaged.passRetained($0).toOpaque() }
-}
-
-@_cdecl("basic_new_AUIImageViewer_0")
-public func basic_new_AUIImageViewer_0() -> UnsafeMutableRawPointer? {
-    let made: AUIImageViewer? = MainActor.assumeIsolated { AUIImageViewer() }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -7121,13 +6959,6 @@ public func basic_new_AUIRadioGroup_3(_ a0: UnsafeMutableRawPointer?, _ a1: Int,
     let e1 = basicEnumIn_AUIRadioGroup_Axis(a1)
     let v0 = (0..<basicArrayCount(a0)).map { basicArrayString(a0, $0) }
     let made: AUIRadioGroup? = MainActor.assumeIsolated { AUIRadioGroup(v0, axis: e1, selectedIndex: a2) }
-    return made.map { Unmanaged.passRetained($0).toOpaque() }
-}
-
-@_cdecl("basic_new_AUIReadOnlyDocument_1")
-public func basic_new_AUIReadOnlyDocument_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
-    let p0 = Unmanaged<AnyObject>.fromOpaque(a0!).takeUnretainedValue() as! AUIReadOnlyDocumentSource
-    let made: AUIReadOnlyDocument? = MainActor.assumeIsolated { AUIReadOnlyDocument(source: p0) }
     return made.map { Unmanaged.passRetained($0).toOpaque() }
 }
 
@@ -7709,12 +7540,11 @@ public func basic_new_AUIAttributedText_0(_ ti: Int) -> UnsafeMutableRawPointer 
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
-@_cdecl("basic_new_AUIAttributedText_5")
-public func basic_new_AUIAttributedText_5(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?, _ a2: UnsafeMutableRawPointer?, _ a3: Swift.Bool, _ a4: Swift.Bool, _ ti: Int) -> UnsafeMutableRawPointer {
-    let b1 = a1.map { basicOpaqueValue($0) as! AUIFont }
-    let b2 = a2.map { basicOpaqueValue($0) as! AUIColor }
+@_cdecl("basic_new_AUIAttributedText_4")
+public func basic_new_AUIAttributedText_4(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?, _ a2: Swift.Bool, _ a3: Swift.Bool, _ ti: Int) -> UnsafeMutableRawPointer {
+    let b1 = a1.map { basicOpaqueValue($0) as! AUIColor }
     let t0 = basicStringIn(a0)
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIAttributedText(t0, font: b1, color: b2, underline: a3, strikethrough: a4), ti)) }
+    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIAttributedText(t0, color: b1, underline: a2, strikethrough: a3), ti)) }
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
@@ -7844,12 +7674,11 @@ public func basic_handler_AUIAttributedText_shared_plainText(_ me: UnsafeMutable
 }
 
 @_cdecl("basic_handler_AUIAttributedText_shared_appending")
-public func basic_handler_AUIAttributedText_shared_appending(_ me: UnsafeMutableRawPointer?, _ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?, _ a2: UnsafeMutableRawPointer?, _ a3: Swift.Bool, _ a4: Swift.Bool, _ ti: Int) -> UnsafeMutableRawPointer {
+public func basic_handler_AUIAttributedText_shared_appending(_ me: UnsafeMutableRawPointer?, _ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?, _ a2: Swift.Bool, _ a3: Swift.Bool, _ ti: Int) -> UnsafeMutableRawPointer {
     let object = basicOpaqueValue(me) as! AUIAttributedText
-    let b1 = a1.map { basicOpaqueValue($0) as! AUIFont }
-    let b2 = a2.map { basicOpaqueValue($0) as! AUIColor }
+    let b1 = a1.map { basicOpaqueValue($0) as! AUIColor }
     let t0 = basicStringIn(a0)
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(object.appending(t0, font: b1, color: b2, underline: a3, strikethrough: a4), ti)) }
+    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(object.appending(t0, color: b1, underline: a2, strikethrough: a3), ti)) }
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
@@ -8190,63 +8019,6 @@ public func basic_handler_AUIDocumentReference_shared_displayName(_ me: UnsafeMu
     let object = basicOpaqueValue(me) as! AUIDocumentReference
     let result = MainActor.assumeIsolated { object.`displayName` }
     return basicStringOut(result)
-}
-
-@_cdecl("basic_handler_AUIFont_shared_body")
-public func basic_handler_AUIFont_shared_body(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`body`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_headline")
-public func basic_handler_AUIFont_shared_headline(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`headline`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_title")
-public func basic_handler_AUIFont_shared_title(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`title`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_largeTitle")
-public func basic_handler_AUIFont_shared_largeTitle(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`largeTitle`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_callout")
-public func basic_handler_AUIFont_shared_callout(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`callout`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_caption")
-public func basic_handler_AUIFont_shared_caption(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`caption`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_caption2")
-public func basic_handler_AUIFont_shared_caption2(_ ti: Int) -> UnsafeMutableRawPointer {
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.`caption2`, ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_system")
-public func basic_handler_AUIFont_shared_system(_ a0: CGFloat, _ a1: Int, _ a2: Int, _ ti: Int) -> UnsafeMutableRawPointer {
-    let e1 = basicEnumIn_AUIFont_Weight(a1)
-    let e2 = basicEnumIn_AUIFont_Design(a2)
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.system(size: a0, weight: e1, design: e2), ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
-}
-
-@_cdecl("basic_handler_AUIFont_shared_monospaced")
-public func basic_handler_AUIFont_shared_monospaced(_ a0: CGFloat, _ a1: Int, _ ti: Int) -> UnsafeMutableRawPointer {
-    let e1 = basicEnumIn_AUIFont_Weight(a1)
-    let bits = MainActor.assumeIsolated { Int(bitPattern: basicOpaqueMake(AUIFont.monospaced(size: a0, weight: e1), ti)) }
-    return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
 @_cdecl("basic_handler_AUIInteraction_shared_preferredPencilTapAction")
@@ -8795,16 +8567,6 @@ public func basic_handler_AUIUnderConstruction_shared_census() {
 public func basic_handler_AUIUnderConstruction_shared_report() -> UnsafeMutableRawPointer {
     let result = MainActor.assumeIsolated { AUIUnderConstruction.report() }
     return basicStringOut(result)
-}
-
-@_cdecl("basic_handler_AUIView_shared_makeContainerBacking")
-public func basic_handler_AUIView_shared_makeContainerBacking() {
-    MainActor.assumeIsolated { _ = AUIView.makeContainerBacking() }
-}
-
-@_cdecl("basic_handler_AUIView_shared_makeTextInputContainerBacking")
-public func basic_handler_AUIView_shared_makeTextInputContainerBacking() {
-    MainActor.assumeIsolated { _ = AUIView.makeTextInputContainerBacking() }
 }
 
 @_cdecl("basic_handler_AUIView_shared_isBoundedExtent")
@@ -12329,20 +12091,6 @@ public func basic_set_AUIAvatarView_color(_ me: UnsafeMutableRawPointer, _ value
     MainActor.assumeIsolated { object.`color` = converted }
 }
 
-@_cdecl("basic_get_AUIButton_font")
-public func basic_get_AUIButton_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUIButton>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUIButton_font")
-public func basic_set_AUIButton_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUIButton>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
-}
-
 @_cdecl("basic_get_AUIButton_keyEquivalent")
 public func basic_get_AUIButton_keyEquivalent(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
     let object = Unmanaged<AUIButton>.fromOpaque(me).takeUnretainedValue()
@@ -12439,20 +12187,6 @@ public func basic_set_AUIConversationView_outgoingColor(_ me: UnsafeMutableRawPo
     let object = Unmanaged<AUIConversationView>.fromOpaque(me).takeUnretainedValue()
     let converted = value.map { basicOpaqueValue($0) as! AUIColor }
     MainActor.assumeIsolated { object.`outgoingColor` = converted }
-}
-
-@_cdecl("basic_get_AUIDrawnButton_font")
-public func basic_get_AUIDrawnButton_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUIDrawnButton>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUIDrawnButton_font")
-public func basic_set_AUIDrawnButton_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUIDrawnButton>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
 }
 
 @_cdecl("basic_get_AUIDrawnButton_keyEquivalent")
@@ -12567,20 +12301,6 @@ public func basic_set_AUILabel_strikethroughColor(_ me: UnsafeMutableRawPointer,
     MainActor.assumeIsolated { object.`strikethroughColor` = converted }
 }
 
-@_cdecl("basic_get_AUILabel_font")
-public func basic_get_AUILabel_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUILabel_font")
-public func basic_set_AUILabel_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
-}
-
 @_cdecl("basic_get_AUILabel_textColor")
 public func basic_get_AUILabel_textColor(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
     let object = Unmanaged<AUILabel>.fromOpaque(me).takeUnretainedValue()
@@ -12665,34 +12385,6 @@ public func basic_set_AUIPathControl_textColor(_ me: UnsafeMutableRawPointer, _ 
     MainActor.assumeIsolated { object.`textColor` = converted }
 }
 
-@_cdecl("basic_get_AUIPathControl_font")
-public func basic_get_AUIPathControl_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUIPathControl>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUIPathControl_font")
-public func basic_set_AUIPathControl_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUIPathControl>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
-}
-
-@_cdecl("basic_get_AUIPicker_font")
-public func basic_get_AUIPicker_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUIPicker>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUIPicker_font")
-public func basic_set_AUIPicker_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUIPicker>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
-}
-
 @_cdecl("basic_get_AUIPicker_textColor")
 public func basic_get_AUIPicker_textColor(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
     let object = Unmanaged<AUIPicker>.fromOpaque(me).takeUnretainedValue()
@@ -12749,20 +12441,6 @@ public func basic_set_AUIRangeSlider_labelColor(_ me: UnsafeMutableRawPointer, _
     MainActor.assumeIsolated { object.`labelColor` = converted }
 }
 
-@_cdecl("basic_get_AUISegmentedControl_font")
-public func basic_get_AUISegmentedControl_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUISegmentedControl>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUISegmentedControl_font")
-public func basic_set_AUISegmentedControl_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUISegmentedControl>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
-}
-
 @_cdecl("basic_get_AUISegmentedControl_selectedSegmentColor")
 public func basic_get_AUISegmentedControl_selectedSegmentColor(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
     let object = Unmanaged<AUISegmentedControl>.fromOpaque(me).takeUnretainedValue()
@@ -12789,20 +12467,6 @@ public func basic_set_AUITable_selectionColor(_ me: UnsafeMutableRawPointer, _ v
     let object = Unmanaged<AUITable>.fromOpaque(me).takeUnretainedValue()
     let converted = value.map { basicOpaqueValue($0) as! AUIColor }
     MainActor.assumeIsolated { object.`selectionColor` = converted }
-}
-
-@_cdecl("basic_get_AUITextEditor_font")
-public func basic_get_AUITextEditor_font(_ me: UnsafeMutableRawPointer, _ ti: Int) -> UnsafeMutableRawPointer? {
-    let object = Unmanaged<AUITextEditor>.fromOpaque(me).takeUnretainedValue()
-    let bits = MainActor.assumeIsolated { object.`font`.map { Int(bitPattern: basicOpaqueMake($0, ti)) } ?? 0 }
-    return UnsafeMutableRawPointer(bitPattern: bits)
-}
-
-@_cdecl("basic_set_AUITextEditor_font")
-public func basic_set_AUITextEditor_font(_ me: UnsafeMutableRawPointer, _ value: UnsafeMutableRawPointer?) {
-    let object = Unmanaged<AUITextEditor>.fromOpaque(me).takeUnretainedValue()
-    let converted = value.map { basicOpaqueValue($0) as! AUIFont }
-    MainActor.assumeIsolated { object.`font` = converted }
 }
 
 @_cdecl("basic_get_AUITrendArrow_color")
@@ -14091,12 +13755,6 @@ public func basic_set_AUIButton_isBordered(_ me: UnsafeMutableRawPointer, _ valu
     let object = Unmanaged<AUIButton>.fromOpaque(me).takeUnretainedValue()
     let converted = value
     MainActor.assumeIsolated { object.`isBordered` = converted }
-}
-
-@_cdecl("basic_get_AUICollectionView_wantsWindowMargin")
-public func basic_get_AUICollectionView_wantsWindowMargin(_ me: UnsafeMutableRawPointer) -> Bool {
-    let object = Unmanaged<AUICollectionView>.fromOpaque(me).takeUnretainedValue()
-    return MainActor.assumeIsolated { object.`wantsWindowMargin` }
 }
 
 @_cdecl("basic_get_AUICollectionView_headerHeight")
@@ -15548,12 +15206,6 @@ public func basic_set_AUIMenuButton_menu(_ me: UnsafeMutableRawPointer, _ value:
     MainActor.assumeIsolated { object.`menu` = basicObjectIn(value) }
 }
 
-@_cdecl("basic_get_AUIOutlineView_wantsWindowMargin")
-public func basic_get_AUIOutlineView_wantsWindowMargin(_ me: UnsafeMutableRawPointer) -> Bool {
-    let object = Unmanaged<AUIOutlineView>.fromOpaque(me).takeUnretainedValue()
-    return MainActor.assumeIsolated { object.`wantsWindowMargin` }
-}
-
 @_cdecl("basic_get_AUIOutlineView_usesSourceListStyle")
 public func basic_get_AUIOutlineView_usesSourceListStyle(_ me: UnsafeMutableRawPointer) -> Bool {
     let object = Unmanaged<AUIOutlineView>.fromOpaque(me).takeUnretainedValue()
@@ -16174,12 +15826,6 @@ public func basic_set_AUISwitch_isOn(_ me: UnsafeMutableRawPointer, _ value: Boo
     let object = Unmanaged<AUISwitch>.fromOpaque(me).takeUnretainedValue()
     let converted = value
     MainActor.assumeIsolated { object.`isOn` = converted }
-}
-
-@_cdecl("basic_get_AUITable_wantsWindowMargin")
-public func basic_get_AUITable_wantsWindowMargin(_ me: UnsafeMutableRawPointer) -> Bool {
-    let object = Unmanaged<AUITable>.fromOpaque(me).takeUnretainedValue()
-    return MainActor.assumeIsolated { object.`wantsWindowMargin` }
 }
 
 @_cdecl("basic_get_AUITable_acceptsDrops")
@@ -17310,12 +16956,6 @@ public func basic_get_AUIScrollView_isScrolledToBottom(_ me: UnsafeMutableRawPoi
 public func basic_get_AUISpacer_minLength(_ me: UnsafeMutableRawPointer) -> Double {
     let object = Unmanaged<AUISpacer>.fromOpaque(me).takeUnretainedValue()
     return MainActor.assumeIsolated { Double(object.`minLength`) }
-}
-
-@_cdecl("basic_get_AUISplitView_wantsWindowMargin")
-public func basic_get_AUISplitView_wantsWindowMargin(_ me: UnsafeMutableRawPointer) -> Bool {
-    let object = Unmanaged<AUISplitView>.fromOpaque(me).takeUnretainedValue()
-    return MainActor.assumeIsolated { object.`wantsWindowMargin` }
 }
 
 @_cdecl("basic_get_AUIStack_spacing")
@@ -18770,106 +18410,105 @@ private let basicClassIndex_ActiveUI: [ObjectIdentifier: Int] = [
     ObjectIdentifier(AUIQuestionCard.self): 65,
     ObjectIdentifier(AUIRadioGroup.self): 66,
     ObjectIdentifier(AUIRangeSlider.self): 67,
-    ObjectIdentifier(AUIReadOnlyDocument.self): 68,
-    ObjectIdentifier(AUIScoreMeter.self): 69,
-    ObjectIdentifier(AUIScroller.self): 70,
-    ObjectIdentifier(AUISearchField.self): 71,
-    ObjectIdentifier(AUISegmentedControl.self): 72,
-    ObjectIdentifier(AUISettingsGroup.self): 73,
-    ObjectIdentifier(AUIShareLink.self): 74,
-    ObjectIdentifier(AUISlider.self): 75,
-    ObjectIdentifier(AUIStepper.self): 76,
-    ObjectIdentifier(AUISwitch.self): 77,
-    ObjectIdentifier(AUITable.self): 78,
-    ObjectIdentifier(AUITextEditor.self): 79,
-    ObjectIdentifier(AUITextField.self): 80,
-    ObjectIdentifier(AUITimelineBand.self): 81,
-    ObjectIdentifier(AUIToggle.self): 82,
-    ObjectIdentifier(AUITokenField.self): 83,
-    ObjectIdentifier(AUITrendArrow.self): 84,
-    ObjectIdentifier(AUIUnavailableView.self): 85,
-    ObjectIdentifier(AUIUnderConstruction.self): 86,
-    ObjectIdentifier(AUICursor.self): 87,
-    ObjectIdentifier(AUIDataBackends.self): 88,
-    ObjectIdentifier(AUIJSONDataBinding.self): 89,
-    ObjectIdentifier(AUIMemoryDataBinding.self): 90,
-    ObjectIdentifier(AUIQueryDesigner.self): 91,
-    ObjectIdentifier(AUIQueryDesignerObservation.self): 92,
-    ObjectIdentifier(AUIDataLink.self): 93,
-    ObjectIdentifier(AUIQueryColumnsView.self): 94,
-    ObjectIdentifier(AUIQueryConditionsView.self): 95,
-    ObjectIdentifier(AUIQueryDesignerView.self): 96,
-    ObjectIdentifier(AUIQueryJoinsView.self): 97,
-    ObjectIdentifier(AUIQueryLimitView.self): 98,
-    ObjectIdentifier(AUIQuerySectionView.self): 99,
-    ObjectIdentifier(AUIQuerySortView.self): 100,
-    ObjectIdentifier(AUIQuerySourceTextView.self): 101,
-    ObjectIdentifier(AUIRowEditor.self): 102,
-    ObjectIdentifier(AUIFieldLink.self): 103,
-    ObjectIdentifier(AUIDocumentManager.self): 104,
-    ObjectIdentifier(AUIMemoryDocumentStorage.self): 105,
-    ObjectIdentifier(AUIAnimationEligibility.self): 106,
-    ObjectIdentifier(AUIBezierPath.self): 107,
-    ObjectIdentifier(AUICanvas.self): 108,
-    ObjectIdentifier(AUIDrawnStates.self): 109,
-    ObjectIdentifier(AUIParticleSurface.self): 110,
-    ObjectIdentifier(AUIShape.self): 111,
-    ObjectIdentifier(AUIRectangle.self): 112,
-    ObjectIdentifier(AUIRoundedRectangle.self): 113,
-    ObjectIdentifier(AUIEllipse.self): 114,
-    ObjectIdentifier(AUICircle.self): 115,
-    ObjectIdentifier(AUICapsule.self): 116,
-    ObjectIdentifier(AUITicker.self): 117,
-    ObjectIdentifier(AUIInteraction.self): 118,
-    ObjectIdentifier(AUIAccordion.self): 119,
-    ObjectIdentifier(AUIAccordionHeader.self): 120,
-    ObjectIdentifier(AUIBubbleView.self): 121,
-    ObjectIdentifier(AUIBubbleTail.self): 122,
-    ObjectIdentifier(AUIControlGroup.self): 123,
-    ObjectIdentifier(AUIFlipView.self): 124,
-    ObjectIdentifier(AUIFloatingLayout.self): 125,
-    ObjectIdentifier(AUIGrid.self): 126,
-    ObjectIdentifier(AUIWidthSwitch.self): 127,
-    ObjectIdentifier(AUIHeightSwitch.self): 128,
-    ObjectIdentifier(AUIOrientationSwitch.self): 129,
-    ObjectIdentifier(AUIAspectSwitch.self): 130,
-    ObjectIdentifier(AUIScrollView.self): 131,
-    ObjectIdentifier(AUISpacer.self): 132,
-    ObjectIdentifier(AUISplitView.self): 133,
-    ObjectIdentifier(AUIStack.self): 134,
-    ObjectIdentifier(AUIViewThatFits.self): 135,
-    ObjectIdentifier(AUIZStack.self): 136,
-    ObjectIdentifier(AUIConsoleLogDestination.self): 137,
-    ObjectIdentifier(AUIOSLogDestination.self): 138,
-    ObjectIdentifier(AUIFileLogDestination.self): 139,
-    ObjectIdentifier(AUILogStore.self): 140,
-    ObjectIdentifier(AUILogView.self): 141,
-    ObjectIdentifier(AUILogger.self): 142,
-    ObjectIdentifier(AUISound.self): 143,
-    ObjectIdentifier(AUIMenuItem.self): 144,
-    ObjectIdentifier(AUIMenu.self): 145,
-    ObjectIdentifier(AUIMindMap.self): 146,
-    ObjectIdentifier(AUIMindMapHistory.self): 147,
-    ObjectIdentifier(AUIFolderPanel.self): 148,
-    ObjectIdentifier(AUIFolderRibbon.self): 149,
-    ObjectIdentifier(AUIMasterDetailView.self): 150,
-    ObjectIdentifier(AUINavigator.self): 151,
-    ObjectIdentifier(AUIPageView.self): 152,
-    ObjectIdentifier(AUIPanel.self): 153,
-    ObjectIdentifier(AUISidebar.self): 154,
-    ObjectIdentifier(AUISidebarList.self): 155,
-    ObjectIdentifier(AUISidebarRow.self): 156,
-    ObjectIdentifier(AUITabView.self): 157,
-    ObjectIdentifier(AUIToolbox.self): 158,
-    ObjectIdentifier(AUIToolboxDock.self): 159,
-    ObjectIdentifier(AUIWindow.self): 160,
-    ObjectIdentifier(AUIPasteboard.self): 161,
-    ObjectIdentifier(AUINativeHost.self): 162,
-    ObjectIdentifier(AUINotificationToken.self): 163,
-    ObjectIdentifier(AUIVisualEffectView.self): 164,
-    ObjectIdentifier(AUIToolbarItem.self): 165,
-    ObjectIdentifier(AUIToolbar.self): 166,
-    ObjectIdentifier(AUIToolbarGlyphButton.self): 167,
+    ObjectIdentifier(AUIScoreMeter.self): 68,
+    ObjectIdentifier(AUIScroller.self): 69,
+    ObjectIdentifier(AUISearchField.self): 70,
+    ObjectIdentifier(AUISegmentedControl.self): 71,
+    ObjectIdentifier(AUISettingsGroup.self): 72,
+    ObjectIdentifier(AUIShareLink.self): 73,
+    ObjectIdentifier(AUISlider.self): 74,
+    ObjectIdentifier(AUIStepper.self): 75,
+    ObjectIdentifier(AUISwitch.self): 76,
+    ObjectIdentifier(AUITable.self): 77,
+    ObjectIdentifier(AUITextEditor.self): 78,
+    ObjectIdentifier(AUITextField.self): 79,
+    ObjectIdentifier(AUITimelineBand.self): 80,
+    ObjectIdentifier(AUIToggle.self): 81,
+    ObjectIdentifier(AUITokenField.self): 82,
+    ObjectIdentifier(AUITrendArrow.self): 83,
+    ObjectIdentifier(AUIUnavailableView.self): 84,
+    ObjectIdentifier(AUIUnderConstruction.self): 85,
+    ObjectIdentifier(AUICursor.self): 86,
+    ObjectIdentifier(AUIDataBackends.self): 87,
+    ObjectIdentifier(AUIJSONDataBinding.self): 88,
+    ObjectIdentifier(AUIMemoryDataBinding.self): 89,
+    ObjectIdentifier(AUIQueryDesigner.self): 90,
+    ObjectIdentifier(AUIQueryDesignerObservation.self): 91,
+    ObjectIdentifier(AUIDataLink.self): 92,
+    ObjectIdentifier(AUIQueryColumnsView.self): 93,
+    ObjectIdentifier(AUIQueryConditionsView.self): 94,
+    ObjectIdentifier(AUIQueryDesignerView.self): 95,
+    ObjectIdentifier(AUIQueryJoinsView.self): 96,
+    ObjectIdentifier(AUIQueryLimitView.self): 97,
+    ObjectIdentifier(AUIQuerySectionView.self): 98,
+    ObjectIdentifier(AUIQuerySortView.self): 99,
+    ObjectIdentifier(AUIQuerySourceTextView.self): 100,
+    ObjectIdentifier(AUIRowEditor.self): 101,
+    ObjectIdentifier(AUIFieldLink.self): 102,
+    ObjectIdentifier(AUIDocumentManager.self): 103,
+    ObjectIdentifier(AUIMemoryDocumentStorage.self): 104,
+    ObjectIdentifier(AUIAnimationEligibility.self): 105,
+    ObjectIdentifier(AUIBezierPath.self): 106,
+    ObjectIdentifier(AUICanvas.self): 107,
+    ObjectIdentifier(AUIDrawnStates.self): 108,
+    ObjectIdentifier(AUIParticleSurface.self): 109,
+    ObjectIdentifier(AUIShape.self): 110,
+    ObjectIdentifier(AUIRectangle.self): 111,
+    ObjectIdentifier(AUIRoundedRectangle.self): 112,
+    ObjectIdentifier(AUIEllipse.self): 113,
+    ObjectIdentifier(AUICircle.self): 114,
+    ObjectIdentifier(AUICapsule.self): 115,
+    ObjectIdentifier(AUITicker.self): 116,
+    ObjectIdentifier(AUIInteraction.self): 117,
+    ObjectIdentifier(AUIAccordion.self): 118,
+    ObjectIdentifier(AUIAccordionHeader.self): 119,
+    ObjectIdentifier(AUIBubbleView.self): 120,
+    ObjectIdentifier(AUIBubbleTail.self): 121,
+    ObjectIdentifier(AUIControlGroup.self): 122,
+    ObjectIdentifier(AUIFlipView.self): 123,
+    ObjectIdentifier(AUIFloatingLayout.self): 124,
+    ObjectIdentifier(AUIGrid.self): 125,
+    ObjectIdentifier(AUIWidthSwitch.self): 126,
+    ObjectIdentifier(AUIHeightSwitch.self): 127,
+    ObjectIdentifier(AUIOrientationSwitch.self): 128,
+    ObjectIdentifier(AUIAspectSwitch.self): 129,
+    ObjectIdentifier(AUIScrollView.self): 130,
+    ObjectIdentifier(AUISpacer.self): 131,
+    ObjectIdentifier(AUISplitView.self): 132,
+    ObjectIdentifier(AUIStack.self): 133,
+    ObjectIdentifier(AUIViewThatFits.self): 134,
+    ObjectIdentifier(AUIZStack.self): 135,
+    ObjectIdentifier(AUIConsoleLogDestination.self): 136,
+    ObjectIdentifier(AUIOSLogDestination.self): 137,
+    ObjectIdentifier(AUIFileLogDestination.self): 138,
+    ObjectIdentifier(AUILogStore.self): 139,
+    ObjectIdentifier(AUILogView.self): 140,
+    ObjectIdentifier(AUILogger.self): 141,
+    ObjectIdentifier(AUISound.self): 142,
+    ObjectIdentifier(AUIMenuItem.self): 143,
+    ObjectIdentifier(AUIMenu.self): 144,
+    ObjectIdentifier(AUIMindMap.self): 145,
+    ObjectIdentifier(AUIMindMapHistory.self): 146,
+    ObjectIdentifier(AUIFolderPanel.self): 147,
+    ObjectIdentifier(AUIFolderRibbon.self): 148,
+    ObjectIdentifier(AUIMasterDetailView.self): 149,
+    ObjectIdentifier(AUINavigator.self): 150,
+    ObjectIdentifier(AUIPageView.self): 151,
+    ObjectIdentifier(AUIPanel.self): 152,
+    ObjectIdentifier(AUISidebar.self): 153,
+    ObjectIdentifier(AUISidebarList.self): 154,
+    ObjectIdentifier(AUISidebarRow.self): 155,
+    ObjectIdentifier(AUITabView.self): 156,
+    ObjectIdentifier(AUIToolbox.self): 157,
+    ObjectIdentifier(AUIToolboxDock.self): 158,
+    ObjectIdentifier(AUIWindow.self): 159,
+    ObjectIdentifier(AUIPasteboard.self): 160,
+    ObjectIdentifier(AUINativeHost.self): 161,
+    ObjectIdentifier(AUINotificationToken.self): 162,
+    ObjectIdentifier(AUIVisualEffectView.self): 163,
+    ObjectIdentifier(AUIToolbarItem.self): 164,
+    ObjectIdentifier(AUIToolbar.self): 165,
+    ObjectIdentifier(AUIToolbarGlyphButton.self): 166,
     ObjectIdentifier(BASICOpaque.self): -2,
 ]
 @_cdecl("basic_classid_ActiveUI")

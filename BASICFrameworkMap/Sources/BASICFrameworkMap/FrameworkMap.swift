@@ -23,8 +23,8 @@ public enum BASICFrameworkMap {
     /// The frameworks Studio contains, from this target's resources.
     public static var frameworks: [Framework] {
         ["ActiveUI", "TUIKit"].compactMap { module in
-            guard let graph = Bundle.module.url(forResource: "\(module).symbols", withExtension: "json", subdirectory: "Resources"),
-                  let exported = Bundle.module.url(forResource: module, withExtension: "exported", subdirectory: "Resources")
+            guard let graph = Bundle.module.url(forResource: "\(module).symbols", withExtension: "json", subdirectory: "Map"),
+                  let exported = Bundle.module.url(forResource: module, withExtension: "exported", subdirectory: "Map")
             else { return nil }
             return Framework(module: module, symbolGraph: graph, exported: exported)
         }
@@ -33,7 +33,7 @@ public enum BASICFrameworkMap {
     /// Every shim, by name, for the runner: a module's imports of them are
     /// answered here. With them, retain and release, which a program's
     /// imported objects take as Swift objects do.
-    public static var entries: [String: WasmEntryPoint] {
+    public static let entries: [String: WasmEntryPoint] = {
         var all = ActiveUIEntries.merging(TUIKitEntries) { first, _ in first }
         all["swift_retain"] = WasmEntryPoint(arity: 1) { a in
             if let object = UnsafeMutableRawPointer(bitPattern: UInt(a[0])) {
@@ -55,5 +55,5 @@ public enum BASICFrameworkMap {
             Double(UInt(bitPattern: basic_rt_opaque_text(UnsafeMutableRawPointer(bitPattern: UInt(a[0])))))
         }
         return all
-    }
+    }()
 }

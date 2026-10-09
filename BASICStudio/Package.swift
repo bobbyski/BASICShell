@@ -12,6 +12,9 @@ let package = Package(
         // The compiler core, in process: on an iPad a program is compiled to
         // WebAssembly and run in JavaScriptCore (BASIC-42).
         .package(path: "../BASICCompiler"),
+        // IMPORT of the frameworks Studio contains, in its WebAssembly runs:
+        // a shim for every ActiveUI and TUIKit member (BASIC-45).
+        .package(path: "../BASICFrameworkMap"),
         .package(path: "../DocumentArchive"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         // The local checkout, on develop: the only SwiftTerm with an iOS
@@ -38,6 +41,8 @@ let package = Package(
                 "BASICRecipes",
                 .product(name: "BASICCompilerKit", package: "BASICCompiler"),
                 .product(name: "BASICDialectTraditional", package: "BASICCompiler"),
+                .product(name: "BASICDialectSwift", package: "BASICCompiler"),
+                .product(name: "BASICFrameworkMap", package: "BASICFrameworkMap"),
                 .product(name: "BASICWasm", package: "BASICCompiler"),
                 .product(name: "BASICWasmRunner", package: "BASICCompiler"),
                 "DocumentArchive",

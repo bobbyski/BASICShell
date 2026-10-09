@@ -90,6 +90,8 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     private let lock = NSLock()
     private var runner: WasmRunner?
     private var stopped = false
+    /// The map's entries for this run (BASIC-45), made once.
+    private lazy var frameworkEntries = StudioFrameworkMap.entries(for: model, title: name)
 
     init(model: StudioModel, source: String, name: String, path: String, projectRoot: String?, directory: String) {
         self.model = model
@@ -195,7 +197,7 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     /// interpreter's programs use too.
     var services: WasmHostServices {
         guard let model else { return WasmHostServices() }
-        return WasmHostServices(
+        var services = WasmHostServices(
             windows: model,
             touchControls: model,
             canvas: canvas,
@@ -205,5 +207,8 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
             readKey: { [weak model] in model?.readBlockingKey() },
             tui: model
         )
+        // The frameworks Studio contains, for a program that imports them.
+        services.entries = frameworkEntries
+        return services
     }
 }

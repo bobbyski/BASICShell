@@ -53,6 +53,18 @@ public enum WasmMainThread {
         if call.code != 0 { basic_wasm_unwind(call.code) }
         return call.result
     }
+
+    /// Waits, on the run's thread, until `done` is signalled — a host's
+    /// stand-in for a framework call that keeps the program until the user
+    /// is finished, such as the window `AUIApplication.run` opens in Studio.
+    /// Meanwhile the BASIC calls the framework queues are made, and Stop
+    /// ends the wait as it ends a SLEEP.
+    public static func wait(for done: DispatchSemaphore) {
+        while done.wait(timeout: .now() + .milliseconds(10)) == .timedOut {
+            WasmCallbacks.runQueued()
+            RTHosted.checkStop?()
+        }
+    }
 }
 
 private let runOnMain: basic_wasm_body = { context in

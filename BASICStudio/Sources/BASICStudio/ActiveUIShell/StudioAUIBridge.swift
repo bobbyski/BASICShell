@@ -54,6 +54,15 @@ final class StudioAUIBridge {
     private var pies: [Int: Pie] = [:]
     /// The size each window asked for with `size`, if it did.
     private var sizes: [Int: CGSize] = [:]
+    /// Windows a program's own ActiveUI app opened (`AUIApplication.run`,
+    /// BASIC-45): the framework's views, in a window of Studio's.
+    private(set) var appWindows: [AppWindow] = []
+
+    /// One such window, and the root view the program gave it.
+    struct AppWindow {
+        let window: AUIWindow
+        let root: AUIView
+    }
 
     private struct Dialog {
         var title: String
@@ -283,6 +292,9 @@ final class StudioAUIBridge {
         for id in open {
             windows[id]?.close()
         }
+        let apps = appWindows
+        appWindows.removeAll()
+        for app in apps where showsWindows { app.window.close() }
         views.removeAll()
         windows.removeAll()
         windowRoots.removeAll()
@@ -291,6 +303,35 @@ final class StudioAUIBridge {
         tabs.removeAll()
         pies.removeAll()
         sizes.removeAll()
+    }
+
+    /// Opens the window a program's `AUIApplication.run(root, …)` asks for
+    /// (BASIC-45): `root` is the framework's own view, made by the program
+    /// through `IMPORT "ActiveUI"`, and the window is Studio's, beside its
+    /// others — an app inside Studio, not a second application. `closed` is
+    /// called once, when the user or the program's end closes it.
+    func openAppWindow(_ root: AUIView, title: String, closed: @escaping @MainActor () -> Void) {
+        let fitted = root.layoutSize(fitting: CGSize(width: 800, height: 10_000))
+        let size = CGSize(width: max(480, fitted.width), height: min(900, max(360, fitted.height)))
+        let window = AUIWindow(title: title, rootView: root, contentSize: size)
+        var reported = false
+        window.onClose = { [weak self, weak window] in
+            self?.appWindows.removeAll { $0.window === window }
+            guard !reported else { return }
+            reported = true
+            closed()
+        }
+        appWindows.append(AppWindow(window: window, root: root))
+        if showsWindows { window.show() }
+    }
+
+    /// Closes a program's app window as its close box would.
+    func closeAppWindow(_ window: AUIWindow) {
+        if showsWindows {
+            window.close()
+        } else {
+            window.onClose?()
+        }
     }
 
     // MARK: Making controls

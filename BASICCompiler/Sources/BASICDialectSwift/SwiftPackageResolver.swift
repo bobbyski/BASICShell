@@ -126,6 +126,32 @@ public struct SwiftPackageResolver {
                                objects: objects, exported: Self.exportedSymbols(of: objects))
     }
 
+    /// A resolved module's symbol graph as built for iOS (BASIC-45). A
+    /// framework map keeps only what the Mac and the iPad both have, since
+    /// Studio runs the same program on either: ActiveUI's AppKit-only members
+    /// are in the Mac's graph and not in this one. Built in the import's own
+    /// scratch directory, for the iOS device triple.
+    public static func iOSSymbolGraph(of package: ResolvedPackage) throws -> String {
+        let scratch = (package.path as NSString).appendingPathComponent(".build-basicc")
+        let output = (scratch as NSString).appendingPathComponent("ios-symbol-graphs")
+        try? FileManager.default.removeItem(atPath: output)
+        try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
+        let sdk = try ProcessRunner.run("/usr/bin/xcrun", ["--sdk", "iphoneos", "--show-sdk-path"])
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = try ProcessRunner.run("/usr/bin/xcrun", [
+            "swift", "build", "--target", package.name,
+            "--triple", "arm64-apple-ios", "--sdk", sdk, "--scratch-path", scratch,
+            "-Xswiftc", "-emit-symbol-graph", "-Xswiftc", "-emit-symbol-graph-dir", "-Xswiftc", output,
+            "-Xswiftc", "-symbol-graph-minimum-access-level", "-Xswiftc", "public",
+        ], workingDirectory: package.path)
+        guard let graph = Self.find(named: "\(package.name).symbols.json", under: output) else {
+            throw Failure(importName: package.name, problem: build.exitCode == 0
+                ? "no \(package.name).symbols.json was written for iOS under \(output)"
+                : "swift build for iOS failed in \(package.path):\n\(Self.errorLines(stdout: build.stdout, stderr: build.stderr))")
+        }
+        return graph
+    }
+
     /// Compiles the async shim for `api`, or nil when it has no async
     /// methods. The object joins the program's link line.
     public func buildAsyncShim(for api: SwiftAPI, package: ResolvedPackage) throws -> String? {

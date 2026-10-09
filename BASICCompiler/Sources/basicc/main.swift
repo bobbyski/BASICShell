@@ -339,14 +339,42 @@ func frameworkMap() -> Never {
     }
     let out = rest[0]
     do {
-        let resources = (out as NSString).appendingPathComponent("Resources")
+        let resources = (out as NSString).appendingPathComponent("Map")
         try FileManager.default.createDirectory(atPath: resources, withIntermediateDirectories: true)
         for pair in rest.dropFirst() {
             let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { fail("\(pair): expected <Module>=<package folder>", code: 2) }
             let (module, package) = (parts[0], parts[1])
             let resolved = try SwiftPackageResolver(programDirectory: package).resolve(module)
-            var api = try SwiftAPI.read(fileAt: resolved.symbolGraph)
+            // What the Mac and the iPad both have: the Mac's graph, less every
+            // symbol iOS's does not declare, and every relationship naming one.
+            let iOSGraph = try SwiftPackageResolver.iOSSymbolGraph(of: resolved)
+            guard var graph = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resolved.symbolGraph))) as? [String: Any],
+                  var symbols = graph["symbols"] as? [[String: Any]],
+                  let relationships = graph["relationships"] as? [[String: Any]],
+                  let iOS = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: iOSGraph))) as? [String: Any],
+                  let iOSSymbols = iOS["symbols"] as? [[String: Any]]
+            else { fail("\(module): its symbol graphs could not be read") }
+            func precise(_ symbol: [String: Any]) -> String? { (symbol["identifier"] as? [String: Any])?["precise"] as? String }
+            let onIOS = Set(iOSSymbols.compactMap(precise))
+            let macOnly = Set(symbols.compactMap(precise)).subtracting(onIOS)
+            symbols.removeAll { precise($0).map(macOnly.contains) ?? false }
+            // The graph without what only a reader wants: documentation.
+            for index in symbols.indices {
+                symbols[index]["docComment"] = nil
+                if var names = symbols[index]["names"] as? [String: Any] {
+                    names["subHeading"] = nil
+                    names["navigator"] = nil
+                    symbols[index]["names"] = names
+                }
+            }
+            graph["symbols"] = symbols
+            graph["relationships"] = relationships.filter {
+                !macOnly.contains($0["source"] as? String ?? "") && !macOnly.contains($0["target"] as? String ?? "")
+            }
+            let graphPath = (resources as NSString).appendingPathComponent("\(module).symbols.json")
+            try JSONSerialization.data(withJSONObject: graph, options: [.sortedKeys]).write(to: URL(fileURLWithPath: graphPath))
+            var api = try SwiftAPI.read(fileAt: graphPath)
             guard !resolved.exported.isEmpty else { fail("\(module): its exported symbols could not be read") }
             // Only the symbols the API was checked against, and found: what
             // the compiler Studio carries needs to get the same API again.
@@ -360,27 +388,12 @@ func frameworkMap() -> Never {
             }
             try (found.sorted().joined(separator: "\n") + "\n")
                 .write(toFile: (resources as NSString).appendingPathComponent("\(module).exported"), atomically: true, encoding: .utf8)
-            // The graph without what only a reader wants: documentation.
-            let data = try Data(contentsOf: URL(fileURLWithPath: resolved.symbolGraph))
-            guard var graph = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  var symbols = graph["symbols"] as? [[String: Any]] else { fail("\(resolved.symbolGraph): not a symbol graph") }
-            for index in symbols.indices {
-                symbols[index]["docComment"] = nil
-                if var names = symbols[index]["names"] as? [String: Any] {
-                    names["subHeading"] = nil
-                    names["navigator"] = nil
-                    symbols[index]["names"] = names
-                }
-            }
-            graph["symbols"] = symbols
-            try JSONSerialization.data(withJSONObject: graph, options: [.sortedKeys])
-                .write(to: URL(fileURLWithPath: (resources as NSString).appendingPathComponent("\(module).symbols.json")))
             let shims = SwiftPackageResolver.shimModel(for: api, mapped: true).source() ?? ""
             try shims.write(toFile: (out as NSString).appendingPathComponent("\(module)Shims.swift"), atomically: true, encoding: .utf8)
             let signatures = SwiftFrameworkMap.signatures(in: shims)
             try SwiftFrameworkMap.entriesSource(module: module, signatures: signatures)
                 .write(toFile: (out as NSString).appendingPathComponent("\(module)Entries.swift"), atomically: true, encoding: .utf8)
-            print("framework-map: \(module): \(api.classes.count) classes, \(signatures.count) shims")
+            print("framework-map: \(module): \(api.classes.count) classes, \(signatures.count) shims (\(macOnly.count) Mac-only symbols left out)")
         }
     } catch let failure as SwiftPackageResolver.Failure {
         fail(failure.description)
