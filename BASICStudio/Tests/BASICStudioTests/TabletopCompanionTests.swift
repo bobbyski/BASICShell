@@ -266,9 +266,14 @@ struct TabletopCompanionTests {
 
         try await screen.show(4)
         let history = try screen.table("Dice", "How they came up", "Total")
-        try screen.click("dF")
-        try await waitFor("a Fudge die", on: screen) { screen.rows(history) == 1 }
-        #expect(["-1", "0", "1"].contains(screen.cell(history, 0, 2)))
+        let roll = try screen.field("Dice to roll")
+        for (die, made) in [("dF", "dF"), ("dF", "2dF"), ("d4", "d4+2dF")] {
+            try screen.click(die)
+            try await waitFor(made, on: screen) { roll.text == made }
+        }
+        try screen.click("Roll")
+        try await waitFor("two Fudge dice and a d4", on: screen) { screen.rows(history) == 1 }
+        #expect((-1...6).contains(Int(screen.cell(history, 0, 2)) ?? 99), "\(screen.cell(history, 0, 1))")
 
         let window = try #require(screen.bridge.windows.keys.first)
         _ = try screen.bridge.perform(.close(id: window))
@@ -309,6 +314,9 @@ struct TabletopCompanionTests {
         try await waitFor("the draft", on: screen) { screen.rows(scores) == 6 }
         #expect((0..<6).map { screen.cell(scores, $0, 0) } == ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"])
         #expect(try !screen.field("Name").text.isEmpty, "a name made up")
+        // D&D's standard array to begin with, the best where a fighter
+        // needs it: Strength, then Constitution, then Dexterity.
+        try await waitFor("the standard array", on: screen) { (0..<6).map { screen.cell(scores, $0, 1) } == ["15", "13", "14", "10", "12", "8"] }
 
         // A wizard, by the standard array: the 15 goes on Intelligence, the
         // 8 on Strength, as a wizard's needs say.
@@ -403,22 +411,39 @@ struct TabletopCompanionTests {
         let log = try screen.table("Who", "For", "Dice", "Total")
         #expect((0..<screen.rows(log)).map { screen.cell(log, $0, 1) } == ["Initiative", "Attack", "Strength check", "Intelligence check"])
 
-        // The dice tray: a d7, a roll typed in, and one that cannot be read.
+        // The dice tray: a d7, dice pressed into one roll, a die added to a
+        // roll typed in, a roll typed in, and one that cannot be read.
         try await screen.show(4)
         let history = try screen.table("Dice", "How they came up", "Total")
+        let roll = try screen.field("Dice to roll")
         try screen.click("d7")
+        try await waitFor("d7 in the box", on: screen) { roll.text == "d7" }
+        try screen.click("Roll")
         try await waitFor("a d7", on: screen) { screen.rows(history) == 1 }
         let seven = Int(screen.cell(history, 0, 2)) ?? 0
         #expect((1...7).contains(seven))
+        try screen.click("Clear")
+        try await waitFor("an empty box", on: screen) { roll.text.isEmpty }
+        for (die, made) in [("d6", "d6"), ("d8", "d6+d8"), ("d6", "2d6+d8")] {
+            try screen.click(die)
+            try await waitFor(made, on: screen) { roll.text == made }
+        }
+        try screen.click("Roll")
+        try await waitFor("2d6+d8", on: screen) { screen.rows(history) == 2 }
+        #expect(screen.cell(history, 0, 0) == "2d6+d8")
+        #expect((3...20).contains(Int(screen.cell(history, 0, 2)) ?? 0), "\(screen.cell(history, 0, 1))")
+        try screen.type("3d8+2", into: "Dice to roll")
+        try screen.click("d4")
+        try await waitFor("a d4 added", on: screen) { roll.text == "3d8+2+d4" }
         try screen.type("4d6dl1", into: "Dice to roll")
         try screen.click("Roll")
-        try await waitFor("4d6dl1", on: screen) { screen.rows(history) == 2 }
+        try await waitFor("4d6dl1", on: screen) { screen.rows(history) == 3 }
         #expect(screen.cell(history, 0, 0) == "4d6dl1" && screen.cell(history, 0, 1).contains("("))
         try screen.type("3x", into: "Dice to roll")
         try screen.click("Roll")
         try await waitFor("3x refused", on: screen) { screen.label(startingWith: "Could not roll") != nil }
         #expect(screen.label(startingWith: "Could not roll") == "Could not roll \"3x\": Expected + or - before \"x\".")
-        #expect(screen.rows(history) == 2)
+        #expect(screen.rows(history) == 3)
 
         // Quit, and run it again: Mira, as she was left.
         try await quit(screen)
