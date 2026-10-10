@@ -142,13 +142,30 @@ public enum BASICJIT {
     /// The text of a program, as a file the compiler can read.
     ///
     /// Numbered lines keep their numbers, because a diagnostic that names a
-    /// line has to name the one the program was written with.
+    /// line has to name the one the program was written with. Each line is
+    /// where the editor has it: the program leaves out blank lines, which
+    /// come back as blank lines, so the line a runtime error or the debugger
+    /// names is the editor's, as the interpreter's is.
     public static func text(of program: BASICProgram) -> String {
-        program.orderedLines
-            .map { $0.number.map { number in "\(number) " } ?? "" }
-            .enumerated()
-            .map { index, prefix in prefix + program.orderedLines[index].source }
-            .joined(separator: "\n") + "\n"
+        compiledText(of: program).text
+    }
+
+    /// The text of a program, and the editor's line for each of its lines
+    /// (nil for a blank line put back, or a line typed at the prompt).
+    public static func compiledText(of program: BASICProgram) -> (text: String, editorLines: [Int?]) {
+        var lines: [String] = []
+        var editorLines: [Int?] = []
+        for line in program.orderedLines {
+            if !line.isImported, let wanted = line.sourceLineNumber {
+                while lines.count + 1 < wanted {
+                    lines.append("")
+                    editorLines.append(nil)
+                }
+            }
+            lines.append((line.number.map { "\($0) " } ?? "") + line.source)
+            editorLines.append(line.isImported ? nil : line.sourceLineNumber)
+        }
+        return (lines.joined(separator: "\n") + "\n", editorLines)
     }
 
     /// Runs a compiled binary with the terminal it was started from, so

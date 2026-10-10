@@ -106,6 +106,9 @@ public final class WasmRunner: @unchecked Sendable {
     public let program: WasmProgram
     private let stopLock = NSLock()
     private var stopRequested = false
+    /// For a module translated for debugging: where it stops, and what it
+    /// shows there (BASIC-46). Set before `run`.
+    public var debugger: WasmDebugger?
 
     // The run in progress, for the C callbacks that cannot capture.
     nonisolated(unsafe) static var current: WasmRunner?
@@ -115,6 +118,7 @@ public final class WasmRunner: @unchecked Sendable {
     private var context: JSContext!
     private var entries: [RTEntryPoint?] = []
     private var pollIndex = -1
+    private var debugIndex = -1
     /// The back-edges between a loop's polls, and when the last was: sized
     /// so polls come about every `pollTarget`, however long a pass takes
     /// (BASIC-47). A Stop waits for a poll.
@@ -142,6 +146,8 @@ public final class WasmRunner: @unchecked Sendable {
         stopLock.lock()
         stopRequested = true
         stopLock.unlock()
+        // A run stopped in the debugger wakes, and ends.
+        debugger?.cancel()
     }
 
     private var isStopRequested: Bool {
@@ -154,7 +160,8 @@ public final class WasmRunner: @unchecked Sendable {
     /// with `extra` entries a host supplies.
     public static func missingImports(of program: WasmProgram, extra: [String: WasmEntryPoint] = [:]) -> [String] {
         program.imports.map(\.name).filter { name in
-            name != WasmTranslator.pollImport && RTEntryPoints.table[name] == nil && intrinsics[name] == nil && extra[name] == nil
+            name != WasmTranslator.pollImport && name != WasmTranslator.debugImport
+                && RTEntryPoints.table[name] == nil && intrinsics[name] == nil && extra[name] == nil
         }
     }
 
@@ -187,6 +194,7 @@ public final class WasmRunner: @unchecked Sendable {
         }
         entries = program.imports.map { RTEntryPoints.table[$0.name] ?? Self.intrinsics[$0.name] ?? extra[$0.name] }
         pollIndex = program.imports.firstIndex { $0.name == WasmTranslator.pollImport } ?? -1
+        debugIndex = program.imports.firstIndex { $0.name == WasmTranslator.debugImport } ?? -1
         pollCountdown = 1
         lastPoll = DispatchTime.now().uptimeNanoseconds
 
@@ -259,6 +267,7 @@ public final class WasmRunner: @unchecked Sendable {
             return .trapped("the module's memory has no address")
         }
         base.storeBytes(of: 0, toByteOffset: 7, as: UInt8.self)
+        debugger?.begin(info: program.debugInfo, base: base)
 
         // The one native function every import goes through.
         let rt = JSObjectMakeFunctionWithCallback(context.jsGlobalContextRef, nil, importCallback)
@@ -322,6 +331,13 @@ public final class WasmRunner: @unchecked Sendable {
     func callImport(_ ctx: JSContextRef, _ count: Int, _ arguments: UnsafePointer<JSValueRef?>,
                     _ exception: UnsafeMutablePointer<JSValueRef?>?) -> JSValueRef? {
         let index = Int(JSValueToNumber(ctx, arguments[0], nil))
+        if index == debugIndex {
+            // A statement starts, in a debug build: it may stop here.
+            func argument(_ position: Int) -> Int { position < count ? Int(JSValueToNumber(ctx, arguments[position], nil)) : 0 }
+            let goesOn = debugger?.statement(argument(1), function: argument(2), frame: argument(3)) ?? true
+            if !goesOn || isStopRequested { exception?.pointee = stopValue.jsValueRef }
+            return JSValueMakeUndefined(ctx)
+        }
         if index == pollIndex {
             let next = JSValueMakeNumber(ctx, Double(nextPollCountdown()))
             if isStopRequested { exception?.pointee = stopValue.jsValueRef }

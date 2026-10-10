@@ -38,8 +38,10 @@ enum StudioCompiler {
     /// through a shim Studio has. A program that imports none is lowered
     /// exactly as before, by the traditional dialect.
     static func llvmIR(source: String, name: String, hostedActiveUI: Bool = false,
-                       path: String? = nil, projectRoot: String? = nil) throws -> String {
-        var options = CompileOptions(emitDebugInfo: false)
+                       path: String? = nil, projectRoot: String? = nil, debugInfo: Bool = false) throws -> String {
+        // Debug info names each variable's type, for a run the debugger can
+        // look into (BASIC-46).
+        var options = CompileOptions(emitDebugInfo: debugInfo)
         options.hostedActiveUI = hostedActiveUI
         guard let path else {
             let compilation = Compilation(dialect: TraditionalDialect(), options: options)

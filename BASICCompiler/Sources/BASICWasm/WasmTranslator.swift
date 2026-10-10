@@ -38,6 +38,9 @@ public struct WasmProgram: Sendable {
     public let imports: [WasmImport]
     /// The memory it imports as `env.memory`: this many 64 KiB pages, never grown.
     public let memoryPages: Int
+    /// Where its statements and variables are, when it was translated for
+    /// debugging (BASIC-46); nil otherwise.
+    public let debugInfo: WasmDebugInfo?
 }
 
 /// One runtime function the module imports.
@@ -83,11 +86,15 @@ public enum WasmTranslator {
     public static let runExport = "__run"
     public static let landedTagExport = "landed"
     public static let pollImport = "__poll"
+    /// A debug build's statement hook: (statement, function, frame) (BASIC-46).
+    public static let debugImport = "__debug"
     public static let callbackExports = ["__callback_ptr_void", "__callback_ptr_ptr", "__callback_void_ptr", "__callback_ptr_double",
                                          "__callback_ptr_bool"]
 
-    /// Translates basicc's LLVM IR into a module.
-    public static func translate(llvmIR: String) throws -> WasmProgram {
+    /// Translates basicc's LLVM IR into a module. With `debug`, a module a
+    /// debugger can stop and look into (BASIC-46): compile the IR with debug
+    /// info, so its metadata names each variable's type.
+    public static func translate(llvmIR: String, debug: Bool = false) throws -> WasmProgram {
         let module: IRModule
         do {
             module = try IRParser.parse(llvmIR)
@@ -95,6 +102,7 @@ public enum WasmTranslator {
             throw WasmTranslationError(message: error.message, function: nil, line: error.line)
         }
         var translation = ModuleTranslation(module: module)
+        if debug { translation.debugNames = IRDebugNames(llvmIR: llvmIR) }
         return try translation.translate()
     }
 }
@@ -132,6 +140,12 @@ private struct ModuleTranslation {
     let stackPointer: UInt32 = 2
     let pollCounter: UInt32 = 3
     var firstPromoted: UInt32 = 4
+
+    /// A debug build's: the metadata's names and types, then each function's
+    /// locals as they are laid out (BASIC-46).
+    var debugNames: IRDebugNames?
+    var debugFunctions: [WasmDebugInfo.Function] = []
+    var debug: Bool { debugNames != nil }
 
     init(module: IRModule) {
         self.module = module
@@ -211,6 +225,9 @@ private struct ModuleTranslation {
         }
         // The poll answers how many back-edges until the next (BASIC-47).
         addImport(WasmImport(name: WasmTranslator.pollImport, parameters: [], result: .int32))
+        if debug {
+            addImport(WasmImport(name: WasmTranslator.debugImport, parameters: [.int32, .int32, .int32], result: nil))
+        }
 
         // Defined functions: slot 0 of the table is a trap.
         let importCount = UInt32(imports.count)
@@ -238,6 +255,16 @@ private struct ModuleTranslation {
             typeIndex = translation.module.typeIndex
             functionTypes.append(type(translation.signature))
             bodies.append(body)
+            if let debugNames {
+                let name = debugNames.functionNames[function.name] ?? function.name
+                let types = debugNames.localTypes[function.name] ?? [:]
+                debugFunctions.append(WasmDebugInfo.Function(
+                    name: name, isProgram: function.name == "main",
+                    locals: translation.debugSlots.map { slot in
+                        let name = String(slot.register.dropFirst(2))
+                        return debugVariable(name: name, type: slot.type, typeName: types[name], offset: slot.offset)
+                    }))
+            }
         }
 
         // Generated: start, run, and the callback dispatchers.
@@ -350,7 +377,67 @@ private struct ModuleTranslation {
             out.section(11, segment.bytes)
         }
 
-        return WasmProgram(bytes: out.bytes, imports: imports, memoryPages: pages)
+        return WasmProgram(bytes: out.bytes, imports: imports, memoryPages: pages, debugInfo: debug ? debugInfo() : nil)
+    }
+
+    // MARK: Debugging (BASIC-46)
+
+    /// Whether a global or alloca is a variable of the program's, by the
+    /// names basicc gives them: `G.TOTAL`, `L.X`; `L.$for.end.1` is its own.
+    static func isProgramVariable(_ name: String, prefix: String) -> Bool {
+        name.hasPrefix(prefix) && !name.dropFirst(prefix.count).hasPrefix("$")
+    }
+
+    func debugVariable(name: String, type: IRType, typeName: String?, offset: Int) -> WasmDebugInfo.Variable {
+        let storage: WasmDebugInfo.Storage
+        switch type {
+        case .double: storage = .double
+        case .int(1): storage = .boolean
+        case .int(64): storage = .int64
+        case .int: storage = .int32
+        default: storage = .pointer
+        }
+        return WasmDebugInfo.Variable(name: name, typeName: typeName ?? "", storage: storage, offset: offset)
+    }
+
+    /// The program's globals, functions and statements, for a debugger.
+    func debugInfo() -> WasmDebugInfo {
+        let types = debugNames?.globalTypes ?? [:]
+        let globals = module.globals.compactMap { global -> WasmDebugInfo.Variable? in
+            guard Self.isProgramVariable(global.name, prefix: "G."), let offset = memoryOffset[global.name] else { return nil }
+            let name = String(global.name.dropFirst(2))
+            return debugVariable(name: name, type: global.type, typeName: types[name], offset: offset)
+        }
+        // basicc's table of statement locations: lines, columns, and the text.
+        func values(_ name: String) -> [IRValue] {
+            guard let global = module.globals.first(where: { $0.name == name }),
+                  case .array(let values) = global.initializer else { return [] }
+            return values
+        }
+        func text(_ value: IRValue) -> String {
+            guard case .global(let name) = value, let global = module.globals.first(where: { $0.name == name }),
+                  case .bytes(let bytes) = global.initializer else { return "" }
+            return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        func number(_ value: IRValue) -> Int {
+            if case .integer(let number) = value { return Int(number) }
+            return 0
+        }
+        let lines = values("basic.locations.lines").map(number)
+        let columns = values("basic.locations.columns").map(number)
+        let sources = values("basic.locations.sources").map(text)
+        var statements: [WasmDebugInfo.Statement] = []
+        for index in lines.indices {
+            let column = index < columns.count ? columns[index] : 0
+            let source = index < sources.count ? sources[index] : ""
+            // Its place on its line: the statements of the same line before it.
+            let before = lines.indices.filter { other in
+                lines[other] == lines[index] && (other < sources.count ? sources[other] : "") == source
+                    && (other < columns.count ? columns[other] : 0) < column
+            }.count
+            statements.append(WasmDebugInfo.Statement(line: lines[index], column: column, source: source, indexOnLine: before))
+        }
+        return WasmDebugInfo(globals: globals, functions: debugFunctions, statements: statements)
     }
 
     mutating func addImport(_ entry: WasmImport) {
@@ -409,7 +496,10 @@ private struct ModuleTranslation {
             case .array: scalar = false
             default: scalar = true
             }
-            if scalar, !global.isConstant, !escaping.contains(global.name) {
+            // A debug build keeps the program's own variables in memory,
+            // where the debugger reads them.
+            let inspected = debug && Self.isProgramVariable(global.name, prefix: "G.")
+            if scalar, !global.isConstant, !escaping.contains(global.name), !inspected {
                 promoted[global.name] = (index, global.type)
                 promotedOrder.append(global)
                 index += 1
@@ -621,6 +711,10 @@ private struct FunctionTranslation {
     /// Allocas held in locals: never escaping, scalar.
     var promotedAlloca: Set<String> = []
     var frameSize = 0
+    /// A debug build's program variables, in the frame (BASIC-46).
+    var debugSlots: [(register: String, type: IRType, offset: Int)] = []
+    /// The function's number, as the debug hook passes it.
+    var number: Int32 { Int32(module.tableSlot[function.name]! - 1) }
 
     // Pseudo-blocks: the IR's, with each split after a setjmp.
     struct Piece {
@@ -781,17 +875,22 @@ private struct FunctionTranslation {
         for block in function.blocks {
             for instruction in block.instructions {
                 guard case .alloca(let type) = instruction.kind, let result = instruction.result else { continue }
-                if !escaping.contains(result), let wasm = module.wasmType(type) {
+                // A debug build keeps the program's variables in the frame.
+                let inspected = module.debug && ModuleTranslation.isProgramVariable(result, prefix: "L.")
+                if !escaping.contains(result), !inspected, let wasm = module.wasmType(type) {
                     promotedAlloca.insert(result)
                     local[result] = newLocal(wasm)
                 } else {
                     let alignment = max(8, type.alignment)
                     frameSize = (frameSize + alignment - 1) / alignment * alignment
                     address[result] = .frame(frameSize)
+                    if inspected { debugSlots.append((result, type, frameSize)) }
                     frameSize += type.size
                 }
             }
         }
+        // In a debug build every call has a frame: its address is the call's.
+        if module.debug { frameSize = max(frameSize, 16) }
         frameSize = (frameSize + 15) / 16 * 16
 
         // Pieces, split after each setjmp.
@@ -1024,6 +1123,14 @@ private struct FunctionTranslation {
                 case .int: code.i32Store8(offset: offset)
                 default: throw error("a store of \(type)", instruction)
                 }
+            }
+            // A statement starts where basicc records it: a debug build asks
+            // the debugger whether to stop there (BASIC-46).
+            if module.debug, case .global("basic.here") = pointer, case .integer(let statement) = value, statement >= 0 {
+                code.i32Const(Int32(statement))
+                code.i32Const(number)
+                code.localGet(fp)
+                code.call(module.importIndex[WasmTranslator.debugImport]!)
             }
         case .floatCompare(let predicate, let left, let right):
             try floatCompare(predicate, left, right, instruction)

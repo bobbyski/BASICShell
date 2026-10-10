@@ -15,6 +15,11 @@
 //  its touch controls and held keys, and what the user does, which the
 //  session sends to the compiled program for the length of the run.
 //
+//  And so is its debugger (BASIC-46). With breakpoints set, the Debug pane
+//  open, or a run started with Step, the program is built for debugging: it
+//  stops at breakpoints, steps, pauses, and fills the same panes. A stopped
+//  run waits on its own thread; Continue or a step lets it go on.
+//
 
 import BASICCompilerKit
 import BASICCore
@@ -25,13 +30,14 @@ import VectorTerminalSDK
 
 extension StudioModel {
     /// Compiles the editor's program to WebAssembly and runs it. `echo` is the
-    /// command shown at the prompt: RUN or JIT.
-    func runAsWebAssembly(echo: String) {
+    /// command shown at the prompt: RUN or JIT. `debugCommand` starts it in
+    /// the debugger: `.stepInto` stops at its first statement.
+    func runAsWebAssembly(echo: String, debugCommand: WasmDebugger.Command? = nil) {
         guard !isProgramRunning, !isJITRunning else { return }
         rebuildProgramFromEditor()
         selectedPane = .console
         echoConsoleCommandForRun(echo)
-        let source = BASICJIT.text(of: session.program)
+        let (source, editorLines) = BASICJIT.compiledText(of: session.program)
         let name = currentProgramURL.map { $0.deletingPathExtension().lastPathComponent } ?? "program"
         // Where the text belongs, so its IMPORTs are found as the
         // interpreter finds them, and the project it is in.
@@ -39,8 +45,14 @@ extension StudioModel {
         let projectRoot = projectDirectoryURL.flatMap { project in
             path.hasPrefix(project.standardizedFileURL.path + "/") ? project.path : nil
         }
+        // Built for the debugger when it will be wanted: a slower build, so
+        // not for every run.
+        let debugging = debugCommand != nil || debuggerBreakpoints.contains(where: \.isEnabled) || inspectorPane == .debug
         let run = StudioWasmRun(model: self, source: source, name: name, path: path, projectRoot: projectRoot,
-                                directory: programWorkingDirectoryPath)
+                                directory: programWorkingDirectoryPath,
+                                debugCommand: debugging ? debugCommand ?? .run : nil,
+                                editorLines: editorLines)
+        clearWasmDebuggerState()
         wasmRun = run
         isJITRunning = true
         setCompiledRunInputActive(true)
@@ -54,6 +66,7 @@ extension StudioModel {
     /// The end of a WebAssembly run: what it ended with, then the prompt.
     func finishWasmRun(_ ending: StudioWasmRun.Ending) {
         wasmRun = nil
+        clearWasmDebuggerState()
         isJITRunning = false
         setCompiledRunInputActive(false)
         session.sendsHostEventsToCompiledProgram = false
@@ -65,6 +78,58 @@ extension StudioModel {
             for line in lines { appendJITOutput(line + "\n") }
         }
         appendJITOutput(prompt)
+    }
+
+    // MARK: The debugger (BASIC-46)
+
+    /// Whether Pause can stop the run in progress: one built for debugging.
+    var isWasmRunDebuggable: Bool { wasmRun?.debugger != nil }
+
+    /// The run stopped: where, and what it holds, into the debugger's panes.
+    func wasmRunPaused(_ pause: WasmDebugger.Pause, in run: StudioWasmRun) {
+        guard run === wasmRun else { return }
+        isProgramPaused = true
+        let lines = programText.split(separator: "\n", omittingEmptySubsequences: false)
+        let line = pause.location.lineNumber
+        // Only a line of the editor's own text: a file it imports has its
+        // own line numbers.
+        let inEditor = lines.indices.contains(line - 1)
+            && lines[line - 1].trimmingCharacters(in: .whitespaces) == pause.source.trimmingCharacters(in: .whitespaces)
+        debuggerExecutionLine = inEditor ? line : nil
+        debuggerCallStack = pause.callStack
+        debuggerFrameLocalVariables = pause.frameLocals
+        debuggerLocalVariables = pause.frameLocals.first ?? []
+        debuggerSelectedCallStackFrameIndex = pause.callStack.first?.index
+        debuggerGlobalVariables = pause.globals
+        appendLog(level: "PAUSE", issuer: .basic, text: "WebAssembly run paused at \(line)")
+        // As the interpreter says it, unless the Debug pane is showing.
+        if inspectorPane != .debug {
+            var message = "Break at \(line)"
+            if let frame = pause.callStack.first, frame.kind != "Program" { message += " in \(frame.kind) \(frame.name)" }
+            appendJITOutput(message + "\n")
+        }
+    }
+
+    /// Continue or a step, for a stopped run.
+    func resumeWasmRun(_ command: WasmDebugger.Command) {
+        guard isProgramPaused, let run = wasmRun else { return }
+        isProgramPaused = false
+        if !showsLiveExecutionLine { debuggerExecutionLine = nil }
+        run.resume(command)
+    }
+
+    /// Breakpoints changed: a run in the debugger stops at the new ones.
+    func updateWasmRunBreakpoints() {
+        wasmRun?.setBreakpoints(debuggerBreakpoints, programText: programText)
+    }
+
+    private func clearWasmDebuggerState() {
+        isProgramPaused = false
+        debuggerExecutionLine = nil
+        debuggerCallStack = []
+        debuggerSelectedCallStackFrameIndex = nil
+        debuggerLocalVariables = []
+        debuggerFrameLocalVariables = []
     }
 }
 
@@ -92,8 +157,17 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
     private var stopped = false
     /// The map's entries for this run (BASIC-45), made once.
     private lazy var frameworkEntries = StudioFrameworkMap.entries(for: model, title: name)
+    /// The run's debugger, when it is built for one (BASIC-46).
+    var debugger: WasmDebugger? {
+        lock.lock()
+        defer { lock.unlock() }
+        return debuggerStorage
+    }
+    private var debuggerStorage: WasmDebugger?
 
-    init(model: StudioModel, source: String, name: String, path: String, projectRoot: String?, directory: String) {
+    @MainActor
+    init(model: StudioModel, source: String, name: String, path: String, projectRoot: String?, directory: String,
+         debugCommand: WasmDebugger.Command? = nil, editorLines: [Int?]? = nil) {
         self.model = model
         canvas = model.makeCompiledRunCanvas()
         self.source = source
@@ -101,6 +175,43 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         self.path = path
         self.projectRoot = projectRoot
         self.directory = directory
+        if let debugCommand {
+            let debugger = WasmDebugger(command: debugCommand)
+            debugger.spellings = Self.spellings(in: source)
+            // The compiled text leaves out the editor's blank lines.
+            debugger.editorLines = editorLines
+            debugger.onPause = { [weak self, weak model] pause in
+                guard let self else { return }
+                Task { @MainActor in model?.wasmRunPaused(pause, in: self) }
+            }
+            debuggerStorage = debugger
+            setBreakpoints(model.debuggerBreakpoints, programText: model.programText)
+        }
+    }
+
+    /// Where the debugger stops: the enabled breakpoints, on lines that read
+    /// as the editor's do.
+    func setBreakpoints(_ breakpoints: [BASICBreakpoint], programText: String) {
+        debugger?.setBreakpoints(breakpoints.filter(\.isEnabled).map(\.location),
+                                 programLines: programText.components(separatedBy: "\n"))
+    }
+
+    func pause() { debugger?.pause() }
+
+    func resume(_ command: WasmDebugger.Command) { debugger?.resume(command) }
+
+    /// How the program spells each name, by its uppercased form: the first
+    /// time it is written. basicc keeps only the uppercased one.
+    static func spellings(in source: String) -> [String: String] {
+        var spellings: [String: String] = [:]
+        let pattern = try! NSRegularExpression(pattern: "[A-Za-z_][A-Za-z0-9_]*[$%&!#]?")
+        let text = source as NSString
+        for match in pattern.matches(in: source, range: NSRange(location: 0, length: text.length)) {
+            let word = text.substring(with: match.range)
+            let key = word.uppercased()
+            if spellings[key] == nil { spellings[key] = word }
+        }
+        return spellings
     }
 
     /// Starts the run. The front end and the runtime both recurse, so the
@@ -132,10 +243,25 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         var translated = started
         do {
             // Its ActiveUI windows are Studio's.
-            let ir = try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true,
-                                               path: path, projectRoot: projectRoot)
+            func ir(debugInfo: Bool) throws -> String {
+                try StudioCompiler.llvmIR(source: source, name: name, hostedActiveUI: true,
+                                          path: path, projectRoot: projectRoot, debugInfo: debugInfo)
+            }
+            var debuggable: WasmProgram?
+            if debugger != nil {
+                debuggable = try? WasmTranslator.translate(llvmIR: try ir(debugInfo: true), debug: true)
+            }
             let compiled = DispatchTime.now()
-            program = try WasmTranslator.translate(llvmIR: ir)
+            if let debuggable {
+                program = debuggable
+            } else {
+                // A program the debugger cannot look into still runs, as
+                // it would without one.
+                lock.lock()
+                debuggerStorage = nil
+                lock.unlock()
+                program = try WasmTranslator.translate(llvmIR: try ir(debugInfo: false))
+            }
             translated = DispatchTime.now()
             Self.time("compile \(Self.milliseconds(started, compiled)) ms, translate \(Self.milliseconds(compiled, translated)) ms")
         } catch let error as CompileError {
@@ -144,6 +270,7 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
             return .refused(["WebAssembly: \(error)"])
         }
         let runner = WasmRunner(program: program)
+        runner.debugger = debugger
         lock.lock()
         self.runner = runner
         let stopEarly = stopped

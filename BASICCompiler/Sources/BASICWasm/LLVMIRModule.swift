@@ -322,6 +322,8 @@ enum IRParser {
             if trimmed.hasPrefix("@") {
                 module.globals.append(try global(trimmed))
             } else if trimmed.hasPrefix("declare ") {
+                // Debug info's own intrinsic: a debug build's (BASIC-46).
+                if trimmed.contains("@llvm.dbg.") { continue }
                 module.declarations.append(try declaration(trimmed))
             } else if trimmed.hasPrefix("define ") {
                 var body: [String] = []
@@ -408,6 +410,9 @@ enum IRParser {
         for line in body {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix(";") { continue }
+            // Where a variable lives, for a native debugger: a debug build's
+            // metadata says the same, and the translator reads it there.
+            if trimmed.contains("@llvm.dbg.declare(") { continue }
             if !line.hasPrefix(" "), trimmed.hasSuffix(":") {
                 var label = String(trimmed.dropLast())
                 if label.hasPrefix("\""), label.hasSuffix("\""), label.count >= 2 { label = String(label.dropFirst().dropLast()) }

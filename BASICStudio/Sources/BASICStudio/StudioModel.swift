@@ -733,6 +733,7 @@ final class StudioModel: ObservableObject {
         } else {
             debuggerBreakpoints.append(BASICBreakpoint(location: location))
         }
+        updateWasmRunBreakpoints()
     }
 
     func showFind() {
@@ -1558,25 +1559,36 @@ final class StudioModel: ObservableObject {
     /// there. Stop still ends the program. (STUDIO_FEATURES.md D21, ruled by
     /// Bobby 2026-09-29: Pause used to call stopProgram and end the run.)
     func pauseProgram() {
-        guard isProgramRunning, !isJITRunning, let control = activeExecutionControl else { return }
+        // A WebAssembly run built for the debugger stops the same way (BASIC-46).
+        if isJITRunning {
+            wasmRun?.pause()
+            return
+        }
+        guard isProgramRunning, let control = activeExecutionControl else { return }
         control.setTargetTaskID(nil)
         control.setMode(.stepInto)
     }
 
     func continueDebugging() {
         guard isProgramPaused else { return }
+        if isJITRunning { return resumeWasmRun(.run) }
         startProgramRun(startLine: nil, command: .continueExecution)
     }
 
     func stepDebugging() {
+        if isJITRunning { return resumeWasmRun(.stepInto) }
         if !isProgramPaused {
+            // Run as WebAssembly, in the debugger from its first statement.
+            if effectiveRunTarget == .webAssembly { return runAsWebAssembly(echo: "RUN", debugCommand: .stepInto) }
             rebuildProgramFromEditor()
         }
         startProgramRun(startLine: nil, command: isProgramPaused ? .stepInto : .runStep)
     }
 
     func stepOverDebugging() {
+        if isJITRunning { return resumeWasmRun(.stepOver) }
         if !isProgramPaused {
+            if effectiveRunTarget == .webAssembly { return runAsWebAssembly(echo: "RUN", debugCommand: .stepInto) }
             rebuildProgramFromEditor()
         }
         startProgramRun(startLine: nil, command: isProgramPaused ? .stepOver : .runStep)
@@ -1584,6 +1596,7 @@ final class StudioModel: ObservableObject {
 
     func stepOutDebugging() {
         guard isProgramPaused else { return }
+        if isJITRunning { return resumeWasmRun(.stepOut) }
         startProgramRun(startLine: nil, command: .stepOut)
     }
 

@@ -390,6 +390,18 @@ public struct BASICVariableSnapshot: Identifiable, Equatable, Sendable {
     public let scope: BASICVariableScope
     /// Nested children for arrays, dictionaries, records, and objects.
     public let children: [BASICVariableSnapshot]
+
+    /// A snapshot made outside the interpreter: a WebAssembly run's
+    /// debugger (BASIC-46).
+    public init(path: String, name: String, typeName: String, value: String, scope: BASICVariableScope,
+                children: [BASICVariableSnapshot]) {
+        self.path = path
+        self.name = name
+        self.typeName = typeName
+        self.value = value
+        self.scope = scope
+        self.children = children
+    }
 }
 
 /// A debugger-friendly snapshot of one modern or numbered file handle.
@@ -436,6 +448,19 @@ public struct BASICCallStackFrame: Identifiable, Equatable, Sendable {
     public let receiverClassName: String?
     /// Whether the method frame represents an override.
     public let isOverride: Bool
+
+    /// A frame made outside the interpreter: a WebAssembly run's debugger
+    /// (BASIC-46).
+    public init(index: Int, kind: String, name: String, location: BASICBreakpointLocation?,
+                declaringClassName: String? = nil, receiverClassName: String? = nil, isOverride: Bool = false) {
+        self.index = index
+        self.kind = kind
+        self.name = name
+        self.location = location
+        self.declaringClassName = declaringClassName
+        self.receiverClassName = receiverClassName
+        self.isOverride = isOverride
+    }
 }
 
 typealias BASICMetadata = [String: BASICValue]

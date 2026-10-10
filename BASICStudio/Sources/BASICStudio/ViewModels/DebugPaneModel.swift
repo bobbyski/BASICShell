@@ -179,14 +179,17 @@ struct DebugPaneModel: Equatable {
 
     @MainActor
     init(_ model: StudioModel) {
-        let running = model.isProgramRunning
         let paused = model.isProgramPaused
+        // A WebAssembly run (BASIC-46) is running until it stops in the
+        // debugger, where it waits to go on.
+        let running = model.isProgramRunning || (model.isJITRunning && !paused)
         let canCancel = Self.canCancel(model.debuggerSelectedTask?.state)
         buttons = Command.allCases.map { command in
             switch command {
-            case .run: Button(command: command, title: "Run", symbol: "play.fill", isEnabled: !running)
+            case .run: Button(command: command, title: "Run", symbol: "play.fill", isEnabled: !running && !model.isJITRunning)
             case .continueExecution: Button(command: command, title: "Continue", symbol: "forward.frame.fill", isEnabled: paused && !running)
-            case .pause: Button(command: command, title: "Pause", symbol: "pause.fill", isEnabled: running)
+            case .pause: Button(command: command, title: "Pause", symbol: "pause.fill",
+                                isEnabled: running && (!model.isJITRunning || model.isWasmRunDebuggable))
             case .step: Button(command: command, title: "Step", symbol: "arrow.down.to.line", isEnabled: !running)
             case .stepOver: Button(command: command, title: "Step Over", symbol: "arrow.turn.down.right", isEnabled: !running)
             case .stepOut: Button(command: command, title: "Step Out", symbol: "arrow.up.to.line", isEnabled: paused && !running)

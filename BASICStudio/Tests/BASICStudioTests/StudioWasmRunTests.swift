@@ -9,6 +9,7 @@
 //
 
 import ActiveUI
+import BASICCore
 import Foundation
 import Testing
 @testable import BASICStudio
@@ -84,6 +85,92 @@ struct StudioWasmRunTests {
         #expect(studio.model.consoleText.contains("Break at "), "\(studio.model.consoleText.suffix(200))")
     }
 
+    @Test("BASIC-46 · The debugger in a WebAssembly run: a breakpoint, the panes, step out, into and over, Continue")
+    func debugger() async throws {
+        let studio = StudioHarness(program: """
+        DIM total AS DOUBLE
+        name$ = "Ada"
+        total = 0
+        FOR i = 1 TO 3
+            total = total + Twice(i)
+        NEXT i
+        PRINT name$; total
+
+        FUNCTION Twice(x AS DOUBLE) AS DOUBLE
+            LOCAL y = x * 2
+            RETURN y
+        END FUNCTION
+        """)
+        let model = studio.model
+        model.runTarget = .webAssembly
+        model.toggleDebuggerBreakpoint(atSourceLine: 11)
+        model.runEditorProgram()
+        func stopped(at line: Int) async throws {
+            try await studio.waitUntil("a stop at line \(line)", timeout: .seconds(60)) { model.isProgramPaused }
+            #expect(model.debuggerExecutionLine == line, "\(model.consoleText.suffix(200))")
+        }
+        func value(_ name: String, _ variables: [BASICVariableSnapshot]) -> String? {
+            variables.first { $0.name == name }?.value
+        }
+
+        try await stopped(at: 11)
+        #expect(model.isJITRunning, "compiled, and waiting")
+        #expect(model.debuggerCallStack.map(\.name) == ["Twice", "[main]"])
+        #expect(model.debuggerCallStack.map { $0.location?.lineNumber } == [11, 5])
+        #expect(value("x", model.debuggerSelectedLocalVariables) == "1")
+        #expect(value("y", model.debuggerSelectedLocalVariables) == "2")
+        #expect(value("total", model.debuggerGlobalVariables) == "0")
+        #expect(value("name$", model.debuggerGlobalVariables) == "Ada")
+        #expect(model.consoleText.contains("Break at 11 in Function Twice\n"), "\(model.consoleText.suffix(200))")
+        let pane = DebugPaneModel(model)
+        #expect(pane.button(.continueExecution).isEnabled && pane.button(.stepOut).isEnabled && pane.button(.step).isEnabled)
+        #expect(!pane.button(.pause).isEnabled && !pane.button(.run).isEnabled)
+        // The caller's frame: its own (no) locals.
+        model.selectDebuggerCallStackFrame(model.debuggerCallStack[1])
+        #expect(model.debuggerSelectedLocalVariables.isEmpty)
+
+        model.stepOutDebugging()
+        try await stopped(at: 6)
+        #expect(model.debuggerCallStack.map(\.name) == ["[main]"])
+        #expect(value("total", model.debuggerGlobalVariables) == "2")
+        model.stepDebugging()
+        try await stopped(at: 5)
+        model.stepDebugging()
+        try await stopped(at: 10)
+        #expect(value("x", model.debuggerSelectedLocalVariables) == "2")
+        model.stepOverDebugging()
+        try await stopped(at: 11)
+        #expect(value("y", model.debuggerSelectedLocalVariables) == "4")
+
+        model.toggleDebuggerBreakpoint(atSourceLine: 11)
+        model.continueDebugging()
+        try await waitUntilFinished(studio)
+        #expect(model.consoleText.contains("Ada12\n"), "\(model.consoleText.suffix(300))")
+        #expect(!model.isProgramPaused && model.debuggerCallStack.isEmpty)
+    }
+
+    @Test("BASIC-46 · Step starts a WebAssembly run at its first line; Pause stops a running one; Stop ends a stopped one")
+    func debuggerPauseAndStop() async throws {
+        let studio = StudioHarness(program: "n = 0\nWHILE 1\n    n = n + 1\nWEND")
+        let model = studio.model
+        model.runTarget = .webAssembly
+        model.stepDebugging()
+        try await studio.waitUntil("a stop at the first line", timeout: .seconds(60)) { model.isProgramPaused }
+        #expect(model.debuggerExecutionLine == 1)
+        model.continueDebugging()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(model.isJITRunning && !model.isProgramPaused)
+        #expect(DebugPaneModel(model).button(.pause).isEnabled)
+        model.pauseProgram()
+        try await studio.waitUntil("Pause to stop it") { model.isProgramPaused }
+        #expect((2...4).contains(model.debuggerExecutionLine ?? 0), "\(String(describing: model.debuggerExecutionLine))")
+        #expect(Int(model.debuggerGlobalVariables.first { $0.name == "n" }?.value ?? "") ?? 0 > 0)
+        model.stopProgram()
+        try await waitUntilFinished(studio)
+        #expect(model.consoleText.contains("Break at "), "\(model.consoleText.suffix(200))")
+        #expect(!model.isProgramPaused)
+    }
+
     @Test("The timing test: ▶ Run as WebAssembly prints the interpreter's checksums, and both say when they started and ended")
     func timingTest() async throws {
         let studio = StudioHarness()
@@ -129,6 +216,19 @@ struct StudioWasmRunTests {
             for line in run.split(separator: "\n") where line.contains(" ms") || line.hasPrefix("Elapsed") {
                 print("timing test, \(engine): \(line)")
             }
+        }
+    }
+
+    @Test("A runtime error names the editor's line, blank lines and all, as the interpreter's does")
+    func errorLineAfterBlankLines() async throws {
+        for target in [StudioRunTarget.interpreter, .webAssembly] {
+            let studio = StudioHarness(program: "print 1\n\nprint 2\n\nprint 1 / 0")
+            studio.model.runTarget = target
+            studio.model.runEditorProgram()
+            try await studio.waitUntil("the error", timeout: .seconds(60)) {
+                !studio.model.isProgramRunning && !studio.model.isJITRunning && studio.model.consoleText.contains("zero")
+            }
+            #expect(studio.model.consoleText.contains("Division by zero at 5"), "\(target): \(studio.model.consoleText.suffix(200))")
         }
     }
 
