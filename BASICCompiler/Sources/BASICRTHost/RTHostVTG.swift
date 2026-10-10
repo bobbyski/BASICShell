@@ -106,6 +106,49 @@ enum RTHostVTG {
         return stride(from: 0, to: numbers.count, by: 2).map { VTGPoint(x: numbers[$0], y: numbers[$0 + 1]) }
     }
 
+    static func double(_ value: RTValue) -> Double {
+        guard let number = value.number else { basic_rt_fail("Expected a number") }
+        return number
+    }
+    static func optionalDouble(_ arguments: [RTValue], _ index: Int) -> Double? {
+        present(arguments, index) ? double(arguments[index]) : nil
+    }
+    /// A sprite's pixels, as the interpreter's `integerList` reads them: an
+    /// array, or the numbers in a string separated by commas, spaces or
+    /// semicolons.
+    static func integerList(_ value: RTValue) -> [Int] {
+        switch value {
+        case .array(let array):
+            return array.values.map(integer)
+        case .string(let text):
+            return text.description.split { $0 == "," || $0 == " " || $0 == ";" }.map {
+                guard let number = Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    basic_rt_fail("Expected an integer list")
+                }
+                return number
+            }
+        default:
+            basic_rt_fail("Expected an integer array or list")
+        }
+    }
+    /// A palette, as the interpreter's `stringList` reads it: an array, or a
+    /// string separated by commas or semicolons.
+    static func stringList(_ value: RTValue) -> [String] {
+        switch value {
+        case .array(let array):
+            return array.values.map(string)
+        case .string(let text):
+            return text.description.split { $0 == "," || $0 == ";" }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        default:
+            basic_rt_fail("Expected a string array or list")
+        }
+    }
+    static func spriteFilter(_ value: String) -> VTGSpriteFilter {
+        VTGSpriteFilter(rawValue: value.lowercased()) ?? .smooth
+    }
+
     static func color(_ value: String?) -> VTGColor? {
         guard let value, value.lowercased() != "none" else { return nil }
         return VTGColor(value)
@@ -210,6 +253,44 @@ enum RTHostVTG {
             count(arguments, 5...8, "vectorPrint")
             canvas.vectorPrint(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]), height: integer(arguments[3]), value: string(arguments[4]),
                                stroke: VTGColor(optionalString(arguments, 5) ?? "#f8fafc"), width: optionalInteger(arguments, 6) ?? 1, layer: optionalInteger(arguments, 7))
+        // Sprites: an image uploaded once, then placed, moved, turned and
+        // scaled by id — the interpreter's methods, with its argument rules.
+        case "UPLOADSPRITE", "UPLOADINDEXEDSPRITE":
+            let name = method.uppercased() == "UPLOADSPRITE" ? "uploadSprite" : "uploadIndexedSprite"
+            count(arguments, 5...7, name)
+            canvas.uploadIndexedSprite(id: string(arguments[0]), width: integer(arguments[1]), height: integer(arguments[2]),
+                                       pixels: integerList(arguments[3]), palette: stringList(arguments[4]).map { VTGColor($0) },
+                                       transparentIndex: optionalInteger(arguments, 5),
+                                       filter: spriteFilter(optionalString(arguments, 6) ?? "nearest"))
+        case "UPLOADVECTORSPRITE":
+            count(arguments, 4...7, "uploadVectorSprite")
+            canvas.uploadVectorSprite(id: string(arguments[0]), width: integer(arguments[1]), height: integer(arguments[2]),
+                                      path: string(arguments[3]), stroke: color(optionalString(arguments, 4)), fill: color(optionalString(arguments, 5)),
+                                      lineWidth: optionalDouble(arguments, 6) ?? 1)
+        case "SPRITE":
+            count(arguments, 4...9, "sprite")
+            canvas.sprite(id: string(arguments[0]), imageID: string(arguments[1]), x: integer(arguments[2]), y: integer(arguments[3]),
+                          rotation: optionalDouble(arguments, 4) ?? 0, scale: optionalDouble(arguments, 5) ?? 1,
+                          anchorX: optionalDouble(arguments, 6) ?? 0.5, anchorY: optionalDouble(arguments, 7) ?? 0.5,
+                          layer: optionalInteger(arguments, 8))
+        case "MOVESPRITE":
+            count(arguments, 3...3, "moveSprite")
+            canvas.moveSprite(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]))
+        case "ROTATESPRITE":
+            count(arguments, 2...2, "rotateSprite")
+            canvas.rotateSprite(id: string(arguments[0]), rotation: double(arguments[1]))
+        case "ANCHORSPRITE":
+            count(arguments, 3...3, "anchorSprite")
+            canvas.anchorSprite(id: string(arguments[0]), anchorX: double(arguments[1]), anchorY: double(arguments[2]))
+        case "TRANSFORMSPRITE":
+            count(arguments, 5...7, "transformSprite")
+            canvas.transformSprite(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]),
+                                   rotation: double(arguments[3]), scale: double(arguments[4]),
+                                   anchorX: optionalDouble(arguments, 5), anchorY: optionalDouble(arguments, 6))
+        case "REMOVESPRITE":
+            count(arguments, 1...1, "removeSprite"); canvas.removeSprite(id: string(arguments[0]))
+        case "CLEARSPRITES":
+            count(arguments, 0...0, "clearSprites"); canvas.clearSprites()
         case "CLEARRECT":
             count(arguments, 5...6, "clearRect")
             canvas.clearRect(id: string(arguments[0]), x: integer(arguments[1]), y: integer(arguments[2]), width: integer(arguments[3]), height: integer(arguments[4]), layer: optionalInteger(arguments, 5))

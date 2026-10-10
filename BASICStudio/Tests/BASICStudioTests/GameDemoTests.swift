@@ -226,11 +226,51 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Outatime: the title shows every era's plane, Space starts, the plane turns and fires, the enemy comes, and it quits with its score")
+    func outatime() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/outatime" })
+        #expect(example.title == "Outatime")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The pictures are sprites: uploaded once, then the title puts up
+        // every era's plane, 1910 to 2001.
+        try await studio.waitUntil("the title's planes", timeout: .seconds(60)) {
+            sent.contains("spriteDataUpload,id=p1910,") && sent.contains("sprite,id=t5,image=p2001,")
+        }
+
+        // Space starts in 1910, with its biplane in the middle of the sky.
+        studio.model.handleTerminalInput([.append(" ")])
+        try await studio.waitUntil("the plane") { sent.contains("sprite,id=plane,image=p1910,") }
+
+        // Held RIGHT turns it, a sixteenth at a time, until it faces right.
+        studio.model.heldKeys.set("RIGHT", down: true)
+        try await studio.waitUntil("the plane to face right") { sent.contains("spriteRotate,id=plane,rotation=90") }
+        studio.model.heldKeys.set("RIGHT", down: false)
+
+        // Held SPACE keeps firing.
+        studio.model.heldKeys.set("SPACE", down: true)
+        try await studio.waitUntil("shots") { sent.contains("circle,id=s0,") && sent.contains("circle,id=s1,") }
+        studio.model.heldKeys.set("SPACE", down: false)
+
+        // The era's planes come in.
+        try await studio.waitUntil("the enemy", timeout: .seconds(30)) { sent.contains("image=e1910,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
     /// VTG coordinates must be whole numbers, and a game that scales its world
     /// to the window computes them; at 1:1 a stray half can stay hidden.
     /// Munchies' score popup stopped the game this way in a window that
     /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
-    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "protector"])
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "outatime", "protector"])
     func awkwardScale(game: String) async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
@@ -343,6 +383,34 @@ struct GameDemoTests {
         try Self.touch(studio, "bomb", finger: 3)
         try await studio.waitUntil("the smart bomb's flash") { sent.contains("id=flash,") }
         studio.model.touchControls.touchEnded(3)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Outatime by touch: Fire starts, the stick points the plane, and Fire shoots")
+    func outatimeByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/outatime" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the title", timeout: .seconds(60)) {
+            sent.contains("sprite,id=t5,") && !studio.model.touchControls.isEmpty
+        }
+
+        try Self.touch(studio, "fire", finger: 1)
+        try await studio.waitUntil("the plane") { sent.contains("sprite,id=plane,") }
+        try await studio.waitUntil("shots") { sent.contains("circle,id=s0,") }
+        studio.model.touchControls.touchEnded(1)
+
+        // The stick points down: the plane turns all the way round.
+        try Self.touch(studio, "stick", finger: 2)
+        try Self.slide(studio, "stick", finger: 2, x: 0, y: 0.9)
+        try await studio.waitUntil("the plane to face down") { sent.contains("spriteRotate,id=plane,rotation=180") }
+        studio.model.touchControls.touchEnded(2)
 
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))
