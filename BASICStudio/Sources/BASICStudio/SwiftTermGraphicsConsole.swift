@@ -69,6 +69,10 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     private var heldKeyMonitor: Any?
     private var heldKeyObservers: [NSObjectProtocol] = []
     private var pendingEscapeBytes: [UInt8] = []
+    /// Inside an APC string (`ESC _ … ESC \`), and whether its last byte
+    /// was ESC: SwiftTerm's VTG replies, which may span reads.
+    private var isSkippingAPC = false
+    private var apcSawEscape = false
     private var pendingEscapeFlushID = 0
     #if os(macOS)
     private var mouseTrackingArea: NSTrackingArea?
@@ -821,7 +825,7 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         }
 
         var operations: [TerminalInputOperation] = []
-        var bytes = Array(data)
+        var bytes = droppingTerminalReports(Array(data))
         if !pendingEscapeBytes.isEmpty {
             bytes = pendingEscapeBytes + bytes
             pendingEscapeBytes = []
@@ -917,6 +921,57 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         Task { @MainActor [weak model] in
             model?.handleTerminalInput(operations)
         }
+    }
+
+    /// `bytes` without the reports the terminal makes for the program's
+    /// mouse, which Studio posts as events itself: on iOS, while a program
+    /// reads the mouse, SwiftTerm answers every touch with an xterm report
+    /// (`ESC [ < 0 ; 51 ; 25 M`, or `ESC [ M` and three bytes) and may answer
+    /// VTG with an APC string (`ESC _VTG;mouse,… ESC \`, which may span
+    /// reads). Typed, each tap reached the program as twenty-odd keys, an
+    /// Escape among them. A TUI program's reports go to its driver, before
+    /// this.
+    private func droppingTerminalReports(_ bytes: [UInt8]) -> [UInt8] {
+        var kept: [UInt8] = []
+        kept.reserveCapacity(bytes.count)
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+            if isSkippingAPC {
+                if byte == 7 || (apcSawEscape && byte == UInt8(ascii: "\\")) {
+                    isSkippingAPC = false
+                    apcSawEscape = false
+                } else {
+                    apcSawEscape = byte == 27
+                }
+            } else if byte == 27, index + 1 < bytes.count, bytes[index + 1] == UInt8(ascii: "_") {
+                isSkippingAPC = true
+                apcSawEscape = false
+                index += 1
+            } else if let length = Self.mouseReportLength(bytes, at: index) {
+                index += length
+                continue
+            } else {
+                kept.append(byte)
+            }
+            index += 1
+        }
+        return kept
+    }
+
+    /// The length of the xterm mouse report starting at `index`, if one does:
+    /// SGR (`ESC [ <` digits and semicolons, then `M` or `m`) or X10
+    /// (`ESC [ M` and three bytes).
+    private static func mouseReportLength(_ bytes: [UInt8], at index: Int) -> Int? {
+        guard index + 2 < bytes.count, bytes[index] == 27, bytes[index + 1] == UInt8(ascii: "[") else { return nil }
+        if bytes[index + 2] == UInt8(ascii: "M") {
+            return index + 5 < bytes.count ? 6 : nil
+        }
+        guard bytes[index + 2] == UInt8(ascii: "<") else { return nil }
+        var end = index + 3
+        while end < bytes.count, bytes[end] == UInt8(ascii: ";") || (48...57).contains(bytes[end]) { end += 1 }
+        guard end < bytes.count, bytes[end] == UInt8(ascii: "M") || bytes[end] == UInt8(ascii: "m") else { return nil }
+        return end - index + 1
     }
 
     private func appendPrintableByte(_ byte: UInt8, operations: inout [TerminalInputOperation]) {
