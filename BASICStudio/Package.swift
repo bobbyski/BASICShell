@@ -70,7 +70,8 @@ let package = Package(
         // Headless: the model, the projections, the pages. No window.
         .testTarget(
             name: "BASICStudioTests",
-            dependencies: ["BASICStudio"]
+            // SwiftTerm's own VTG scene, to see what a terminal would draw.
+            dependencies: ["BASICStudio", "SwiftTerm"]
         )
     ]
 )

@@ -9,6 +9,7 @@
 
 import CoreGraphics
 import Foundation
+import SwiftTerm
 import Testing
 @testable import BASICStudio
 
@@ -338,6 +339,59 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
     }
 
+    /// The sprites a terminal would draw once `sent` has all been applied to
+    /// SwiftTerm's own VTG scene, and whether the picture each one shows is
+    /// still uploaded. `clear` and `clearSprites` take the pictures away as
+    /// well, so a game that clears after uploading shows no sprite at all —
+    /// which reading the commands alone never shows.
+    ///
+    /// Also, every picture uploaded that the scene does not hold: SwiftTerm
+    /// refuses a picture named with "_" or "-", which the SDK sends anyway.
+    private static func spritesShown(in sent: String) -> (sprites: [(id: String, image: String, hasPicture: Bool)], refused: [String]) {
+        let scene = VTGGraphicsScene()
+        var uploaded: [String] = []
+        for command in VectorTerminalGraphicsParser().feed(ArraySlice(Array(sent.utf8))).commands {
+            _ = scene.apply(command)
+            if ["spriteUpload", "spriteDataUpload", "vectorSpriteUpload"].contains(command.name), let id = command.parameters["id"] {
+                uploaded.append(id)
+            }
+        }
+        func holds(_ image: String) -> Bool {
+            scene.indexedSpriteAsset(id: image) != nil || scene.vectorSpriteAsset(id: image) != nil || scene.spriteAsset(id: image) != nil
+        }
+        let sprites = scene.primitives.compactMap { primitive -> (id: String, image: String, hasPicture: Bool)? in
+            guard case .sprite(let id, let image, _, _, _, _, _, _) = primitive else { return nil }
+            return (id, image, holds(image))
+        }
+        return (sprites, Array(Set(uploaded.filter { !holds($0) })).sorted())
+    }
+
+    @Test("Sprite games keep their pictures: in SwiftTerm's own scene, every picture is taken and every sprite placed shows one", arguments: [("outatime", "plane"), ("outatime", "c0"), ("soft-landing", "lander"), ("soft-landing", "rock0")])
+    func spritePicturesKept(game: String, sprite: String) async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the title", timeout: .seconds(60)) { sent.contains("endFrame") }
+        studio.model.handleTerminalInput([.append(" ")])
+        try await studio.waitUntil("the \(sprite)", timeout: .seconds(30)) { sent.contains("id=\(sprite),") }
+        let frames = sent.components(separatedBy: "endFrame").count
+        try await studio.waitUntil("a second more") { sent.components(separatedBy: "endFrame").count > frames + 30 }
+
+        // Before quitting, which clears everything away.
+        let shown = Self.spritesShown(in: sent)
+        let placed = shown.sprites.map { $0.id }
+        let missing = shown.sprites.filter { !$0.hasPicture }.map { $0.image }
+        #expect(placed.contains(sprite), "\(placed)")
+        #expect(missing.isEmpty, "no picture for \(missing)")
+        #expect(shown.refused.isEmpty, "the terminal refused \(shown.refused)")
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+    }
+
     // MARK: - Touch and gamepad
 
     /// The screen the touch tests put fingers on. On the Mac the controls are
@@ -384,6 +438,32 @@ struct GameDemoTests {
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))
         #expect(studio.model.touchControls.isEmpty)
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    /// On iPad every program runs as WebAssembly, and a touch button reports
+    /// as a game controller does. Studio once asked only the interpreter
+    /// whether anything wanted the event, and dropped every press.
+    @Test("By touch, as WebAssembly as on iPad: a game's buttons reach it", arguments: [("electric-storm", "fire", "id=shot0,"), ("soft-landing", "thrust", "sprite,id=lander,"), ("outatime", "fire", "sprite,id=plane,")])
+    func touchButtonsAsWebAssembly(game: String, control: String, shows: String) async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.compiledRunTarget = .webAssembly
+        studio.model.jitEditorProgram()
+        try await studio.waitUntil("the game, compiled", timeout: .seconds(120)) {
+            sent.contains("endFrame") && !studio.model.touchControls.isEmpty
+        }
+        #expect(!sent.contains(shows))
+
+        try Self.touch(studio, control, finger: 1)
+        try await studio.waitUntil("\(control) to work", timeout: .seconds(30)) { sent.contains(shows) }
+        studio.model.touchControls.touchEnded(1)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntil("the compiled run to end", timeout: .seconds(30)) { !studio.model.isJITRunning }
         #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
     }
 

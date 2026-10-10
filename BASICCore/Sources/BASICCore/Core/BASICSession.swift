@@ -236,8 +236,13 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     }
 
     /// Returns true when the current event options and registrations want this host input family.
+    ///
+    /// A compiled program keeps its handlers in its own runtime, not in this
+    /// one, so while one runs every event goes to it, and it drops what it
+    /// has no handler for. Asking only this runtime dropped a WebAssembly
+    /// game's touch buttons before they reached it.
     public func acceptsHostInputEvent(type: String, subtype: String? = nil) -> Bool {
-        runtime.isHostInputEnabled(for: BASICEventSelector(type: type, subtype: subtype))
+        sendsHostEventsToCompiledProgram || runtime.isHostInputEnabled(for: BASICEventSelector(type: type, subtype: subtype))
     }
 
     /// Submits one console line, returning false when the caller should exit.
