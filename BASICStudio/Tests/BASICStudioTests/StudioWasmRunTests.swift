@@ -224,6 +224,31 @@ struct StudioWasmRunTests {
         #expect(bridge.appWindows.isEmpty)
     }
 
+    @Test("A BASIC class inheriting ActiveUI's AUIView: ActiveUI calls its override")
+    func inheritAUIView() async throws {
+        let studio = start("""
+        IMPORT "ActiveUI"
+        GLOBAL refreshed = 0
+        CLASS Badge
+          INHERITS AUIView
+          PUBLIC count AS DOUBLE
+          OVERRIDES FUNCTION refreshSelf() AS VOID
+            refreshed = refreshed + 1
+            ME.count = ME.count + 1
+          END FUNCTION
+        END CLASS
+        DIM B AS Badge
+        B = NEW Badge()
+        DIM Column AS AUIStack
+        Column = NEW AUIStack(AUIStack_Axis.vertical, 12, AUIStack_CrossAxisAlignment.leading, AUIStack_LayoutMode.flow)
+        Column.addChild(B)
+        Column.refresh()
+        PRINT "refreshed "; refreshed; ", count "; B.count
+        """)
+        try await waitUntilFinished(studio)
+        #expect(studio.model.consoleText.contains("refreshed 1, count 1\n"), "\(studio.model.consoleText.suffix(400))")
+    }
+
     @Test("IMPORT \"TUIKit\": an App on a headless terminal calls BASIC back inside run, and stops")
     func importTUIKit() async throws {
         let studio = start("""

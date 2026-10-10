@@ -14,8 +14,15 @@ import Foundation
 // are queued, and the run's thread makes them: while it waits for a call
 // that keeps the main thread (a TUIKit `App.run` firing a scheduled
 // handler), or else at its next event drain, the way an ActiveUI click
-// reaches a handler. Only the run's thread ever executes the module, and the
-// main thread never waits for it.
+// reaches a handler. Only the run's thread ever executes the module.
+//
+// One call from the framework cannot wait: an override of a BASIC class that
+// inherits a framework class (slice 11d), whose answer the framework needs
+// now. The main thread asks the run's thread for it (`WasmForward`) and waits,
+// making meanwhile the framework calls the BASIC override makes in turn; the
+// run's thread answers at its next chance — any framework call, a loop's
+// poll, an event drain, a SLEEP. If none comes soon (the program is waiting
+// for INPUT), the framework's own method answers instead.
 
 /// The main thread, for a framework call.
 public enum WasmMainThread {
@@ -38,20 +45,38 @@ public enum WasmMainThread {
     public static func run(_ body: @escaping () -> Double) -> Double {
         if Thread.isMainThread { return body() }
         let call = Call(body: body)
+        lock.lock()
+        pending.append(call)
+        lock.unlock()
         let main = CFRunLoopGetMain()
-        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
-            call.code = basic_wasm_protected(runOnMain, Unmanaged.passUnretained(call).toOpaque())
-            call.done.signal()
-        }
+        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) { drain() }
         CFRunLoopWakeUp(main)
         // BASIC the framework calls back meanwhile runs here, on the run's
         // thread, which is the module's: a call that keeps the main thread
         // may be waiting for it.
         while call.done.wait(timeout: .now() + .milliseconds(2)) == .timedOut {
+            WasmForward.service()
             WasmCallbacks.runQueued()
         }
         if call.code != 0 { basic_wasm_unwind(call.code) }
         return call.result
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var pending: [Call] = []
+
+    /// Makes, on the main thread, every call the run's thread is waiting on:
+    /// from the run loop, or while the main thread itself waits for BASIC
+    /// (``WasmForward``), which may be making calls of its own.
+    static func drain() {
+        while true {
+            lock.lock()
+            let call = pending.isEmpty ? nil : pending.removeFirst()
+            lock.unlock()
+            guard let call else { return }
+            call.code = basic_wasm_protected(runOnMain, Unmanaged.passUnretained(call).toOpaque())
+            call.done.signal()
+        }
     }
 
     /// Waits, on the run's thread, until `done` is signalled — a host's
@@ -61,10 +86,106 @@ public enum WasmMainThread {
     /// ends the wait as it ends a SLEEP.
     public static func wait(for done: DispatchSemaphore) {
         while done.wait(timeout: .now() + .milliseconds(10)) == .timedOut {
+            WasmForward.service()
             WasmCallbacks.runQueued()
             RTHosted.checkStop?()
         }
     }
+}
+
+/// A BASIC body the framework calls and waits for (slice 11d): an override
+/// of a BASIC class that inherits a framework class. The body is the module's
+/// function at a table index, of the callbacks' `(ptr) -> double` shape,
+/// taking a frame of the host's that carries its arguments and its result.
+public enum WasmForward {
+    final class Request: @unchecked Sendable {
+        let target: Double
+        let frame: UnsafeMutableRawPointer
+        /// 0 waiting, 1 taken by the run's thread, 2 done, 3 given up.
+        var state = 0
+        var code: Int32 = 0
+        let done = DispatchSemaphore(value: 0)
+        init(target: Double, frame: UnsafeMutableRawPointer) {
+            self.target = target
+            self.frame = frame
+        }
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var waiting: [Request] = []
+
+    /// How long the main thread waits for the run's thread before the
+    /// framework's own method answers instead: a UI that stalls for this long
+    /// at worst, never one that hangs.
+    static let patience = DispatchTimeInterval.milliseconds(250)
+
+    /// Calls the BASIC body at `target` with `frame`, on the run's thread,
+    /// and waits for it. False when there is no run to call, or it did not
+    /// answer in time: the caller does what it would without the override.
+    public static func call(_ target: Double, frame: UnsafeMutableRawPointer) -> Bool {
+        guard let runner = WasmRunner.current else { return false }
+        if Thread.current === runner.runThread {
+            _ = runner.call(tableIndex: target, shape: .ptrDouble, argument: frame)
+            return true
+        }
+        let request = Request(target: target, frame: frame)
+        lock.lock()
+        waiting.append(request)
+        lock.unlock()
+        let deadline = DispatchTime.now() + patience
+        while request.done.wait(timeout: .now() + .milliseconds(1)) == .timedOut {
+            // The body may make framework calls, which come back here.
+            if Thread.isMainThread { WasmMainThread.drain() }
+            guard DispatchTime.now() >= deadline else { continue }
+            lock.lock()
+            let untouched = request.state == 0
+            if untouched {
+                request.state = 3
+                waiting.removeAll { $0 === request }
+            }
+            lock.unlock()
+            if untouched { return false }
+        }
+        return request.code == 0
+    }
+
+    /// Makes the waiting calls, on the run's thread. An error or Stop inside
+    /// one is caught here first, so the waiting thread is told, and then
+    /// raised again here.
+    static func service() {
+        while true {
+            lock.lock()
+            let request = waiting.isEmpty ? nil : waiting.removeFirst()
+            request?.state = 1
+            lock.unlock()
+            guard let request else { return }
+            let code = basic_wasm_protected(forwardOnRunThread, Unmanaged.passUnretained(request).toOpaque())
+            request.code = code
+            request.state = 2
+            request.done.signal()
+            if code != 0 { basic_wasm_unwind(code) }
+        }
+    }
+
+    /// Whether any call is waiting: asked at every loop's poll.
+    static var hasWaiting: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !waiting.isEmpty
+    }
+
+    static func clear() {
+        lock.lock()
+        let left = waiting
+        waiting = []
+        lock.unlock()
+        for request in left { request.state = 3; request.code = -1; request.done.signal() }
+    }
+}
+
+private let forwardOnRunThread: basic_wasm_body = { context in
+    let request = Unmanaged<WasmForward.Request>.fromOpaque(context!).takeUnretainedValue()
+    _ = WasmRunner.current?.call(tableIndex: request.target, shape: .ptrDouble, argument: request.frame)
 }
 
 private let runOnMain: basic_wasm_body = { context in

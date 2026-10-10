@@ -130,14 +130,9 @@ public struct SwiftDialect: DialectCompiler {
     /// The mapped lowering: the traditional dialect's, with an object model
     /// that reaches every framework member through the map's shims.
     private func lowerMapped(_ module: BIRModule, options: CompileOptions) throws -> LoweredModule {
-        // A BASIC class inheriting a framework class is written as Swift and
-        // compiled by swiftc natively (R1.5); there is none here.
-        if let found = SwiftHostedClasses.find(in: module, imports: imports).first {
-            throw CompileError(
-                "CLASS \(found.composite.displayName) INHERITS \(found.baseClass.name): a class inheriting a framework class "
-                    + "cannot run as WebAssembly yet (BASIC-45 slice 11d)",
-                at: nil)
-        }
+        // A BASIC class inheriting a framework class is made as the map's
+        // forwarding class for its base (slice 11d), where natively swiftc
+        // compiles one for it (R1.5).
         let objects = SwiftObjectModel(module: module, imports: imports, mapped: true)
         if !objects.refusals.isEmpty { throw CompileError(objects.refusals) }
         let base = try TraditionalDialect().lower(module, options: options, objectModel: objects)

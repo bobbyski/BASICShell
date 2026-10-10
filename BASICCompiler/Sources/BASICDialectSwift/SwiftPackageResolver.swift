@@ -133,21 +133,35 @@ public struct SwiftPackageResolver {
     /// scratch directory, for the iOS device triple.
     public static func iOSSymbolGraph(of package: ResolvedPackage) throws -> String {
         let scratch = (package.path as NSString).appendingPathComponent(".build-basicc")
-        let output = (scratch as NSString).appendingPathComponent("ios-symbol-graphs")
-        try? FileManager.default.removeItem(atPath: output)
-        try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
         let sdk = try ProcessRunner.run("/usr/bin/xcrun", ["--sdk", "iphoneos", "--show-sdk-path"])
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sdkVersion = try ProcessRunner.run("/usr/bin/xcrun", ["--sdk", "iphoneos", "--show-sdk-version"])
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let build = try ProcessRunner.run("/usr/bin/xcrun", [
             "swift", "build", "--target", package.name,
             "--triple", "arm64-apple-ios", "--sdk", sdk, "--scratch-path", scratch,
-            "-Xswiftc", "-emit-symbol-graph", "-Xswiftc", "-emit-symbol-graph-dir", "-Xswiftc", output,
-            "-Xswiftc", "-symbol-graph-minimum-access-level", "-Xswiftc", "public",
         ], workingDirectory: package.path)
-        guard let graph = Self.find(named: "\(package.name).symbols.json", under: output) else {
+        // The graph is read from the built module, not emitted by the build:
+        // a build with nothing to do emits nothing.
+        guard let module = Self.find(named: "\(package.name).swiftmodule", under: scratch, where: { $0.contains("iphoneos") || $0.contains("-ios") }) else {
             throw Failure(importName: package.name, problem: build.exitCode == 0
-                ? "no \(package.name).symbols.json was written for iOS under \(output)"
+                ? "the iOS build of \(package.name) left no \(package.name).swiftmodule under \(scratch)"
                 : "swift build for iOS failed in \(package.path):\n\(Self.errorLines(stdout: build.stdout, stderr: build.stderr))")
+        }
+        // Not under the scratch directory, where the Mac's graph is looked
+        // for by name and this one would be found instead.
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basicc-ios-graph-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
+        let extract = try ProcessRunner.run("/usr/bin/xcrun", [
+            "swift-symbolgraph-extract", "-module-name", package.name,
+            "-target", "arm64-apple-ios\(sdkVersion)", "-sdk", sdk,
+            "-I", (module as NSString).deletingLastPathComponent,
+            "-minimum-access-level", "public", "-output-dir", output,
+        ])
+        guard let graph = Self.find(named: "\(package.name).symbols.json", under: output) else {
+            throw Failure(importName: package.name,
+                          problem: "swift-symbolgraph-extract wrote no iOS graph for \(package.name): \(Self.lastLines(extract.stderr))")
         }
         return graph
     }
@@ -269,15 +283,20 @@ public struct SwiftPackageResolver {
         // that both take three, and the shim defined the same `@_cdecl` symbol
         // twice, which does not compile.
         var emittedNew = Set<String>()
-        for klass in api.classes {
+        // A map's forwarding classes (slice 11d) are made with the
+        // initializers they inherit from their bases, through shims of their own.
+        let forwarding = mapped
+            ? api.classes.filter(SwiftForwarding.isForwardable).map { ($0, SwiftForwarding.className(for: $0.name)) }
+            : []
+        for (klass, className) in api.classes.map({ ($0, $0.name) }) + forwarding {
             for initializer in klass.initializers {
                 let passed = initializer.passed
                 // A box's NEW always goes through its shim, which boxes the value.
                 guard mapped || SwiftObjectModel.needsInitializerShim(initializer) || klass.isOpaque else { continue }
                 let arity = SwiftObjectModel.basicArity(initializer, in: api)
-                guard emittedNew.insert("\(klass.name).\(arity)").inserted else { continue }
+                guard emittedNew.insert("\(className).\(arity)").inserted else { continue }
                 var shim = SwiftAsyncShim.Method(
-                    className: klass.name, name: "init",
+                    className: className, name: "init",
                     labels: passed.map(\.label),
                     parameterTypes: passed.map { Self.spelling($0.type, in: api) },
                     returns: nil, isThrowing: initializer.isThrowing
@@ -470,6 +489,7 @@ public struct SwiftPackageResolver {
             }
         }
         shim.mappedClasses = api.classes.filter { !$0.isOpaque }.map(\.name)
+        shim.forwardingSource = SwiftForwarding.source(for: api)
         return shim
     }
 
@@ -708,6 +728,15 @@ public struct SwiftPackageResolver {
     static func lastLines(_ text: String, count: Int = 12) -> String {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         return lines.suffix(count).joined(separator: "\n")
+    }
+
+    /// The first entry called `name` under `root` whose path passes `test`.
+    static func find(named name: String, under root: String, where test: (String) -> Bool) -> String? {
+        guard let walker = FileManager.default.enumerator(atPath: root) else { return nil }
+        for case let entry as String in walker where (entry.hasSuffix("/" + name) || entry == name) && test(entry) {
+            return (root as NSString).appendingPathComponent(entry)
+        }
+        return nil
     }
 
     static func find(named name: String, under root: String) -> String? {

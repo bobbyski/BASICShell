@@ -109,6 +109,8 @@ public final class WasmRunner: @unchecked Sendable {
 
     // The run in progress, for the C callbacks that cannot capture.
     nonisolated(unsafe) static var current: WasmRunner?
+    /// The thread the module runs on, while it runs.
+    var runThread: Thread?
 
     private var context: JSContext!
     private var entries: [RTEntryPoint?] = []
@@ -181,11 +183,15 @@ public final class WasmRunner: @unchecked Sendable {
         pollIndex = program.imports.firstIndex { $0.name == WasmTranslator.pollImport } ?? -1
 
         Self.current = self
+        runThread = Thread.current
         RTHosted.output = { [unowned host] text in host.write(text) }
         RTHosted.readLine = { [unowned host] prompt in host.readLine(prompt: prompt) }
         RTHosted.inkey = { [unowned host] in host.inkey() }
         RTHosted.unwind = { kind in basic_wasm_unwind(kind.rawValue) }
         RTHosted.checkStop = { [unowned self] in
+            // Where the program waits (SLEEP, PLAY), an override the
+            // framework is waiting for is made (slice 11d).
+            WasmForward.service()
             if self.isStopRequested { basic_wasm_unwind(Self.stopCode) }
         }
         RTHosted.isStopRequested = { [unowned self] in self.isStopRequested }
@@ -202,6 +208,7 @@ public final class WasmRunner: @unchecked Sendable {
         let collectHosted = RTHosted.collectEvents
         RTHosted.collectEvents = {
             collectHosted?()
+            WasmForward.service()
             WasmCallbacks.collectQueued()
         }
         WasmCallbacks.reset()
@@ -217,6 +224,8 @@ public final class WasmRunner: @unchecked Sendable {
             WasmCallbacks.clearQueued()
             WasmCallbacks.reset()
             Self.current = nil
+            runThread = nil
+            WasmForward.clear()
             context = nil
         }
 
@@ -307,6 +316,11 @@ public final class WasmRunner: @unchecked Sendable {
         let index = Int(JSValueToNumber(ctx, arguments[0], nil))
         if index == pollIndex {
             if isStopRequested { exception?.pointee = stopValue.jsValueRef }
+            // A loop's poll is a chance to make an override the framework is
+            // waiting for (slice 11d); the BASIC is the module's own.
+            guard WasmForward.hasWaiting else { return JSValueMakeUndefined(ctx) }
+            let code = basic_wasm_protected(serviceForwards, nil)
+            if code != 0 { exception?.pointee = exceptionValue(for: code, ctx) }
             return JSValueMakeUndefined(ctx)
         }
         guard index >= 0, index < entries.count, let entry = entries[index] else {
@@ -319,21 +333,26 @@ public final class WasmRunner: @unchecked Sendable {
         }
         frame.entry = entry
         let code = basic_wasm_protected(callFrame, Unmanaged.passUnretained(frame).toOpaque())
+        if code == 0 { return JSValueMakeNumber(ctx, frame.result) }
+        exception?.pointee = exceptionValue(for: code, ctx)
+        return JSValueMakeUndefined(ctx)
+    }
+
+    /// The exception an import throws into the module for an unwind code.
+    private func exceptionValue(for code: Int32, _ ctx: JSContextRef) -> JSValueRef? {
         switch code {
-        case 0:
-            return JSValueMakeNumber(ctx, frame.result)
         case RTHosted.Unwind.landed.rawValue:
-            exception?.pointee = landedFactory.call(withArguments: [])?.jsValueRef
+            return landedFactory.call(withArguments: [])?.jsValueRef
         case Self.rethrowCode:
-            exception?.pointee = pending
+            let value = pending
             if let pending { JSValueUnprotect(ctx, pending) }
             pending = nil
+            return value
         case Self.stopCode:
-            exception?.pointee = stopValue.jsValueRef
+            return stopValue.jsValueRef
         default:
-            exception?.pointee = fatalValue.jsValueRef
+            return fatalValue.jsValueRef
         }
-        return JSValueMakeUndefined(ctx)
     }
 
     // MARK: Callbacks
@@ -405,6 +424,8 @@ public final class WasmRunner: @unchecked Sendable {
 }
 
 // MARK: - C entry points (no captures)
+
+private let serviceForwards: basic_wasm_body = { _ in WasmForward.service() }
 
 private let callFrame: basic_wasm_body = { context in
     let frame = Unmanaged<WasmRunner.Frame>.fromOpaque(context!).takeUnretainedValue()

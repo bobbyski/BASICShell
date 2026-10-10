@@ -33,6 +33,8 @@ let package = Package(
                 .product(name: "BASICWasmRunner", package: "BASICCompiler"),
                 // The runtime's half of a shim: strings, records, errors.
                 .product(name: "BASICRTSwift", package: "BASICCompiler"),
+                // A forwarding object's own fields are a runtime record.
+                .product(name: "BASICRT", package: "BASICCompiler"),
             ],
             // `Map`, not `Resources`: an iOS bundle whose top folder is called
             // that is read as a malformed Mac one, and will not sign.

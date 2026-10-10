@@ -3897,6 +3897,46 @@ public func basic_new_LogLevel_1(_ a0: UnsafeMutableRawPointer?, _ ti: Int) -> U
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
+@_cdecl("basic_new_BASICForward_Window_4")
+public func basic_new_BASICForward_Window_4(_ a0_0: Swift.Int, _ a0_1: Swift.Int, _ a0_2: Swift.Int, _ a0_3: Swift.Int) -> UnsafeMutableRawPointer? {
+    let s0 = Rect(x: a0_0, y: a0_1, width: a0_2, height: a0_3)
+    let made: BASICForward_Window? = MainActor.assumeIsolated { BASICForward_Window(frame: s0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_Dialog_2")
+public func basic_new_BASICForward_Dialog_2(_ a0: UnsafeMutableRawPointer?, _ a1: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let t0 = basicStringIn(a0)
+    let t1 = basicStringIn(a1)
+    let made: BASICForward_Dialog? = MainActor.assumeIsolated { BASICForward_Dialog(title: t0, message: t1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_FloatingWindow_5")
+public func basic_new_BASICForward_FloatingWindow_5(_ a0: UnsafeMutableRawPointer?, _ a1_0: Swift.Int, _ a1_1: Swift.Int, _ a1_2: Swift.Int, _ a1_3: Swift.Int) -> UnsafeMutableRawPointer? {
+    let t0 = basicStringIn(a0)
+    let s1 = Rect(x: a1_0, y: a1_1, width: a1_2, height: a1_3)
+    let made: BASICForward_FloatingWindow? = MainActor.assumeIsolated { BASICForward_FloatingWindow(title: t0, frame: s1) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_StackView_11")
+public func basic_new_BASICForward_StackView_11(_ a0: Int, _ a1_0: Swift.Int, _ a1_1: Swift.Int, _ a1_2: Swift.Int, _ a1_3: Swift.Int, _ a2: Swift.Int, _ a3: Int, _ a4_0: Swift.Int, _ a4_1: Swift.Int, _ a4_2: Swift.Int, _ a4_3: Swift.Int) -> UnsafeMutableRawPointer? {
+    let e0 = basicEnumIn_StackView_Axis(a0)
+    let e3 = basicEnumIn_StackAlignment(a3)
+    let s1 = Rect(x: a1_0, y: a1_1, width: a1_2, height: a1_3)
+    let s4 = EdgeInsets(top: a4_0, left: a4_1, bottom: a4_2, right: a4_3)
+    let made: BASICForward_StackView? = MainActor.assumeIsolated { BASICForward_StackView(axis: e0, frame: s1, spacing: a2, alignment: e3, insets: s4) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_TUIView_4")
+public func basic_new_BASICForward_TUIView_4(_ a0_0: Swift.Int, _ a0_1: Swift.Int, _ a0_2: Swift.Int, _ a0_3: Swift.Int) -> UnsafeMutableRawPointer? {
+    let s0 = Rect(x: a0_0, y: a0_1, width: a0_2, height: a0_3)
+    let made: BASICForward_TUIView? = MainActor.assumeIsolated { BASICForward_TUIView(frame: s0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_handler_BorderStyle_inner")
 public func basic_handler_BorderStyle_inner(_ me: Int) -> Int {
     let object = basicEnumIn_BorderStyle(me)
@@ -9633,10 +9673,113 @@ private let basicClassIndex_TUIKit: [ObjectIdentifier: Int] = [
 public func basic_classid_TUIKit(_ me: UnsafeMutableRawPointer?) -> Int {
     guard let me else { return -1 }
     let object = Unmanaged<AnyObject>.fromOpaque(me).takeUnretainedValue()
+    // An object of a BASIC class inheriting one of these (slice 11d):
+    // the BASIC class says what it is, not its framework base.
+    if object is BASICForwarding { return -3 }
     var here: AnyClass? = Swift.type(of: object)
     while let type = here {
         if let index = basicClassIndex_TUIKit[ObjectIdentifier(type)] { return index }
         here = class_getSuperclass(type)
     }
     return -1
+}
+
+final class BASICForward_Window: Window, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `layoutSubviews`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`layoutSubviews`()
+    }
+    override func `didBecomeFirstResponder`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didBecomeFirstResponder`()
+    }
+    override func `didResignFirstResponder`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didResignFirstResponder`()
+    }
+    override func `mouseGestureCancelled`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`mouseGestureCancelled`()
+    }
+}
+
+final class BASICForward_Dialog: Dialog, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `layoutSubviews`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`layoutSubviews`()
+    }
+    override func `didBecomeFirstResponder`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didBecomeFirstResponder`()
+    }
+    override func `didResignFirstResponder`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didResignFirstResponder`()
+    }
+    override func `mouseGestureCancelled`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`mouseGestureCancelled`()
+    }
+}
+
+final class BASICForward_FloatingWindow: FloatingWindow, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `layoutSubviews`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`layoutSubviews`()
+    }
+    override func `didBecomeFirstResponder`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didBecomeFirstResponder`()
+    }
+    override func `didResignFirstResponder`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didResignFirstResponder`()
+    }
+    override func `mouseGestureCancelled`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`mouseGestureCancelled`()
+    }
+}
+
+final class BASICForward_StackView: StackView, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `layoutSubviews`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`layoutSubviews`()
+    }
+    override func `didBecomeFirstResponder`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didBecomeFirstResponder`()
+    }
+    override func `didResignFirstResponder`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didResignFirstResponder`()
+    }
+    override func `mouseGestureCancelled`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`mouseGestureCancelled`()
+    }
+}
+
+final class BASICForward_TUIView: TUIView, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `layoutSubviews`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`layoutSubviews`()
+    }
+    override func `didBecomeFirstResponder`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didBecomeFirstResponder`()
+    }
+    override func `didResignFirstResponder`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didResignFirstResponder`()
+    }
+    override func `mouseGestureCancelled`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`mouseGestureCancelled`()
+    }
 }

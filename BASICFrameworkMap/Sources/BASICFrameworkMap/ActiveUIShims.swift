@@ -7568,6 +7568,51 @@ public func basic_new_AUIColumn_5(_ a0: UnsafeMutableRawPointer?, _ a1: Int, _ a
     return UnsafeMutableRawPointer(bitPattern: bits)!
 }
 
+@_cdecl("basic_new_BASICForward_AUIView_0")
+public func basic_new_BASICForward_AUIView_0() -> UnsafeMutableRawPointer? {
+    let made: BASICForward_AUIView? = MainActor.assumeIsolated { BASICForward_AUIView() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIList_1")
+public func basic_new_BASICForward_AUIList_1(_ a0: Int) -> UnsafeMutableRawPointer? {
+    let e0 = basicEnumIn_AUIList_Style(a0)
+    let made: BASICForward_AUIList? = MainActor.assumeIsolated { BASICForward_AUIList(style: e0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIQuerySectionView_1")
+public func basic_new_BASICForward_AUIQuerySectionView_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let o0 = Unmanaged<AUIQueryDesigner>.fromOpaque(a0!).takeUnretainedValue()
+    let made: BASICForward_AUIQuerySectionView? = MainActor.assumeIsolated { BASICForward_AUIQuerySectionView(o0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIShape_0")
+public func basic_new_BASICForward_AUIShape_0() -> UnsafeMutableRawPointer? {
+    let made: BASICForward_AUIShape? = MainActor.assumeIsolated { BASICForward_AUIShape() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIRoundedRectangle_1")
+public func basic_new_BASICForward_AUIRoundedRectangle_1(_ a0: CGFloat) -> UnsafeMutableRawPointer? {
+    let made: BASICForward_AUIRoundedRectangle? = MainActor.assumeIsolated { BASICForward_AUIRoundedRectangle(cornerRadius: a0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIBubbleView_0")
+public func basic_new_BASICForward_AUIBubbleView_0() -> UnsafeMutableRawPointer? {
+    let made: BASICForward_AUIBubbleView? = MainActor.assumeIsolated { BASICForward_AUIBubbleView() }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
+@_cdecl("basic_new_BASICForward_AUIBubbleView_1")
+public func basic_new_BASICForward_AUIBubbleView_1(_ a0: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    let t0 = basicStringIn(a0)
+    let made: BASICForward_AUIBubbleView? = MainActor.assumeIsolated { BASICForward_AUIBubbleView(text: t0) }
+    return made.map { Unmanaged.passRetained($0).toOpaque() }
+}
+
 @_cdecl("basic_handler_AUICalloutGeometry_Side_isHorizontal")
 public func basic_handler_AUICalloutGeometry_Side_isHorizontal(_ me: Int) -> Swift.Bool {
     let object = basicEnumIn_AUICalloutGeometry_Side(me)
@@ -18515,10 +18560,117 @@ private let basicClassIndex_ActiveUI: [ObjectIdentifier: Int] = [
 public func basic_classid_ActiveUI(_ me: UnsafeMutableRawPointer?) -> Int {
     guard let me else { return -1 }
     let object = Unmanaged<AnyObject>.fromOpaque(me).takeUnretainedValue()
+    // An object of a BASIC class inheriting one of these (slice 11d):
+    // the BASIC class says what it is, not its framework base.
+    if object is BASICForwarding { return -3 }
     var here: AnyClass? = Swift.type(of: object)
     while let type = here {
         if let index = basicClassIndex_ActiveUI[ObjectIdentifier(type)] { return index }
         here = class_getSuperclass(type)
     }
     return -1
+}
+
+final class BASICForward_AUIView: AUIView, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
+}
+
+final class BASICForward_AUIList: AUIList, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `reloadData`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`reloadData`()
+    }
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
+}
+
+final class BASICForward_AUIQuerySectionView: AUIQuerySectionView, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `rebuildContents`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`rebuildContents`()
+    }
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(3), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
+}
+
+final class BASICForward_AUIShape: AUIShape, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
+}
+
+final class BASICForward_AUIRoundedRectangle: AUIRoundedRectangle, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
+}
+
+final class BASICForward_AUIBubbleView: AUIBubbleView, BASICForwarding {
+    nonisolated let basicForward = BASICForwardState()
+    override func `styleTraitsDidChange`() {
+        if let target = basicForward.target(0), BASICForwardCall.void(target, self, []) { return }
+        super.`styleTraitsDidChange`()
+    }
+    override func `didAttach`() {
+        if let target = basicForward.target(1), BASICForwardCall.void(target, self, []) { return }
+        super.`didAttach`()
+    }
+    override func `refreshSelf`() {
+        if let target = basicForward.target(2), BASICForwardCall.void(target, self, []) { return }
+        super.`refreshSelf`()
+    }
 }

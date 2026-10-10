@@ -357,7 +357,10 @@ func frameworkMap() -> Never {
             else { fail("\(module): its symbol graphs could not be read") }
             func precise(_ symbol: [String: Any]) -> String? { (symbol["identifier"] as? [String: Any])?["precise"] as? String }
             let onIOS = Set(iOSSymbols.compactMap(precise))
-            let macOnly = Set(symbols.compactMap(precise)).subtracting(onIOS)
+            // The module's own symbols only (`s:6TUIKit…`): one it re-exports
+            // from another (TUIKit's RichSwift) is in one graph and not the other.
+            let own = "s:\(module.utf8.count)\(module)"
+            let macOnly = Set(symbols.compactMap(precise).filter { $0.hasPrefix(own) }).subtracting(onIOS)
             symbols.removeAll { precise($0).map(macOnly.contains) ?? false }
             // The graph without what only a reader wants: documentation.
             for index in symbols.indices {

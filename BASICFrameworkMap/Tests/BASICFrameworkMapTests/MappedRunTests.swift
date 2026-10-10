@@ -128,6 +128,77 @@ struct MappedRunTests {
         """)
     }
 
+    /// A BASIC class inheriting ActiveUI's `AUIView` (slice 11d): made as
+    /// the map's forwarding class, its own fields in its record, the base's
+    /// properties the framework's, and its override called by ActiveUI —
+    /// `refresh()` calls `refreshSelf()` on every view below it.
+    @Test("A BASIC class inheriting AUIView: own fields, the base's properties, an override ActiveUI calls")
+    func inheritAUIView() throws {
+        let (outcome, output) = try Self.run("""
+        IMPORT "ActiveUI"
+        GLOBAL refreshed = 0
+        CLASS Badge
+          INHERITS AUIView
+          PUBLIC count AS DOUBLE
+          PUBLIC caption AS STRING
+          OVERRIDES FUNCTION refreshSelf() AS VOID
+            refreshed = refreshed + 1
+            ME.count = ME.count + 1
+          END FUNCTION
+          FUNCTION describe() AS STRING
+            RETURN ME.caption + " at " + STR$(ME.count)
+          END FUNCTION
+        END CLASS
+        DIM B AS Badge
+        B = NEW Badge()
+        B.caption = "badge"
+        B.isHidden = TRUE
+        PRINT "hidden "; B.isHidden
+        DIM Column AS AUIStack
+        Column = NEW AUIStack(AUIStack_Axis.vertical, 12, AUIStack_CrossAxisAlignment.leading, AUIStack_LayoutMode.flow)
+        Column.addChild(B)
+        Column.refresh()
+        Column.refresh()
+        PRINT "refreshed "; refreshed; ", count "; B.count
+        PRINT B.describe()
+        B.refreshSelf()
+        PRINT "called from BASIC: "; B.count
+        """)
+        #expect(outcome == .finished(0), "\(output)")
+        #expect(output == """
+        hidden TRUE
+        refreshed 2, count 2
+        badge at  2
+        called from BASIC: 3
+
+        """)
+    }
+
+    /// TUIKit's `TUIView` inherited, its `layoutSubviews` overridden: TUIKit
+    /// calls BASIC from `layoutIfNeeded`.
+    @Test("A BASIC class inheriting TUIView: TUIKit calls its layoutSubviews")
+    func inheritTUIView() throws {
+        let (outcome, output) = try Self.run("""
+        IMPORT "TUIKit"
+        GLOBAL laid = 0
+        CLASS Meter
+          INHERITS TUIView
+          PUBLIC level AS DOUBLE
+          OVERRIDES FUNCTION layoutSubviews() AS VOID
+            laid = laid + 1
+            ME.level = ME.level + 10
+          END FUNCTION
+        END CLASS
+        DIM M AS Meter
+        M = NEW Meter(0, 0, 20, 4)
+        M.setNeedsLayout()
+        M.layoutIfNeeded()
+        PRINT "laid out "; laid; " level "; M.level
+        """)
+        #expect(outcome == .finished(0), "\(output)")
+        #expect(output == "laid out 1 level 10\n")
+    }
+
     /// TUIKit's exhibit (R5.1): an `App` on a headless terminal, a BASIC
     /// closure TUIKit schedules and calls back while BASIC is inside
     /// `App.run` — run on the run's thread while it waits — and the frame

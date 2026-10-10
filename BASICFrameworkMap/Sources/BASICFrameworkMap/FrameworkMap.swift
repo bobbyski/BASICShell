@@ -47,6 +47,8 @@ public enum BASICFrameworkMap {
             }
             return 0
         }
+        // A BASIC class inheriting a framework class (slice 11d).
+        all.merge(BASICForwardCall.entries) { first, _ in first }
         // A box's type and text (P1.3e), which BASICRTSwift answers.
         all["basic_rt_opaque_type_index"] = WasmEntryPoint(arity: 1) { a in
             Double(basic_rt_opaque_type_index(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))

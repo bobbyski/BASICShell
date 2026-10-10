@@ -147,6 +147,9 @@ public struct SwiftAPI: Sendable {
         /// a plain call — so importing one as ordinary would not merely lose
         /// the suspension, it would call the wrong thing.
         public var isAsync: Bool = false
+        /// Whether an extension declares it, not the type itself. Swift does
+        /// not let a subclass override one (BASIC-45 forwarding classes).
+        public var isFromExtension: Bool = false
         /// Whether it can throw.
         ///
         /// Load-bearing, not decorative: a `throws` function takes a hidden
@@ -591,6 +594,7 @@ public struct SwiftAPI: Sendable {
                     isThrowing: fragments(of: symbol["declarationFragments"])
                         .contains { $0.kind == "keyword" && $0.spelling == "throws" }
                 )
+                function.isFromExtension = symbol["swiftExtension"] != nil
                 // A member blocked *only* by its result is still callable for
                 // its effect. `AUIApplication.run()` returns an `AUIRunResult`
                 // — a typealias, which is not a type BASIC can name — and

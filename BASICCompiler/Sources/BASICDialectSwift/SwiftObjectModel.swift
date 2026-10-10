@@ -102,6 +102,20 @@ public struct SwiftObjectModel: ObjectModel {
     /// Imported classes, by normalized BASIC name.
     private let importedByName: [String: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)]
 
+    /// A program class that inherits a framework class, in a mapped module
+    /// (BASIC-45, slice 11d): made as the map's forwarding class for its
+    /// framework base (``SwiftForwarding``), its own fields in a runtime
+    /// record the object carries.
+    struct Forwarded {
+        let composite: BIRCompositeType
+        /// The nearest framework class above it.
+        let base: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)
+        /// The base's fields come first, the program's after them.
+        var baseFieldCount: Int { base.type.fields.count }
+    }
+    /// Forwarded classes, by normalized BASIC name.
+    let forwardedByName: [String: Forwarded]
+
     /// Symbols `swiftc` says this module's classes have (R0.5). Empty when
     /// the probe could not run, which declines every class rather than
     /// emitting a name that might not link.
@@ -141,7 +155,23 @@ public struct SwiftObjectModel: ObjectModel {
         // out, and its symbol graph says what it is (R1.5).
         for entry in hosted { imported[entry.composite.name] = (entry.module, entry.api, entry.klass, entry.composite) }
         self.importedByName = imported
-        self.refusals = Self.refusals(module, imported: Set(imported.keys))
+        var forwarded: [String: Forwarded] = [:]
+        if mapped {
+            for type in module.types where type.isClass && type.externalModule == nil {
+                var walk = type
+                while let baseIndex = walk.base, let base = module.types.first(where: { $0.index == baseIndex }) {
+                    if base.externalModule != nil {
+                        if let entry = imported[base.name] { forwarded[type.name] = Forwarded(composite: type, base: entry) }
+                        break
+                    }
+                    walk = base
+                }
+            }
+        }
+        self.forwardedByName = forwarded
+        self.refusals = Self.refusals(module, imported: Set(imported.keys).union(forwarded.keys),
+                                      inherited: forwarded.mapValues(\.baseFieldCount))
+            + Self.forwardingRefusals(module, forwarded: forwarded)
         var (accepted, notes) = Self.analyze(module, hosted: Set(hosted.map(\.composite.name)))
         // Mapped, a program's own class is the runtime's record, by design
         // rather than for want of a probe.
@@ -173,7 +203,9 @@ public struct SwiftObjectModel: ObjectModel {
     /// and there is no conversion between the two — so a declaration that
     /// puts one where the other is expected is refused by name rather than
     /// compiled into a program that dies on the first access.
-    static func refusals(_ module: BIRModule, imported: Set<String>) -> [Diagnostic] {
+    /// `inherited`: how many leading fields of a class are its framework
+    /// base's (slice 11d) — the framework's properties, not BASIC slots.
+    static func refusals(_ module: BIRModule, imported: Set<String>, inherited: [String: Int] = [:]) -> [Diagnostic] {
         guard !imported.isEmpty else { return [] }
         var out: [Diagnostic] = []
         func display(_ name: String) -> String {
@@ -198,7 +230,7 @@ public struct SwiftObjectModel: ObjectModel {
             }
         }
         for type in module.types where type.externalModule == nil {
-            for field in type.fields {
+            for field in type.fields.dropFirst(inherited[type.name, default: 0]) {
                 check(field.type, rank: field.dimensions.isEmpty ? nil : field.dimensions.count,
                       "the array \(type.displayName).\(field.displayName)")
                 if field.dimensions.isEmpty, case .composite(let held) = field.type, imported.contains(held) {
@@ -512,7 +544,7 @@ public struct SwiftObjectModel: ObjectModel {
     // MARK: - ObjectModel
 
     public func isSwiftObject(_ typeName: String) -> Bool {
-        byName[typeName] != nil || importedByName[typeName] != nil
+        byName[typeName] != nil || importedByName[typeName] != nil || forwardedByName[typeName] != nil
     }
 
     /// Whether anything in this program is a Swift object at all.
@@ -530,7 +562,8 @@ public struct SwiftObjectModel: ObjectModel {
     public func newSymbol(for typeName: String) -> String? {
         if byName[typeName] != nil { return "\(typeName).new" }
         // An imported class with a no-argument initializer.
-        if let entry = importedByName[typeName], entry.klass.initializers.contains(where: { $0.parameters.isEmpty }) {
+        if let entry = importedByName[typeName] ?? forwardedByName[typeName]?.base,
+           entry.klass.initializers.contains(where: { $0.parameters.isEmpty }) {
             return "\(typeName).new"
         }
         return nil
@@ -541,7 +574,7 @@ public struct SwiftObjectModel: ObjectModel {
         // count: a struct arrives flattened and a defaulted parameter is not
         // passed at all, so `Window.init(frame: Rect)` is four arguments here
         // and one there.
-        guard let entry = importedByName[typeName],
+        guard let entry = importedByName[typeName] ?? forwardedByName[typeName]?.base,
               entry.klass.initializers.contains(where: {
                   Self.basicArity($0, in: entry.api) == arguments.count
               })
@@ -550,11 +583,18 @@ public struct SwiftObjectModel: ObjectModel {
     }
 
     public func runtimeRecordSymbol(for typeName: String) -> String? {
+        if forwardedByName[typeName] != nil { return "basic_forward_record" }
         guard let layout = byName[typeName], layout.sideOffset != nil else { return nil }
         return "\(layout.name).record"
     }
 
     public func fieldLivesInRuntimeRecord(_ typeName: String, field index: Int) -> Bool {
+        // A forwarded class's own containers: the runtime's own calls, on
+        // its record. Its own scalars and objects have thunks of their own.
+        if let forwarded = forwardedByName[typeName] {
+            guard index >= forwarded.baseFieldCount, forwarded.composite.fields.indices.contains(index) else { return false }
+            return Self.livesInRuntimeRecord(forwarded.composite.fields[index].type)
+        }
         guard let layout = byName[typeName], layout.composite.fields.indices.contains(index) else { return false }
         return Self.livesInRuntimeRecord(layout.composite.fields[index].type)
     }
@@ -565,6 +605,14 @@ public struct SwiftObjectModel: ObjectModel {
         // An imported class's storage is the framework's: reached through its
         // property accessors, never by an offset we computed.
         if let entry = importedByName[typeName], entry.type.fields.indices.contains(index) { return "\(typeName).get.\(index)" }
+        if let forwarded = forwardedByName[typeName] {
+            // The base's fields are the framework's properties, reached as the
+            // base reaches them; the class's own are in its record.
+            if index < forwarded.baseFieldCount { return "\(forwarded.base.type.name).get.\(index)" }
+            guard forwarded.composite.fields.indices.contains(index),
+                  !Self.livesInRuntimeRecord(forwarded.composite.fields[index].type) else { return nil }
+            return "\(typeName).get.\(index)"
+        }
         return nil
     }
 
@@ -573,6 +621,12 @@ public struct SwiftObjectModel: ObjectModel {
            layout.fieldOffsets[index] >= 0 { return "\(layout.name).set.\(index)" }
         if let entry = importedByName[typeName], entry.type.fields.indices.contains(index),
            Self.property(named: entry.type.fields[index].name, of: entry.klass, in: entry.api)?.isSettable == true {
+            return "\(typeName).set.\(index)"
+        }
+        if let forwarded = forwardedByName[typeName] {
+            if index < forwarded.baseFieldCount { return fieldSetSymbol(for: forwarded.base.type.name, field: index) }
+            guard forwarded.composite.fields.indices.contains(index),
+                  !Self.livesInRuntimeRecord(forwarded.composite.fields[index].type) else { return nil }
             return "\(typeName).set.\(index)"
         }
         return nil
@@ -621,7 +675,10 @@ public struct SwiftObjectModel: ObjectModel {
         if isMapped {
             var out = "; ---- imported Swift frameworks, through their map (BASIC-45) ----\n"
             out += mappedDeclarations()
+            out += forwardingDeclarations()
             for name in importedByName.keys.sorted() { out += perImportedClass(importedByName[name]!) }
+            for name in forwardedByName.keys.sorted() { out += perForwardedClass(forwardedByName[name]!) }
+            out += forwardThunks()
             for key in imports.keys.sorted() { out += perImportedEnumMembers(imports[key]!) }
             out += helpers()
             return out
@@ -1183,9 +1240,14 @@ public struct SwiftObjectModel: ObjectModel {
         return out
     }
 
-    func perImportedClass(_ entry: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)) -> String {
-        let name = entry.type.name
-        var out = "; \(entry.module).\(entry.klass.name), imported\n"
+    ///
+    /// With `forwarding`, only the constructors of a program class that
+    /// inherits this one (slice 11d): the same arguments, made as the map's
+    /// forwarding class and set up as the program class.
+    func perImportedClass(_ entry: (module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType),
+                          forwarding: Forwarded? = nil) -> String {
+        let name = forwarding?.composite.name ?? entry.type.name
+        var out = forwarding == nil ? "; \(entry.module).\(entry.klass.name), imported\n" : ""
         var counter = 0
         func temp() -> String { counter += 1; return "%t\(counter)" }
 
@@ -1318,7 +1380,11 @@ public struct SwiftObjectModel: ObjectModel {
             let arity0 = Self.basicArity(initializer, in: entry.api)
             let result = temp()
             if entry.klass.isOpaque { arguments.append("i64 \(entry.type.index)") }
-            if viaShim {
+            if let forwarding {
+                let made = SwiftForwarding.className(for: entry.klass.name)
+                body += "  \(result) = call ptr @basic_new_\(made)_\(arity0)(\(arguments.joined(separator: ", ")))\n"
+                body += forwardingSetup(forwarding, object: result, temp: temp)
+            } else if viaShim {
                 // Through the shim, for the same reasons a method goes
                 // through one: a protocol argument is an existential rather
                 // than a pointer, and a struct arrives in pieces.
@@ -1351,6 +1417,7 @@ public struct SwiftObjectModel: ObjectModel {
                 out += "define ptr @\"\(name).new\"() {\n  %r = call ptr @\"\(symbol)\"()\n  ret ptr %r\n}\n"
             }
         }
+        if forwarding != nil { return out }
 
         // Property accessors, by BIR field index.
         for (index, field) in entry.type.fields.enumerated() {
@@ -1961,7 +2028,7 @@ public struct SwiftObjectModel: ObjectModel {
     /// that becomes the nearest class this program declares. The object's
     /// memory is never read here — in WebAssembly it is not the module's.
     func mappedClassOf(imported: [(module: String, api: SwiftAPI, klass: SwiftAPI.Class, type: BIRCompositeType)],
-                       boxLabel: Int?) -> String {
+                       boxLabel: Int?, forwardLabel: Int? = nil) -> String {
         let label = Dictionary(imported.enumerated().map { ("\($0.element.module).\($0.element.klass.precise)", $0.offset) }) { first, _ in first }
         var out = """
         ; Which of this module's classes an object is: each framework's map
@@ -1988,6 +2055,7 @@ public struct SwiftObjectModel: ObjectModel {
                 }
             }
             if position == 0, let boxLabel { cases.append((-2, boxLabel)) }
+            if position == 0, let forwardLabel { cases.append((-3, forwardLabel)) }
             let next = position + 1 < modules.count ? "m\(position + 1)" : "none"
             out += "m\(position):\n"
             out += "  %k\(position) = call i64 @\(Self.classIndexSymbol(module))(ptr %o)\n"
@@ -2029,8 +2097,12 @@ public struct SwiftObjectModel: ObjectModel {
         probes += imported.enumerated().map { (classes.count + $0.offset, "\($0.element.klass.symbol)N") }
         let boxLabel: Int? = hasBoxes ? probes.count : nil
         if let boxLabel { probes.append((boxLabel, Self.opaqueMetadata)) }
+        // Objects of program classes inheriting framework classes (slice
+        // 11d), told apart by the map; mapped modules only.
+        let forwardLabel: Int? = forwardedByName.isEmpty ? nil : probes.count
+        if let forwardLabel { probes.append((forwardLabel, "")) }
         if isMapped {
-            out += mappedClassOf(imported: imported, boxLabel: boxLabel)
+            out += mappedClassOf(imported: imported, boxLabel: boxLabel, forwardLabel: forwardLabel)
         } else {
         out += """
         ; Which of this module's classes an object is, walking the metadata
@@ -2081,6 +2153,20 @@ public struct SwiftObjectModel: ObjectModel {
             "print": "  %bp = call ptr @basic_rt_opaque_text(ptr %o)\n  call void @basic_rt_print_text(ptr %bp)\n  call void @basic_rt_string_release(ptr %bp)\n  ret void\n",
             "box": "  %bs = call ptr @basic_rt_opaque_text(ptr %o)\n  %bv = call ptr @basic_rt_value_from_string(ptr %bs)\n  call void @basic_rt_string_release(ptr %bs)\n  ret ptr %bv\n",
         ]
+        // What each dispatcher does for a forwarded object (slice 11d): a Swift
+        // object for its lifetime, with the reference semantics an imported
+        // one has (D15); its type is the program class it was made as, and
+        // its text is its record's.
+        let forwardRecord = "  %fr = call ptr @basic_forward_record(ptr %o)\n"
+        let forwardArms: [String: String] = [
+            "copy": "  call void @swift_retain(ptr %o)\n  ret ptr %o\n",
+            "assign": "  ret void\n",
+            "release": "  call void @swift_release(ptr %o)\n  ret void\n",
+            "typeIndex": "  %fk = call i64 @basic_forward_type_index(ptr %o)\n  ret i64 %fk\n",
+            "text": forwardRecord + "  %ft = call ptr @basic_rt_composite_text(ptr %fr)\n  ret ptr %ft\n",
+            "print": forwardRecord + "  call void @basic_rt_print_composite(ptr %fr)\n  ret void\n",
+            "box": forwardRecord + "  %fb = call ptr @basic_rt_value_from_composite(ptr %fr)\n  ret ptr %fb\n",
+        ]
         /// A dispatcher: switch on classOf, one arm per class, runtime default.
         func dispatcher(_ name: String, signature: String, arguments: String, subject: String,
                         arm: (ClassLayout) -> String, importedArm: (Int) -> String, fallback: String) -> String {
@@ -2089,7 +2175,8 @@ public struct SwiftObjectModel: ObjectModel {
             text += "  switch i64 %k, label %rt [ " + probes.map { "i64 \($0.label), label %c\($0.label)" }.joined(separator: " ") + " ]\n"
             for layout in classes { text += "c\(layout.ordinal):\n" + arm(layout) }
             for k in classes.count..<probes.count {
-                text += "c\(k):\n" + (k == boxLabel ? boxArms[name, default: fallback] : importedArm(k))
+                text += "c\(k):\n" + (k == boxLabel ? boxArms[name, default: fallback]
+                    : k == forwardLabel ? forwardArms[name, default: fallback] : importedArm(k))
             }
             text += "rt:\n" + fallback + "}\n\n"
             return text
