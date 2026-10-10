@@ -76,8 +76,8 @@ public struct BASICEnvelope: Equatable, Sendable {
     ///
     /// Consecutive steps with the same pitch and loudness are merged, so a
     /// long steady sustain is one event rather than hundreds.
-    public func shape(pitch: Double, duration: TimeInterval, isNoise: Bool) -> (body: [BASICSoundEvent], release: [BASICSoundEvent]) {
-        var shaper = Shaper(envelope: self, pitch: pitch, isNoise: isNoise)
+    public func shape(pitch: Double, duration: TimeInterval, isNoise: Bool, resetsPitchOnRepeat:Bool = false) -> (body: [BASICSoundEvent], release: [BASICSoundEvent]) {
+        var shaper = Shaper(envelope: self, pitch: pitch, isNoise: isNoise, resetsPitchOnRepeat:resetsPitchOnRepeat)
         let body = shaper.body(lasting: duration)
         return (body, duration.isFinite ? shaper.release() : [])
     }
@@ -86,6 +86,8 @@ public struct BASICEnvelope: Equatable, Sendable {
     private struct Shaper {
         let envelope: BASICEnvelope
         let isNoise: Bool
+        let originalPitch:Double
+        let resetsPitchOnRepeat:Bool
         var pitch: Double
         var level = 0
         var phase = Phase.attack
@@ -96,7 +98,8 @@ public struct BASICEnvelope: Equatable, Sendable {
 
         enum Phase { case attack, decay, sustain }
 
-        init(envelope: BASICEnvelope, pitch: Double, isNoise: Bool) {
+        init(envelope: BASICEnvelope, pitch: Double, isNoise: Bool, resetsPitchOnRepeat:Bool) {
+            originalPitch=pitch;self.resetsPitchOnRepeat=resetsPitchOnRepeat
             self.envelope = envelope
             self.pitch = pitch
             self.isNoise = isNoise
@@ -195,6 +198,7 @@ public struct BASICEnvelope: Equatable, Sendable {
                 if section == sections.count {
                     guard envelope.repeatsPitch else { pitchHeld = true; return }
                     section = 0
+                    if resetsPitchOnRepeat { pitch=originalPitch }
                 }
             }
             pitch = (pitch + Double(sections[section].change)).truncatingRemainder(dividingBy: 256)

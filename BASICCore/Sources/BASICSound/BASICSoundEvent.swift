@@ -66,6 +66,11 @@ public struct BASICBBCNote: Equatable, Sendable {
     public let duration: TimeInterval
     public let loudness: Loudness
 
+    /// Create an already validated note with a host-selected duration profile.
+    public init(channel:Int,flushes:Bool,pitch:Double,duration:TimeInterval,loudness:Loudness) {
+        self.channel=channel;self.flushes=flushes;self.pitch=pitch;self.duration=duration;self.loudness=loudness
+    }
+
     /// The note's one event, when it has a fixed volume.
     public var event: BASICSoundEvent? {
         guard case .volume(let volume) = loudness else { return nil }

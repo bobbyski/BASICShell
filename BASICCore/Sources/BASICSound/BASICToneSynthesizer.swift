@@ -41,14 +41,7 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
     /// The process's synthesizer, or nil when audio cannot start.
     public static let shared: BASICToneSynthesizer? = BASICToneSynthesizer()
 
-    private struct Note {
-        var voice: Int
-        var start: Int64
-        var end: Int64
-        var frequency: Double
-        var volume: Float
-        var isNoise: Bool
-    }
+    private typealias Note = BASICPCMNote
 
     /// A song and the voice it plays on, kept so it can be stopped.
     private struct Song {
@@ -67,16 +60,15 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
     private let lock = NSLock()
     private var notes: [Note] = []
     /// Where each voice's square wave is in its cycle, 0..<1.
-    private var phases: [Int: Double] = [:]
+    private let renderer=BASICPCMRenderer()
     private var renderedFrames: Int64 = 0
-    private var noiseRegister: UInt16 = 0x4000
     private var songs: [Int: Song] = [:]
     private var nextSongID = 0
 
     private init?() {
         let hardware = engine.outputNode.outputFormat(forBus: 0)
         sampleRate = hardware.sampleRate > 0 ? hardware.sampleRate : 44_100
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return nil }
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2) else { return nil }
         timeline = BASICSoundTimeline(sampleRate: sampleRate, origin: ProcessInfo.processInfo.systemUptime)
         let source = AVAudioSourceNode(format: format) { [unowned self] _, _, frameCount, bufferList -> OSStatus in
             self.render(frameCount: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(bufferList))
@@ -129,6 +121,10 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
     }
 
     public func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval) {
+        play(event,voice:voice,at:time,noiseProfile:nil)
+    }
+    /// Capture a shift-register profile with a scheduled noise note; ordinary output stays unchanged.
+    public func play(_ event:BASICSoundEvent,voice:Int,at time:TimeInterval,noiseProfile:BASICShiftNoiseProfile?) {
         restartIfStopped()
         let start = frame(at: time)
         // "Play indefinitely" lasts until the voice is silenced or cut.
@@ -138,7 +134,7 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         case .tone(let frequency, _, let volume):
             note = Note(voice: voice, start: start, end: end, frequency: frequency, volume: Float(volume), isNoise: false)
         case .noise(_, let volume):
-            note = Note(voice: voice, start: start, end: end, frequency: 0, volume: Float(volume), isNoise: true)
+            note = Note(voice: voice, start: start, end: end, frequency: 0, volume: Float(volume), isNoise: true,noiseProfile:noiseProfile)
         case .rest:
             return
         case .song(let data, _, _):
@@ -148,6 +144,25 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         lock.lock()
         notes.append(note)
         lock.unlock()
+    }
+
+    /// Schedule a continuously varying signal, including during blocked host calls.
+    /// The audio render lock owns access to a stateful modulation object.
+    public func play(modulation:any BASICPCMModulation,voice:Int,at time:TimeInterval,duration:TimeInterval) {
+        restartIfStopped()
+        let start=frame(at:time)
+        let end=duration.isFinite ? start+Int64((max(0,duration)*sampleRate).rounded()) : Int64.max
+        let note=Note(voice:voice,start:start,end:end,frequency:0,volume:0,isNoise:false,modulation:modulation)
+        lock.lock();notes.append(note);lock.unlock()
+    }
+
+    /// Select a waveform and stereo position for current and future notes.
+    public func configure(voice:Int,waveform:BASICWaveform,pan:Double) {
+        lock.lock();renderer.configure(voice:voice,waveform:waveform,pan:pan);lock.unlock()
+    }
+    /// Restore the default square wave and centre position for every voice.
+    public func resetVoiceStyles() {
+        lock.lock();renderer.resetStyles();lock.unlock()
     }
 
     public func silence(voice: Int) {
@@ -225,35 +240,15 @@ public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
         defer { lock.unlock() }
         let first = renderedFrames
         guard let samples = buffers.first?.mData?.assumingMemoryBound(to: Float.self) else { return }
+        let right=buffers.count>1 ? buffers[1].mData?.assumingMemoryBound(to:Float.self) : nil
         for frame in 0..<frameCount {
-            let position = first + Int64(frame)
-            var sample: Float = 0
-            for note in notes where note.start <= position && position < note.end {
-                sample += note.volume * (note.isNoise ? nextNoise() : square(note))
-            }
-            samples[frame] = max(-1, min(1, sample * Self.gain))
-        }
-        for buffer in buffers.dropFirst() {
-            buffer.mData?.copyMemory(from: samples, byteCount: Int(buffer.mDataByteSize))
+            let value=renderer.sample(notes:notes,frame:first+Int64(frame),sampleRate:sampleRate,gain:Self.gain)
+            samples[frame]=value.left
+            right?[frame]=value.right
         }
         renderedFrames = first + Int64(frameCount)
         notes.removeAll { $0.end <= renderedFrames }
     }
 
-    /// The next sample of `note`'s square wave, advancing its voice's phase:
-    /// one phase a voice, so consecutive steps of an envelope join smoothly.
-    private func square(_ note: Note) -> Float {
-        var phase = phases[note.voice, default: 0] + note.frequency / sampleRate
-        phase -= phase.rounded(.down)
-        phases[note.voice] = phase
-        return phase < 0.5 ? 1 : -1
-    }
-
-    /// The SN76489's white noise: a 15-bit LFSR, tapped at bits 0 and 1.
-    private func nextNoise() -> Float {
-        let bit = (noiseRegister ^ (noiseRegister >> 1)) & 1
-        noiseRegister = (noiseRegister >> 1) | (bit << 14)
-        return noiseRegister & 1 == 0 ? 1 : -1
-    }
 }
 #endif
