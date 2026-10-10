@@ -6247,6 +6247,8 @@ public final class BASICInterpreter {
             return .number(Double(string.characterCount))
         case .environmentFunction(let expression):
             return .string(BASICString(runtime.environmentValue(name: try string(expression))))
+        case .timerFunction:
+            return .number(Self.secondsSinceMidnight())
         case .pwdFunction:
             guard let fileHost = host as? BASICFileHost else {
                 throw BASICError.runtime("PWD$ is not supported by this host")
@@ -6472,7 +6474,7 @@ public final class BASICInterpreter {
             case .unaryMinus(let expression), .logicalNot(let expression), .await(let expression), .chrFunction(let expression),
                  .lenFunction(let expression), .environmentFunction(let expression), .systemFunction(let expression):
                 visit(expression)
-            case .pwdFunction:
+            case .pwdFunction, .timerFunction:
                 return
             case .binary(let left, _, let right):
                 visit(left)
@@ -7549,5 +7551,13 @@ extension BASICInterpreter {
     /// Whether Stop was pressed, without taking the request.
     var isFrameworkStopRequested: Bool {
         executionControl?.isBreakRequested ?? false
+    }
+}
+
+extension BASICInterpreter {
+    /// TIMER(): seconds since local midnight, with the fraction — what
+    /// QuickBASIC's and VB's Timer give, and what basicc's runtime gives.
+    static func secondsSinceMidnight(_ now: Date = Date()) -> Double {
+        now.timeIntervalSince(Calendar.current.startOfDay(for: now))
     }
 }

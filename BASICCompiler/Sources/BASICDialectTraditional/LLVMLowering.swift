@@ -729,6 +729,7 @@ struct LLVMLowering {
     /// Declared only when called (see `render`), in this order.
     static let onDemandDeclarations: KeyValuePairs<String, String> = [
         "basic_rt_pwd": "declare ptr @basic_rt_pwd()",
+        "basic_rt_timer": "declare double @basic_rt_timer()",
     ]
 }
 

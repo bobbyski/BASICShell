@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 289 entry points, by name.
+    /// 290 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -272,6 +272,7 @@ enum RTEntryPoints {
         "basic_rt_task_value": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_task_value(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_tasks_install": RTEntryPoint(arity: 2) { a in basic_rt_tasks_install(WasmCallbacks.trampoline(.voidPtr, forTableIndex: a[0]), WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[1])); return 0 },
         "basic_rt_time": RTEntryPoint(arity: 0) { a in Double(UInt(bitPattern: basic_rt_time())) },
+        "basic_rt_timer": RTEntryPoint(arity: 0) { a in basic_rt_timer() },
         "basic_rt_timer_new": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_timer_new(a[0]))) },
         "basic_rt_timer_on": RTEntryPoint(arity: 4) { a in basic_rt_timer_on(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1], WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[2]), Int(a[3])); return 0 },
         "basic_rt_type_register": RTEntryPoint(arity: 2) { a in basic_rt_type_register(Int(a[0]), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[1])), to: UnsafePointer<CChar>.self)); return 0 },

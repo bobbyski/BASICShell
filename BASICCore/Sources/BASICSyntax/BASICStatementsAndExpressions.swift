@@ -374,6 +374,8 @@ public indirect enum Expression: Equatable {
     case lenFunction(Expression)
     case environmentFunction(Expression)
     case pwdFunction
+    /// `TIMER()`: seconds since midnight, with the fraction.
+    case timerFunction
     case systemFunction(Expression)
 }
 

@@ -1890,6 +1890,14 @@ public struct Parser {
             if uppercased == "PWD$", peek != .leftParen {
                 return .pwdFunction
             }
+            // TIMER(): seconds since midnight, with the fraction, as
+            // QuickBASIC's and VB's Timer. Only with empty parentheses:
+            // `timer` alone is a name programs give their SecondsTimer.
+            if uppercased == "TIMER", peek == .leftParen, peekNext == .rightParen {
+                _ = advance()
+                _ = advance()
+                return .timerFunction
+            }
             if uppercased == "SYSTEM$", peek == .leftParen {
                 return .systemFunction(try parseSingleArgumentFunction())
             }

@@ -192,6 +192,14 @@ public func basic_rt_time() -> UnsafeMutableRawPointer {
     return rtOwned(formatter.string(from: Date()))
 }
 
+/// `TIMER()`: seconds since local midnight, with the fraction — QuickBASIC's
+/// and VB's Timer, and the interpreter's.
+@_cdecl("basic_rt_timer")
+public func basic_rt_timer() -> Double {
+    let now = Date()
+    return now.timeIntervalSince(Calendar.current.startOfDay(for: now))
+}
+
 /// `SLEEP(ms)`: pauses; the value is 0, as a statement-shaped builtin.
 @_cdecl("basic_rt_sleep")
 public func basic_rt_sleep(_ milliseconds: Double) -> Double {

@@ -846,7 +846,7 @@ struct SemanticAnalyzer {
             return variableType
         case .closure(let parameters, let returnType, _, _):
             return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
-        case .lenFunction, .pointFunction: return .number
+        case .lenFunction, .pointFunction, .timerFunction: return .number
         case .chrFunction, .systemFunction, .environmentFunction, .pwdFunction: return .string
         default: return nil
         }
@@ -1049,7 +1049,7 @@ struct SemanticAnalyzer {
         }
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction: return
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction, .timerFunction: return
             case .variable(let name): append(name)
             case .variableReference(let reference):
                 append(reference.base); reference.indexes.forEach(visit); reference.fieldIndexes.flatMap { $0 }.forEach(visit)

@@ -84,6 +84,54 @@ struct StudioWasmRunTests {
         #expect(studio.model.consoleText.contains("Break at "), "\(studio.model.consoleText.suffix(200))")
     }
 
+    @Test("The timing test: ▶ Run as WebAssembly prints the interpreter's checksums, and both say when they started and ended")
+    func timingTest() async throws {
+        let studio = StudioHarness()
+        let model = studio.model
+        let example = try #require(model.bundledExamples.first { $0.path == "language/timing-test" })
+        model.loadBundledExample(example)
+
+        /// Each section's line, without its time: what must be the same.
+        func checksums(_ console: String) -> [String] {
+            let run = console.components(separatedBy: "TIMING TEST").last ?? ""
+            return run.split(separator: "\n").compactMap { line in
+                guard let range = line.range(of: "checksum") else { return nil }
+                return String(line[..<range.upperBound]) + (line[range.upperBound...].components(separatedBy: "   ").first ?? "")
+            }
+        }
+        func timed(_ console: String) -> Bool {
+            let run = console.components(separatedBy: "TIMING TEST").last ?? ""
+            return run.contains("Started at ") && run.contains("Ended at ") && run.contains("Elapsed ") && run.contains(" ms\n")
+        }
+
+        let clock = ContinuousClock()
+        model.runTarget = .interpreter
+        var started = clock.now
+        model.runEditorProgram()
+        try await studio.waitUntilStopped(timeout: .seconds(180))
+        let interpretedTook = clock.now - started
+        let interpreted = model.consoleText
+        let expected = checksums(interpreted)
+        #expect(expected.count == 5, "\(interpreted.suffix(600))")
+        #expect(timed(interpreted), "\(interpreted.suffix(600))")
+
+        model.runTarget = .webAssembly
+        started = clock.now
+        model.runEditorProgram()
+        try await waitUntilFinished(studio)
+        let compiledTook = clock.now - started
+        let compiled = model.consoleText
+        #expect(checksums(compiled) == expected, "\(compiled.suffix(600))")
+        #expect(timed(compiled), "\(compiled.suffix(600))")
+        print("timing test: interpreter \(interpretedTook), WebAssembly \(compiledTook) (compiling included)")
+        for (engine, console) in [("interpreter", interpreted), ("WebAssembly", compiled)] {
+            let run = console.components(separatedBy: "TIMING TEST").last ?? ""
+            for line in run.split(separator: "\n") where line.contains(" ms") || line.hasPrefix("Elapsed") {
+                print("timing test, \(engine): \(line)")
+            }
+        }
+    }
+
     @Test("A program that does not compile says why, and runs nothing")
     func refused() async throws {
         let studio = start("print \"unterminated")
