@@ -266,11 +266,61 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    @Test("Soft Landing: the title shows the lander over the ground, Space starts, Up fires the engine, Right turns, the view closes in on the ground, it crashes, and it quits with its score")
+    func softLanding() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/soft-landing" })
+        #expect(example.title == "Soft Landing")
+        studio.model.loadBundledExample(example)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+
+        // The ground, its pads and the lander are vector sprites; the title
+        // puts the lander up large over a landing site.
+        try await studio.waitUntil("the title", timeout: .seconds(60)) {
+            sent.contains("vectorSpriteUpload,id=rockart,") && sent.contains("vectorSpriteUpload,id=padart,")
+                && sent.contains("sprite,id=titlelander,image=landerart,")
+        }
+
+        // Space starts: the lander, high over a new site.
+        studio.model.handleTerminalInput([.append(" ")])
+        try await studio.waitUntil("the lander") { sent.contains("sprite,id=lander,image=landerart,") }
+
+        // Up fires the engine.
+        studio.model.heldKeys.set("UP", down: true)
+        try await studio.waitUntil("the flame") { sent.contains("draw,id=flame,") }
+        studio.model.heldKeys.set("UP", down: false)
+
+        // Right turns it clockwise, four degrees a frame.
+        studio.model.heldKeys.set("RIGHT", down: true)
+        try await studio.waitUntil("the lander to turn") { Self.turned("lander", in: sent) }
+        studio.model.heldKeys.set("RIGHT", down: false)
+
+        // Left alone it falls: near the ground the view closes in, three
+        // times as close, and tilted and too fast, it crashes.
+        try await studio.waitUntil("the view to close in", timeout: .seconds(60)) {
+            sent.range(of: #"spriteTransform,id=rock0,[^\x{1B}]*scale=(2\.[5-9]|[3-9]\.)"#, options: .regularExpression) != nil
+        }
+        try await studio.waitUntil("the crash", timeout: .seconds(60)) { sent.contains("draw,id=w0,") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(studio.model.consoleText.contains("Final score:"), "\(studio.model.consoleText)")
+        #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
+    }
+
+    /// Whether sprite `id` has been turned 20 to 99 degrees clockwise.
+    private static func turned(_ id: String, in sent: String) -> Bool {
+        sent.range(of: #"(sprite|spriteTransform),id=\#(id),[^\x{1B}]*rotation=[2-9][0-9][,.\x{1B}]"#, options: .regularExpression) != nil
+    }
+
     /// VTG coordinates must be whole numbers, and a game that scales its world
     /// to the window computes them; at 1:1 a stray half can stay hidden.
     /// Munchies' score popup stopped the game this way in a window that
     /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
-    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "outatime", "protector"])
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "outatime", "protector", "soft-landing"])
     func awkwardScale(game: String) async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
@@ -318,6 +368,8 @@ struct GameDemoTests {
         ("munchies", ["pad", "pause"]),
         ("bugs-from-space", ["stick", "fire", "pause"]),
         ("protector", ["stick", "fire", "bomb", "hyper", "pause"]),
+        ("outatime", ["stick", "fire", "pause"]),
+        ("soft-landing", ["stick", "thrust", "pause"]),
     ])
     func touchControlsPlaced(game: String, controls: [String]) async throws {
         let studio = StudioHarness()
@@ -410,6 +462,35 @@ struct GameDemoTests {
         try Self.touch(studio, "stick", finger: 2)
         try Self.slide(studio, "stick", finger: 2, x: 0, y: 0.9)
         try await studio.waitUntil("the plane to face down") { sent.contains("spriteRotate,id=plane,rotation=180") }
+        studio.model.touchControls.touchEnded(2)
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    @Test("Soft Landing by touch: Thrust starts the game and fires the engine, and the stick turns the lander")
+    func softLandingByTouch() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/soft-landing" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.runEditorProgram()
+        try await studio.waitUntil("the title", timeout: .seconds(60)) {
+            sent.contains("sprite,id=titlelander,") && !studio.model.touchControls.isEmpty
+        }
+
+        // Thrust reports as a right trigger squeezed all the way.
+        try Self.touch(studio, "thrust", finger: 1)
+        try await studio.waitUntil("the lander") { sent.contains("sprite,id=lander,") }
+        try await studio.waitUntil("the flame") { sent.contains("draw,id=flame,") }
+        studio.model.touchControls.touchEnded(1)
+
+        // The stick pushed right turns it clockwise.
+        try Self.touch(studio, "stick", finger: 2)
+        try Self.slide(studio, "stick", finger: 2, x: 0.9, y: 0)
+        try await studio.waitUntil("the lander to turn") { Self.turned("lander", in: sent) }
         studio.model.touchControls.touchEnded(2)
 
         studio.model.handleTerminalInput([.append("q")])
