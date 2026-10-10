@@ -6,8 +6,6 @@ import UIKit
 #endif
 import CoreText
 import GameController
-import MarkdownUI
-import SwiftUI
 import SwiftTerm
 import UniformTypeIdentifiers
 import VectorTerminalSDK

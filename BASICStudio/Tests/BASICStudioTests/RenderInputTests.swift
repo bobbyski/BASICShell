@@ -92,13 +92,4 @@ struct RenderInputTests {
         view.render(ConsoleRenderInput(studio.model))
         #expect(view.model === studio.model)
     }
-
-    @Test("P2 precondition · The editor controller makes its web view, and takes input before the page is ready")
-    func editorControllerBeforeReady() {
-        let controller = MonacoEditorController()
-        let webView = controller.makeWebView()
-        #expect(controller.webView === webView)
-        controller.sync(EditorRenderInput.mainEditor(StudioHarness(program: "PRINT 1").model))
-        controller.dismantle(webView)
-    }
 }

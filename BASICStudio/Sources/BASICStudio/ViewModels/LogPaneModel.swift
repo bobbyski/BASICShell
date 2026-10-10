@@ -10,9 +10,9 @@ import Foundation
 /// The Log inspector as values: its toggles, its Levels menu, and its rows.
 ///
 /// A projection, not a store (ACTIVEUI_TRANSITION.md §2). It is built from a
-/// ``StudioModel`` on demand, owns nothing, and imports no UI framework, so
-/// the SwiftUI pane and the ActiveUI pane draw from the same values. The
-/// pane's actions go straight to the model.
+/// ``StudioModel`` on demand, owns nothing, and imports no UI framework; the
+/// Log inspector (`LogPaneAUI`) draws from it. The pane's actions go straight
+/// to the model.
 ///
 /// ```text
 ///   ┌ [x] Enabled                      Clear ┐   canClear

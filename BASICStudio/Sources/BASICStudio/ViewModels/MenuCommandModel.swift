@@ -9,9 +9,9 @@ import Foundation
 
 /// Studio's own menu items: titles, shortcuts, check marks, and what each does.
 ///
-/// The SwiftUI shell places these with `CommandGroup`s, and the ActiveUI shell
-/// builds an `AUIMenuBar` from the same lists. The standard menus (Edit's
-/// clipboard items, Window, Help) are each framework's own and are not here.
+/// The ActiveUI shell builds an `AUIMenuBar` from these lists. The standard
+/// menus (Edit's clipboard items, Window, Help) are ActiveUI's own and are
+/// not here.
 ///
 /// ```text
 ///   BASICStudio  About BASICStudio                    about

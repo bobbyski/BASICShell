@@ -6,29 +6,10 @@ import UIKit
 #endif
 import CoreText
 import GameController
-import MarkdownUI
-import SwiftUI
 import SwiftTerm
 import UniformTypeIdentifiers
 import VectorTerminalSDK
 import WebKit
-
-#if os(macOS)
-struct SwiftTermGraphicsConsole: NSViewRepresentable {
-    @ObservedObject var model: StudioModel
-
-    func makeNSView(context: Context) -> AIBasicTerminalContainerView {
-        let view = AIBasicTerminalContainerView()
-        view.attach(to: model)
-        return view
-    }
-
-    func updateNSView(_ nsView: AIBasicTerminalContainerView, context: Context) {
-        nsView.attach(to: model)
-        nsView.render(ConsoleRenderInput(model))
-    }
-}
-#endif
 
 #if os(macOS)
 /// The console's base view and font: AppKit's on the Mac, UIKit's on iPhone

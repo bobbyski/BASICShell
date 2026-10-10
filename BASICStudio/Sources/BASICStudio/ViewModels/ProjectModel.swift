@@ -13,8 +13,6 @@ import Foundation
 ///
 /// A projection like the P1 ones: built from ``StudioModel``, owning nothing,
 /// importing no UI framework. The ActiveUI shell draws it in an `AUISidebar`.
-/// The SwiftUI shell does not show it: it is the reference, and gets no new
-/// features (§11.2).
 ///
 /// ```text
 ///   ┌ Samples            [+][⟳] ┐   title, and Open Project… / Rescan

@@ -25,9 +25,6 @@ packages:
   VectorTerminalSDK:
     url: https://github.com/bobbyski/VectorTerminalSDK.git
     from: 1.5.6
-  MarkdownUI:
-    url: https://github.com/gonzalezreal/swift-markdown-ui
-    from: 2.4.1
   DocumentArchive:
     path: ../DocumentArchive
   # The ActiveUI shell, which is Studio (Documents/ACTIVEUI_TRANSITION.md):
@@ -99,8 +96,6 @@ targets:
       - package: VectorTerminalSDK
         product: VectorTerminalSDK
         embed: true
-      - package: MarkdownUI
-        product: MarkdownUI
       - package: DocumentArchive
         product: DocumentArchive
       - package: ActiveUI
@@ -197,8 +192,6 @@ targets:
       - package: VectorTerminalSDK
         product: VectorTerminalSDK
         embed: true
-      - package: MarkdownUI
-        product: MarkdownUI
       - package: DocumentArchive
         product: DocumentArchive
       - package: ActiveUI

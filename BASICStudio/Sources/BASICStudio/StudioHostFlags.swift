@@ -45,7 +45,7 @@ final class StudioHostFlags: @unchecked Sendable {
 ///
 /// The interpreter appends here without blocking; `StudioModel` drains the buffer on
 /// the main actor at a bounded rate, so a chatty program produces one coalesced
-/// SwiftUI update instead of one per `LOG` statement.
+/// update of the Log inspector instead of one per `LOG` statement.
 final class StudioLogBuffer: @unchecked Sendable {
     struct PendingEntry {
         let timestamp: Date

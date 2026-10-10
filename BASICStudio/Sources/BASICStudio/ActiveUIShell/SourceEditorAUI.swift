@@ -3,9 +3,8 @@
 //  BASICStudio
 //
 //  The program editor in the ActiveUI shell: ActiveUI's own source editor
-//  over SwiftyCodeEditor on the Mac, where the SwiftUI shell has Monaco, and
-//  ActiveUI's canvas editor on iPhone and iPad, where SwiftyCodeEditor's
-//  AppKit text engine does not run.
+//  over SwiftyCodeEditor on the Mac, and ActiveUI's canvas editor on iPhone
+//  and iPad, where SwiftyCodeEditor's AppKit text engine does not run.
 //
 
 #if canImport(SwiftyCodeEditor)
@@ -15,9 +14,9 @@ import AppKit
 import BASICCore
 import SwiftyCodeEditor
 
-/// A source editor drawn from ``EditorRenderInput``, as
-/// `MonacoEditorController` is in the SwiftUI shell. The main editor and the
-/// Debug code view are both one of these.
+/// A source editor drawn from ``EditorRenderInput``, which replaced the
+/// SwiftUI shell's Monaco page. The main editor and the Debug code view are
+/// both one of these.
 ///
 /// What Monaco did, and where it went:
 ///

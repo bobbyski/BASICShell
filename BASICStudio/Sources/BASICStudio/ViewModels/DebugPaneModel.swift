@@ -13,9 +13,9 @@ import Foundation
 /// variable and file lists, and the code view's layout arithmetic.
 ///
 /// A projection like ``LogPaneModel``: built from ``StudioModel`` on demand,
-/// owning nothing, importing no UI framework. Every piece of text the pane
-/// shows is decided here, so the SwiftUI pane and the ActiveUI pane cannot
-/// drift apart. Actions go straight to the model through ``perform(_:on:)``.
+/// owning nothing, importing no UI framework. Every piece of text the Debug
+/// inspector (`DebugPaneAUI`) shows is decided here. Actions go straight to
+/// the model through ``perform(_:on:)``.
 ///
 /// ```text
 ///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line                buttons, showsLiveExecutionLine

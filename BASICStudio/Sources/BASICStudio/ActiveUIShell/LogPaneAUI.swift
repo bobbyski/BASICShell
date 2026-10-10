@@ -13,8 +13,8 @@ import UIKit
 #endif
 import Foundation
 
-/// The Log inspector for the ActiveUI shell, drawn from ``LogPaneModel``, the
-/// projection the SwiftUI `LogPane` draws from.
+/// The Log inspector, drawn from ``LogPaneModel``. Its measures are those of
+/// the SwiftUI `LogPane` Studio began with (removed 2026-10-10).
 ///
 /// ```text
 ///   [x] Enabled                            Clear

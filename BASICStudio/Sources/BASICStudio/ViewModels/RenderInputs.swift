@@ -8,12 +8,12 @@
 import BASICCore
 import Foundation
 
-/// Everything the Monaco editor shows, as one value.
+/// Everything the source editor shows, as one value.
 ///
-/// ``MonacoEditorController/sync(_:)`` takes it and pushes only what changed
-/// into the page. The SwiftUI shell builds one per update; the ActiveUI shell
-/// builds the same one in its refresh. The two places Studio shows code differ
-/// only in which input they build.
+/// `SourceEditorAUI` takes it and applies only what changed. The ActiveUI
+/// shell builds one in its refresh; the two places Studio shows code (the
+/// editor and the Debug inspector's code view) differ only in which input
+/// they build.
 struct EditorRenderInput: Equatable {
     var text: String
     var showsLineNumbers: Bool

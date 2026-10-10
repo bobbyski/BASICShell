@@ -23,8 +23,7 @@ import Foundation
 ///                                   └ handle, 12 pt: drags the width
 /// ```
 ///
-/// The width rules are ``StudioShellModel``'s, the same two functions the
-/// SwiftUI shell's `InspectorDivider` calls, so the two shells clamp alike.
+/// The width rules are ``StudioShellModel``'s.
 /// With no inspector showing, the main pane takes the whole width.
 @MainActor
 final class InspectorLayout: AUIView {

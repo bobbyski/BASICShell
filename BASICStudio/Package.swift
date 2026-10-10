@@ -16,7 +16,6 @@ let package = Package(
         // a shim for every ActiveUI and TUIKit member (BASIC-45).
         .package(path: "../BASICFrameworkMap"),
         .package(path: "../DocumentArchive"),
-        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.1"),
         // The local checkout, on develop: the only SwiftTerm with an iOS
         // VectorTerminalView (merged 96c3973, in no tag yet).
         .package(path: "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm"),
@@ -46,7 +45,6 @@ let package = Package(
                 .product(name: "BASICWasm", package: "BASICCompiler"),
                 .product(name: "BASICWasmRunner", package: "BASICCompiler"),
                 "DocumentArchive",
-                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 "SwiftTerm",
                 "VectorTerminalSDK",
                 .product(name: "ActiveUI", package: "ActiveUI"),

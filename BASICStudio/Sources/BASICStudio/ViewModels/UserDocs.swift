@@ -1,92 +1,14 @@
-import BASICCore
-#if canImport(AppKit)
-import AppKit
-#else
-import UIKit
-#endif
+//
+//  UserDocs.swift
+//  BASICStudio
+//
+//  The documentation pages Studio ships: their categories, and each page
+//  loaded from the bundle. The Documentation inspector (DocsPaneAUI) and its
+//  projection (DocsPaneModel) show them.
+//
+
 import DocumentArchive
-import CoreText
-import GameController
-import MarkdownUI
-import SwiftUI
-import SwiftTerm
-import UniformTypeIdentifiers
-import VectorTerminalSDK
-import WebKit
-
-#if os(macOS)
-// The SwiftUI shell's Documentation pane, which is macOS-only. `UserDoc`
-// below is shared with the ActiveUI shell's DocsPaneAUI.
-struct UserDocumentationPane: View {
-    @State private var docs = UserDoc.loadAll()
-    @State private var selectedDocID: UserDoc.ID?
-
-    var body: some View {
-        // What is drawn comes from the projection, which the ActiveUI pane
-        // reads too. The pages and the choice stay this view's state.
-        let pane = DocsPaneModel(docs: docs, selectedID: selectedDocID)
-        VStack(spacing: 0) {
-            HStack {
-                Text(DocsPaneModel.heading)
-                    .font(.headline)
-                Spacer()
-                if pane.showsMenu {
-                    Menu {
-                        ForEach(pane.sections, id: \.title) { section in
-                            Menu(section.title) {
-                                ForEach(section.items, id: \.id) { item in
-                                    Button {
-                                        selectedDocID = item.id
-                                    } label: {
-                                        HStack {
-                                            Text(item.title)
-                                            if item.isChecked {
-                                                Image(systemName: "checkmark")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "book")
-                            Text(pane.menuTitle)
-                            Image(systemName: "chevron.down")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .menuStyle(.button)
-                    .frame(maxWidth: 280, alignment: .trailing)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color(nsColor: .controlBackgroundColor))
-
-            Divider()
-
-            ScrollView {
-                if let selectedDoc = pane.selectedDoc {
-                    Markdown(selectedDoc.content)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(18)
-                } else {
-                    Text(DocsPaneModel.emptyText)
-                        .foregroundStyle(.secondary)
-                        .padding()
-                }
-            }
-            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .onAppear {
-            selectedDocID = selectedDocID ?? docs.first?.id
-        }
-    }
-}
-#endif
+import Foundation
 
 enum UserDocCategory: String, CaseIterable, Identifiable {
     case tutorials

@@ -1,3 +1,4 @@
+import Combine
 import BASICRecipes
 import BASICCore
 import TUIKit
@@ -8,8 +9,6 @@ import UIKit
 #endif
 import CoreText
 import GameController
-import MarkdownUI
-import SwiftUI
 #if os(iOS)
 import ActiveUI
 #endif
@@ -846,8 +845,8 @@ final class StudioModel: ObservableObject {
         rescanProject()
     }
 
-    /// Shows the New Project wizard. The ActiveUI shell sets it; without
-    /// one (the SwiftUI reference shell), New Project asks for a folder.
+    /// Shows the New Project wizard. The ActiveUI shell sets it; without one
+    /// (a test's model), New Project asks for a folder.
     var newProjectWizardPresenter: (() -> Void)?
 
     /// File ▸ New Project… (⇧⌘N): the wizard, which makes a project from a

@@ -15,8 +15,8 @@ import Foundation
 
 /// The Settings window for the ActiveUI shell: `AUIPreferencesWindow` in its
 /// modern chrome, a sidebar of pages beside a resizable page. Prompt, Font
-/// and Console are ``SettingsViewModel``'s tabs, ranges, steps and notes, the
-/// same ones the SwiftUI `SettingsView` shows. Editor is this shell's own.
+/// and Console are ``SettingsViewModel``'s tabs, ranges, steps and notes.
+/// Editor and Storage are this window's own.
 ///
 /// ```text
 ///   Prompt    the prompt editor (PromptEditorAUI)
@@ -195,10 +195,11 @@ final class SettingsAUI {
         refresh()
     }
 
-    /// How far the SwiftUI Settings window insets a page on each side.
+    /// How far a page is inset on each side (the measure Studio's first,
+    /// SwiftUI, Settings window used).
     static let pageInset: CGFloat = 36
 
-    /// The width a page is designed for: the SwiftUI Settings window's page.
+    /// The width a page is designed for.
     /// The prompt editor needs all of it, so it is the prompt editor's
     /// minimum, and the window opens wide enough to give it.
     static var pageWidth: CGFloat { SettingsViewModel.windowSize.width - 2 * pageInset }

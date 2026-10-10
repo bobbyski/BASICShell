@@ -34,13 +34,13 @@ struct SettingsViewModel: Equatable {
         Tab(title: "Console", symbol: "terminal"),
     ]
 
-    /// The window's size in the SwiftUI shell's `Settings` scene.
+    /// The size Settings' pages are laid out for (SettingsAUI).
     static let windowSize = (width: 760.0, height: 520.0)
 
     static let fontSectionTitle = "Editor And Console Font"
     static let fontSizeRange: ClosedRange<Double> = 10...24
     static let fontSizeStep = 1.0
-    static let fontNote = "The selected font is used by Monaco and the SwiftTerm console. Prompt symbols need a Nerd Font or a font with matching glyph coverage."
+    static let fontNote = "The selected font is used by the editor and the console. Prompt symbols need a Nerd Font or a font with matching glyph coverage."
 
     static let scrollbackSectionTitle = "Scrollback"
     static let graphicsSectionTitle = "Graphics"

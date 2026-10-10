@@ -22,7 +22,7 @@ import Foundation
 ///
 /// The editor follows: its light colors under Light, its high-contrast ones
 /// under High Contrast, the system's light or dark under Native, and dark
-/// otherwise. The SwiftUI shell keeps `EditorTheme` for Monaco alone.
+/// otherwise.
 enum StudioAppTheme {
     /// The system look: no stylesheet.
     static let native = "Native"
