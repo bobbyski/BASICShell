@@ -209,7 +209,8 @@ private struct ModuleTranslation {
             let result = importKind(declaration.returns)
             addImport(WasmImport(name: name, parameters: parameters, result: result))
         }
-        addImport(WasmImport(name: WasmTranslator.pollImport, parameters: [], result: nil))
+        // The poll answers how many back-edges until the next (BASIC-47).
+        addImport(WasmImport(name: WasmTranslator.pollImport, parameters: [], result: .int32))
 
         // Defined functions: slot 0 of the table is a trap.
         let importCount = UInt32(imports.count)
@@ -301,7 +302,9 @@ private struct ModuleTranslation {
         var globals: [[UInt8]] = []
         globals.append(globalEntry(.i64, mutable: true) { $0.i64Const(0) })
         globals.append(globalEntry(.i32, mutable: true) { $0.i32Const(Int32(dataEndOffset + WasmTranslator.stackSize)) })
-        globals.append(globalEntry(.i32, mutable: true) { $0.i32Const(4096) })
+        // The countdown to a loop's first poll: 1, so the poll can size the
+        // next by how long the loop's passes take (BASIC-47).
+        globals.append(globalEntry(.i32, mutable: true) { $0.i32Const(1) })
         for global in promotedOrder {
             let wasm = wasmType(global.type)!
             globals.append(globalEntry(wasm, mutable: true) { code in
@@ -1291,7 +1294,10 @@ private struct FunctionTranslation {
             for phi in incoming.reversed() { code.localSet(local[phi.result]!) }
         }
         if target <= index {
-            // A back-edge: count down to the next poll.
+            // A back-edge: count down to the next poll, which says how far
+            // the one after it is. The host sizes that by the clock, so a
+            // loop whose passes are slow is polled as often as one whose
+            // passes are fast (BASIC-47: 4096 slow passes took seconds).
             code.globalGet(module.pollCounter)
             code.i32Const(1)
             code.op(WasmOp.i32Sub)
@@ -1301,9 +1307,8 @@ private struct FunctionTranslation {
             code.i32Const(0)
             code.op(WasmOp.i32LeS)
             code.ifThen()
-            code.i32Const(4096)
-            code.globalSet(module.pollCounter)
             code.call(module.importIndex[WasmTranslator.pollImport]!)
+            code.globalSet(module.pollCounter)
             code.end()
         }
         if mayFallThrough, target == index + 1 {

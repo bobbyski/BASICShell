@@ -60,6 +60,30 @@ struct StudioWasmRunTests {
         #expect(studio.model.consoleText.contains("Break at "), "\(studio.model.consoleText.suffix(200))")
     }
 
+    @Test("BASIC-47 · Stop ends a loop whose every pass is slow, at once, not after thousands more passes")
+    func stopSlowPasses() async throws {
+        // Each pass searches two million characters. Polling every 4,096th
+        // pass took over 30 seconds to see a Stop; the poll is sized by time
+        // now, about every 10 ms, and Stop lands in about 0.1 s.
+        let studio = start("""
+        big$ = STRING$(2000000, "x")
+        n = 0
+        while 1
+            p = INSTR(big$, "y")
+            n = n + 1
+        wend
+        """)
+        try await studio.waitUntil("the run to start") { studio.model.isJITRunning }
+        try await Task.sleep(for: .seconds(1))
+        let clock = ContinuousClock()
+        let asked = clock.now
+        studio.model.stopProgram()
+        try await waitUntilFinished(studio)
+        let took = clock.now - asked
+        #expect(took < .seconds(2), "Stop took \(took)")
+        #expect(studio.model.consoleText.contains("Break at "), "\(studio.model.consoleText.suffix(200))")
+    }
+
     @Test("A program that does not compile says why, and runs nothing")
     func refused() async throws {
         let studio = start("print \"unterminated")

@@ -115,6 +115,12 @@ public final class WasmRunner: @unchecked Sendable {
     private var context: JSContext!
     private var entries: [RTEntryPoint?] = []
     private var pollIndex = -1
+    /// The back-edges between a loop's polls, and when the last was: sized
+    /// so polls come about every `pollTarget`, however long a pass takes
+    /// (BASIC-47). A Stop waits for a poll.
+    private var pollCountdown = 1
+    private var lastPoll: UInt64 = 0
+    static let pollTarget: UInt64 = 10_000_000
     private var landedFactory: JSValue!
     private var fatalValue: JSValue!
     private var stopValue: JSValue!
@@ -181,6 +187,8 @@ public final class WasmRunner: @unchecked Sendable {
         }
         entries = program.imports.map { RTEntryPoints.table[$0.name] ?? Self.intrinsics[$0.name] ?? extra[$0.name] }
         pollIndex = program.imports.firstIndex { $0.name == WasmTranslator.pollImport } ?? -1
+        pollCountdown = 1
+        lastPoll = DispatchTime.now().uptimeNanoseconds
 
         Self.current = self
         runThread = Thread.current
@@ -315,13 +323,14 @@ public final class WasmRunner: @unchecked Sendable {
                     _ exception: UnsafeMutablePointer<JSValueRef?>?) -> JSValueRef? {
         let index = Int(JSValueToNumber(ctx, arguments[0], nil))
         if index == pollIndex {
+            let next = JSValueMakeNumber(ctx, Double(nextPollCountdown()))
             if isStopRequested { exception?.pointee = stopValue.jsValueRef }
             // A loop's poll is a chance to make an override the framework is
             // waiting for (slice 11d); the BASIC is the module's own.
-            guard WasmForward.hasWaiting else { return JSValueMakeUndefined(ctx) }
+            guard WasmForward.hasWaiting else { return next }
             let code = basic_wasm_protected(serviceForwards, nil)
             if code != 0 { exception?.pointee = exceptionValue(for: code, ctx) }
-            return JSValueMakeUndefined(ctx)
+            return next
         }
         guard index >= 0, index < entries.count, let entry = entries[index] else {
             exception?.pointee = JSValueMakeString(ctx, JSStringCreateWithUTF8CString("no entry point \(index)"))
@@ -384,6 +393,18 @@ public final class WasmRunner: @unchecked Sendable {
     }
 
     // MARK: JavaScript
+
+    /// How many back-edges until the next poll: scaled so the next comes
+    /// `pollTarget` after this one, shrinking at once when passes are slow
+    /// and growing at most eightfold a time when they are fast.
+    private func nextPollCountdown() -> Int32 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let elapsed = max(1, now &- lastPoll)
+        lastPoll = now
+        let scaled = Double(pollCountdown) * Double(Self.pollTarget) / Double(elapsed)
+        pollCountdown = Int(min(Double(pollCountdown) * 8, min(1_048_576, max(1, scaled))))
+        return Int32(pollCountdown)
+    }
 
     /// The glue: imports by arity (no array per call), and the three
     /// exceptions a run can end with.
