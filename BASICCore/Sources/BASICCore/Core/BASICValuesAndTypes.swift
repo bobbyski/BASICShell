@@ -977,6 +977,22 @@ struct BASICAsyncFunctionJob: @unchecked Sendable {
 }
 
 extension BASICValue {
+    /// The array this value holds, taken out of it, leaving it empty; nil, and
+    /// the value as it was, when it holds none. Once nothing else holds the
+    /// array either, a store into it changes one element in place.
+    mutating func takeArray() -> BASICArray? {
+        guard case .array(let array) = self else { return nil }
+        self = .empty
+        return array
+    }
+
+    /// The dictionary this value holds, taken out as `takeArray` takes an array.
+    mutating func takeDictionary() -> BASICDictionary? {
+        guard case .dictionary(let dictionary) = self else { return nil }
+        self = .empty
+        return dictionary
+    }
+
     /// The runtime value of a literal the parser produced.
     init(_ literal: BASICLiteral) {
         switch literal {

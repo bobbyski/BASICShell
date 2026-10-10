@@ -968,13 +968,18 @@ final class BASICRuntime {
         }
 
         if !indexes.isEmpty {
-            switch binding.value {
-            case .array(var array):
+            // The array or dictionary is taken out of the binding, and the
+            // variable table lets go of it, before the store: then the store
+            // changes one element instead of copying them all. (A loop
+            // filling an array was quadratic.) Not by a switch on the value,
+            // whose copy would keep hold of it for the whole case.
+            if var array = binding.value.takeArray() {
                 let offset = try arrayOffset(dimensions: array.dimensions, indexes: indexes, name: reference.base.name)
+                let element: BASICValue
                 if reference.fields.isEmpty {
-                    array.values[offset] = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
+                    element = try coerce(value ?? defaultValue(for: array.type), to: array.type, variable: reference.base)
                 } else {
-                    array.values[offset] = try assigningField(
+                    element = try assigningField(
                         reference.fields,
                         fieldIndexes: fieldIndexes,
                         in: array.values[offset],
@@ -983,30 +988,34 @@ final class BASICRuntime {
                         declaredType: fieldSurfaceType(for: reference)
                     )
                 }
+                set(binding, in: context, normalized: normalized)
+                array.values[offset] = element
                 binding.value = .array(array)
                 set(binding, in: context, normalized: normalized)
                 return
-            case .dictionary(var dictionary):
+            }
+            if var dictionary = binding.value.takeDictionary() {
                 let key = try dictionaryKey(from: indexes, name: reference.base.name)
-                let currentValue = dictionary.values[key] ?? .empty
+                let element: BASICValue
                 if reference.fields.isEmpty {
-                    dictionary.values[key] = value ?? .empty
+                    element = value ?? .empty
                 } else {
-                    dictionary.values[key] = try assigningField(
+                    element = try assigningField(
                         reference.fields,
                         fieldIndexes: fieldIndexes,
-                        in: currentValue,
+                        in: dictionary.values[key] ?? .empty,
                         value: value,
                         accessClassName: accessClassName,
                         declaredType: fieldSurfaceType(for: reference)
                     )
                 }
+                set(binding, in: context, normalized: normalized)
+                dictionary.values[key] = element
                 binding.value = .dictionary(dictionary)
                 set(binding, in: context, normalized: normalized)
                 return
-            default:
-                throw BASICError.runtime("\(reference.base.name) is not an array")
             }
+            throw BASICError.runtime("\(reference.base.name) is not an array")
         }
 
         if let (handle, object) = frameworkObject(binding.value) {
