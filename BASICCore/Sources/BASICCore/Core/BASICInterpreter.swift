@@ -27,6 +27,8 @@ public final class BASICInterpreter {
     private var recordDefinitions: [String: BASICRecordDefinition] = [:]
     /// `ENUM` declarations, by normalized name (E1).
     private var enumDefinitions: [String: BASICEnumDefinition] = [:]
+    /// The frameworks the program imports (slice 11e), as written.
+    private var frameworkImportNames: [String] = []
     private var interfaceDefinitions: [String: BASICInterfaceDefinition] = [:]
     private var classDefinitions: [String: BASICClassDefinition] = [:]
     private var functionTypeDefinitions: [String: BASICFunctionTypeDefinition] = [:]
@@ -170,6 +172,7 @@ public final class BASICInterpreter {
         guard diagnostics.isEmpty else { return diagnostics }
 
         do {
+            frameworkImportNames = []
             let sourceLines = try expandedProgramLines()
             let parsed: [ParsedLine]
             do {
@@ -203,11 +206,13 @@ public final class BASICInterpreter {
                 runtime.enumDefinitions = enumDefinitions
                 recordDefinitions = try collectRecords(in: parsed)
                 runtime.recordDefinitions = recordDefinitions
+                try importFrameworks(forRun: false)
                 interfaceDefinitions = try collectInterfaces(in: parsed)
                 runtime.interfaceDefinitions = interfaceDefinitions
                 functionTypeDefinitions = try collectFunctionTypes(in: parsed)
                 runtime.functionTypeDefinitions = functionTypeDefinitions
                 classDefinitions = try collectClasses(in: parsed)
+                runtime.classDefinitions = classDefinitions
                 try validateInterfaceInheritance()
                 try validateClassInheritance()
                 try validateClassInterfaces()
@@ -327,6 +332,7 @@ public final class BASICInterpreter {
     }
 
     func prepare(startLine: Int?) throws {
+        frameworkImportNames = []
         let sourceLines = try expandedProgramLines()
         let parsed = try parsedProgramLines(from: sourceLines)
         parsedLines = parsed
@@ -352,11 +358,15 @@ public final class BASICInterpreter {
         runtime.enumDefinitions = enumDefinitions
         recordDefinitions = try collectRecords(in: parsed)
         runtime.recordDefinitions = recordDefinitions
+        try importFrameworks(forRun: true)
         interfaceDefinitions = try collectInterfaces(in: parsed)
         runtime.interfaceDefinitions = interfaceDefinitions
         functionTypeDefinitions = try collectFunctionTypes(in: parsed)
         runtime.functionTypeDefinitions = functionTypeDefinitions
         classDefinitions = try collectClasses(in: parsed)
+        // Validation asks the runtime which framework class a BASIC class
+        // inherits, through the classes between.
+        runtime.classDefinitions = classDefinitions
         try validateInterfaceInheritance()
         try validateClassInheritance()
         try validateClassInterfaces()
@@ -491,6 +501,14 @@ public final class BASICInterpreter {
             }
 
             if case .importDirective(let path) = parsedStatement {
+                // A framework the host links, not a file (slice 11e): its
+                // declarations arrive in `importFrameworks`.
+                if let frameworks = host as? BASICFrameworkHost, frameworks.providesFramework(named: path) {
+                    if !frameworkImportNames.contains(where: { $0.caseInsensitiveCompare(path) == .orderedSame }) {
+                        frameworkImportNames.append(path)
+                    }
+                    continue
+                }
                 guard let fileHost = host as? BASICFileHost else {
                     throw BASICError.runtime("IMPORT is not supported by this host")
                 }
@@ -906,6 +924,12 @@ public final class BASICInterpreter {
         guard executionControl?.isStepping != true else { return }
         eventLoop?.runPending(limit: limit)
         try eventLoop?.throwPendingError()
+        // A framework's calls back — a button's handler, an override — run
+        // here, between statements, as events do (slice 11e).
+        if let frameworkHost = runtime.frameworkHost {
+            try frameworkHost.frameworkPoll()
+            try runtime.throwPendingFrameworkError()
+        }
         try throwPendingAsyncDebuggerPause()
     }
 
@@ -2150,6 +2174,14 @@ public final class BASICInterpreter {
             if reference.fields.count == 1, let definition = enumDefinitions[reference.base.normalized] {
                 return definition
             }
+            // `Caption.alignment`: a framework object's ENUM property, by the
+            // object's declared class (slice 11e).
+            if reference.fields.count == 1, reference.indexes.isEmpty,
+               case .classType(let className)? = runtime.declaredType(for: VariableReference(base: reference.base)),
+               let enumName = runtime.frameworkPropertyEnum(className: runtime.frameworkBase(ofUserClass: className) ?? className,
+                                                            property: reference.fields[0]) {
+                return enumDefinitions[enumName.uppercased()]
+            }
             guard reference.fields.isEmpty,
                   case .enumType(let type)? = runtime.declaredType(for: reference)
             else { return nil }
@@ -2483,7 +2515,7 @@ public final class BASICInterpreter {
     private func validateClassInheritance() throws {
         for classDefinition in classDefinitions.values {
             if let baseName = classDefinition.baseClassName,
-               classDefinitions[baseName.uppercased()] == nil {
+               classDefinitions[baseName.uppercased()] == nil, !runtime.isFrameworkClass(baseName) {
                 throw BASICError.runtime("CLASS \(classDefinition.displayName) inherits unknown CLASS \(baseName)")
             }
             var seen: Set<String> = []
@@ -2503,6 +2535,15 @@ public final class BASICInterpreter {
 
             for method in classDefinition.methods.values {
                 let inheritedMethod = inheritedMethod(named: method.normalizedName, for: classDefinition)
+                // An override of a framework class's method: one the
+                // framework lets a subclass override (slice 11e).
+                if method.isOverride, inheritedMethod == nil,
+                   let base = runtime.frameworkBase(ofUserClass: classDefinition.displayName) {
+                    guard frameworkOverridable(method.normalizedName, in: base) else {
+                        throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) is OVERRIDES but \(base) has no method by that name a subclass can override")
+                    }
+                    continue
+                }
                 if method.isOverride {
                     guard let inheritedMethod else {
                         throw BASICError.runtime("CLASS \(classDefinition.displayName) method \(method.displayName) is OVERRIDES but no inherited method exists")
@@ -3240,6 +3281,15 @@ public final class BASICInterpreter {
            !runtime.hasVariable(receiver.base) {
             return try callSharedFileMethod(method: method, arguments: arguments)
         }
+        // `AUIApplication.run(...)`: a framework type's static method.
+        if receiver.indexes.isEmpty, receiver.fields.isEmpty, !runtime.hasVariable(receiver.base),
+           runtime.isFrameworkClass(receiver.base.name) {
+            let answer = try runtime.requireFrameworkHost().frameworkStatic(
+                typeName: runtime.frameworkClasses[receiver.base.normalized]?.name ?? receiver.base.name,
+                member: method.name, arguments: try arguments.map { try runtime.frameworkValue(try evaluate($0)) })
+            try runtime.throwPendingFrameworkError()
+            return runtime.basicValue(answer)
+        }
         let receiverDeclaredType = runtime.declaredType(for: receiver)
         let receiverValue = try runtime.value(
             for: receiver,
@@ -3247,6 +3297,10 @@ public final class BASICInterpreter {
             fieldIndexes: try evaluatedFieldIndexes(for: receiver),
             accessClassName: currentClassContext
         )
+        if let (handle, object) = runtime.frameworkObject(receiverValue) {
+            return try callFrameworkMethod(handle: handle, object: object, value: receiverValue, method: method,
+                                           arguments: arguments, allowVoid: allowVoid)
+        }
         if case .systemObject(let typeName, let id) = receiverValue {
             if typeName.uppercased() == "HTTPCLIENT", method.normalized == "GET" {
                 return try callHTTPClientGet(id: id, arguments: arguments)
@@ -4430,6 +4484,9 @@ public final class BASICInterpreter {
     }
 
     private func resolvedDeclaredType(_ type: BASICType) -> BASICType {
+        if case .record(let name) = type, runtime.isFrameworkClass(name) {
+            return .classType(name)
+        }
         if case .record(let name) = type, classDefinitions[name.uppercased()] != nil || BASICRuntime.isBuiltInClass(name) {
             return .classType(name)
         }
@@ -6021,6 +6078,15 @@ public final class BASICInterpreter {
             if let value = try enumMemberValue(reference) { return value }
             // `S.Damage` — a payload member's field, guarded by the case.
             if let value = try enumFieldValue(reference) { return value }
+            // `AUIColor.red`: a framework type's static property (slice 11e).
+            if reference.fields.count == 1, reference.indexes.isEmpty, !runtime.hasVariable(reference.base),
+               runtime.isFrameworkClass(reference.base.name) {
+                let answer = try runtime.requireFrameworkHost().frameworkStatic(
+                    typeName: runtime.frameworkClasses[reference.base.normalized]?.name ?? reference.base.name,
+                    member: reference.fields[0], arguments: nil)
+                try runtime.throwPendingFrameworkError()
+                return runtime.basicValue(answer)
+            }
             return try runtime.value(
                 for: reference,
                 indexes: try reference.indexes.map(evaluate),
@@ -6028,6 +6094,9 @@ public final class BASICInterpreter {
                 accessClassName: currentClassContext
             )
         case .callOrArray(let name, let arguments):
+            if runtime.isFrameworkClass(name.name), !runtime.hasVariable(name) {
+                return try constructFramework(className: name.name, arguments: arguments)
+            }
             if name.normalized == "FILE" {
                 return try constructFile(arguments: arguments)
             }
@@ -6081,6 +6150,11 @@ public final class BASICInterpreter {
             if let value = try enumConstruction(receiver, method, arguments) { return value }
             return try callMethod(receiver: receiver, method: method, arguments: arguments)
         case .newObject(let className, let arguments):
+            // A framework's class, or a BASIC class inheriting one (slice 11e),
+            // before any built-in pseudo class of the same name.
+            if runtime.isFrameworkClass(className) || runtime.frameworkBase(ofUserClass: className) != nil {
+                return try constructFramework(className: className, arguments: arguments)
+            }
             if className.uppercased() == "FILE" {
                 return try constructFile(arguments: arguments)
             }
@@ -7311,3 +7385,169 @@ public final class BASICInterpreter {
 }
 
 
+
+// MARK: - IMPORT of a framework the host links (slice 11e)
+
+extension BASICInterpreter {
+    /// Each framework the program imports, as its host declares it: its
+    /// ENUMs and records join the program's own, so DIM, PRINT and the field
+    /// rules treat them as if the program had declared them, and its classes
+    /// become names NEW, DIM and INHERITS know. The editor's checks
+    /// (`forRun` false) read the declarations only, and start nothing.
+    private func importFrameworks(forRun: Bool) throws {
+        guard !frameworkImportNames.isEmpty, let frameworks = host as? BASICFrameworkHost else { return }
+        let callbacks = BASICFrameworkCallbacks(interpreter: self)
+        if forRun {
+            runtime.frameworkHost = frameworks
+            runtime.frameworkCallbacks = callbacks
+        }
+        for name in frameworkImportNames {
+            let module = forRun
+                ? try frameworks.importFramework(named: name, callbacks: callbacks)
+                : try frameworks.describeFramework(named: name)
+            for enumeration in module.enumerations {
+                let normalized = enumeration.name.uppercased()
+                guard enumDefinitions[normalized] == nil else { continue }
+                enumDefinitions[normalized] = BASICEnumDefinition(
+                    displayName: enumeration.name, normalizedName: normalized,
+                    members: enumeration.cases.enumerated().map { (name: $0.element, value: $0.offset) })
+            }
+            for record in module.records {
+                let normalized = record.name.uppercased()
+                guard recordDefinitions[normalized] == nil else { continue }
+                recordDefinitions[normalized] = BASICRecordDefinition(
+                    displayName: record.name, normalizedName: normalized,
+                    fields: record.fields.map { field in
+                        BASICRecordField(displayName: field.name, normalizedName: field.name.uppercased(),
+                                         type: Self.basicType(field.type), fixedLength: nil, arrayDimensions: [],
+                                         json: nil, database: nil, metadata: [:], defaultValue: nil)
+                    })
+            }
+            for declared in module.classes {
+                runtime.frameworkClasses[declared.name.uppercased()] = declared
+                runtime.frameworkClassModules[declared.name.uppercased()] = module.name
+            }
+        }
+        runtime.enumNames = Set(enumDefinitions.keys)
+        runtime.enumDefinitions = enumDefinitions
+        runtime.recordDefinitions = recordDefinitions
+    }
+
+    private static func basicType(_ type: BASICFrameworkModule.TypeRef) -> BASICType {
+        switch type {
+        case .string: return .scalar(.string)
+        case .boolean: return .scalar(.boolean)
+        case .enumeration(let name): return .enumType(name)
+        case .record(let name): return .record(name)
+        case .object(let name): return .classType(name)
+        case .number: return .scalar(.double)
+        default: return .scalar(.variant)
+        }
+    }
+
+    /// Whether the framework class `base`, or one above it, lets a subclass
+    /// override `method` (uppercased).
+    private func frameworkOverridable(_ method: String, in base: String) -> Bool {
+        var current: String? = base
+        var seen: Set<String> = []
+        while let name = current, seen.insert(name.uppercased()).inserted, let declared = runtime.frameworkClasses[name.uppercased()] {
+            if declared.overridable.contains(method.uppercased()) { return true }
+            current = declared.baseName
+        }
+        return false
+    }
+
+    /// `NEW X(…)` of a framework class, or of a BASIC class inheriting one:
+    /// for the latter the framework makes its forwarding object, and every
+    /// OVERRIDES method up the BASIC classes it can override is registered,
+    /// the nearest first; the arguments are the framework class's.
+    private func constructFramework(className: String, arguments: [Expression]) throws -> BASICValue {
+        let frameworks = try runtime.requireFrameworkHost()
+        let values = try arguments.map { try runtime.frameworkValue(try evaluate($0)) }
+        if let declared = runtime.frameworkClasses[className.uppercased()] {
+            let made = try frameworks.frameworkNew(className: declared.name, arguments: values)
+            try runtime.throwPendingFrameworkError()
+            return runtime.basicValue(made)
+        }
+        guard let classDefinition = classDefinitions[className.uppercased()],
+              let base = runtime.frameworkBase(ofUserClass: className) else {
+            throw BASICError.runtime("Unknown CLASS \(className)")
+        }
+        var overrides: [String: Int] = [:]
+        var current: BASICClassDefinition? = classDefinition
+        while let definition = current {
+            for method in definition.methods.values where method.isOverride && overrides[method.normalizedName] == nil
+                && frameworkOverridable(method.normalizedName, in: base) {
+                let id = runtime.nextFrameworkCallable
+                runtime.nextFrameworkCallable += 1
+                runtime.frameworkCallables[id] = .method(userClass: classDefinition.displayName, method: method.normalizedName, handle: 0)
+                overrides[method.normalizedName] = id
+            }
+            current = definition.baseClassName.flatMap { classDefinitions[$0.uppercased()] }
+        }
+        let made = try frameworks.frameworkNewSubclass(baseName: base, arguments: values, overrides: overrides)
+        try runtime.throwPendingFrameworkError()
+        guard case .object(let handle, _) = made else { return runtime.basicValue(made) }
+        runtime.frameworkClassModules[classDefinition.normalizedName] = runtime.frameworkClassModules[base.uppercased()]
+        runtime.frameworkObjects[handle] = BASICFrameworkObject(className: base, userClass: classDefinition.displayName)
+        for id in overrides.values {
+            if case .method(let userClass, let method, _)? = runtime.frameworkCallables[id] {
+                runtime.frameworkCallables[id] = .method(userClass: userClass, method: method, handle: handle)
+            }
+        }
+        if case .object(_, let fields) = runtime.defaultValue(for: .classType(classDefinition.displayName)) {
+            runtime.frameworkFields[handle] = fields
+        }
+        return .systemObject(runtime.frameworkTypeName(classDefinition.displayName), handle)
+    }
+
+    /// `object.method(…)` on a framework object: a BASIC subclass's own method
+    /// (its override included, as a BASIC call of it dispatches to BASIC), or
+    /// the framework's.
+    private func callFrameworkMethod(handle: Int, object: BASICFrameworkObject, value: BASICValue, method: VariableName,
+                                     arguments: [Expression], allowVoid: Bool) throws -> BASICValue {
+        if let userClass = object.userClass, let classDefinition = classDefinitions[userClass.uppercased()],
+           let definition = lookupMethod(named: method.normalized, in: classDefinition) {
+            return try callFunction(definition: definition, receiver: value,
+                                    receiverClassName: definition.ownerClassName ?? classDefinition.displayName,
+                                    arguments: arguments, allowVoid: allowVoid).value
+        }
+        let answer = try runtime.requireFrameworkHost().frameworkCall(
+            .object(handle: handle, className: object.className), method: method.name,
+            arguments: try arguments.map { try runtime.frameworkValue(try evaluate($0)) })
+        try runtime.throwPendingFrameworkError()
+        return runtime.basicValue(answer)
+    }
+
+    /// The framework calls BASIC back (BASICFrameworkCallbacks.call): a
+    /// closure the program handed it, or an override. On the interpreter's
+    /// thread, while it waits inside a host call or between statements. An
+    /// error is kept for the program, raised when that call returns.
+    func callFrameworkCallable(_ id: Int, arguments: [BASICFrameworkValue]) -> BASICFrameworkValue {
+        guard let callable = runtime.frameworkCallables[id] else { return .empty }
+        do {
+            let values = arguments.map(runtime.basicValue)
+            switch callable {
+            case .closure(let closure):
+                return try runtime.frameworkValue(try closure.call(arguments: values, interpreter: self))
+            case .method(let userClass, let method, let handle):
+                guard let classDefinition = classDefinitions[userClass.uppercased()],
+                      let definition = lookupMethod(named: method, in: classDefinition) else { return .empty }
+                let result = try callFunctionSynchronously(
+                    definition: definition,
+                    receiver: .systemObject(runtime.frameworkTypeName(userClass), handle),
+                    receiverClassName: definition.ownerClassName ?? classDefinition.displayName,
+                    argumentValues: values, allowVoid: true)
+                return try runtime.frameworkValue(result.value)
+            }
+        } catch {
+            if runtime.pendingFrameworkError == nil { runtime.pendingFrameworkError = error }
+            return .empty
+        }
+    }
+
+    /// Whether Stop was pressed, without taking the request.
+    var isFrameworkStopRequested: Bool {
+        executionControl?.isBreakRequested ?? false
+    }
+}

@@ -88,7 +88,7 @@ let package = Package(
         // The whole runtime, host half included (databases, rich text, VTG,
         // TUIKit), as a native program links it.
         .target(name: "BASICWasmRunner", dependencies: [
-            "BASICWasm", "BASICRT", "BASICRTHost", "BASICWasmHostC",
+            "BASICWasm", "BASICRT", "BASICRTSwift", "BASICRTHost", "BASICWasmHostC",
             .product(name: "BASICCore", package: "BASICCore"),
             .product(name: "VectorTerminalSDK", package: "VectorTerminalSDK"),
         ]),

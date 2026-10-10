@@ -123,9 +123,9 @@ public enum WasmForward {
     /// and waits for it. False when there is no run to call, or it did not
     /// answer in time: the caller does what it would without the override.
     public static func call(_ target: Double, frame: UnsafeMutableRawPointer) -> Bool {
-        guard let runner = WasmRunner.current else { return false }
-        if Thread.current === runner.runThread {
-            _ = runner.call(tableIndex: target, shape: .ptrDouble, argument: frame)
+        guard let basicThread = WasmCallbacks.basicThread else { return false }
+        if Thread.current === basicThread {
+            _ = WasmCallbacks.invoke(target, argument: frame)
             return true
         }
         let request = Request(target: target, frame: frame)
@@ -185,12 +185,45 @@ public enum WasmForward {
 
 private let forwardOnRunThread: basic_wasm_body = { context in
     let request = Unmanaged<WasmForward.Request>.fromOpaque(context!).takeUnretainedValue()
-    _ = WasmRunner.current?.call(tableIndex: request.target, shape: .ptrDouble, argument: request.frame)
+    _ = WasmCallbacks.invoke(request.target, argument: request.frame)
 }
 
 private let runOnMain: basic_wasm_body = { context in
     let call = Unmanaged<WasmMainThread.Call>.fromOpaque(context!).takeUnretainedValue()
     call.result = call.body()
+}
+
+/// Who BASIC is when no module runs: the interpreter, in Studio's ▶ Run of a
+/// program that imports a framework (slice 11e). It calls the same entries a
+/// module does, so the framework's calls back — a handler, a closure, an
+/// override — come here as numbers it handed out, and run on its thread.
+public protocol WasmCallbackHost: AnyObject {
+    /// The thread the BASIC program runs on.
+    var basicThread: Thread { get }
+    /// Runs the BASIC callable `target` stands for — a closure, a handler or
+    /// an override it gave out — with `argument`: an override's frame, else
+    /// nothing. Called on `basicThread` only.
+    func callBASIC(_ target: Double, argument: UnsafeMutableRawPointer?) -> Double
+}
+
+extension WasmCallbacks {
+    /// The interpreter's run, while one calls the entries (slice 11e).
+    nonisolated(unsafe) public static var host: WasmCallbackHost?
+
+    /// The thread BASIC runs on: a module's, or the interpreter's.
+    static var basicThread: Thread? {
+        if let runner = WasmRunner.current { return runner.runThread }
+        return host?.basicThread
+    }
+
+    /// Calls BASIC: the module's function at `target`, or what the
+    /// interpreter gave out as `target`.
+    static func invoke(_ target: Double, argument: UnsafeMutableRawPointer?) -> Double {
+        if let runner = WasmRunner.current {
+            return runner.call(tableIndex: target, shape: .ptrDouble, argument: argument)
+        }
+        return host?.callBASIC(target, argument: argument) ?? 0
+    }
 }
 
 /// A BASIC closure the framework holds: the module's function, by table
@@ -269,7 +302,7 @@ extension WasmCallbacks {
         queued = []
         queueLock.unlock()
         for call in calls {
-            _ = WasmRunner.current?.call(tableIndex: call.tableIndex, shape: .ptrDouble, argument: call.environment)
+            _ = invoke(call.tableIndex, argument: call.environment)
         }
     }
 
@@ -295,6 +328,6 @@ private let makeQueuedCall: @convention(c) (UnsafeMutableRawPointer?) -> Void = 
     guard case .dictionary(let fields) = rtValue(payload), case .number(let bits)? = fields.values["call"],
           let pointer = UnsafeMutableRawPointer(bitPattern: UInt(bits)) else { return }
     let call = Unmanaged<WasmClosureCall>.fromOpaque(pointer).takeRetainedValue()
-    _ = WasmRunner.current?.call(tableIndex: call.tableIndex, shape: .ptrDouble, argument: call.environment)
+    _ = WasmCallbacks.invoke(call.tableIndex, argument: call.environment)
 }
 #endif

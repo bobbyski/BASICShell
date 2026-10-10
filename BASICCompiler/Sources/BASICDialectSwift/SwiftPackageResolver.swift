@@ -500,7 +500,7 @@ public struct SwiftPackageResolver {
     /// declaration order — which is the order the leaves arrive in.
     /// A struct that crosses as a record, as the shim generator takes it
     /// (P1.3c): each leaf's path and Swift type, and the struct rebuilt.
-    static func recordStruct(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> SwiftAsyncShim.RecordStruct? {
+    public static func recordStruct(_ type: SwiftAPI.ValueType, in api: SwiftAPI) -> SwiftAsyncShim.RecordStruct? {
         guard api.crossesAsRecord(type), let leaves = api.leaves(of: type) else { return nil }
         func paths(_ type: SwiftAPI.ValueType, _ prefix: String) -> [String] {
             guard case .structure(let precise) = type, let structure = api.structures[precise] else { return [prefix] }

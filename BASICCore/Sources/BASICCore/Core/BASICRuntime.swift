@@ -63,6 +63,21 @@ final class BASICRuntime {
     // than count to it: `grid.editable("Points")`.
     var auiTableColumns: [Int: [String]] = [:]
     var nextAUIObjectID = 1
+
+    // IMPORT of a framework the host links (slice 11e, BASICFrameworks.swift):
+    // the host, the classes the imports declared and the module of each, the
+    // framework objects the program holds by the host's handle, a BASIC
+    // subclass instance's own fields, and the closures and overrides the host
+    // may call back.
+    var frameworkHost: BASICFrameworkHost?
+    var frameworkCallbacks: BASICFrameworkCallbacks?
+    var frameworkClasses: [String: BASICFrameworkModule.Class] = [:]
+    var frameworkClassModules: [String: String] = [:]
+    var frameworkObjects: [Int: BASICFrameworkObject] = [:]
+    var frameworkFields: [Int: [String: BASICValue]] = [:]
+    var frameworkCallables: [Int: BASICFrameworkCallable] = [:]
+    var nextFrameworkCallable = 1
+    var pendingFrameworkError: Error?
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
     private var nextVectorTerminalObjectID = 1
@@ -73,6 +88,7 @@ final class BASICRuntime {
     var sound: BASICSoundSession?
 
     func resetForRun() {
+        endFrameworkRun()
         sound?.stop()
         sound = nil
         globals.removeAll()
@@ -585,6 +601,14 @@ final class BASICRuntime {
             }
         }
         for (fieldIndex, field) in reference.fields.enumerated() {
+            if let (handle, object) = frameworkObject(value) {
+                value = try frameworkProperty(handle: handle, object: object, field: field)
+                let indexes = fieldIndexes.indices.contains(fieldIndex) ? fieldIndexes[fieldIndex] : []
+                if !indexes.isEmpty, case .array(let array) = value {
+                    value = try arrayValue(array, at: indexes, name: field)
+                }
+                continue
+            }
             if case .systemObject(let typeName, let id) = value {
                 guard reference.fields.count == 1 else {
                     throw BASICError.runtime("\(typeName) has no field \(field)")
@@ -985,7 +1009,12 @@ final class BASICRuntime {
             }
         }
 
-        if case .systemObject(let typeName, let id) = binding.value {
+        if let (handle, object) = frameworkObject(binding.value) {
+            guard reference.fields.count == 1 else {
+                throw BASICError.runtime("\(reference.fields.dropLast().joined(separator: ".")) of a framework object cannot be assigned into; set the whole property")
+            }
+            try setFrameworkProperty(handle: handle, object: object, field: reference.fields[0], value: value ?? .empty)
+        } else if case .systemObject(let typeName, let id) = binding.value {
             try assignSystemObjectProperty(typeName: typeName, id: id, reference: reference, value: value)
         } else {
             binding.value = try assigningField(
@@ -1214,6 +1243,12 @@ final class BASICRuntime {
     }
 
     private func resolvedDeclaredType(_ type: BASICType) -> BASICType {
+        // A class an imported framework declares, before a built-in pseudo
+        // class of the same name: with `IMPORT "ActiveUI"`, AUILabel is
+        // ActiveUI's (slice 11e).
+        if case .record(let name) = type, isFrameworkClass(name) {
+            return .classType(name)
+        }
         if case .record(let name) = type, classDefinitions[name.uppercased()] != nil || Self.isBuiltInClass(name) {
             return .classType(name)
         }
@@ -1326,6 +1361,21 @@ final class BASICRuntime {
             throw BASICError.type(message: "Cannot assign non-\(name) value to \(variable.name)")
         }
         if case .classType(let name) = type {
+            // A framework class's variable holds a framework object or NULL;
+            // a BASIC class inheriting one holds an instance of it (slice 11e).
+            if isFrameworkClass(name) {
+                switch value {
+                case .null: return .null
+                case .empty: return .null
+                default:
+                    if frameworkObject(value) != nil { return value }
+                    throw BASICError.type(message: "Cannot assign non-\(name) object to \(variable.name)")
+                }
+            }
+            if let (_, object) = frameworkObject(value), let userClass = object.userClass,
+               userClass.uppercased() == name.uppercased() || isClass(userClass, subclassOf: name) {
+                return value
+            }
             if let expected = Self.builtInEventClassName(name) {
                 if case .null = value {
                     return .null
@@ -2555,6 +2605,10 @@ final class BASICRuntime {
             })
             return .record(definition.displayName, fields)
         case .classType(let name):
+            // A framework object not made yet is NULL, as compiled.
+            if isFrameworkClass(name) {
+                return .null
+            }
             if Self.isBuiltInClass(name) {
                 switch name.uppercased() {
                 case "VECTORTERMINAL", "VTG":
@@ -3084,7 +3138,7 @@ final class BASICRuntime {
         return []
     }
 
-    private func inheritedFields(for classDefinition: BASICClassDefinition) -> [BASICClassField] {
+    func inheritedFields(for classDefinition: BASICClassDefinition) -> [BASICClassField] {
         var fields: [BASICClassField] = []
         if let baseName = classDefinition.baseClassName,
            let baseDefinition = classDefinitions[baseName.uppercased()] {
@@ -3145,7 +3199,7 @@ final class BASICRuntime {
         }
     }
 
-    private func isClass(_ className: String, subclassOf baseName: String) -> Bool {
+    func isClass(_ className: String, subclassOf baseName: String) -> Bool {
         if Self.isBuiltInEventClass(className, subclassOf: baseName) {
             return true
         }

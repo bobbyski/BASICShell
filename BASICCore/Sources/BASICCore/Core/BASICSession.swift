@@ -189,7 +189,13 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
     /// to be compiled where it lives rather than as a copy.
     public var lastLoadedPath: String? { fileState.lastFilePath }
     private let taskScheduler: BASICTaskScheduler
-    private var activeInterpreter: BASICInterpreter?
+    private var activeInterpreter: BASICInterpreter? {
+        // A run that imported a framework lets go of its objects when it
+        // ends, however it ends (slice 11e).
+        didSet {
+            if activeInterpreter == nil, oldValue != nil { runtime.endFrameworkRun() }
+        }
+    }
     private var activeProgramTask: BASICTask?
     /// Optional lane used by synchronous foreground RUN commands.
     public var foregroundRunLane: BASICWorkerLane?
