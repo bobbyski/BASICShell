@@ -2530,7 +2530,13 @@ final class StudioModel: ObservableObject {
 
     private static func availableBundledExamples() -> [BundledExample] {
         guard let demos = demosFolder else { return [] }
-        return BundledExampleFolder.tree(programPaths(in: demos).map(BundledExample.init(path:))).allExamples
+        #if os(iOS)
+        let onMobile = true
+        #else
+        let onMobile = false
+        #endif
+        let paths = programPaths(in: demos).filter { BundledExampleFolder.isOffered($0, onMobile: onMobile) }
+        return BundledExampleFolder.tree(paths.map(BundledExample.init(path:))).allExamples
     }
 
     /// The runnable programs under a demos folder, without `.bas`, at any

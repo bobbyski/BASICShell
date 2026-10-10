@@ -149,12 +149,24 @@ struct BundledExampleFolder: Equatable {
     var title: String { Self.titles[name] ?? BundledExample.words(name) }
 
     /// Names the folder's own spelling cannot give.
-    private static let titles = ["activeui": "ActiveUI", "tui": "TUI", "input-events": "Input and Events"]
+    private static let titles = ["activeui": "ActiveUI", "tui": "TUI", "input-events": "Input and Events",
+                                 desktopOnly: "Desktop Only"]
+
+    /// Programs that cannot run on an iPad or iPhone (`longWait`, shell job
+    /// control): listed on the Mac, last, and left out on iOS.
+    static let desktopOnly = "desktopOnly"
+
+    /// Whether the example at `path` (`desktopOnly/longWait`) is offered on
+    /// this kind of device.
+    static func isOffered(_ path: String, onMobile: Bool) -> Bool {
+        !(onMobile && path.split(separator: "/").first.map(String.init) == desktopOnly)
+    }
 
     /// The categories: games first, as the ones people open first; then the
-    /// others by what they show, the language last; folders not listed here
-    /// follow, by name.
-    static let order = ["games", "graphics", "sound", "input-events", "files", "data", "network", "apps", "activeui", "tui", "language"]
+    /// others by what they show, the language, then what only a desktop
+    /// runs; folders not listed here follow, by name.
+    static let order = ["games", "graphics", "sound", "input-events", "files", "data", "network", "apps", "activeui", "tui", "language",
+                        desktopOnly]
 
     /// Every program in the tree, in menu order: a folder's subfolders, then
     /// its own programs.

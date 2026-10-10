@@ -79,6 +79,16 @@ struct BundledExampleCatalogTests {
         #expect(tree.allExamples.prefix(4).map(\.path) == ["games/arcade/breakout/main", "games/arcade/pong", "games/Asteroids", "games/roids"])
     }
 
+    @Test("Desktop Only comes last on the Mac, and is left out on an iPad or iPhone")
+    func desktopOnly() {
+        let examples = ["desktopOnly/longWait", "language/hello", "games/roids"].map(BundledExample.init(path:))
+        let tree = BundledExampleFolder.tree(examples)
+        #expect(tree.folders.map(\.title) == ["Games", "Language", "Desktop Only"])
+        #expect(BundledExampleFolder.isOffered("desktopOnly/longWait", onMobile: false))
+        #expect(!BundledExampleFolder.isOffered("desktopOnly/longWait", onMobile: true))
+        #expect(BundledExampleFolder.isOffered("language/fullOfErrors", onMobile: true))
+    }
+
     @Test("The demos are found by walking down from the resources, wherever a build put them")
     func demosFolderIsFoundByWalking() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("layout-\(UUID().uuidString)")
