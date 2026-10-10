@@ -79,7 +79,15 @@ struct LLVMLowering {
 
         var text = "; basicc — \(module.name), traditional dialect\n"
         text += "target triple = \"\(options.target.rawValue)\"\n\n"
-        text += Self.runtimeDeclarations + "\n\n"
+        text += Self.runtimeDeclarations + "\n"
+        // Runtime entries added since the golden IR was taken are declared
+        // only where a program calls them, so every other program's IR is
+        // byte for byte what it was.
+        let body = functions.joined()
+        for (name, declaration) in Self.onDemandDeclarations where body.contains("@\(name)(") {
+            text += declaration + "\n"
+        }
+        text += "\n"
         // Only when there is something to say: an empty model leaves Rev 1's
         // IR byte for byte what it was, which the seam is measured against.
         if !objectModel.declarations.isEmpty { text += objectModel.declarations + "\n" }
@@ -717,6 +725,11 @@ struct LLVMLowering {
     declare void @basic_rt_stop_midi()
     declare ptr @basic_rt_environ(ptr)
     """
+
+    /// Declared only when called (see `render`), in this order.
+    static let onDemandDeclarations: KeyValuePairs<String, String> = [
+        "basic_rt_pwd": "declare ptr @basic_rt_pwd()",
+    ]
 }
 
 /// Module-wide string constants, shared by every function emitter.

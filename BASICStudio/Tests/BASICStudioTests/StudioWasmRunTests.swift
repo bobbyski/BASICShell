@@ -224,6 +224,34 @@ struct StudioWasmRunTests {
         #expect(bridge.appWindows.isEmpty)
     }
 
+    /// The requirement (Bobby, 2026-10-09): Apps ▸ Grade Book — a project,
+    /// directory imports, an SQLite store, a window of pages — runs as
+    /// WebAssembly in Studio, as it does in the interpreter.
+    @Test("Apps ▸ Grade Book runs as a project: its window opens, its database is made, it closes cleanly")
+    func gradeBookProject() async throws {
+        let studio = StudioHarness()
+        let model = studio.model
+        let examples = FileManager.default.temporaryDirectory.appendingPathComponent("gradebook-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: examples) }
+        model.examplesFolderOverride = examples
+        let example = try #require(model.bundledExamples.first { $0.projectFolder?.hasSuffix("GradeBook.basproj") == true })
+        model.loadBundledExample(example)
+        let project = try #require(model.projectDirectoryURL)
+        let bridge = model.auiBridge
+        bridge.showsWindows = false
+        model.compiledRunTarget = .webAssembly
+        model.jitEditorProgram()
+        try await studio.waitUntil("Grade Book's window", timeout: .seconds(90)) {
+            !bridge.windows.isEmpty && (try? bridge.perform(.isOpen(id: bridge.windows.keys.min()!))) == .flag(true)
+        }
+        #expect(FileManager.default.fileExists(atPath: project.appendingPathComponent("GradeBook.sqlite").path),
+                "\(model.consoleText.suffix(600))")
+        _ = try bridge.perform(.close(id: bridge.windows.keys.min()!))
+        try await waitUntilFinished(studio)
+        #expect(model.consoleText.contains("Grade Book closed. Everything is saved in"), "\(model.consoleText.suffix(600))")
+        #expect(!model.consoleText.contains("error"), "\(model.consoleText.suffix(600))")
+    }
+
     @Test("A BASIC class inheriting ActiveUI's AUIView: ActiveUI calls its override")
     func inheritAUIView() async throws {
         let studio = start("""

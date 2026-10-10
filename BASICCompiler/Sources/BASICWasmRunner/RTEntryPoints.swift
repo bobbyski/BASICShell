@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 288 entry points, by name.
+    /// 289 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -213,6 +213,7 @@ enum RTEntryPoints {
         "basic_rt_print_tab": RTEntryPoint(arity: 1) { a in basic_rt_print_tab(a[0]); return 0 },
         "basic_rt_print_text": RTEntryPoint(arity: 1) { a in basic_rt_print_text(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_print_value": RTEntryPoint(arity: 1) { a in basic_rt_print_value(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
+        "basic_rt_pwd": RTEntryPoint(arity: 0) { a in Double(UInt(bitPattern: basic_rt_pwd())) },
         "basic_rt_rad": RTEntryPoint(arity: 1) { a in basic_rt_rad(a[0]) },
         "basic_rt_raise": RTEntryPoint(arity: 1) { a in basic_rt_raise(a[0]) },
         "basic_rt_randomize": RTEntryPoint(arity: 1) { a in basic_rt_randomize(a[0]); return 0 },

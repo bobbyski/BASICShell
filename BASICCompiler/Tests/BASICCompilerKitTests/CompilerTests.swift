@@ -151,6 +151,41 @@ struct IntrinsicTableTests {
 
 /// Diagnostics: what basicc refuses, and how it says so.
 struct DiagnosticTests {
+    /// A name DIM'd AS a different class in each of two functions (Apps ▸
+    /// Grade Book's `added`): one variable per function, when nothing else
+    /// names it; refused as before when something does, because there the
+    /// interpreter's one global would show through.
+    @Test func aNameRetypedByDimInTwoFunctionsIsEachFunctionsOwn() throws {
+        let classes = """
+            CLASS Student
+              PUBLIC Name AS STRING
+            END CLASS
+            CLASS Assignment
+              PUBLIC Points AS DOUBLE
+            END CLASS
+            FUNCTION AddStudent() AS STRING
+                DIM added AS Student
+                added = NEW Student()
+                RETURN "student" ' added, in a comment, is not a use
+            END FUNCTION
+            FUNCTION AddAssignment() AS DOUBLE
+                DIM added AS Assignment
+                added = NEW Assignment()
+                RETURN added.Points
+            END FUNCTION
+            FUNCTION Other() AS DOUBLE
+                LOCAL added = 3
+                RETURN added
+            END FUNCTION
+
+            """
+        let module = try Compilation(dialect: TraditionalDialect()).bir(source: classes + "PRINT AddStudent(); AddAssignment()", name: "retyped")
+        #expect(!module.globals.contains { $0.name == "ADDED" })
+        #expect(throws: CompileError.self) {
+            try Compilation(dialect: TraditionalDialect()).bir(source: classes + "PRINT added.Name", name: "read")
+        }
+    }
+
     @Test func orderingStringsInExpressionsIsRefusedLikeTheInterpreter() {
         // The interpreter's `<` on strings raises "Expected a number"; the
         // compiler says so at compile time rather than compiling something else.

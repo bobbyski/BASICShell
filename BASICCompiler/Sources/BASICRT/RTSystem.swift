@@ -10,6 +10,13 @@ public func basic_rt_environ(_ name: UnsafeMutableRawPointer?) -> UnsafeMutableR
     return rtOwned(environment[key] ?? environment[key.uppercased()] ?? "")
 }
 
+/// `PWD$`: the folder the program runs in — the process's, which a host
+/// sets to the program's (BASICStudio: the project's own folder).
+@_cdecl("basic_rt_pwd")
+public func basic_rt_pwd() -> UnsafeMutableRawPointer {
+    rtOwned(FileManager.default.currentDirectoryPath)
+}
+
 // BASICRT system objects — the interpreter's built-in classes that are
 // implemented by the host rather than by BASIC code: `File` here; the
 // TUI, graphics, timer, and HTTP objects follow with their hosts.

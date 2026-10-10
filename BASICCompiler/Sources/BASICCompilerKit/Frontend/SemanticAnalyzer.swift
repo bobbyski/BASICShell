@@ -422,6 +422,62 @@ struct SemanticAnalyzer {
                 }
             }
         }
+        if !localLet { localizeRetypedDims() }
+    }
+
+    /// A name DIM'd AS one type in one function and another in another —
+    /// Grade Book's `added`, a Student in AddStudent and an Assignment in
+    /// AddAssignment. The interpreter keeps one global that each DIM
+    /// re-types; basicc needs one type per variable, and refused it. When
+    /// nothing but those functions mentions the name, each one's is its own,
+    /// which the program cannot tell from the interpreter's global. A program
+    /// that reads it anywhere else is still refused.
+    private mutating func localizeRetypedDims() {
+        var declared: [String: [String: String]] = [:]
+        for (index, line) in lines.enumerated() {
+            guard let function = owner[index], function != Self.declaration else { continue }
+            Self.forEachStatement(in: line.statement) { statement in
+                if case .dim(.bare, let name, _, let type?) = statement {
+                    declared[name.normalized, default: [:]][function] = String(describing: type)
+                }
+            }
+        }
+        for (name, byFunction) in declared where Set(byFunction.values).count > 1 {
+            // Mentioned only by those functions, or by one whose own LOCAL it is.
+            let mentioned = lines.indices.filter { Self.mentions(lines[$0].source, name) }
+            guard mentioned.allSatisfy({ index in
+                owner[index].map { byFunction[$0] != nil || model.isLocal(name, in: $0) } ?? false
+            }) else { continue }
+            for function in byFunction.keys { model.declareLocal(name, in: function) }
+        }
+    }
+
+    /// Whether source text names `name` as a whole word, ignoring case,
+    /// outside its strings and its comment.
+    static func mentions(_ source: String, _ name: String) -> Bool {
+        var code: [Unicode.Scalar] = []
+        var inString = false
+        for scalar in source.uppercased().unicodeScalars {
+            if scalar == "\"" { inString.toggle(); code.append(" "); continue }
+            if inString { code.append(" "); continue }
+            if scalar == "'" { break }
+            code.append(scalar)
+        }
+        if let rem = String(String.UnicodeScalarView(code)).range(of: #"(^|[^A-Z0-9_])REM([^A-Z0-9_]|$)"#, options: .regularExpression) {
+            code = Array(String(String.UnicodeScalarView(code))[..<rem.lowerBound].unicodeScalars)
+        }
+        let text = code
+        let word = Array(name.uppercased().unicodeScalars)
+        guard !word.isEmpty, text.count >= word.count else { return false }
+        func isPart(_ scalar: Unicode.Scalar) -> Bool {
+            CharacterSet.alphanumerics.contains(scalar) || "_$%&!#".unicodeScalars.contains(scalar)
+        }
+        for start in 0...(text.count - word.count) where Array(text[start..<(start + word.count)]) == word {
+            let before = start == 0 || !isPart(text[start - 1])
+            let after = start + word.count == text.count || !isPart(text[start + word.count])
+            if before && after { return true }
+        }
+        return false
     }
 
     static func matchingEndFunction(after start: Int, in lines: [ParsedLine]) -> Int? {

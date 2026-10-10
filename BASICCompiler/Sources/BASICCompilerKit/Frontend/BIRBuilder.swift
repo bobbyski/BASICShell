@@ -2167,6 +2167,8 @@ final class FunctionBuilder {
             return .intrinsic(.chr, [try lowerExpression(inner, expecting: .number, context: "CHR$")])
         case .environmentFunction(let inner):
             return .hostCall("basic_rt_environ", [try lowerExpression(inner, expecting: .string, context: "ENVIRON$")], returns: .string)
+        case .pwdFunction:
+            return .hostCall("basic_rt_pwd", [], returns: .string)
         case .null:
             return .nullValue
         case .systemFunction(let inner):
