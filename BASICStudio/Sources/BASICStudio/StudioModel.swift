@@ -112,6 +112,18 @@ final class StudioModel: ObservableObject {
     var effectiveCompiledRunTarget: StudioCompiledRunTarget {
         StudioCompiledRunTarget.isChoosable ? compiledRunTarget : .webAssembly
     }
+    /// What ▶ Run uses on the Mac: the interpreter or WebAssembly.
+    @Published var runTarget: StudioRunTarget = .interpreter {
+        didSet {
+            guard runTarget != oldValue, !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
+    /// What actually runs ▶ Run here: the choice on the Mac, WebAssembly on
+    /// iPhone and iPad.
+    var effectiveRunTarget: StudioRunTarget {
+        StudioRunTarget.isChoosable ? runTarget : .webAssembly
+    }
     /// The WebAssembly run in progress (StudioWasmRun.swift).
     var wasmRun: StudioWasmRun?
     /// Say so when that happens, once a launch; off for good after "Don't
@@ -190,7 +202,9 @@ final class StudioModel: ObservableObject {
             graphicsRevision += 1
         }
     }
-    @Published var programText = StudioModel.defaultProgramSource() {
+    /// Empty at launch: Studio opens on no program (Bobby, 2026-10-10; it
+    /// used to open on the bundled test suite).
+    @Published var programText = "" {
         didSet {
             editorErrorLine = nil
             updateEditorDiagnostics()
@@ -355,6 +369,7 @@ final class StudioModel: ObservableObject {
         hidesGraphicsOnStop = settings.hidesGraphicsOnStop
         showsGameControls = settings.showsGameControls
         compiledRunTarget = settings.compiledRunTarget
+        runTarget = settings.runTarget
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         recentItems = settings.recentItems
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
@@ -1365,17 +1380,17 @@ final class StudioModel: ObservableObject {
 
     func runEditorProgram() {
         guard !isProgramRunning else { return }
-        #if os(iOS)
         // On iPhone and iPad a program runs as WebAssembly in JavaScriptCore,
-        // never in the interpreter (BASIC-42).
-        runAsWebAssembly(echo: "RUN")
-        return
-        #else
+        // never in the interpreter (BASIC-42); on the Mac, when chosen in
+        // Settings ▸ Console.
+        if effectiveRunTarget == .webAssembly {
+            runAsWebAssembly(echo: "RUN")
+            return
+        }
         rebuildProgramFromEditor()
         selectedPane = .console
         echoConsoleCommand("RUN")
         startProgramRun(startLine: nil)
-        #endif
     }
 
     func listProgram() {
@@ -2329,7 +2344,8 @@ final class StudioModel: ObservableObject {
                 showsGraphicsHiddenNotice: showsGraphicsHiddenNotice,
                 showsGameControls: showsGameControls,
                 recentItems: recentItems,
-                compiledRunTarget: compiledRunTarget
+                compiledRunTarget: compiledRunTarget,
+                runTarget: runTarget
             )
         )
     }
@@ -2434,25 +2450,6 @@ final class StudioModel: ObservableObject {
             types.append(basic)
         }
         return types
-    }
-
-    private static func defaultProgramSource() -> String {
-        if let source = bundledDemoSource(named: "test-suite") {
-            return source
-        }
-
-        return """
-        print "AIBASIC SWIFTTERM"
-        screen 1
-        color 2
-        line (10,10)-(310,10), 2
-        line (310,10)-(310,190), 3
-        line (310,190)-(10,190), 1
-        line (10,190)-(10,10), 2
-        pset (160,100), 3
-        print "CENTER =", point(160,100)
-        end
-        """
     }
 
     /// The demos folder, found once by walking down from the resource bundle

@@ -2,7 +2,7 @@
 //  PromptEditorAUI.swift
 //  BASICStudio
 //
-//  Settings ▸ General, the prompt editor, in ActiveUI.
+//  Settings ▸ Prompt, the prompt editor, in ActiveUI.
 //
 
 import ActiveUI

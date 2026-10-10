@@ -8,7 +8,7 @@
 import BASICCore
 import Foundation
 
-/// The prompt editor (Settings ▸ General) as a value: the segment list, the
+/// The prompt editor (Settings ▸ Prompt) as a value: the segment list, the
 /// selection, the Add Segment form, and every edit the pane can make.
 ///
 /// Unlike the other projections this one holds state, because the editor

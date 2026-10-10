@@ -11,11 +11,11 @@ import Foundation
 ///
 /// Almost all of Settings is already data, which is ActiveUI's point that
 /// such screens "convert almost free": the ranges, the steps and the notes are
-/// constants, and the values are the model's. The General tab is the prompt
+/// constants, and the values are the model's. The Prompt tab is the prompt
 /// editor, which has its own projection (P1 unit 7).
 ///
 /// ```text
-///   [ General ] [ Font ] [ Console ]             tabs
+///   [ Prompt ] [ Font ] [ Console ]              tabs
 ///   Font:  Font ▾ fontFamilies    Size ──●── 13   fontSizeRange, fontSizeText
 ///   Console:  Lines ──●── [−][+] 10000            scrollbackRange/Step, scrollbackText
 /// ```
@@ -28,7 +28,8 @@ struct SettingsViewModel: Equatable {
     }
 
     static let tabs = [
-        Tab(title: "General", symbol: "gearshape"),
+        // Named for what it is: the prompt, and nothing else (Bobby, 2026-10-10).
+        Tab(title: "Prompt", symbol: "chevron.right.square"),
         Tab(title: "Font", symbol: "textformat"),
         Tab(title: "Console", symbol: "terminal"),
     ]
@@ -45,7 +46,13 @@ struct SettingsViewModel: Equatable {
     static let graphicsSectionTitle = "Graphics"
     static let hidesGraphicsOnStopTitle = "Hide graphics when a program stops on a break or an error"
     static let showsGraphicsHiddenNoticeTitle = "Say so when they are hidden"
-    static let compiledRunsSectionTitle = "Compiled runs"
+    static let compiledRunsSectionTitle = "Running programs"
+    static let runTargetTitle = "▶ Run with"
+    #if os(iOS)
+    static let runTargetNote = "On iPad and iPhone every program runs as WebAssembly in JavaScriptCore."
+    #else
+    static let runTargetNote = "The interpreter runs a program as written, with the debugger. WebAssembly compiles it and runs it in JavaScriptCore, as it runs on iPad."
+    #endif
     static let compiledRunTargetTitle = "⚡ builds with"
     #if os(iOS)
     static let compiledRunTargetNote = "On iPad and iPhone every program is compiled to WebAssembly and run by JavaScriptCore; nothing else may run it here."

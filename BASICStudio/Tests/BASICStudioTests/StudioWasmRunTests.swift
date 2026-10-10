@@ -333,6 +333,20 @@ struct StudioWasmRunTests {
         #expect(studio.model.consoleText.contains("│ Hello from BASIC │"), "\(studio.model.consoleText.suffix(600))")
     }
 
+    @Test("On the Mac ▶ Run can be WebAssembly too: chosen in Settings, kept, and run as iPad runs it")
+    func runAsWebAssemblyOnTheMac() async throws {
+        let studio = StudioHarness(program: "print \"run as \"; 6 * 7")
+        #expect(studio.model.effectiveRunTarget == .interpreter, "the interpreter by default")
+        studio.model.runTarget = .webAssembly
+        #expect(StudioSettings(runTarget: .webAssembly).runTarget == .webAssembly)
+        let saved = try JSONEncoder().encode(StudioSettings(runTarget: .webAssembly))
+        #expect(try JSONDecoder().decode(StudioSettings.self, from: saved).runTarget == .webAssembly)
+        studio.model.runEditorProgram()
+        #expect(studio.model.isJITRunning, "compiled, not interpreted")
+        try await waitUntilFinished(studio)
+        #expect(studio.model.consoleText.contains("RUN\nrun as 42\n"), "\(studio.model.consoleText.suffix(200))")
+    }
+
     @Test("On the Mac the choice is the person's, and LLVM is the default")
     func choice() {
         #expect(StudioCompiledRunTarget.isChoosable)

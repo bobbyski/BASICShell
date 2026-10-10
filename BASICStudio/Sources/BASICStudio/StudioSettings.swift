@@ -120,6 +120,9 @@ struct StudioSettings: Codable {
     /// How ⚡ builds a program on the Mac (BASIC-45). iPhone and iPad always
     /// use WebAssembly.
     var compiledRunTarget: StudioCompiledRunTarget = .llvm
+    /// What ▶ Run runs a program with on the Mac: the interpreter, or
+    /// WebAssembly as on iPad. iPhone and iPad always use WebAssembly.
+    var runTarget: StudioRunTarget = .interpreter
 
     /// On by default on iPad and iPhone, where the app's own folder is
     /// otherwise the only place a program can be; off on the Mac, where
@@ -152,6 +155,7 @@ struct StudioSettings: Codable {
         case showsGameControls
         case recentItems
         case compiledRunTarget
+        case runTarget
     }
 
     init(
@@ -173,7 +177,8 @@ struct StudioSettings: Codable {
         showsGraphicsHiddenNotice: Bool = true,
         showsGameControls: Bool = true,
         recentItems: StudioRecentItems = StudioRecentItems(),
-        compiledRunTarget: StudioCompiledRunTarget = .llvm
+        compiledRunTarget: StudioCompiledRunTarget = .llvm,
+        runTarget: StudioRunTarget = .interpreter
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -194,6 +199,7 @@ struct StudioSettings: Codable {
         self.showsGameControls = showsGameControls
         self.recentItems = recentItems
         self.compiledRunTarget = compiledRunTarget
+        self.runTarget = runTarget
     }
 
     init(from decoder: Decoder) throws {
@@ -220,7 +226,26 @@ struct StudioSettings: Codable {
         showsGameControls = try container.decodeIfPresent(Bool.self, forKey: .showsGameControls) ?? true
         recentItems = (try? container.decodeIfPresent(StudioRecentItems.self, forKey: .recentItems)) ?? StudioRecentItems()
         compiledRunTarget = (try? container.decodeIfPresent(StudioCompiledRunTarget.self, forKey: .compiledRunTarget)) ?? .llvm
+        runTarget = (try? container.decodeIfPresent(StudioRunTarget.self, forKey: .runTarget)) ?? .interpreter
     }
+}
+
+/// What ▶ Run runs a program with: Studio's interpreter, or basicc's core
+/// compiling it to WebAssembly for JavaScriptCore, as on iPad. The choice is
+/// the Mac's; iPhone and iPad have only WebAssembly.
+enum StudioRunTarget: String, Codable, CaseIterable, Sendable {
+    case interpreter
+    case webAssembly
+
+    var label: String {
+        switch self {
+        case .interpreter: return "The interpreter"
+        case .webAssembly: return "WebAssembly, in JavaScriptCore"
+        }
+    }
+
+    /// Whether this platform lets a person choose; iPhone and iPad cannot.
+    static var isChoosable: Bool { StudioCompiledRunTarget.isChoosable }
 }
 
 /// How a compiled run (⚡) builds the program (BASIC-45).

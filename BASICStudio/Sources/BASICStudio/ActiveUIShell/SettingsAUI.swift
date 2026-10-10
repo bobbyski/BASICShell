@@ -14,12 +14,12 @@ import UIKit
 import Foundation
 
 /// The Settings window for the ActiveUI shell: `AUIPreferencesWindow` in its
-/// modern chrome, a sidebar of pages beside a resizable page. General, Font
+/// modern chrome, a sidebar of pages beside a resizable page. Prompt, Font
 /// and Console are ``SettingsViewModel``'s tabs, ranges, steps and notes, the
 /// same ones the SwiftUI `SettingsView` shows. Editor is this shell's own.
 ///
 /// ```text
-///   General   the prompt editor (PromptEditorAUI)
+///   Prompt    the prompt editor (PromptEditorAUI)
 ///   Editor    Appearance: the app theme
 ///             Typing: Tab indents, new-line indent, indent width
 ///             Display: line numbers
@@ -43,6 +43,9 @@ final class SettingsAUI {
     let tabIndentSwitch: AUISwitch
     let newLineIndentSwitch: AUISwitch
     let indentPicker: AUIPicker
+    /// What ▶ Run uses: the interpreter or WebAssembly; fixed to WebAssembly
+    /// on iPad.
+    let runPicker: AUIPicker
     /// How ⚡ builds a program (BASIC-45): fixed to WebAssembly on iPad.
     let compiledRunPicker: AUIPicker
     let themePicker: AUIPicker
@@ -104,6 +107,12 @@ final class SettingsAUI {
         graphicsGroup.addRow(SettingsViewModel.showsGraphicsHiddenNoticeTitle,
                              description: "",
                              accessory: graphicsNoticeSwitch)
+        let runTargets = StudioRunTarget.allCases
+        runPicker = AUIPicker(runTargets.map(\.label),
+                              selectedIndex: runTargets.firstIndex(of: model.effectiveRunTarget)) { [weak model] index in
+            model?.runTarget = runTargets[index]
+        }
+        runPicker.isEnabled = StudioRunTarget.isChoosable
         let targets = StudioCompiledRunTarget.allCases
         compiledRunPicker = AUIPicker(targets.map(\.label),
                                       selectedIndex: targets.firstIndex(of: model.effectiveCompiledRunTarget)) { [weak model] index in
@@ -111,6 +120,9 @@ final class SettingsAUI {
         }
         compiledRunPicker.isEnabled = StudioCompiledRunTarget.isChoosable
         let compiledGroup = AUISettingsGroup(title: SettingsViewModel.compiledRunsSectionTitle)
+        compiledGroup.addRow(SettingsViewModel.runTargetTitle,
+                             description: SettingsViewModel.runTargetNote,
+                             accessory: runPicker)
         compiledGroup.addRow(SettingsViewModel.compiledRunTargetTitle,
                              description: SettingsViewModel.compiledRunTargetNote,
                              accessory: compiledRunPicker)
@@ -277,6 +289,10 @@ final class SettingsAUI {
         }
         if graphicsNoticeSwitch.isOn != model.showsGraphicsHiddenNotice {
             graphicsNoticeSwitch.isOn = model.showsGraphicsHiddenNotice
+        }
+        let runIndex = StudioRunTarget.allCases.firstIndex(of: model.effectiveRunTarget)
+        if runPicker.selectedIndex != runIndex {
+            runPicker.selectedIndex = runIndex
         }
         let compiledIndex = StudioCompiledRunTarget.allCases.firstIndex(of: model.effectiveCompiledRunTarget)
         if compiledRunPicker.selectedIndex != compiledIndex {

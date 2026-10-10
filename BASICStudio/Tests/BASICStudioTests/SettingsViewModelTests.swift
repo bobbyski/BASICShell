@@ -12,10 +12,10 @@ import Testing
 @Suite("SettingsViewModel")
 @MainActor
 struct SettingsViewModelTests {
-    @Test("W6 · Three tabs: General, Font, Console")
+    @Test("W6 · Three tabs: Prompt, Font, Console")
     func tabs() {
-        #expect(SettingsViewModel.tabs.map(\.title) == ["General", "Font", "Console"])
-        #expect(SettingsViewModel.tabs.map(\.symbol) == ["gearshape", "textformat", "terminal"])
+        #expect(SettingsViewModel.tabs.map(\.title) == ["Prompt", "Font", "Console"])
+        #expect(SettingsViewModel.tabs.map(\.symbol) == ["chevron.right.square", "textformat", "terminal"])
     }
 
     @Test("S2 · Preferred fonts come first, then the installed ones in Finder order, each once")

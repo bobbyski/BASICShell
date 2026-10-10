@@ -107,13 +107,12 @@ struct BundledExampleCatalogTests {
         #expect(StudioModel.folder(named: "Demos", under: root.appendingPathComponent("Xcode/Contents/Resources/Demos/games")) == nil)
     }
 
-    @Test("This build's demos folder is the one the Examples menu and the default program come from")
+    @Test("This build's demos folder is the one the Examples menu comes from; Studio opens on no program")
     func thisBuildsDemosFolder() throws {
         let demos = try #require(StudioModel.demosFolder)
         #expect(demos.lastPathComponent == "Demos")
         #expect(FileManager.default.fileExists(atPath: demos.appendingPathComponent("games/roids.bas").path))
-        let testSuite = try String(contentsOf: demos.appendingPathComponent("language/test-suite.bas"), encoding: .utf8)
-        #expect(StudioModel(launch: .headless).programText == testSuite)
+        #expect(StudioModel(launch: .headless).programText.isEmpty)
     }
 
     @Test("The demos tree has its games first, and no program outside a category")
