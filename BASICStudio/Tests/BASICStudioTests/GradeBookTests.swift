@@ -90,6 +90,18 @@ struct GradeBookTests {
             tabs?.selectedTabIndex = tab
             tabs?.onTabChange?(tab)
             try await studio.waitUntil("page \(tab) shown") { status != mark }
+            // Clearing the line is the handler's first act; filling the
+            // page in, and emptying its fields, comes after.
+            try await settle()
+        }
+
+        /// Waits until the program has handled everything posted so far:
+        /// two more turns of its window's `run()`, each of which runs the
+        /// handlers waiting. Under load, a page could still be filling in
+        /// (and emptying its fields) when the test typed into it.
+        func settle() async throws {
+            let start = BASICAUIRunLoop.passes
+            try await studio.waitUntil("the program to settle") { BASICAUIRunLoop.passes >= start + 2 }
         }
 
         func click(_ title: String) throws {
@@ -135,6 +147,8 @@ struct GradeBookTests {
 
     /// Waits for `condition`, and on a timeout says what the program's
     /// status line said, which is where it explains a refusal.
+    /// Then waits for the program to settle: what is waited for is often a
+    /// handler's first effect, and the rest of it comes after.
     private func waitFor(_ what: String, on screen: Screen, _ condition: () -> Bool) async throws {
         do {
             try await screen.studio.waitUntil(what, condition)
@@ -142,6 +156,7 @@ struct GradeBookTests {
             Issue.record("\(what): the status line says \"\(screen.status)\"")
             throw error
         }
+        try await screen.settle()
     }
 
     /// Runs the open project and waits for its window.
@@ -193,7 +208,13 @@ struct GradeBookTests {
         try screen.click("Make book")
         let students = try screen.table("Last name", "First name", "Student ID")
         try await waitFor("the book made", on: screen) { screen.heading.hasPrefix("Period 2 - Algebra I - ") }
-        #expect(screen.tabs?.selectedTabIndex == 1)
+        // The heading changes first; the Students tab is picked after it.
+        try await waitFor("the Students tab", on: screen) { screen.tabs?.selectedTabIndex == 1 }
+
+        // Making the book picked the Students tab, whose change event fills
+        // the page in and empties its fields, after the heading changed:
+        // typing now could be wiped (flaky under load until 2026-10-10).
+        try await screen.settle()
 
         // Students, and one added by mistake and deleted.
         for (first, last, number) in [("Ada", "Lovelace", ""), ("Grace", "Hopper", "1002"), ("Katherine", "Johnson", ""), ("Pat", "Mistake", "")] {
@@ -249,7 +270,11 @@ struct GradeBookTests {
             try await waitFor("assignment \(assignment)", on: screen) { screen.cell(grades, 0, 1) == "" && screen.cell(grades, 0, 2) == "missing" }
             for (row, score) in points.enumerated() where !score.isEmpty {
                 try screen.typePoints(score, row: row, in: grades)
-                try await waitFor("points \(score)", on: screen) { screen.cell(grades, row, 2) != "missing" }
+                // Its handler's last act is to say so: the next pick waits
+                // for it, so it cannot land before the handler is done.
+                try await waitFor("points \(score)", on: screen) {
+                    screen.cell(grades, row, 2) != "missing" && screen.status.hasPrefix("Saved \(score) for ")
+                }
             }
         }
         // Midterm is showing: 40/50 is 80% and a B.

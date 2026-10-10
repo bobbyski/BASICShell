@@ -342,6 +342,7 @@ extension BASICRuntime {
         while true {
             try pump()
             guard case .boolean(true) = try perform(host, .isOpen(id: id)) else { break }
+            BASICAUIRunLoop.passed()
             Thread.sleep(forTimeInterval: 0.01)
         }
         // A handler for the close itself, posted as the window went.
@@ -412,5 +413,26 @@ extension BASICRuntime {
         case .boolean(let flag): return flag ? "TRUE" : "FALSE"
         default: throw BASICError.runtime("ActiveUI controls take text, not \(value.debugTypeName)")
         }
+    }
+}
+
+/// How many times a window's `run()` has gone round, waiting for the user.
+/// Handlers run inside a pass, so once two more passes are counted after an
+/// event is posted, it has been handled: what a test waits for before it
+/// types into a page the program is still filling in.
+public enum BASICAUIRunLoop {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var count = 0
+
+    public static var passes: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    static func passed() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }
