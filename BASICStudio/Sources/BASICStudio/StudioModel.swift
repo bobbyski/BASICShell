@@ -261,11 +261,12 @@ final class StudioModel: ObservableObject {
 
     let graphics = GraphicsFramebuffer()
     var vtgDataSink: ((Data) -> Void)?
-    private lazy var vtgOutput = ClosureVTGOutput { [weak self] data in
-        Task { @MainActor [weak self] in
-            self?.vtgDataSink?(data)
-        }
-    }
+    /// The program's VTG commands reach the console a frame at a time
+    /// (`StudioVTGFrameQueue`).
+    private lazy var vtgOutput: ClosureVTGOutput = {
+        let frames = StudioVTGFrameQueue { [weak self] data in self?.vtgDataSink?(data) }
+        return ClosureVTGOutput { data in frames.write(data) }
+    }()
     private lazy var vtgCanvas = VectorTerminalCanvas.hostValidated(output: vtgOutput)
     private var basicGraphicsOperationID = 0
     private var shouldRunStartupProgram = false
@@ -1451,14 +1452,11 @@ final class StudioModel: ObservableObject {
     /// VTG view, as an interpreted program's, fed in order from the
     /// program's thread.
     nonisolated func makeCompiledRunCanvas() -> VectorTerminalCanvas {
-        VectorTerminalCanvas.hostValidated(output: ClosureVTGOutput { [weak self] data in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.programDrewGraphics = true
-                    self?.vtgDataSink?(data)
-                }
-            }
-        })
+        let frames = StudioVTGFrameQueue { [weak self] data in
+            self?.programDrewGraphics = true
+            self?.vtgDataSink?(data)
+        }
+        return VectorTerminalCanvas.hostValidated(output: ClosureVTGOutput { data in frames.write(data) })
     }
 
     /// The console canvas's size now, for a compiled run.
