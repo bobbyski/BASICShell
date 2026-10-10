@@ -31,7 +31,7 @@ struct DebugPaneModel: Equatable {
     // MARK: Buttons
 
     enum Command: CaseIterable, Equatable {
-        case run, continueExecution, pause, step, stepOver, stepOut, cancelTask
+        case run, continueExecution, pause, step, stepOver, stepOut, toggleBreakpoint, cancelTask
     }
 
     struct Button: Equatable {
@@ -193,6 +193,7 @@ struct DebugPaneModel: Equatable {
             case .step: Button(command: command, title: "Step", symbol: "arrow.down.to.line", isEnabled: !running)
             case .stepOver: Button(command: command, title: "Step Over", symbol: "arrow.turn.down.right", isEnabled: !running)
             case .stepOut: Button(command: command, title: "Step Out", symbol: "arrow.up.to.line", isEnabled: paused && !running)
+            case .toggleBreakpoint: Button(command: command, title: "Toggle Breakpoint", symbol: "smallcircle.filled.circle", isEnabled: true)
             case .cancelTask: Button(command: command, title: "Cancel Task", symbol: "xmark.circle", isEnabled: canCancel)
             }
         }
@@ -242,6 +243,7 @@ struct DebugPaneModel: Equatable {
         case .step: model.stepDebugging()
         case .stepOver: model.stepOverDebugging()
         case .stepOut: model.stepOutDebugging()
+        case .toggleBreakpoint: model.toggleBreakpointAtCaret()
         case .cancelTask: model.cancelSelectedDebuggerTask()
         }
     }

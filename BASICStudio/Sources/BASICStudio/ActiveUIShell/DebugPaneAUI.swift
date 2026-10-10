@@ -17,7 +17,7 @@ import Foundation
 /// The Debug inspector for the ActiveUI shell, drawn from ``DebugPaneModel``.
 ///
 /// ```text
-///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line               buttons
+///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⦿ ⊗  [x] Live Line             buttons
 ///   ┌ code: a second editor, read-only ────┐   EditorRenderInput.debugCodeView
 ///   ├════════════ drag ════════════════════┤   DebugPaneModel's height rules
 ///   │ ▾ Tasks                              │   one scroll view of disclosure

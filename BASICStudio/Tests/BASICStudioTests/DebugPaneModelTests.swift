@@ -102,11 +102,25 @@ struct DebugPaneModelProgramTests {
         pane.buttons.filter(\.isEnabled).map(\.command)
     }
 
-    @Test("D7 · Idle: Run, Step and Step Over")
+    @Test("D7 · Idle: Run, Step, Step Over and Toggle Breakpoint")
     func idleButtons() {
         let pane = DebugPaneModel(StudioHarness(program: "PRINT 1").model)
-        #expect(enabled(pane) == [.run, .step, .stepOver])
-        #expect(pane.buttons.map(\.title) == ["Run", "Continue", "Pause", "Step", "Step Over", "Step Out", "Cancel Task"])
+        #expect(enabled(pane) == [.run, .step, .stepOver, .toggleBreakpoint])
+        #expect(pane.buttons.map(\.title) == ["Run", "Continue", "Pause", "Step", "Step Over", "Step Out", "Toggle Breakpoint", "Cancel Task"])
+    }
+
+    @Test("BASIC-46 · Toggle Breakpoint sets and clears one on the caret's line: the iPad's editor has no gutter to click")
+    func toggleBreakpointAtCaret() {
+        let model = StudioHarness(program: "PRINT 1\nPRINT 2\nPRINT 3").model
+        model.editorCaretLine = 2
+        DebugPaneModel.perform(.toggleBreakpoint, on: model)
+        #expect(DebugPaneModel(model).breakpointLines == [2])
+        model.editorCaretLine = 3
+        DebugPaneModel.perform(.toggleBreakpoint, on: model)
+        #expect(DebugPaneModel(model).breakpointLines == [2, 3])
+        model.editorCaretLine = 2
+        DebugPaneModel.perform(.toggleBreakpoint, on: model)
+        #expect(DebugPaneModel(model).breakpointLines == [3])
     }
 
     @Test("D7 D10 D11 · Paused: the program's task is selected, so Cancel Task joins the stepping buttons")
@@ -119,7 +133,7 @@ struct DebugPaneModelProgramTests {
         studio.model.toggleDebuggerBreakpoint(atSourceLine: 2)
         try await studio.run()
         var pane = DebugPaneModel(studio.model)
-        #expect(enabled(pane) == [.run, .continueExecution, .step, .stepOver, .stepOut, .cancelTask])
+        #expect(enabled(pane) == [.run, .continueExecution, .step, .stepOver, .stepOut, .toggleBreakpoint, .cancelTask])
         #expect(pane.executionLine == 2)
         #expect(pane.breakpointLines == [2])
 

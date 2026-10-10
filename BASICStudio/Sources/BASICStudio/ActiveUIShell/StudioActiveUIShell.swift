@@ -177,7 +177,10 @@ final class StudioActiveUIShell {
 
         buildCommandBar()
         editor.onTextChange = { [weak model] text in model?.programText = text }
-        editor.onCaretLineChange = { [weak self] line in self?.ribbon.caretMoved(to: line) }
+        editor.onCaretLineChange = { [weak self] line in
+            self?.ribbon.caretMoved(to: line)
+            self?.model.editorCaretLine = line
+        }
         ribbon.text = { [weak model] in model?.programText ?? "" }
         ribbon.onJump = { [weak self] line in
             self?.editor.go(toLine: line)

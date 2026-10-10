@@ -722,6 +722,15 @@ final class StudioModel: ObservableObject {
         session.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
     }
 
+    /// The 1-based line the editor's caret is on.
+    var editorCaretLine = 1
+
+    /// Toggle Breakpoint: on the caret's line. The iPad's editor has no
+    /// gutter to click (BASIC-46).
+    func toggleBreakpointAtCaret() {
+        toggleDebuggerBreakpoint(atSourceLine: editorCaretLine)
+    }
+
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
         let location = BASICBreakpointLocation(
             fileName: debuggerFileName,
