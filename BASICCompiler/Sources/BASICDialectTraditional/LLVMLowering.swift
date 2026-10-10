@@ -1626,12 +1626,29 @@ struct FunctionEmitter {
             fail("a call with more than \(scratchValues) arguments is not supported by basicc yet")
             return "%\"scratch.values\""
         }
+        var boxes: [String] = []
+        var clobbered = false
         for (position, index) in indexes.enumerated() {
+            let start = out.lines.count
             let (value, _) = lowerValue(index)
             let box = boxedPointer(value, index.type)
+            // A later argument that makes a call of its own — `store.Load("Book",
+            // rows.Number("Id"))` — fills the same scratch array for it,
+            // over the arguments already stored here.
+            if position > 0, out.lines[start...].contains(where: { $0.contains("%\"scratch.values\"") }) { clobbered = true }
+            boxes.append(box)
             let slot = out.temp()
             out.emit("\(slot) = getelementptr [\(scratchValues) x ptr], ptr %\"scratch.values\", i64 0, i64 \(position)")
             out.emit("store ptr \(box), ptr \(slot)")
+        }
+        // So those go back in, once every argument is in hand. Only then:
+        // a call whose arguments make no calls is lowered as it always was.
+        if clobbered {
+            for (position, box) in boxes.enumerated() {
+                let slot = out.temp()
+                out.emit("\(slot) = getelementptr [\(scratchValues) x ptr], ptr %\"scratch.values\", i64 0, i64 \(position)")
+                out.emit("store ptr \(box), ptr \(slot)")
+            }
         }
         return "%\"scratch.values\""
     }

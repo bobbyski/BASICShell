@@ -246,10 +246,39 @@ struct StudioWasmRunTests {
         }
         #expect(FileManager.default.fileExists(atPath: project.appendingPathComponent("GradeBook.sqlite").path),
                 "\(model.consoleText.suffix(600))")
+        // Make a book through its Books page, as a teacher would.
+        let fields = bridge.views.values.compactMap { $0 as? AUITextField }
+        let classField = try #require(fields.first { $0.placeholder?.hasPrefix("Class") == true })
+        let periodField = try #require(fields.first { $0.placeholder?.hasPrefix("Period") == true })
+        classField.text = "Algebra I"
+        periodField.text = "2"
+        let make = try #require(bridge.views.values.compactMap { $0 as? AUIButton }.first { $0.title == "Make book" })
+        make.onClick?()
+        try await studio.waitUntil("the book to be made", timeout: .seconds(30)) { classField.text.isEmpty }
         _ = try bridge.perform(.close(id: bridge.windows.keys.min()!))
         try await waitUntilFinished(studio)
         #expect(model.consoleText.contains("Grade Book closed. Everything is saved in"), "\(model.consoleText.suffix(600))")
         #expect(!model.consoleText.contains("error"), "\(model.consoleText.suffix(600))")
+
+        // Again, over the book the first run made: `store.Load("Book",
+        // rows.Number("Id"))` reads it back — a call whose second argument
+        // makes a call of its own, which once overwrote the first ("Unknown
+        // CLASS Id", Bobby's iPad).
+        let before = model.consoleText.count
+        model.jitEditorProgram()
+        try await studio.waitUntil("Grade Book's window again", timeout: .seconds(90)) {
+            let id = bridge.windows.keys.max()
+            return id.map { (try? bridge.perform(.isOpen(id: $0))) == .flag(true) } ?? false
+        }
+        // The book it read back is the open one, named over the tabs.
+        try await studio.waitUntil("the book read back", timeout: .seconds(30)) {
+            bridge.views.values.compactMap { $0 as? AUILabel }.contains { $0.text.contains("Algebra I") }
+        }
+        _ = try bridge.perform(.close(id: bridge.windows.keys.max()!))
+        try await waitUntilFinished(studio)
+        let second = String(model.consoleText.dropFirst(before))
+        #expect(second.contains("Grade Book closed. Everything is saved in"), "\(second.suffix(600))")
+        #expect(!second.contains("error"), "\(second.suffix(600))")
     }
 
     @Test("A BASIC class inheriting ActiveUI's AUIView: ActiveUI calls its override")
