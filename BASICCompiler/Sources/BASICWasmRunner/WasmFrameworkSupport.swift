@@ -1,5 +1,6 @@
 #if canImport(JavaScriptCore)
 import BASICRT
+import BASICRTSwift
 import BASICWasmHostC
 import Foundation
 
@@ -100,14 +101,18 @@ public enum WasmMainThread {
 public enum WasmForward {
     final class Request: @unchecked Sendable {
         let target: Double
-        let frame: UnsafeMutableRawPointer
+        /// An override's frame, or a provider's environment.
+        let frame: UnsafeMutableRawPointer?
+        let shape: WasmCallbacks.Shape
         /// 0 waiting, 1 taken by the run's thread, 2 done, 3 given up.
         var state = 0
         var code: Int32 = 0
+        var result = 0.0
         let done = DispatchSemaphore(value: 0)
-        init(target: Double, frame: UnsafeMutableRawPointer) {
+        init(target: Double, frame: UnsafeMutableRawPointer?, shape: WasmCallbacks.Shape) {
             self.target = target
             self.frame = frame
+            self.shape = shape
         }
     }
 
@@ -123,12 +128,18 @@ public enum WasmForward {
     /// and waits for it. False when there is no run to call, or it did not
     /// answer in time: the caller does what it would without the override.
     public static func call(_ target: Double, frame: UnsafeMutableRawPointer) -> Bool {
-        guard let basicThread = WasmCallbacks.basicThread else { return false }
+        ask(target, argument: frame, shape: .ptrDouble) != nil
+    }
+
+    /// Calls the BASIC body at `target` with `argument` on the run's thread,
+    /// as `call` does, and answers its result; nil when it could not be
+    /// asked in time. A framework's provider asks this way (BASIC-45).
+    static func ask(_ target: Double, argument: UnsafeMutableRawPointer?, shape: WasmCallbacks.Shape) -> Double? {
+        guard let basicThread = WasmCallbacks.basicThread else { return nil }
         if Thread.current === basicThread {
-            _ = WasmCallbacks.invoke(target, argument: frame)
-            return true
+            return WasmCallbacks.invoke(target, argument: argument, shape: shape)
         }
-        let request = Request(target: target, frame: frame)
+        let request = Request(target: target, frame: argument, shape: shape)
         lock.lock()
         waiting.append(request)
         lock.unlock()
@@ -144,9 +155,9 @@ public enum WasmForward {
                 waiting.removeAll { $0 === request }
             }
             lock.unlock()
-            if untouched { return false }
+            if untouched { return nil }
         }
-        return request.code == 0
+        return request.code == 0 ? request.result : nil
     }
 
     /// Makes the waiting calls, on the run's thread. An error or Stop inside
@@ -185,7 +196,7 @@ public enum WasmForward {
 
 private let forwardOnRunThread: basic_wasm_body = { context in
     let request = Unmanaged<WasmForward.Request>.fromOpaque(context!).takeUnretainedValue()
-    _ = WasmCallbacks.invoke(request.target, argument: request.frame)
+    request.result = WasmCallbacks.invoke(request.target, argument: request.frame, shape: request.shape)
 }
 
 private let runOnMain: basic_wasm_body = { context in
@@ -218,9 +229,9 @@ extension WasmCallbacks {
 
     /// Calls BASIC: the module's function at `target`, or what the
     /// interpreter gave out as `target`.
-    static func invoke(_ target: Double, argument: UnsafeMutableRawPointer?) -> Double {
+    static func invoke(_ target: Double, argument: UnsafeMutableRawPointer?, shape: Shape = .ptrDouble) -> Double {
         if let runner = WasmRunner.current {
-            return runner.call(tableIndex: target, shape: .ptrDouble, argument: argument)
+            return runner.call(tableIndex: target, shape: shape, argument: argument)
         }
         return host?.callBASIC(target, argument: argument) ?? 0
     }
@@ -231,6 +242,10 @@ extension WasmCallbacks {
 final class WasmClosureCall: @unchecked Sendable {
     let tableIndex: Double
     let environment: UnsafeMutableRawPointer?
+    /// A provider's last answer, given again when BASIC cannot be asked in
+    /// time.
+    var lastNumber = 0.0
+    var lastText = ""
     init(tableIndex: Double, environment: UnsafeMutableRawPointer?) {
         self.tableIndex = tableIndex
         self.environment = environment
@@ -247,19 +262,35 @@ extension WasmCallbacks {
         return (queueVoidCall, Unmanaged.passRetained(call).toOpaque())
     }
 
+    /// What a handler property's closure answers: nothing (`() -> Void`,
+    /// whose calls are queued), or a value the framework waits for — a
+    /// provider, `textProvider: (() -> String)?` (BASIC-45).
+    public enum HandlerResult: Sendable {
+        case none, number, boolean, string
+    }
+
     /// A handler property's pair (P1.2): the module's compiled body and the
     /// closure's environment arrive; a native function of the shape the shim
     /// calls, and a context, go to the framework. A handler that takes
     /// arguments is refused here, on the run's thread, until a callback can
-    /// carry them.
-    public static func handler(function: Double, environment: Double, parameters: Int, name: String)
-        -> (function: UnsafeRawPointer?, context: UnsafeMutableRawPointer?) {
+    /// carry them. A provider's function asks BASIC on the run's thread and
+    /// waits for the answer, as an override does; if it cannot be asked in
+    /// time, its last answer is given again.
+    public static func handler(function: Double, environment: Double, parameters: Int, result: HandlerResult = .none,
+                               name: String) -> (function: UnsafeRawPointer?, context: UnsafeMutableRawPointer?) {
         guard function != 0 else { return (nil, nil) }
         guard parameters == 0 else {
             basic_rt_fail("\(name) takes a handler with arguments, which a program Studio runs as WebAssembly cannot set yet")
         }
         let call = WasmClosureCall(tableIndex: function, environment: UnsafeMutableRawPointer(bitPattern: UInt(environment)))
-        return (unsafeBitCast(queueHandlerCall, to: UnsafeRawPointer.self), Unmanaged.passRetained(call).toOpaque())
+        let native: UnsafeRawPointer
+        switch result {
+        case .none: native = unsafeBitCast(queueHandlerCall, to: UnsafeRawPointer.self)
+        case .number: native = unsafeBitCast(askNumber, to: UnsafeRawPointer.self)
+        case .boolean: native = unsafeBitCast(askBoolean, to: UnsafeRawPointer.self)
+        case .string: native = unsafeBitCast(askString, to: UnsafeRawPointer.self)
+        }
+        return (native, Unmanaged.passRetained(call).toOpaque())
     }
 
     private static func closureCall(_ closure: Double) -> WasmClosureCall {
@@ -320,6 +351,34 @@ private let queueVoidCall: @convention(c) (UnsafeMutableRawPointer?) -> Void = {
 private let queueHandlerCall: @convention(c) (UnsafeMutableRawPointer?) -> Double = { context in
     WasmCallbacks.enqueue(Unmanaged<WasmClosureCall>.fromOpaque(context!).takeUnretainedValue())
     return 0
+}
+
+/// Providers (BASIC-45): the framework's call waits for BASIC's answer.
+private let askNumber: @convention(c) (UnsafeMutableRawPointer?) -> Double = { context in
+    let call = Unmanaged<WasmClosureCall>.fromOpaque(context!).takeUnretainedValue()
+    if let answer = WasmForward.ask(call.tableIndex, argument: call.environment, shape: .ptrDouble) {
+        call.lastNumber = answer
+    }
+    return call.lastNumber
+}
+
+private let askBoolean: @convention(c) (UnsafeMutableRawPointer?) -> Bool = { context in
+    let call = Unmanaged<WasmClosureCall>.fromOpaque(context!).takeUnretainedValue()
+    if let answer = WasmForward.ask(call.tableIndex, argument: call.environment, shape: .ptrBool) {
+        call.lastNumber = answer
+    }
+    return call.lastNumber != 0
+}
+
+/// The string goes to the shim owned, which releases it once read.
+private let askString: @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? = { context in
+    let call = Unmanaged<WasmClosureCall>.fromOpaque(context!).takeUnretainedValue()
+    if let answer = WasmForward.ask(call.tableIndex, argument: call.environment, shape: .ptrPtr),
+       let text = UnsafeMutableRawPointer(bitPattern: UInt(answer)) {
+        call.lastText = basicRTSwiftStringIn(text)
+        return text
+    }
+    return basicRTSwiftStringOut(call.lastText)
 }
 
 /// The event handler a queued call runs as: the payload is a dictionary

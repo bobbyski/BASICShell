@@ -199,6 +199,46 @@ struct MappedRunTests {
         #expect(output == "laid out 1 level 10\n")
     }
 
+    /// Handlers that answer (P1.2's providers): a toggle's `isOnProvider`,
+    /// a label's `textProvider`, a progress bar's `valueProvider`. ActiveUI
+    /// calls each from `refresh()` on the main thread and needs BASIC's
+    /// answer then: a truth value, a string, a number.
+    static let providerProgram = """
+    IMPORT "ActiveUI"
+    GLOBAL asked = 0
+    FUNCTION Lights() AS BOOLEAN
+      asked = asked + 1
+      RETURN TRUE
+    END FUNCTION
+    DIM T AS AUIToggle
+    T = NEW AUIToggle("Lights", FALSE)
+    T.isOnProvider = FUNCTION() AS BOOLEAN = Lights()
+    T.refresh()
+    PRINT "toggle on: "; T.isOn; ", asked "; asked
+    DIM L AS AUILabel
+    L = NEW AUILabel("before")
+    L.textProvider = FUNCTION() AS STRING = "from " + "BASIC"
+    L.refresh()
+    PRINT "label: "; L.text
+    DIM P AS AUIProgressBar
+    P = NEW AUIProgressBar(0, 1)
+    P.valueProvider = FUNCTION() AS DOUBLE = 0.25
+    P.refresh()
+    PRINT "progress: "; P.value
+    """
+
+    @Test("Handlers that answer: BASIC's truth value, string and number reach ActiveUI")
+    func providers() throws {
+        let (outcome, output) = try Self.run(Self.providerProgram)
+        #expect(outcome == .finished(0), "\(output)")
+        #expect(output == """
+        toggle on: TRUE, asked 1
+        label: from BASIC
+        progress: 0.25
+
+        """)
+    }
+
     /// TUIKit's exhibit (R5.1): an `App` on a headless terminal, a BASIC
     /// closure TUIKit schedules and calls back while BASIC is inside
     /// `App.run` — run on the run's thread while it waits — and the frame

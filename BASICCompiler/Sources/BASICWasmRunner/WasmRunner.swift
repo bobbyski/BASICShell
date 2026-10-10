@@ -461,12 +461,15 @@ private let dispatchPtrDouble: basic_wasm_dispatch_ptr_double = { slot, argument
 public enum WasmCallbacks {
     enum Shape: Int {
         case ptrVoid = 0, ptrPtr = 1, voidPtr = 2, ptrDouble = 3
+        /// A closure answering a truth value: only called from here, never
+        /// made a trampoline.
+        case ptrBool = 4
     }
 
-    nonisolated(unsafe) private static var slots: [[Double]] = [[], [], [], []]
+    nonisolated(unsafe) private static var slots: [[Double]] = [[], [], [], [], []]
 
     static func reset() {
-        slots = [[], [], [], []]
+        slots = [[], [], [], [], []]
     }
 
     /// The trampoline for the module's table slot `tableIndex`, made once per

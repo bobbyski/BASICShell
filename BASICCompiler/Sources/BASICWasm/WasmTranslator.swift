@@ -83,7 +83,8 @@ public enum WasmTranslator {
     public static let runExport = "__run"
     public static let landedTagExport = "landed"
     public static let pollImport = "__poll"
-    public static let callbackExports = ["__callback_ptr_void", "__callback_ptr_ptr", "__callback_void_ptr", "__callback_ptr_double"]
+    public static let callbackExports = ["__callback_ptr_void", "__callback_ptr_ptr", "__callback_void_ptr", "__callback_ptr_double",
+                                         "__callback_ptr_bool"]
 
     /// Translates basicc's LLVM IR into a module.
     public static func translate(llvmIR: String) throws -> WasmProgram {
@@ -545,13 +546,15 @@ private struct ModuleTranslation {
     }
 
     /// The shapes the runtime calls back through: an event handler
-    /// (ptr)→void, an async body (ptr)→ptr, a globals capture ()→ptr, and a
-    /// closure body (ptr)→double.
+    /// (ptr)→void, an async body (ptr)→ptr, a globals capture ()→ptr, a
+    /// closure body (ptr)→double, and a closure answering a truth value
+    /// (ptr)→i1 — a framework's `() -> Bool` provider (BASIC-45).
     static let callbackShapes: [CallbackShape] = [
         CallbackShape(parameters: [.i64], result: nil),
         CallbackShape(parameters: [.i64], result: .i64),
         CallbackShape(parameters: [], result: .i64),
         CallbackShape(parameters: [.i64], result: .f64),
+        CallbackShape(parameters: [.i64], result: .i32),
     ]
 
     /// (slot, arguments…) as doubles → call_indirect → the result as a double.
@@ -565,6 +568,7 @@ private struct ModuleTranslation {
         code.prefixed(3) // i32.trunc_sat_f64_u
         code.callIndirect(type: type(WasmFunctionType(parameters: shape.parameters, results: shape.result.map { [$0] } ?? [])))
         if shape.result == .i64 { code.op(WasmOp.f64ConvertI64U) }
+        if shape.result == .i32 { code.op(WasmOp.f64ConvertI32U) }
         code.end()
         return Self.body(locals: [], code: code)
     }

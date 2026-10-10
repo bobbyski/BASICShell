@@ -131,6 +131,35 @@ struct StudioInterpretedFrameworkTests {
         #expect(compiled == interpreted)
     }
 
+    @Test("Handlers that answer: a toggle's, a label's and a progress bar's providers get BASIC's value")
+    func providers() async throws {
+        let (interpreted, compiled) = try await bothWays("""
+        IMPORT "ActiveUI"
+        GLOBAL asked = 0
+        FUNCTION Lights() AS BOOLEAN
+          asked = asked + 1
+          RETURN TRUE
+        END FUNCTION
+        DIM T AS AUIToggle
+        T = NEW AUIToggle("Lights", FALSE)
+        T.isOnProvider = FUNCTION() AS BOOLEAN = Lights()
+        T.refresh()
+        PRINT "toggle on: "; T.isOn; ", asked "; asked
+        DIM L AS AUILabel
+        L = NEW AUILabel("before")
+        L.textProvider = FUNCTION() AS STRING = "from " + "BASIC"
+        L.refresh()
+        PRINT "label: "; L.text
+        DIM P AS AUIProgressBar
+        P = NEW AUIProgressBar(0, 1)
+        P.valueProvider = FUNCTION() AS DOUBLE = 0.25
+        P.refresh()
+        PRINT "progress: "; P.value
+        """)
+        #expect(interpreted == "toggle on: TRUE, asked 1\nlabel: from BASIC\nprogress: 0.25\n")
+        #expect(compiled == interpreted)
+    }
+
     @Test("A BASIC class inheriting TUIView: TUIKit calls its layoutSubviews")
     func inheritTUIView() async throws {
         let (interpreted, compiled) = try await bothWays("""

@@ -218,6 +218,9 @@ final class StudioInterpretedFrameworks: WasmCallbackHost, @unchecked Sendable {
     private var nextTypeIndex = 1
     /// Overrides: the callable's id to the framework method it overrides.
     private var overrides: [Int: SwiftAPI.Function] = [:]
+    /// Providers: the callable's id to what the framework reads its answer
+    /// as — `Bool`, `String`, or a number.
+    private var providers: [Int: String] = [:]
     /// What the runtime wrote: a shim's error message.
     private var written = ""
 
@@ -437,7 +440,9 @@ final class StudioInterpretedFrameworks: WasmCallbackHost, @unchecked Sendable {
             }
             if let handler = framework.handlerProperties[key] {
                 switch newValue {
-                case .callable(let id): _ = try call(handler.setter, [me, Double(id), 0])
+                case .callable(let id):
+                    if let answers = handler.returns { providers[id] = answers }
+                    _ = try call(handler.setter, [me, Double(id), 0])
                 case .null, .empty: _ = try call(handler.setter, [me, 0, 0])
                 default: throw BASICError.runtime("\(owner).\(property) takes a FUNCTION")
                 }
@@ -673,8 +678,32 @@ final class StudioInterpretedFrameworks: WasmCallbackHost, @unchecked Sendable {
     func callBASIC(_ target: Double, argument: UnsafeMutableRawPointer?) -> Double {
         let id = Int(target)
         guard let method = overrides[id], let frame = argument else {
-            if case .number(let number) = callbacks.call(id, arguments: []) { return number }
-            return 0
+            let answer = callbacks.call(id, arguments: [])
+            // A provider's answer, as its native function reads it: a
+            // string owned by the shim, which releases it; a truth value as
+            // 1 or 0.
+            switch providers[id] {
+            case "String"?:
+                switch answer {
+                case .string(let text): return WasmHostedCalls.newString(text)
+                case .number(let number): return WasmHostedCalls.newString(number == number.rounded() ? String(Int(number)) : String(number))
+                case .boolean(let flag): return WasmHostedCalls.newString(flag ? "TRUE" : "FALSE")
+                default: return WasmHostedCalls.newString("")
+                }
+            case "Bool"?:
+                switch answer {
+                case .boolean(let flag): return flag ? 1 : 0
+                case .number(let number): return number != 0 ? 1 : 0
+                default: return 0
+                }
+            default:
+                switch answer {
+                case .number(let number): return number
+                case .boolean(let flag): return flag ? 1 : 0
+                case .string(let text): return Double(text) ?? 0
+                default: return 0
+                }
+            }
         }
         let frameBits = Double(UInt(bitPattern: frame))
         var arguments: [BASICFrameworkValue] = []

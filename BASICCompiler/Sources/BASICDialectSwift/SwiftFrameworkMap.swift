@@ -26,6 +26,11 @@ public enum SwiftFrameworkMap {
         /// For a handler property's setter (P1.2): how many arguments the
         /// handler takes, read from the shim's own cast of the BASIC body.
         public var handlerArguments: Int?
+        /// For a provider's setter, a handler the framework waits on for an
+        /// answer (BASIC-45): the C type the shim reads the answer as —
+        /// `Swift.Double`, `Swift.Bool`, `UnsafeMutableRawPointer?` (a
+        /// string). Nil for a handler that answers nothing.
+        public var handlerResult: String?
     }
 
     /// Every `@_cdecl` function in `source`, in order.
@@ -58,6 +63,14 @@ public enum SwiftFrameworkMap {
                           let close = matchingParenthesis(in: body, from: body.index(before: start.upperBound)) else { continue }
                     let inside = String(body[start.upperBound..<close])
                     signature.handlerArguments = max(0, splitTopLevel(inside).count - 1)
+                    // The shim keeps the answer (`let r = body(…)`) only
+                    // for a provider; a `() -> Void` handler drops it.
+                    let setter = lines[(index + 2)...].prefix { !$0.hasPrefix("@_cdecl(") }
+                    if setter.contains(where: { $0.contains("let r = body(") }),
+                       let arrow = body[close...].range(of: "-> "),
+                       let end = body[arrow.upperBound...].range(of: ").self") {
+                        signature.handlerResult = String(body[arrow.upperBound..<end.lowerBound])
+                    }
                     break
                 }
             }
@@ -105,7 +118,15 @@ public enum SwiftFrameworkMap {
                     // environment, made a native function and a context.
                     let member = signature.name.replacingOccurrences(of: "basic_set_", with: "")
                         .replacingOccurrences(of: "_", with: ".")
-                    prelude.append("let h\(slot) = WasmCallbacks.handler(function: a[\(slot)], environment: a[\(slot + 1)], parameters: \(signature.handlerArguments ?? 0), name: \"\(member)\")")
+                    // A provider's answer, by the C type its shim reads.
+                    let answers: String
+                    switch signature.handlerResult {
+                    case nil: answers = ""
+                    case "Swift.Bool"?: answers = ", result: .boolean"
+                    case "UnsafeMutableRawPointer?"?: answers = ", result: .string"
+                    default: answers = ", result: .number"
+                    }
+                    prelude.append("let h\(slot) = WasmCallbacks.handler(function: a[\(slot)], environment: a[\(slot + 1)], parameters: \(signature.handlerArguments ?? 0)\(answers), name: \"\(member)\")")
                     arguments.append("h\(slot).function")
                     arguments.append("h\(slot).context")
                     slot += 2
