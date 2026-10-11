@@ -291,18 +291,17 @@ import CoreGraphics
 /// through ActiveUI's canvas and so runs where SwiftyCodeEditor's AppKit text
 /// engine cannot. Driven by the same ``EditorRenderInput``.
 ///
-/// BASIC is colored by CodeEditorCore's `basic` grammar. Breakpoints and the
-/// line a stopped run is on are marks in the gutter (BASIC-46). Not yet
-/// here, and on the Mac: find, and tapping a line number for a breakpoint —
-/// the editor reports no gutter taps yet.
+/// BASIC is colored by CodeEditorCore's `basic` grammar. Breakpoints are
+/// tabs behind the line numbers, and a tap on a number cycles one, as a
+/// click does on the Mac; the line a stopped run is on is banded (BASIC-46,
+/// AUI-12). Not yet here, and on the Mac: find.
 @MainActor
 final class SourceEditorAUI {
     /// The editor, to put in a layout.
     let editor: AUICoreSourceEditor
     /// Called with the whole text after each edit.
     var onTextChange: ((String) -> Void)?
-    /// Called with a 1-based line when its gutter is clicked; not yet on
-    /// iOS, whose editor reports no gutter taps.
+    /// Called with a 1-based line when its number is tapped.
     var onToggleBreakpoint: ((Int) -> Void)?
     /// Called with the 1-based line the caret is on, each time it moves.
     var onCaretLineChange: ((Int) -> Void)?
@@ -312,6 +311,7 @@ final class SourceEditorAUI {
     init() {
         editor = AUICoreSourceEditor(text: "", language: "basic")
         editor.onChange = { [weak self] text in self?.onTextChange?(text) }
+        editor.onLineNumberTap = { [weak self] line in self?.onToggleBreakpoint?(line + 1) }
         editor.onSelectionChange = { [weak self] selection in
             self?.onCaretLineChange?(selection.head.line + 1)
         }
@@ -344,27 +344,21 @@ final class SourceEditorAUI {
         if input.executionLine != old?.executionLine, let line = input.executionLine {
             editor.scroll(toLine: max(0, line - 1))
         }
-        if input.breakpoints != old?.breakpoints || input.breakpointsActive != old?.breakpointsActive
-            || input.executionLine != old?.executionLine {
-            editor.gutterAnnotations = Self.marks(breakpoints: input.breakpoints, active: input.breakpointsActive,
-                                                  executionLine: input.executionLine)
+        if input.breakpoints != old?.breakpoints {
+            // The editor's lines count from 0.
+            var breakpoints: [Int: AUIEditorBreakpoint] = [:]
+            for (line, isEnabled) in input.breakpoints where line > 0 {
+                breakpoints[line - 1] = AUIEditorBreakpoint(isEnabled: isEnabled)
+            }
+            editor.breakpoints = breakpoints
+        }
+        if input.breakpointsActive != old?.breakpointsActive {
+            editor.breakpointsActive = input.breakpointsActive
+        }
+        if input.executionLine != old?.executionLine {
+            editor.stoppedLine = input.executionLine.map { $0 - 1 }
         }
         drawn = input
-    }
-
-    /// A dot for each breakpoint (hollow when turned off, gray while
-    /// breakpoints are switched off), an arrow for the line a stopped run is
-    /// on; keyed by zero-based line, as the editor's gutter is. Two
-    /// characters each: the gutter draws nothing in a one-character column.
-    static func marks(breakpoints: [Int: Bool], active: Bool, executionLine: Int?) -> [Int: AUIGutterAnnotation] {
-        var marks: [Int: AUIGutterAnnotation] = [:]
-        for (line, isEnabled) in breakpoints where line > 0 {
-            marks[line - 1] = AUIGutterAnnotation(isEnabled ? "● " : "○ ", tint: active ? .blue : .gray)
-        }
-        if let line = executionLine, line > 0 {
-            marks[line - 1] = AUIGutterAnnotation(breakpoints[line] != nil ? "▶●" : "▶ ", tint: .green)
-        }
-        return marks
     }
 }
 #endif

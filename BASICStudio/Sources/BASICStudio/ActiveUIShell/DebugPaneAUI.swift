@@ -17,7 +17,8 @@ import Foundation
 /// The Debug inspector for the ActiveUI shell, drawn from ``DebugPaneModel``.
 ///
 /// ```text
-///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line [x] Breakpoints buttons
+///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗                             buttons
+///   [x] Live Line  [x] Breakpoints              switches
 ///   ┌ code: a second editor, read-only ────┐   EditorRenderInput.debugCodeView
 ///   ├════════════ drag ════════════════════┤   DebugPaneModel's height rules
 ///   │ ▾ Tasks                              │   one scroll view of disclosure
@@ -67,8 +68,14 @@ final class DebugPaneAUI {
         liveLine.tooltip = DebugPaneModel.liveLineHelp
         breakpointsActive = AUIToggle(DebugPaneModel.breakpointsTitle) { [weak model] in model?.areBreakpointsActive = $0 }
         breakpointsActive.tooltip = DebugPaneModel.breakpointsHelp
-        controls += [liveLine, breakpointsActive, AUISpacer()]
-        let controlRow = LogPaneAUI.row(controls, spacing: 10)
+        // The switches have a row of their own: beside the buttons they ran
+        // off the edge of an iPad's pane.
+        let buttonRow = LogPaneAUI.row(controls + [AUISpacer()], spacing: 10)
+        let switchRow = LogPaneAUI.row([liveLine, breakpointsActive, AUISpacer()], spacing: 16)
+        let controlRow = AUIStack(.vertical, spacing: 8, alignment: .fill)
+        controlRow.wraps = false
+        controlRow.addChild(buttonRow)
+        controlRow.addChild(switchRow)
         controlRow.padding = AUIEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
 
         codeView.onToggleBreakpoint = { [weak model] line in model?.cycleDebuggerBreakpoint(atSourceLine: line) }
