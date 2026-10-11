@@ -47,7 +47,7 @@ extension StudioModel {
         }
         // Built for the debugger when it will be wanted: a slower build, so
         // not for every run.
-        let debugging = debugCommand != nil || debuggerBreakpoints.contains(where: \.isEnabled) || inspectorPane == .debug
+        let debugging = debugCommand != nil || activeBreakpoints.contains(where: \.isEnabled) || inspectorPane == .debug
         let run = StudioWasmRun(model: self, source: source, name: name, path: path, projectRoot: projectRoot,
                                 directory: programWorkingDirectoryPath,
                                 debugCommand: debugging ? debugCommand ?? .run : nil,
@@ -102,12 +102,7 @@ extension StudioModel {
         debuggerSelectedCallStackFrameIndex = pause.callStack.first?.index
         debuggerGlobalVariables = pause.globals
         appendLog(level: "PAUSE", issuer: .basic, text: "WebAssembly run paused at \(line)")
-        // As the interpreter says it, unless the Debug pane is showing.
-        if inspectorPane != .debug {
-            var message = "Break at \(line)"
-            if let frame = pause.callStack.first, frame.kind != "Program" { message += " in \(frame.kind) \(frame.name)" }
-            appendJITOutput(message + "\n")
-        }
+        showDebuggerForStop()
     }
 
     /// Continue or a step, for a stopped run.
@@ -120,7 +115,7 @@ extension StudioModel {
 
     /// Breakpoints changed: a run in the debugger stops at the new ones.
     func updateWasmRunBreakpoints() {
-        wasmRun?.setBreakpoints(debuggerBreakpoints, programText: programText)
+        wasmRun?.setBreakpoints(activeBreakpoints, programText: programText)
     }
 
     private func clearWasmDebuggerState() {
@@ -185,7 +180,7 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
                 Task { @MainActor in model?.wasmRunPaused(pause, in: self) }
             }
             debuggerStorage = debugger
-            setBreakpoints(model.debuggerBreakpoints, programText: model.programText)
+            setBreakpoints(model.activeBreakpoints, programText: model.programText)
         }
     }
 

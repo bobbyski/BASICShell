@@ -177,10 +177,9 @@ final class StudioActiveUIShell {
 
         buildCommandBar()
         editor.onTextChange = { [weak model] text in model?.programText = text }
-        editor.onCaretLineChange = { [weak self] line in
-            self?.ribbon.caretMoved(to: line)
-            self?.model.editorCaretLine = line
-        }
+        editor.onCaretLineChange = { [weak self] line in self?.ribbon.caretMoved(to: line) }
+        // A click on a line number cycles its breakpoint, as in Xcode.
+        editor.onToggleBreakpoint = { [weak self] line in self?.model.cycleDebuggerBreakpoint(atSourceLine: line) }
         ribbon.text = { [weak model] in model?.programText ?? "" }
         ribbon.onJump = { [weak self] line in
             self?.editor.go(toLine: line)

@@ -95,8 +95,12 @@ final class SourceEditorAUI {
         if input.diagnostics != old?.diagnostics || input.errorLine != old?.errorLine {
             editor.diagnostics = Self.diagnostics(input)
         }
-        if input.breakpointLines != old?.breakpointLines {
-            editor.breakpoints = Dictionary(uniqueKeysWithValues: input.breakpointLines.map { ($0, SwiftyCodeEditor.EditorBreakpointState()) })
+        if input.breakpoints != old?.breakpoints || input.breakpointsActive != old?.breakpointsActive {
+            // Blue when on, hollow when turned off, gray while breakpoints
+            // are switched off: the editor's "unverified" color.
+            editor.breakpoints = input.breakpoints.mapValues {
+                SwiftyCodeEditor.EditorBreakpointState(isEnabled: $0, isVerified: input.breakpointsActive)
+            }
         }
         if input.executionLine != old?.executionLine {
             editor.stoppedLine = input.executionLine
@@ -288,17 +292,17 @@ import CoreGraphics
 /// engine cannot. Driven by the same ``EditorRenderInput``.
 ///
 /// BASIC is colored by CodeEditorCore's `basic` grammar. Breakpoints and the
-/// line a stopped run is on are marks in the gutter; the Debug pane's
-/// Toggle Breakpoint sets one on the caret's line, as a click in the Mac's
-/// gutter does (BASIC-46). Not yet here, and on the Mac: find.
+/// line a stopped run is on are marks in the gutter (BASIC-46). Not yet
+/// here, and on the Mac: find, and tapping a line number for a breakpoint —
+/// the editor reports no gutter taps yet.
 @MainActor
 final class SourceEditorAUI {
     /// The editor, to put in a layout.
     let editor: AUICoreSourceEditor
     /// Called with the whole text after each edit.
     var onTextChange: ((String) -> Void)?
-    /// Called with a 1-based line when its gutter is clicked; the editor
-    /// has no gutter taps on iOS, so the Debug pane's button does it.
+    /// Called with a 1-based line when its gutter is clicked; not yet on
+    /// iOS, whose editor reports no gutter taps.
     var onToggleBreakpoint: ((Int) -> Void)?
     /// Called with the 1-based line the caret is on, each time it moves.
     var onCaretLineChange: ((Int) -> Void)?
@@ -340,22 +344,25 @@ final class SourceEditorAUI {
         if input.executionLine != old?.executionLine, let line = input.executionLine {
             editor.scroll(toLine: max(0, line - 1))
         }
-        if input.breakpointLines != old?.breakpointLines || input.executionLine != old?.executionLine {
-            editor.gutterAnnotations = Self.marks(breakpoints: input.breakpointLines, executionLine: input.executionLine)
+        if input.breakpoints != old?.breakpoints || input.breakpointsActive != old?.breakpointsActive
+            || input.executionLine != old?.executionLine {
+            editor.gutterAnnotations = Self.marks(breakpoints: input.breakpoints, active: input.breakpointsActive,
+                                                  executionLine: input.executionLine)
         }
         drawn = input
     }
 
-    /// A dot for each breakpoint, an arrow for the line a stopped run is
+    /// A dot for each breakpoint (hollow when turned off, gray while
+    /// breakpoints are switched off), an arrow for the line a stopped run is
     /// on; keyed by zero-based line, as the editor's gutter is. Two
     /// characters each: the gutter draws nothing in a one-character column.
-    static func marks(breakpoints: Set<Int>, executionLine: Int?) -> [Int: AUIGutterAnnotation] {
+    static func marks(breakpoints: [Int: Bool], active: Bool, executionLine: Int?) -> [Int: AUIGutterAnnotation] {
         var marks: [Int: AUIGutterAnnotation] = [:]
-        for line in breakpoints where line > 0 {
-            marks[line - 1] = AUIGutterAnnotation("● ", tint: .red)
+        for (line, isEnabled) in breakpoints where line > 0 {
+            marks[line - 1] = AUIGutterAnnotation(isEnabled ? "● " : "○ ", tint: active ? .blue : .gray)
         }
         if let line = executionLine, line > 0 {
-            marks[line - 1] = AUIGutterAnnotation(breakpoints.contains(line) ? "▶●" : "▶ ", tint: .green)
+            marks[line - 1] = AUIGutterAnnotation(breakpoints[line] != nil ? "▶●" : "▶ ", tint: .green)
         }
         return marks
     }

@@ -102,25 +102,71 @@ struct DebugPaneModelProgramTests {
         pane.buttons.filter(\.isEnabled).map(\.command)
     }
 
-    @Test("D7 · Idle: Run, Step, Step Over and Toggle Breakpoint")
+    @Test("D7 · Idle: Run, Step and Step Over")
     func idleButtons() {
         let pane = DebugPaneModel(StudioHarness(program: "PRINT 1").model)
-        #expect(enabled(pane) == [.run, .step, .stepOver, .toggleBreakpoint])
-        #expect(pane.buttons.map(\.title) == ["Run", "Continue", "Pause", "Step", "Step Over", "Step Out", "Toggle Breakpoint", "Cancel Task"])
+        #expect(enabled(pane) == [.run, .step, .stepOver])
+        #expect(pane.buttons.map(\.title) == ["Run", "Continue", "Pause", "Step", "Step Over", "Step Out", "Cancel Task"])
     }
 
-    @Test("BASIC-46 · Toggle Breakpoint sets and clears one on the caret's line: the iPad's editor has no gutter to click")
-    func toggleBreakpointAtCaret() {
+    @Test("A click on a line number cycles: a breakpoint, the breakpoint turned off, none")
+    func cycleBreakpoint() {
         let model = StudioHarness(program: "PRINT 1\nPRINT 2\nPRINT 3").model
-        model.editorCaretLine = 2
-        DebugPaneModel.perform(.toggleBreakpoint, on: model)
+        model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        #expect(model.debuggerBreakpointStates == [2: true])
         #expect(DebugPaneModel(model).breakpointLines == [2])
-        model.editorCaretLine = 3
-        DebugPaneModel.perform(.toggleBreakpoint, on: model)
-        #expect(DebugPaneModel(model).breakpointLines == [2, 3])
-        model.editorCaretLine = 2
-        DebugPaneModel.perform(.toggleBreakpoint, on: model)
-        #expect(DebugPaneModel(model).breakpointLines == [3])
+        model.cycleDebuggerBreakpoint(atSourceLine: 3)
+        model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        #expect(model.debuggerBreakpointStates == [2: false, 3: true])
+        #expect(DebugPaneModel(model).breakpointLines == [3], "one turned off does not stop")
+        model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        #expect(model.debuggerBreakpointStates == [3: true])
+    }
+
+    @Test("The Breakpoints switch: off, breakpoints stay, drawn gray, and stop nothing; it is kept")
+    func breakpointsSwitch() {
+        let model = StudioHarness(program: "PRINT 1\nPRINT 2").model
+        model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        #expect(DebugPaneModel(model).breakpointsActive)
+        #expect(model.activeBreakpoints.count == 1)
+        model.areBreakpointsActive = false
+        #expect(!DebugPaneModel(model).breakpointsActive)
+        #expect(model.activeBreakpoints.isEmpty)
+        #expect(model.debuggerBreakpointStates == [2: true], "still there")
+        #expect(!EditorRenderInput.mainEditor(model).breakpointsActive)
+        #expect(!EditorRenderInput.debugCodeView(model).breakpointsActive)
+        let saved = try? JSONEncoder().encode(StudioSettings(breakpointsActive: false))
+        #expect(saved.flatMap { try? JSONDecoder().decode(StudioSettings.self, from: $0) }?.breakpointsActive == false)
+        #expect((try? JSONDecoder().decode(StudioSettings.self, from: Data("{}".utf8)))?.breakpointsActive == true)
+    }
+
+    @Test("A breakpoint opens the Debug pane when it is closed, and the code view goes to the line")
+    func breakpointOpensDebugger() async throws {
+        let studio = StudioHarness(program: "PRINT 1\nPRINT 2\nPRINT 3")
+        studio.model.inspectorPane = nil
+        studio.model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        try await studio.run()
+        #expect(studio.model.inspectorPane == .debug)
+        #expect(studio.model.isProgramPaused && studio.model.debuggerExecutionLine == 2)
+        #expect(EditorRenderInput.debugCodeView(studio.model).executionLine == 2)
+        studio.model.continueDebugging()
+        try await studio.waitUntilStopped()
+    }
+
+    @Test("With breakpoints switched off, or a breakpoint turned off, a run goes past it")
+    func runPastBreakpoints() async throws {
+        let studio = StudioHarness(program: "PRINT 1\nPRINT 2\nPRINT 3")
+        studio.model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        studio.model.areBreakpointsActive = false
+        try await studio.run()
+        #expect(!studio.model.isProgramPaused)
+        #expect(studio.model.consoleText.contains("3\n"), "\(studio.model.consoleText.suffix(100))")
+
+        studio.model.areBreakpointsActive = true
+        studio.model.cycleDebuggerBreakpoint(atSourceLine: 2)
+        #expect(studio.model.debuggerBreakpointStates == [2: false])
+        try await studio.run()
+        #expect(!studio.model.isProgramPaused)
     }
 
     @Test("D7 D10 D11 · Paused: the program's task is selected, so Cancel Task joins the stepping buttons")
@@ -133,7 +179,7 @@ struct DebugPaneModelProgramTests {
         studio.model.toggleDebuggerBreakpoint(atSourceLine: 2)
         try await studio.run()
         var pane = DebugPaneModel(studio.model)
-        #expect(enabled(pane) == [.run, .continueExecution, .step, .stepOver, .stepOut, .toggleBreakpoint, .cancelTask])
+        #expect(enabled(pane) == [.run, .continueExecution, .step, .stepOver, .stepOut, .cancelTask])
         #expect(pane.executionLine == 2)
         #expect(pane.breakpointLines == [2])
 

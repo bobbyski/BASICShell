@@ -18,7 +18,7 @@ import Foundation
 /// the model through ``perform(_:on:)``.
 ///
 /// ```text
-///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line                buttons, showsLiveExecutionLine
+///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line [x] Breakpoints  buttons, showsLiveExecutionLine, breakpointsActive
 ///   ┌ code (read-only, numbered) ──────────┐   executionLine, breakpointLines
 ///   ├══════════ drag ══════════════════════┤   resolvedCodePaneHeight
 ///   │ ▾ Tasks        #1 Program RUNNING    │   tasks, selectedTask
@@ -31,7 +31,7 @@ struct DebugPaneModel: Equatable {
     // MARK: Buttons
 
     enum Command: CaseIterable, Equatable {
-        case run, continueExecution, pause, step, stepOver, stepOut, toggleBreakpoint, cancelTask
+        case run, continueExecution, pause, step, stepOver, stepOut, cancelTask
     }
 
     struct Button: Equatable {
@@ -156,6 +156,8 @@ struct DebugPaneModel: Equatable {
     static let noSuspendedFramesText = "No suspended frames are captured for this task."
     static let liveLineTitle = "Live Line"
     static let liveLineHelp = "Show the current execution line while the program is running."
+    static let breakpointsTitle = "Breakpoints"
+    static let breakpointsHelp = "Stop at breakpoints. Off, they stay where they are, gray, and a run goes past them."
 
     static let minimumCodeHeight: CGFloat = 160
     static let minimumVariablesHeight: CGFloat = 140
@@ -164,6 +166,8 @@ struct DebugPaneModel: Equatable {
 
     let buttons: [Button]
     let showsLiveExecutionLine: Bool
+    /// Breakpoints switched on: they stop a run.
+    let breakpointsActive: Bool
     /// The code view: the program, read-only, with the paused line marked.
     let programText: String
     let executionLine: Int?
@@ -193,11 +197,11 @@ struct DebugPaneModel: Equatable {
             case .step: Button(command: command, title: "Step", symbol: "arrow.down.to.line", isEnabled: !running)
             case .stepOver: Button(command: command, title: "Step Over", symbol: "arrow.turn.down.right", isEnabled: !running)
             case .stepOut: Button(command: command, title: "Step Out", symbol: "arrow.up.to.line", isEnabled: paused && !running)
-            case .toggleBreakpoint: Button(command: command, title: "Toggle Breakpoint", symbol: "smallcircle.filled.circle", isEnabled: true)
             case .cancelTask: Button(command: command, title: "Cancel Task", symbol: "xmark.circle", isEnabled: canCancel)
             }
         }
         showsLiveExecutionLine = model.showsLiveExecutionLine
+        breakpointsActive = model.areBreakpointsActive
         programText = model.programText
         executionLine = model.debuggerExecutionLine
         errorLine = model.editorErrorLine
@@ -243,7 +247,6 @@ struct DebugPaneModel: Equatable {
         case .step: model.stepDebugging()
         case .stepOver: model.stepOverDebugging()
         case .stepOut: model.stepOutDebugging()
-        case .toggleBreakpoint: model.toggleBreakpointAtCaret()
         case .cancelTask: model.cancelSelectedDebuggerTask()
         }
     }

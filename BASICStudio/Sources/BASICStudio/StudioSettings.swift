@@ -121,6 +121,9 @@ struct StudioSettings: Codable {
     /// What ▶ Run runs a program with on the Mac: the interpreter, or
     /// WebAssembly as on iPad. iPhone and iPad always use WebAssembly.
     var runTarget: StudioRunTarget = .interpreter
+    /// Whether breakpoints stop a run: the Debug pane's Breakpoints switch.
+    /// Off, they stay where they are, gray, and stop nothing.
+    var breakpointsActive = true
 
     /// On by default on iPad and iPhone, where the app's own folder is
     /// otherwise the only place a program can be; off on the Mac, where
@@ -154,6 +157,7 @@ struct StudioSettings: Codable {
         case recentItems
         case compiledRunTarget
         case runTarget
+        case breakpointsActive
     }
 
     init(
@@ -176,7 +180,8 @@ struct StudioSettings: Codable {
         showsGameControls: Bool = true,
         recentItems: StudioRecentItems = StudioRecentItems(),
         compiledRunTarget: StudioCompiledRunTarget = .llvm,
-        runTarget: StudioRunTarget = .interpreter
+        runTarget: StudioRunTarget = .interpreter,
+        breakpointsActive: Bool = true
     ) {
         self.editorTheme = editorTheme
         self.appTheme = appTheme
@@ -198,6 +203,7 @@ struct StudioSettings: Codable {
         self.recentItems = recentItems
         self.compiledRunTarget = compiledRunTarget
         self.runTarget = runTarget
+        self.breakpointsActive = breakpointsActive
     }
 
     init(from decoder: Decoder) throws {
@@ -225,6 +231,7 @@ struct StudioSettings: Codable {
         recentItems = (try? container.decodeIfPresent(StudioRecentItems.self, forKey: .recentItems)) ?? StudioRecentItems()
         compiledRunTarget = (try? container.decodeIfPresent(StudioCompiledRunTarget.self, forKey: .compiledRunTarget)) ?? .llvm
         runTarget = (try? container.decodeIfPresent(StudioRunTarget.self, forKey: .runTarget)) ?? .interpreter
+        breakpointsActive = try container.decodeIfPresent(Bool.self, forKey: .breakpointsActive) ?? true
     }
 }
 

@@ -17,7 +17,7 @@ import Foundation
 /// The Debug inspector for the ActiveUI shell, drawn from ``DebugPaneModel``.
 ///
 /// ```text
-///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⦿ ⊗  [x] Live Line             buttons
+///   ▶ ⏭ ⏸ ⤓ ↪ ⤒ ⊗  [x] Live Line [x] Breakpoints buttons
 ///   ┌ code: a second editor, read-only ────┐   EditorRenderInput.debugCodeView
 ///   ├════════════ drag ════════════════════┤   DebugPaneModel's height rules
 ///   │ ▾ Tasks                              │   one scroll view of disclosure
@@ -37,6 +37,8 @@ final class DebugPaneAUI {
     let root: AUIView
     let buttons: [DebugPaneModel.Command: AUIButton]
     let liveLine: AUIToggle
+    /// Breakpoints on or off, all at once; off, they are drawn gray.
+    let breakpointsActive: AUIToggle
     let codeView = SourceEditorAUI()
     let codeHost: AUIView
     let sections: [DisclosureSection]
@@ -63,11 +65,13 @@ final class DebugPaneAUI {
         self.buttons = buttons
         liveLine = AUIToggle(DebugPaneModel.liveLineTitle) { [weak model] in model?.showsLiveExecutionLine = $0 }
         liveLine.tooltip = DebugPaneModel.liveLineHelp
-        controls += [liveLine, AUISpacer()]
+        breakpointsActive = AUIToggle(DebugPaneModel.breakpointsTitle) { [weak model] in model?.areBreakpointsActive = $0 }
+        breakpointsActive.tooltip = DebugPaneModel.breakpointsHelp
+        controls += [liveLine, breakpointsActive, AUISpacer()]
         let controlRow = LogPaneAUI.row(controls, spacing: 10)
         controlRow.padding = AUIEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
 
-        codeView.onToggleBreakpoint = { [weak model] line in model?.toggleDebuggerBreakpoint(atSourceLine: line) }
+        codeView.onToggleBreakpoint = { [weak model] line in model?.cycleDebuggerBreakpoint(atSourceLine: line) }
         codeHost = codeView.editor
         codeHost.cornerRadius = 6
 
@@ -100,6 +104,7 @@ final class DebugPaneAUI {
             view.isEnabled = button.isEnabled
         }
         liveLine.isOn = pane.showsLiveExecutionLine
+        breakpointsActive.isOn = pane.breakpointsActive
         if pane.tasks != drawn?.tasks || pane.selectedTask != drawn?.selectedTask {
             sections[0].setContent(taskViews(pane))
         }

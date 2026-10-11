@@ -121,7 +121,7 @@ struct StudioWasmRunTests {
         #expect(value("y", model.debuggerSelectedLocalVariables) == "2")
         #expect(value("total", model.debuggerGlobalVariables) == "0")
         #expect(value("name$", model.debuggerGlobalVariables) == "Ada")
-        #expect(model.consoleText.contains("Break at 11 in Function Twice\n"), "\(model.consoleText.suffix(200))")
+        #expect(model.inspectorPane == .debug, "the stop opens the Debug pane")
         let pane = DebugPaneModel(model)
         #expect(pane.button(.continueExecution).isEnabled && pane.button(.stepOut).isEnabled && pane.button(.step).isEnabled)
         #expect(!pane.button(.pause).isEnabled && !pane.button(.run).isEnabled)

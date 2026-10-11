@@ -13,7 +13,7 @@ import Testing
 @Suite("Render inputs", .serialized)
 @MainActor
 struct RenderInputTests {
-    @Test("E4 E5 E8 · The main editor: editable, the gutter as set, diagnostics and find, no debugger marks")
+    @Test("E4 E5 E8 · The main editor: editable, the gutter as set, diagnostics, find and the breakpoints, not the stopped line")
     func mainEditor() {
         let model = StudioHarness(program: "PRINT (").model
         model.isEditorGutterVisible = true
@@ -24,7 +24,7 @@ struct RenderInputTests {
         #expect(!input.isReadOnly && input.showsLineNumbers)
         #expect(!input.diagnostics.isEmpty)
         #expect(input.findRequest == 1 && input.replaceRequest == 0)
-        #expect(input.executionLine == nil && input.breakpointLines.isEmpty)
+        #expect(input.executionLine == nil && input.breakpoints == [1: true] && input.breakpointsActive)
         #expect(input.fontFamily == model.fontFamily && input.fontSize == model.fontSize && input.theme == model.editorTheme)
     }
 
@@ -62,7 +62,7 @@ struct RenderInputTests {
         try await studio.run()
         let input = EditorRenderInput.debugCodeView(studio.model)
         #expect(input.isReadOnly && input.showsLineNumbers)
-        #expect(input.executionLine == 2 && input.breakpointLines == [2])
+        #expect(input.executionLine == 2 && input.breakpoints == [2: true])
         #expect(input.diagnostics.isEmpty && input.findRequest == 0 && input.replaceRequest == 0)
         studio.model.continueDebugging()
         try await studio.waitUntilStopped()

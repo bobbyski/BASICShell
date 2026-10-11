@@ -118,6 +118,17 @@ final class StudioModel: ObservableObject {
             saveSettings()
         }
     }
+    /// Whether breakpoints stop a run: the Debug pane's Breakpoints switch.
+    /// Off, they stay, drawn gray, and stop nothing, as Xcode's are when its
+    /// breakpoints are deactivated.
+    @Published var areBreakpointsActive = true {
+        didSet {
+            guard areBreakpointsActive != oldValue else { return }
+            applyBreakpointsToRun()
+            guard !isLoadingSettings else { return }
+            saveSettings()
+        }
+    }
     /// What actually runs ▶ Run here: the choice on the Mac, WebAssembly on
     /// iPhone and iPad.
     var effectiveRunTarget: StudioRunTarget {
@@ -369,6 +380,7 @@ final class StudioModel: ObservableObject {
         showsGameControls = settings.showsGameControls
         compiledRunTarget = settings.compiledRunTarget
         runTarget = settings.runTarget
+        areBreakpointsActive = settings.breakpointsActive
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         recentItems = settings.recentItems
         if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
@@ -615,6 +627,50 @@ final class StudioModel: ObservableObject {
             .map(\.location.lineNumber))
     }
 
+    /// The editor's breakpoints, by line: true for one that is on, false for
+    /// one turned off.
+    var debuggerBreakpointStates: [Int: Bool] {
+        var states: [Int: Bool] = [:]
+        for breakpoint in debuggerBreakpoints {
+            states[breakpoint.location.lineNumber] = breakpoint.isEnabled
+        }
+        return states
+    }
+
+    /// The breakpoints a run stops at: none while they are switched off.
+    var activeBreakpoints: [BASICBreakpoint] {
+        areBreakpointsActive ? debuggerBreakpoints : []
+    }
+
+    /// A click on a line number: a breakpoint there, then the breakpoint
+    /// turned off, then none — Xcode's cycle.
+    func cycleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
+        if let index = debuggerBreakpoints.firstIndex(where: { $0.location.lineNumber == lineNumber }) {
+            if debuggerBreakpoints[index].isEnabled {
+                debuggerBreakpoints[index].isEnabled = false
+            } else {
+                debuggerBreakpoints.remove(at: index)
+            }
+        } else {
+            debuggerBreakpoints.append(BASICBreakpoint(location: BASICBreakpointLocation(
+                fileName: debuggerFileName, lineNumber: lineNumber, statementNumber: 0)))
+        }
+        applyBreakpointsToRun()
+    }
+
+    /// A run in progress, interpreted or WebAssembly, stops at the
+    /// breakpoints as they are now.
+    func applyBreakpointsToRun() {
+        activeExecutionControl?.setBreakpoints(activeBreakpoints)
+        updateWasmRunBreakpoints()
+    }
+
+    /// A run stopped at a breakpoint or a step: the debugger shows it,
+    /// opened if it was closed; its code view goes to the line.
+    func showDebuggerForStop() {
+        if inspectorPane != .debug { openDebugger() }
+    }
+
     var debuggerSelectedLocalVariables: [BASICVariableSnapshot] {
         guard let index = debuggerSelectedCallStackFrameIndex,
               debuggerFrameLocalVariables.indices.contains(index) else {
@@ -722,15 +778,6 @@ final class StudioModel: ObservableObject {
         session.postGamepadEvent(subtype: subtype, controller: controller, control: control, value: value)
     }
 
-    /// The 1-based line the editor's caret is on.
-    var editorCaretLine = 1
-
-    /// Toggle Breakpoint: on the caret's line. The iPad's editor has no
-    /// gutter to click (BASIC-46).
-    func toggleBreakpointAtCaret() {
-        toggleDebuggerBreakpoint(atSourceLine: editorCaretLine)
-    }
-
     func toggleDebuggerBreakpoint(atSourceLine lineNumber: Int) {
         let location = BASICBreakpointLocation(
             fileName: debuggerFileName,
@@ -742,7 +789,7 @@ final class StudioModel: ObservableObject {
         } else {
             debuggerBreakpoints.append(BASICBreakpoint(location: location))
         }
-        updateWasmRunBreakpoints()
+        applyBreakpointsToRun()
     }
 
     func showFind() {
@@ -1986,7 +2033,7 @@ final class StudioModel: ObservableObject {
             programDrewGraphics = false
         }
         let control = BASICExecutionControl()
-        control.setBreakpoints(debuggerBreakpoints)
+        control.setBreakpoints(activeBreakpoints)
         switch command {
         case .run, .continueExecution:
             control.setMode(.run)
@@ -2074,9 +2121,11 @@ final class StudioModel: ObservableObject {
             case .breakpoint(let location):
                 debuggerExecutionLine = debuggerSourceLineNumber(for: location)
                 paused = true
+                showDebuggerForStop()
             case .stepComplete(let location):
                 debuggerExecutionLine = debuggerSourceLineNumber(for: location)
                 paused = true
+                showDebuggerForStop()
             default:
                 isProgramPaused = false
                 stoppedShort = true
@@ -2366,7 +2415,8 @@ final class StudioModel: ObservableObject {
                 showsGameControls: showsGameControls,
                 recentItems: recentItems,
                 compiledRunTarget: compiledRunTarget,
-                runTarget: runTarget
+                runTarget: runTarget,
+                breakpointsActive: areBreakpointsActive
             )
         )
     }

@@ -21,7 +21,11 @@ struct EditorRenderInput: Equatable {
     var errorLine: Int?
     var diagnostics: [BASICDiagnostic]
     var executionLine: Int?
-    var breakpointLines: Set<Int>
+    /// Breakpoints by line: true for one that is on, false for one turned
+    /// off.
+    var breakpoints: [Int: Bool]
+    /// False when breakpoints are switched off: they are drawn gray.
+    var breakpointsActive = true
     var isReadOnly: Bool
     var fontFamily: String
     var fontSize: Double
@@ -36,8 +40,9 @@ struct EditorRenderInput: Equatable {
     /// One level of indentation.
     var indentUnit = StudioSettings.defaultIndentUnit
 
-    /// The main editor: editable, with the gutter as set, the diagnostics and
-    /// find requests, and no debugger marks.
+    /// The main editor: editable, with the gutter as set, the diagnostics,
+    /// find requests and the breakpoints, which a click on a line number
+    /// cycles; the line a run is stopped on is the Debug pane's to show.
     ///
     /// The gutter's numbers show when the setting is on and the program does
     /// not number its own lines: beside `10 PRINT` they would be a second,
@@ -51,7 +56,8 @@ struct EditorRenderInput: Equatable {
             errorLine: model.editorErrorLine,
             diagnostics: model.editorDiagnostics,
             executionLine: nil,
-            breakpointLines: [],
+            breakpoints: model.debuggerBreakpointStates,
+            breakpointsActive: model.areBreakpointsActive,
             isReadOnly: false,
             fontFamily: model.fontFamily,
             fontSize: model.fontSize,
@@ -89,7 +95,8 @@ struct EditorRenderInput: Equatable {
             errorLine: model.editorErrorLine,
             diagnostics: [],
             executionLine: model.debuggerExecutionLine,
-            breakpointLines: model.debuggerBreakpointLines,
+            breakpoints: model.debuggerBreakpointStates,
+            breakpointsActive: model.areBreakpointsActive,
             isReadOnly: true,
             fontFamily: model.fontFamily,
             fontSize: model.fontSize,
