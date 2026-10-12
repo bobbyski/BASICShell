@@ -263,7 +263,8 @@ private struct ModuleTranslation {
                     locals: translation.debugSlots.map { slot in
                         let name = String(slot.register.dropFirst(2))
                         return debugVariable(name: name, type: slot.type, typeName: types[name], offset: slot.offset)
-                    }))
+                    },
+                    frameSize: translation.frameSize))
             }
         }
 

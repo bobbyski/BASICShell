@@ -129,8 +129,12 @@ public final class WasmDebugger: @unchecked Sendable {
 
     /// A statement is starting. False when the run must end: Stop.
     func statement(_ index: Int, function: Int, frame: Int) -> Bool {
-        // Frames below this one have returned; one at it is this call.
-        while let last = frames.last, last.frame < frame { frames.removeLast() }
+        // Frames below this one have returned, and so have frames this one
+        // covers: a call that returned within the same statement of its
+        // caller, and a bigger frame now over it (BASIC-53). One at this
+        // address is this call.
+        let size = info?.functions[safe: function]?.frameSize ?? 0
+        while let last = frames.last, last.frame != frame, last.frame < frame + size { frames.removeLast() }
         if let last = frames.last, last.frame == frame {
             frames[frames.count - 1] = (function, frame, index)
         } else {

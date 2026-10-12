@@ -42,6 +42,9 @@ public struct WasmDebugInfo: Sendable {
         /// Whether it is the program's own code rather than a FUNCTION or SUB.
         public let isProgram: Bool
         public let locals: [Variable]
+        /// The bytes its frame takes on the stack: a call made after it
+        /// returned may start lower and cover it (BASIC-53).
+        public let frameSize: Int
     }
 
     /// A statement, by the index the hook passes.

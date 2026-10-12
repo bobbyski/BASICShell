@@ -38,6 +38,12 @@ public enum RTDebug {
         guard let pointer else {
             return RTDebugValue(name: name, typeName: typeName, value: typeName == "STRING" ? "" : "NULL")
         }
+        // Only an object the runtime allocated is read as one: anything else
+        // a debugger finds in a pointer's place is shown, never followed
+        // (BASIC-53).
+        guard isHeapObject(pointer) else {
+            return RTDebugValue(name: name, typeName: typeName, value: "<unreadable>")
+        }
         switch Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue() {
         case let string as RTString: return describe(name: name, typeName: typeName, value: .string(string.value))
         case let array as RTArray: return describe(name: name, typeName: typeName, value: .array(array))
@@ -95,6 +101,17 @@ public enum RTDebug {
             }
             return RTDebugValue(name: name, typeName: "DICTIONARY", value: "\(keys.count) entries", children: children)
         }
+    }
+
+    /// Whether `pointer` is the start of a live heap allocation, as every
+    /// runtime object is: aligned, and known to malloc.
+    static func isHeapObject(_ pointer: UnsafeMutableRawPointer) -> Bool {
+        guard UInt(bitPattern: pointer) % 16 == 0 else { return false }
+        #if canImport(Darwin)
+        return malloc_size(pointer) > 0
+        #else
+        return true
+        #endif
     }
 
     /// A declared type's BASIC name.

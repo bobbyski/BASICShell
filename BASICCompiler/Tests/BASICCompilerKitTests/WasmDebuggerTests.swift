@@ -2,6 +2,7 @@
 import BASICCompilerKit
 import BASICCore
 import BASICDialectTraditional
+import BASICRT
 import BASICWasm
 @testable import BASICWasmRunner
 import Foundation
@@ -124,6 +125,48 @@ struct WasmDebuggerTests {
         #expect(stoppedAt.map { (2...4).contains($0) } == true, "\(String(describing: stoppedAt))")
         #expect(outcome == .stopped)
         #expect(output.hasPrefix("Break at "), "\(output)")
+    }
+
+    @Test("BASIC-53 · A call made after another returned in the same statement is not taken for it, though their frames overlap")
+    func returnedFrameIsGone() throws {
+        // Small$ returns; Big, with the bigger frame, starts lower on the
+        // stack and over Small$'s. Small$ was still on the call stack, so
+        // its string was read from Big's doubles (70.0) and the run crashed.
+        let debugger = WasmDebugger()
+        debugger.setBreakpoints([BASICBreakpointLocation(lineNumber: 11)])
+        var pause: WasmDebugger.Pause?
+        let (outcome, output) = try Self.debug("""
+        FUNCTION Small$() AS STRING
+            LOCAL s$ = "hi"
+            RETURN s$
+        END FUNCTION
+        FUNCTION Big() AS DOUBLE
+            LOCAL a = 70
+            LOCAL b = 70
+            LOCAL c = 70
+            LOCAL d = 70
+            LOCAL e = 70
+            RETURN a + b + c + d + e
+        END FUNCTION
+        PRINT Small$(); Big()
+        """, debugger: debugger) { pause = $0; return .run }
+        #expect(outcome == .finished(0))
+        #expect(output == "hi350\n", "\(output)")
+        let stopped = try #require(pause)
+        #expect(stopped.callStack.map(\.name) == ["BIG", "[main]"])
+        #expect(Self.value("E", in: stopped.frameLocals[0]) == "70")
+    }
+
+    @Test("BASIC-53 · What is not a runtime object is shown as unreadable, never followed")
+    func unreadablePointers() {
+        // The crash's own value: the double 70.0 where a pointer should be.
+        let double = UnsafeMutableRawPointer(bitPattern: UInt(0x4051_8000_0000_0000))
+        #expect(RTDebug.describe(name: "S$", typeName: "STRING", pointer: double).value == "<unreadable>")
+        var local = 0.0
+        withUnsafeMutablePointer(to: &local) { stack in
+            let value = RTDebug.describe(name: "A", typeName: "ARRAY", pointer: UnsafeMutableRawPointer(stack))
+            #expect(value.value == "<unreadable>")
+        }
     }
 
     @Test("Strings, arrays, records and dictionaries, as the interpreter's pane shows them")
