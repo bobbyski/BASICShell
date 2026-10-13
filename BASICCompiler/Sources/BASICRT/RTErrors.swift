@@ -33,6 +33,7 @@ enum RTError {
         if message.localizedCaseInsensitiveContains("division by zero") { return 11 }
         if message.localizedCaseInsensitiveContains("type mismatch") { return 13 }
         if message == "Overflow" { return 6 }
+        if message == "Device unavailable" { return 68 }
         return 5
     }
 

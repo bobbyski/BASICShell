@@ -217,13 +217,19 @@ struct BASICSoundSessionTests {
         #expect(clock.now == 2)
     }
 
-    @Test("with no output the timing is kept anyway")
-    func silentButTimed() throws {
+    @Test("with no output SOUND and PLAY are Device unavailable, once their arguments pass; BEEP is still timed")
+    func noOutputIsDeviceUnavailable() throws {
         let clock = BASICVirtualSoundClock()
         let sound = BASICSoundSession(output: nil, clock: clock)
-        try sound.sound(frequency: 32767, ticks: 18.2)
-        #expect(clock.now == 1)
         #expect(!sound.isAudible)
+        #expect(throws: BASICSoundError.deviceUnavailable) { try sound.sound(frequency: 32767, ticks: 18.2) }
+        #expect(throws: BASICSoundError.deviceUnavailable) { try sound.sound(channel: 1, amplitude: -15, pitch: 53, duration: 20) }
+        #expect(throws: BASICSoundError.deviceUnavailable) { try sound.play("CDE") }
+        #expect(throws: BASICSoundError.illegalFunctionCall) { try sound.sound(frequency: 20, ticks: 1) }
+        #expect(throws: BASICSoundError.illegalFunctionCall) { try sound.play("E#") }
+        #expect(clock.now == 0)
+        try sound.beep()
+        #expect(clock.now == 0.25)
     }
 }
 

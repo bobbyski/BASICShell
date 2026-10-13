@@ -507,11 +507,12 @@ public extension BASICVectorTerminalHost {
 
 /// Host capability for `SOUND`, `PLAY` and `BEEP`: somewhere notes are heard.
 ///
-/// A host without it still keeps the notes' timing, silently, and `BEEP`
-/// rings the terminal bell instead (decision B7 in BBC_ADINS.md).
+/// Without it, or without an output, `SOUND` and `PLAY` are the runtime
+/// error Device unavailable, and `BEEP` rings the terminal bell instead
+/// (decision B7 in BBC_ADINS.md).
 public protocol BASICSoundHost: BASICHost {
-    /// Where notes play — usually `BASICToneSynthesizer.shared` — or nil to
-    /// keep their timing without a sound.
+    /// Where notes play — usually `BASICToneSynthesizer.shared` — or nil
+    /// where nothing can be heard.
     var soundOutput: BASICSoundOutput? { get }
 
     /// The clock notes are timed against; nil, the default, for the system

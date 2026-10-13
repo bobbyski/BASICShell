@@ -10,9 +10,9 @@ import Foundation
 /// Where a program's notes are heard.
 ///
 /// A host supplies one when it can make a sound: the tone synthesizer on
-/// macOS, a recorder in a test. Without one, notes are still timed — a
-/// program that uses `SOUND 32767, 18` as a one-second pause pauses for a
-/// second either way (decision B7 in BBC_ADINS.md).
+/// macOS, a recorder in a test. Without one, `SOUND` and `PLAY` are the
+/// runtime error Device unavailable, and `BEEP` rings the terminal bell
+/// (decision B7 in BBC_ADINS.md, Bobby, 2026-10-13).
 public protocol BASICSoundOutput: AnyObject {
     /// Plays `event` on `voice`, starting at `time` on the session's clock.
     func play(_ event: BASICSoundEvent, voice: Int, at time: TimeInterval)
@@ -128,9 +128,17 @@ public final class BASICSoundSession {
     /// the terminal bell.
     public var isAudible: Bool { output != nil }
 
+    /// Device unavailable, where nothing can be heard. Each statement checks
+    /// its arguments first, so a wrong note is the same error everywhere.
+    private func requireOutput() throws {
+        guard output != nil else { throw BASICSoundError.deviceUnavailable }
+    }
+
     /// GW's `SOUND freq, ticks`.
     public func sound(frequency: Double, ticks: Double) throws {
-        guard let events = try BASICSoundCommand.gw(frequency: frequency, ticks: ticks) else {
+        let command = try BASICSoundCommand.gw(frequency: frequency, ticks: ticks)
+        try requireOutput()
+        guard let events = command else {
             silence(voice: 1)
             return
         }
@@ -140,6 +148,7 @@ public final class BASICSoundSession {
     /// BBC's `SOUND channel, amplitude, pitch, duration`.
     public func sound(channel: Double, amplitude: Double, pitch: Double, duration: Double) throws {
         let note = try BASICSoundCommand.bbc(channel: channel, amplitude: amplitude, pitch: pitch, duration: duration)
+        try requireOutput()
         if note.flushes { silence(voice: note.channel) }
         if let event = note.event {
             try enqueue([[event]], voice: note.channel, capacity: Self.channelCapacity, waits: false)
@@ -164,6 +173,7 @@ public final class BASICSoundSession {
     /// or background as the last `MF`/`MB` said.
     public func playMIDI(data: Data, name: String) throws {
         let song = try BASICMIDIFile(data: data)
+        try requireOutput()
         // Said, not left silent: a device with no instruments to play it on.
         if let reason = output?.reasonSongCannotPlay(data) {
             throw BASICSoundError(reason)
@@ -185,6 +195,7 @@ public final class BASICSoundSession {
     /// `PLAY macro$`.
     public func play(_ macro: String, variables: BASICMusicMacro.Variables = .none) throws {
         let notes = try BASICMusicMacro.notes(for: macro, state: &music, variables: variables)
+        try requireOutput()
         try playGW(notes)
     }
 

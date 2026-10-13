@@ -36,7 +36,7 @@ import Foundation
 /// as the system says the interruption or the change is over (BASIC-26).
 ///
 /// There is one per process, started on first use. `shared` is nil where
-/// there is no audio device, and a host then keeps timing without sound.
+/// there is no audio device, where `SOUND` and `PLAY` are Device unavailable.
 public final class BASICToneSynthesizer: BASICSoundOutput, @unchecked Sendable {
     /// The process's synthesizer, or nil when audio cannot start.
     public static let shared: BASICToneSynthesizer? = BASICToneSynthesizer()

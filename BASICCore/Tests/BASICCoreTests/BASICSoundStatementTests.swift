@@ -71,6 +71,22 @@ struct BASICSoundStatementTests {
         #expect(lines == ["ERR5ERL20", "ERR5ERL30"])
     }
 
+    @Test("with nothing to hear them on, SOUND and PLAY are Device unavailable, which ON ERROR traps as ERR 68")
+    func noDeviceIsAnError() {
+        let lines = run("""
+        10 ON ERROR GOTO 100
+        20 SOUND 440, 18.2
+        30 PLAY "CDE"
+        40 SOUND 1, -15, 53, 20
+        50 PRINT "done"
+        60 END
+        100 PRINT "ERR"; ERR; "ERL"; ERL
+        110 RESUME NEXT
+        """).lines
+        #expect(lines == ["ERR68ERL20", "ERR68ERL30", "ERR68ERL40", "done"])
+        #expect(run("SOUND 440, 18.2").lines.joined().contains("Device unavailable"))
+    }
+
     @Test("BEEP rings the terminal bell when nothing can be heard, and plays when something can")
     func beepFallsBackToTheBell() {
         let silent = run("BEEP: PRINT \"after\"")

@@ -47,6 +47,10 @@ public struct BASICSoundError: Error, Equatable, Sendable {
     /// GW-BASIC's answer to an argument out of range.
     public static let illegalFunctionCall = BASICSoundError("Illegal function call")
 
+    /// `SOUND` or `PLAY` where nothing can be heard: GW-BASIC's error 68
+    /// (decision B7, Bobby, 2026-10-13).
+    public static let deviceUnavailable = BASICSoundError("Device unavailable")
+
     /// A wait for sound that the user broke into. The engines turn it into
     /// their own break, not a runtime error.
     public static let interrupted = BASICSoundError("Break")

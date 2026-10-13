@@ -821,6 +821,8 @@ public final class BASICInterpreter {
             return 13
         case .runtime(let message) where message == "Overflow":
             return 6
+        case .runtime(let message) where message == "Device unavailable":
+            return 68
         case .type, .contextualType:
             return 13
         case .missingLine, .missingLabel:
