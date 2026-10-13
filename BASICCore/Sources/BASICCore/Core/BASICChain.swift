@@ -16,7 +16,12 @@ import Foundation
 ///   RUN f$             none                          closed       first line
 ///   RUN f$, R          none                          kept         first line
 ///   LOAD f$, R         none (it is RUN f$, R)        kept         first line
+///   CHAIN MERGE f$     as CHAIN                      kept         start, else first line
 /// ```
+///
+/// `CHAIN MERGE` keeps this program and lays the file's lines over it, as
+/// GW-BASIC's `MERGE` does; its `DELETE range` first removes the lines an
+/// earlier overlay brought in. Both programs need a number on every line.
 ///
 /// Everything else starts fresh: `GOSUB` and `FOR` frames, the `ON ERROR`
 /// trap, `DATA` (a fresh `RESTORE`), and timers and event handlers, which
@@ -28,6 +33,11 @@ import Foundation
 /// doing the chaining — and GW's `.BAS` is assumed when the name has no
 /// extension and nothing matches without one.
 enum BASICChain {
+    /// `CHAIN MERGE`'s overlay: the lines to delete before it is laid down.
+    struct Merge {
+        let delete: LineRange?
+    }
+
     /// The names every `COMMON` in `lines` declares, normalized.
     ///
     /// `COMMON` is declarative: GW allows it anywhere, so a `CHAIN` reads all

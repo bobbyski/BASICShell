@@ -1571,6 +1571,10 @@ public final class BASICInterpreter {
         case .chain(let file, let start, let keepsAll):
             let carried: Set<String>? = keepsAll ? nil : BASICChain.commonNames(in: parsed)
             return try chainProgram(file: file, start: start, carrying: carried, keepsFiles: true, pc: pc, parsed: parsed)
+        case .chainMerge(let file, let start, let keepsAll, let delete):
+            let carried: Set<String>? = keepsAll ? nil : BASICChain.commonNames(in: parsed)
+            return try chainProgram(file: file, start: start, carrying: carried, keepsFiles: true, pc: pc, parsed: parsed,
+                                    merge: BASICChain.Merge(delete: delete))
         case .common:
             return .next
         case .runFile(let file, let keepsFiles):
@@ -4565,7 +4569,9 @@ public final class BASICInterpreter {
     }
 
     /// Runs another program in this one's place (`CHAIN`, `RUN f$`,
-    /// `LOAD f$, R`), keeping what `BASICChain`'s table says survives.
+    /// `LOAD f$, R`), keeping what `BASICChain`'s table says survives. With
+    /// `merge` (`CHAIN MERGE`), the file's lines are laid over this program's
+    /// instead, after its `DELETE` range is removed.
     ///
     /// The handoff happens in place: the next program is prepared into this
     /// interpreter and the flow returned jumps to its first statement, so the
@@ -4576,7 +4582,8 @@ public final class BASICInterpreter {
         carrying names: Set<String>?,
         keepsFiles: Bool,
         pc: Int,
-        parsed: [ParsedLine]
+        parsed: [ParsedLine],
+        merge: BASICChain.Merge? = nil
     ) throws -> Flow {
         guard functionStack.isEmpty else {
             throw BASICError.runtime("CHAIN and RUN cannot hand off from inside a FUNCTION or SUB")
@@ -4598,6 +4605,13 @@ public final class BASICInterpreter {
         }
         let carried = runtime.chainedGlobals(named: names)
         let source = try fileHost.loadTextFile(path: path)
+        var overlay: [ProgramLine] = []
+        if merge != nil {
+            overlay = ProgramLine.parse(source, fileName: path, isImported: false)
+            guard program.isFullyNumbered, overlay.allSatisfy({ $0.number != nil }) else {
+                throw BASICError.runtime("CHAIN MERGE needs a line number on every line of both programs")
+            }
+        }
 
         if !keepsFiles {
             try closeLegacyFile(number: nil)
@@ -4609,8 +4623,15 @@ public final class BASICInterpreter {
         gosubStack.removeAll()
         forStack.removeAll()
         resetErrorTrap()
-        program.loadSource(source, fileName: path)
-        fileState.lastFilePath = path
+        if let merge {
+            if let delete = merge.delete {
+                program.deleteLines(begin: delete.first, end: delete.last)
+            }
+            program.merge(overlay)
+        } else {
+            program.loadSource(source, fileName: path)
+            fileState.lastFilePath = path
+        }
         try prepare(startLine: startLine)
         if case .label(let label) = start {
             guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
@@ -6641,7 +6662,7 @@ public final class BASICInterpreter {
                 arguments.forEach(visit)
             case .play(let expression), .playMIDI(let expression):
                 visit(expression)
-            case .chain(let file, let start, _):
+            case .chain(let file, let start, _), .chainMerge(let file, let start, _, _):
                 visit(file)
                 if case .line(let line) = start { visit(line) }
             case .runFile(let file, _):

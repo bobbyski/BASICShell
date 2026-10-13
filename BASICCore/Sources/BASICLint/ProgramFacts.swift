@@ -221,7 +221,7 @@ public struct ProgramFacts: Sendable {
                 arguments.forEach { note($0, range) }
             case .play(let expression), .playMIDI(let expression):
                 note(expression, range)
-            case .chain(let file, let start, _):
+            case .chain(let file, let start, _), .chainMerge(let file, let start, _, _):
                 note(file, range)
                 if case .line(let line) = start { note(line, range) }
             case .runFile(let file, _):

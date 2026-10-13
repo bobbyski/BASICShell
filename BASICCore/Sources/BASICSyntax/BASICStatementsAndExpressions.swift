@@ -141,6 +141,11 @@ public indirect enum Statement: Equatable {
     /// place. Open files stay open; the variables `COMMON` names survive, or
     /// all of them with `ALL`; everything else starts fresh (BBC_ADINS.md A7).
     case chain(file: Expression, start: ChainStart?, keepsAllVariables: Bool)
+    /// `CHAIN MERGE file$ [, [start] [, [ALL] [, DELETE range]]]`: GW-BASIC's
+    /// overlay. The file's numbered lines are laid over this program's, after
+    /// `DELETE` removes `range` from it. Interpreter only (A7.8 in
+    /// BBC_ADINS.md): basicc refuses it by name.
+    case chainMerge(file: Expression, start: ChainStart?, keepsAllVariables: Bool, delete: LineRange?)
     /// `COMMON a, b$, c()` — the variables a `CHAIN` carries into the next
     /// program. Declarative, as in GW-BASIC: `CHAIN` reads every `COMMON` in
     /// the program, wherever it sits, and executing one does nothing.
@@ -226,6 +231,18 @@ public struct ClosureBodyLine: Equatable {
 public enum ChainStart: Equatable {
     case line(Expression)
     case label(String)
+}
+
+/// Line numbers from `first` to `last`, inclusive, as `DELETE` writes them:
+/// `40`, `40-100`, `-40` (from the start) or `40-` (to the end).
+public struct LineRange: Equatable, Sendable {
+    public let first: Int?
+    public let last: Int?
+
+    public init(first: Int?, last: Int?) {
+        self.first = first
+        self.last = last
+    }
 }
 
 public enum CaseClause: Equatable {

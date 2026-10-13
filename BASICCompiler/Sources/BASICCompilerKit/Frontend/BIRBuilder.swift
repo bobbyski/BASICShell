@@ -1341,6 +1341,11 @@ final class FunctionBuilder {
             throw CompileError("CHAIN runs another program in this one's place, which a compiled program cannot do yet; run it with BASICShell", at: location)
         case .runFile:
             throw CompileError("RUN (or LOAD ..., R) with a file name runs another program, which a compiled program cannot do yet; run it with BASICShell", at: location)
+        // Lays another file's lines over the running program's text, which a
+        // compiled program does not have: interpreter only, by Bobby's
+        // ruling on A7.8 in BBC_ADINS.md.
+        case .chainMerge:
+            throw CompileError("CHAIN MERGE lays another file's lines over the running program, which only the interpreter can do; run it with BASICShell", at: location)
         case .common:
             // Declarative: only a CHAIN reads it, and a compiled program has none.
             break

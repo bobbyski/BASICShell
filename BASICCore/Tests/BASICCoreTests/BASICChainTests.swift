@@ -113,10 +113,56 @@ struct BASICChainTests {
         #expect(output.last?.contains("inside a FUNCTION") == true)
     }
 
-    @Test("CHAIN MERGE and DELETE are refused by name")
-    func mergeAndDeleteAreRefused() {
-        #expect(run("CHAIN MERGE \"next.bas\"", files: [:]).joined().contains("CHAIN MERGE is not supported yet"))
-        #expect(run("CHAIN \"next.bas\", 10, ALL, DELETE 10-20", files: [:]).joined().contains("DELETE is not supported yet"))
+    @Test("CHAIN MERGE lays the file's lines over this program's: a number it has is replaced, a new one goes in order")
+    func mergeOverlaysLines() {
+        let output = run("""
+        10 COMMON A
+        20 A = 5: B = 6
+        30 CHAIN MERGE "overlay.bas", 40
+        40 PRINT "old 40"
+        60 PRINT "sixty"; A; B
+        """, files: ["overlay.bas": "40 PRINT \"new 40\"\n50 PRINT \"fifty\""])
+        // COMMON's A survives; B, as for any CHAIN without ALL, does not.
+        #expect(output == ["new 40", "fifty", "sixty50"])
+    }
+
+    @Test("CHAIN MERGE with ALL keeps every variable, and DELETE clears the last overlay first")
+    func mergeDeletesTheOldOverlay() {
+        let host = TestHost()
+        host.files["one.bas"] = "1000 PRINT \"overlay one\": N = N + 1\n1010 CHAIN MERGE \"two.bas\", 1000, ALL, DELETE 1000-1999"
+        host.files["two.bas"] = "1000 PRINT \"overlay two\"; N\n1020 PRINT \"done\""
+        let session = BASICSession(host: host)
+        session.program.loadSource("10 N = 1\n20 CHAIN MERGE \"one.bas\", 1000, ALL\n30 END")
+        session.submit("RUN")
+        #expect(host.output == ["overlay one", "overlay two2", "done"])
+        // Overlay one's 1010 was deleted, not left behind.
+        #expect(!session.program.listing().contains("1010"))
+        #expect(session.program.listing().contains("20 CHAIN MERGE"))
+    }
+
+    @Test("DELETE takes a line, a range, or a range open at either end")
+    func deleteRanges() {
+        // Lines 20–50 print their number; line 10 merges x.bas, which ends.
+        func linesLeft(_ range: String) -> [Int] {
+            let host = TestHost()
+            host.files["x.bas"] = "60 END"
+            let session = BASICSession(host: host)
+            let rest = (2...5).map { "\($0 * 10) PRINT \($0)" }.joined(separator: "\n")
+            session.program.loadSource("10 CHAIN MERGE \"x.bas\", 60, , DELETE \(range)\n" + rest)
+            session.submit("RUN")
+            return session.program.listing().split(separator: "\n").compactMap { Int($0.prefix { $0.isNumber }) }
+        }
+        #expect(linesLeft("30") == [10, 20, 40, 50, 60])
+        #expect(linesLeft("20-40") == [10, 50, 60])
+        #expect(linesLeft("-30") == [40, 50, 60])
+        #expect(linesLeft("30-") == [10, 20, 60])
+    }
+
+    @Test("CHAIN MERGE needs a number on every line, and DELETE goes only with MERGE")
+    func mergeNeedsNumbers() {
+        #expect(run("CHAIN MERGE \"x.bas\"", files: ["x.bas": "10 PRINT 1"]).joined().contains("needs a line number on every line"))
+        #expect(run("10 CHAIN MERGE \"x.bas\"", files: ["x.bas": "PRINT 1"]).joined().contains("needs a line number on every line"))
+        #expect(run("CHAIN \"next.bas\", 10, ALL, DELETE 10-20", files: [:]).joined().contains("DELETE goes with CHAIN MERGE"))
     }
 
     @Test("a plain LOAD in a program still swaps the stored program and carries on")

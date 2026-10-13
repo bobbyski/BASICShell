@@ -1099,18 +1099,19 @@ public struct Parser {
         return try parseExpression()
     }
 
-    /// `CHAIN file$ [, [start] [, [ALL]]]`, GW-BASIC's grammar. `MERGE` and
-    /// `DELETE` are refused by name: they lay one program's lines over
-    /// another's, and wait for a later phase of BBC_ADINS.md.
+    /// `CHAIN [MERGE] file$ [, [start] [, [ALL] [, DELETE range]]]`, GW-BASIC's
+    /// grammar. `DELETE` goes only with `MERGE`: it clears the old overlay's
+    /// lines before the new one is laid over the program.
     private mutating func parseChain() throws -> Statement {
-        if isWord("MERGE") { throw syntax("CHAIN MERGE is not supported yet") }
+        let merges = matchIdentifier("MERGE")
         let file = try parseExpression()
         var start: ChainStart?
         var keepsAll = false
+        var delete: LineRange?
         if match(.comma) {
             if matchIdentifier("ALL") {
                 keepsAll = true
-            } else if peek != .comma {
+            } else if peek != .comma, !isStatementEnd(after: 0) {
                 if case .identifier(let name) = peek, peekNext == .comma || isStatementEnd(after: 1) {
                     _ = advance()
                     start = .label(name)
@@ -1118,17 +1119,50 @@ public struct Parser {
                     start = .line(try parseExpression())
                 }
             }
+            // `CHAIN MERGE f$, , DELETE r`, with the ALL slot's comma left
+            // out, is read as GW reads it.
+            var reachedDelete = false
             if !keepsAll, match(.comma) {
-                if isWord("DELETE") { throw syntax("CHAIN ... DELETE is not supported yet") }
-                guard matchIdentifier("ALL") else { throw syntax("Expected ALL") }
-                keepsAll = true
+                if matchIdentifier("ALL") {
+                    keepsAll = true
+                } else if isWord("DELETE") {
+                    reachedDelete = true
+                } else if peek != .comma {
+                    throw syntax("Expected ALL")
+                }
             }
-            if match(.comma) {
-                if isWord("DELETE") { throw syntax("CHAIN ... DELETE is not supported yet") }
-                throw syntax("Unexpected input after CHAIN")
+            if reachedDelete || match(.comma) {
+                guard isWord("DELETE") else { throw syntax("Unexpected input after CHAIN") }
+                _ = advance()
+                delete = try parseLineRange()
             }
+            if match(.comma) { throw syntax("Unexpected input after CHAIN") }
         }
+        if merges {
+            return .chainMerge(file: file, start: start, keepsAllVariables: keepsAll, delete: delete)
+        }
+        if delete != nil { throw syntax("DELETE goes with CHAIN MERGE") }
         return .chain(file: file, start: start, keepsAllVariables: keepsAll)
+    }
+
+    /// `DELETE`'s range: `40`, `40-100`, `-40` or `40-`.
+    private mutating func parseLineRange() throws -> LineRange {
+        var first: Int?
+        if case .number(let value) = peek {
+            _ = advance()
+            first = Int(exactly: value)
+        }
+        guard match(.minus) else {
+            guard let first else { throw syntax("DELETE needs a line number") }
+            return LineRange(first: first, last: first)
+        }
+        var last: Int?
+        if case .number(let value) = peek {
+            _ = advance()
+            last = Int(exactly: value)
+        }
+        guard first != nil || last != nil else { throw syntax("DELETE needs a line number") }
+        return LineRange(first: first, last: last)
     }
 
     /// The `R` of `RUN f$, R` and `LOAD f$, R`.

@@ -54,6 +54,24 @@ public final class BASICProgram: @unchecked Sendable {
         }.joined(separator: "\n")
     }
 
+    /// Whether every line has a number, as `CHAIN MERGE` needs.
+    public var isFullyNumbered: Bool { lines.allSatisfy { $0.number != nil } }
+
+    /// Lays `incoming`'s numbered lines over the program, as GW-BASIC's
+    /// `MERGE` does: a line whose number the program has replaces it, and
+    /// the rest go in number order.
+    public func merge(_ incoming: [ProgramLine]) {
+        for line in incoming {
+            guard let number = line.number else { continue }
+            if let index = lines.firstIndex(where: { $0.number == number && !$0.isImported }) {
+                lines[index] = line
+            } else {
+                lines.append(line)
+            }
+        }
+        lines.sort { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
+    }
+
     /// Deletes numbered program lines in the optional inclusive range.
     public func deleteLines(begin: Int? = nil, end: Int? = nil) {
         lines.removeAll { line in

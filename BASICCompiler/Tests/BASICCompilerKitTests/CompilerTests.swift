@@ -210,6 +210,18 @@ struct DiagnosticTests {
         _ = try Compilation(dialect: TraditionalDialect()).bir(source: "COMMON A, B$\nPRINT 1", name: "common")
     }
 
+    @Test func chainMergeIsInterpreterOnly() throws {
+        for source in ["10 CHAIN MERGE \"overlay.bas\"", "10 CHAIN MERGE \"overlay.bas\", 1000, ALL, DELETE 1000-1999"] {
+            do {
+                _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "merge")
+                Issue.record("\(source) compiled")
+            } catch let error as CompileError {
+                #expect(String(describing: error).contains("CHAIN MERGE lays another file's lines"), "\(source): \(error)")
+                #expect(String(describing: error).contains("only the interpreter"), "\(source): \(error)")
+            }
+        }
+    }
+
     /// A program's own ActiveUI windows (ACTIVEUI_TRANSITION.md P6) are made
     /// by BASICStudio's interpreter through its host, which a compiled program
     /// does not have. Refused by name, in each spelling a program can use,
