@@ -2867,7 +2867,7 @@ public final class BASICInterpreter {
         case "LOC":
             // Two languages' LOC in one name. With an open file's number it is
             // GW-BASIC's file position; otherwise it is IBM BASIC 1970's
-            // natural log (GC28-6837-0, Table 2), checked like LOG.
+            // natural log (GC28-6837-0, Table 2), checked like LN.
             try requireArgumentCount(name.name, arguments, 1)
             let value = try evaluate(arguments[0])
             if let number = value.number, number.rounded() == number,
@@ -2875,7 +2875,7 @@ public final class BASICInterpreter {
                legacyFiles[Int(number)]?.isOpen == true {
                 return .number(Double(try legacyFileLocation(handle: Int(number))))
             }
-            return .number(try BASICMathIntrinsic.log.apply(numeric(value)))
+            return .number(try BASICMathIntrinsic.ln.apply(numeric(value)))
         case "MID$":
             return try intrinsicMid(arguments: arguments)
         case "MKI$":

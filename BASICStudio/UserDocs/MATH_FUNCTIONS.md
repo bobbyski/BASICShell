@@ -13,8 +13,9 @@ The numeric library. Every one takes a number and returns a number.
 | `CINT(x)` | `x` rounded to the nearest whole number, halves away from zero. |
 | `SQR(x)` | The square root. |
 | `EXP(x)` | e raised to `x`. |
-| `LOG(x)` | The natural logarithm. |
-| `LCT(x)` | The logarithm base 10. |
+| `LOG(x)` | The logarithm base 10, as in BBC BASIC: `LOG(100)` is 2. Programs from GW-BASIC, QuickBASIC or VB, whose `LOG` is the natural log, want `LN`. |
+| `LN(x)` | The natural logarithm, base e. |
+| `LOG10(x)` | The logarithm base 10, the same as `LOG`. `LCT` is a third name for it. |
 | `LTW(x)` | The logarithm base 2. |
 | `RND()` | A random number from 0 up to but not including 1. |
 | `RANDOMIZE n` | Starts the random sequence from a known place. |

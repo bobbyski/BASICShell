@@ -3,7 +3,8 @@ REM (BBC_ADINS.md A3, A4).
 PRINT PI
 PRINT DEG(PI); " "; DEC(PI / 2); " "; RAD(180)
 PRINT SQR(16); " "; SQR(2); " "; SIN(0); " "; COS(0); " "; TAN(0); " "; ATN(1) * 4
-PRINT LOG(1); " "; LN(1); " "; LOG(EXP(2)); " "; LOG10(1000); " "; LCT(100); " "; LTW(8)
+REM LOG is base 10, as BBC's (B1); LN is the natural log.
+PRINT LOG(1); " "; LN(1); " "; LN(EXP(2)); " "; LOG(100); " "; LOG10(1000); " "; LCT(100); " "; LTW(8)
 PRINT ACS(1); " "; ASN(0); " "; HCS(0); " "; HSN(0); " "; HTN(0); " "; SCN(-5); " "; SEC(0)
 PRINT COT(PI / 4) > 0.99; " "; CSC(PI / 2)
 REM With no file open, LOC is IBM BASIC 1970's natural log.

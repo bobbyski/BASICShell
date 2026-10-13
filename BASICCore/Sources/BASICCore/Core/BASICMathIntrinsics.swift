@@ -25,8 +25,10 @@ import Foundation
 /// (`basic_rt_acs` and the rest, in BASICRT/RTMath.swift), so a function added
 /// here is added there too.
 ///
-/// `LOG` is a natural log, as in every Microsoft BASIC and VB (decision B1);
-/// `LN` is BBC's name for the same thing, and `LOG10` is VB.NET's for base 10.
+/// `LOG` is a base-10 log, as in BBC BASIC, and `LN` the natural log
+/// (decision B1, Bobby, 2026-10-13: the Microsoft BASICs and VB make `LOG`
+/// natural, and programs from them need `LN`). `LOG10` is VB.NET's name for
+/// base 10, and `LCT` IBM BASIC 1970's.
 /// `DEG` is BBC's name for `DEC`, which this language has always had.
 enum BASICMathIntrinsic: String, CaseIterable {
     case acs = "ACS", asn = "ASN", atn = "ATN", cos = "COS", cot = "COT", csc = "CSC"
@@ -51,8 +53,8 @@ enum BASICMathIntrinsic: String, CaseIterable {
         case .hcs: result = Foundation.cosh(x)
         case .hsn: result = Foundation.sinh(x)
         case .htn: result = Foundation.tanh(x)
-        case .log, .ln: result = Foundation.log(try Self.positive(x))
-        case .lct, .log10: result = Foundation.log10(try Self.positive(x))
+        case .ln: result = Foundation.log(try Self.positive(x))
+        case .lct, .log, .log10: result = Foundation.log10(try Self.positive(x))
         case .ltw: result = Foundation.log2(try Self.positive(x))
         case .sin: result = Foundation.sin(x)
         case .sqr:

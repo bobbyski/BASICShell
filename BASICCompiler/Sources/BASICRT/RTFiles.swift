@@ -351,7 +351,7 @@ public func basic_rt_file_lof(_ number: Double) -> Double {
 /// `LOC(n)`: two languages' LOC in one name, as the interpreter reads it.
 /// With an open file's number it is GW-BASIC's position — records completed
 /// for RANDOM files, else the byte position. Otherwise it is IBM BASIC 1970's
-/// natural log (GC28-6837-0, Table 2), with LOG's domain check.
+/// natural log (GC28-6837-0, Table 2), with LN's domain check.
 @_cdecl("basic_rt_file_loc")
 public func basic_rt_file_loc(_ number: Double) -> Double {
     guard number.rounded() == number, abs(number) < RTArithmetic.wholeNumberLimit,

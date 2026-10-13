@@ -2788,9 +2788,12 @@ struct FunctionEmitter {
         case .sqr:
             failIf("fcmp olt double \(a), 0.0", "Illegal function call")
             return checked("call double @llvm.sqrt.f64(double \(a))")
-        case .log, .ln:
+        case .ln:
             failIf("fcmp ole double \(a), 0.0", "Illegal function call")
             return checked("call double @llvm.log.f64(double \(a))")
+        case .log:
+            // Base 10, as BBC's (decision B1).
+            return number("call double @basic_rt_log10(double \(a))")
         case .sin: return checked("call double @llvm.sin.f64(double \(a))")
         case .cos: return checked("call double @llvm.cos.f64(double \(a))")
         case .exp: return checked("call double @llvm.exp.f64(double \(a))")

@@ -285,7 +285,7 @@ FUNCTION SpeedForLean(lean AS DOUBLE) AS DOUBLE
     IF lean <= DEADZONE THEN RETURN 0
     LOCAL t = (lean - DEADZONE) / (1 - DEADZONE)
     IF t > 1 THEN t = 1
-    RETURN EXP(LOG(WALKSPEED) + t * (LOG(RUNSPEED) - LOG(WALKSPEED)))
+    RETURN EXP(LN(WALKSPEED) + t * (LN(RUNSPEED) - LN(WALKSPEED)))
 END FUNCTION
 
 ' A whole number with no space in front, where STR$ leaves one.
