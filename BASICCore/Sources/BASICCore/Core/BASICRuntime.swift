@@ -90,6 +90,8 @@ final class BASICRuntime {
     let eventTraps = BASICEventTraps()
     /// Keys read while looking for a trapped one, waiting for `INKEY$`.
     var keptKeys: [String] = []
+    /// `OPTION EVAL FULL`: `EVAL` may reach outside the program.
+    var evalFullAccess = false
 
     func resetForRun() {
         endFrameworkRun()
@@ -97,6 +99,7 @@ final class BASICRuntime {
         sound = nil
         eventTraps.reset()
         keptKeys.removeAll()
+        evalFullAccess = false
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()
@@ -112,6 +115,49 @@ final class BASICRuntime {
         nextTimerObjectID = 1
         nextHTTPClientObjectID = 1
         clearLastError()
+    }
+
+    /// A compiled program's variable, bound for its `EVAL` (BBC_ADINS.md
+    /// A10.7) as a global of this runtime. A record's shape is registered
+    /// from its fields, since this runtime has no TYPE of its own to read.
+    func bindForEval(_ name: String, value: BASICValue) {
+        registerEvalRecordTypes(in: value)
+        let type: BASICType
+        switch value {
+        case .array(let array): type = array.type
+        case .record(let recordName, _): type = .record(recordName)
+        default: type = inferredType(name: name, value: value)
+        }
+        let variable = VariableName(name: name, column: 0)
+        globals[variable.normalized] = VariableBinding(displayName: name, type: type, value: value)
+    }
+
+    private func registerEvalRecordTypes(in value: BASICValue) {
+        switch value {
+        case .record(let recordName, let fields):
+            guard recordDefinitions[recordName.uppercased()] == nil else { return }
+            recordDefinitions[recordName.uppercased()] = BASICRecordDefinition(
+                displayName: recordName,
+                normalizedName: recordName.uppercased(),
+                fields: fields.keys.sorted().map { field in
+                    let fieldValue = fields[field]!
+                    var dimensions: [Int?] = []
+                    var type: BASICType
+                    switch fieldValue {
+                    case .array(let array): type = array.type; dimensions = array.dimensions.map { $0 }
+                    case .record(let nested, _): type = .record(nested)
+                    default: type = inferredType(name: field, value: fieldValue)
+                    }
+                    return BASICRecordField(displayName: field, normalizedName: field.uppercased(), type: type, fixedLength: nil,
+                                            arrayDimensions: dimensions, json: nil, database: nil, metadata: [:], defaultValue: nil)
+                }
+            )
+            fields.values.forEach(registerEvalRecordTypes)
+        case .array(let array):
+            array.values.first.map(registerEvalRecordTypes)
+        default:
+            break
+        }
     }
 
     /// The global variables a `CHAIN` carries into the next program: the ones

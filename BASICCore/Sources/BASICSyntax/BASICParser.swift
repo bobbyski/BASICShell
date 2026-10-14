@@ -1709,6 +1709,11 @@ public struct Parser {
             guard match(.minus), matchIdentifier("KEYS") else { throw syntax("Expected AIBASIC-KEYS") }
             return .optionKeyMode(.aibasic)
         }
+        if matchIdentifier("EVAL") {
+            if matchIdentifier("FULL") { return .optionEval(fullAccess: true) }
+            if matchIdentifier("PURE") { return .optionEval(fullAccess: false) }
+            throw syntax("Expected FULL or PURE after OPTION EVAL")
+        }
         if matchIdentifier("MOUSE") {
             return .optionEventInput(type: "MOUSE", mode: try parseEventInputMode(optionName: "MOUSE"))
         }

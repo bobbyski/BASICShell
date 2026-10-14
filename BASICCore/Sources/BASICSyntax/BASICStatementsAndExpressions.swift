@@ -112,6 +112,9 @@ public indirect enum Statement: Equatable {
     case dim(AssignmentKind, VariableName, [Expression?], BASICType?)
     case optionLetMode(LetMode)
     case optionKeyMode(BASICKeyMode)
+    /// `OPTION EVAL FULL` (true) or `OPTION EVAL PURE` (false): whether
+    /// `EVAL` may reach outside the program (B8 in BBC_ADINS.md).
+    case optionEval(fullAccess: Bool)
     case optionEventInput(type: String, mode: BASICEventInputMode)
     case optionShellMode(Bool)
     case optionStringSubstitution(Bool)

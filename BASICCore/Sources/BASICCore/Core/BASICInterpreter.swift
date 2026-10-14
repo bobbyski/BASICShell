@@ -45,6 +45,14 @@ public final class BASICInterpreter {
     /// Whether GW-BASIC's event traps are polled as lines start: set for a
     /// program's run, as `locatesRuntimeErrors` is, and never for direct mode.
     var trapsEvents = false
+    /// A compiled program's FUNCTIONs, for its `EVAL`: called by normalized
+    /// name with the arguments' values, nil for a name it has no function by.
+    var externalFunction: ((String, [BASICValue]) throws -> BASICValue?)?
+
+    /// An `EVAL` string's expression, evaluated here (``BASICCompiledEval``).
+    func evaluateForEval(_ expression: Expression) throws -> BASICValue {
+        try evaluate(expression)
+    }
 
     /// The statement a runtime error began at, recorded by the innermost
     /// statement loop it passes through, so a failure deep in a function is
@@ -789,7 +797,7 @@ public final class BASICInterpreter {
     @discardableResult
     private func handleRuntimeError(_ error: BASICError, fault: ParsedLine, faultPC: Int) throws -> Bool {
         runtime.setLastError(
-            number: errorNumber(for: error),
+            number: Self.errorNumber(for: error),
             line: fault.displayLineNumber,
             message: error.description
         )
@@ -817,10 +825,12 @@ public final class BASICInterpreter {
         }
     }
 
-    private func errorNumber(for error: BASICError) -> Int {
+    static func errorNumber(for error: BASICError) -> Int {
         switch error {
         case .numberedRuntime(let number):
             return number
+        case .runtime(let message) where message.hasPrefix(BASICEval.syntaxErrorPrefix):
+            return 2
         case .runtime(let message) where message.localizedCaseInsensitiveContains("division by zero"):
             return 11
         case .runtime(let message) where message.localizedCaseInsensitiveContains("type mismatch"):
@@ -1495,6 +1505,9 @@ public final class BASICInterpreter {
             return .next
         case .optionLetMode(let mode):
             runtime.letMode = mode
+            return .next
+        case .optionEval(let fullAccess):
+            runtime.evalFullAccess = fullAccess
             return .next
         case .optionKeyMode(let mode):
             runtime.keyMode = mode
@@ -3135,6 +3148,14 @@ public final class BASICInterpreter {
                 return .number(Double(text.utf8.count))
             }
             return .task(handle)
+        case "EVAL":
+            // In the current scope, by the interpreter's own rules (B8).
+            try requireArgumentCount(name.name, arguments, 1)
+            let expression = try BASICEval.parse(try string(arguments[0]))
+            if let reason = BASICEval.refusal(of: expression, fullAccess: runtime.evalFullAccess) {
+                throw BASICError.runtime(reason)
+            }
+            return try evaluate(expression)
         case "TOJSONSTRING":
             try requireArgumentCount(name.name, arguments, 2)
             let value = try evaluate(arguments[0])
@@ -3177,6 +3198,9 @@ public final class BASICInterpreter {
             return try callIntrinsicFunction(name: name, arguments: arguments)
         }
         guard let definition = functionDefinitions[name.normalized] else {
+            if let externalFunction, let result = try externalFunction(name.normalized, arguments.map(evaluate)) {
+                return result
+            }
             throw BASICError.runtime("Unknown function \(name.name)")
         }
         return try callFunction(definition: definition, receiver: nil, receiverClassName: nil, arguments: arguments, allowVoid: allowVoid).value
@@ -6246,6 +6270,12 @@ public final class BASICInterpreter {
             }
             if case .closure(let closure) = runtime.value(for: name) {
                 return try closure.call(arguments: arguments.map(evaluate), interpreter: self)
+            }
+            // A compiled program's FUNCTION, for its EVAL, ahead of GW's
+            // auto-dimensioned array of the same name.
+            if let externalFunction, !runtime.hasVariable(name),
+               let result = try externalFunction(name.normalized, arguments.map(evaluate)) {
+                return result
             }
             return try runtime.value(for: VariableReference(base: name, indexes: arguments), indexes: try arguments.map(evaluate), accessClassName: currentClassContext)
         case .methodCall(let receiver, let method, let arguments):

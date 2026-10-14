@@ -119,6 +119,14 @@ public final class SemanticModel {
         eventHandlers.insert(name)
     }
 
+    /// Whether the program calls `EVAL`, so its FUNCTIONs get trampolines an
+    /// `EVAL` string can call (BBC_ADINS.md A10.7).
+    public internal(set) var usesEval = false
+
+    func noteEval() {
+        usesEval = true
+    }
+
     /// Whether `OPTION LOCAL-LET` is in effect for the program.
     public internal(set) var usesLocalLet = false
     /// Every variable named in a FIELD statement, normalized, in order.

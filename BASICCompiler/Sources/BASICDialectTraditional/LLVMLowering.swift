@@ -128,6 +128,9 @@ struct LLVMLowering {
         if module.functions.contains(where: \.isEventHandler) {
             functions.append(renderEventSupport())
         }
+        if !module.evalFunctions.isEmpty {
+            functions.append(renderEvalSupport())
+        }
         text += constants.definitions.joined(separator: "\n") + "\n\n"
         text += functions.joined(separator: "\n\n")
         let definitions = objectModel.definitions(for: module)
@@ -180,6 +183,63 @@ struct LLVMLowering {
             }
             for (value, release) in owned { out.emit("call void @\(release)(ptr \(value))") }
             out.emit("ret void")
+            out.raw("}")
+            out.raw("")
+        }
+        return out.lines.joined(separator: "\n")
+    }
+
+    /// A trampoline per FUNCTION an `EVAL` string may call (BBC_ADINS.md
+    /// A10.7): it takes the arguments boxed in an array, unboxes each to its
+    /// parameter's type, calls the function, and boxes what it returns. An
+    /// error in the function is the program's, as from any call.
+    private func renderEvalSupport() -> String {
+        var out = LLVMText()
+        var counter = 0
+        func temp() -> String { counter += 1; return "%v\(counter)" }
+        for function in module.functions where module.evalFunctions.contains(function.name) {
+            out.raw("define ptr @\"V.\(function.name)\"(ptr %args) {")
+            out.label("entry")
+            var arguments: [String] = []
+            var owned: [(String, String)] = []
+            for (index, parameter) in function.parameters.enumerated() {
+                let boxed = temp()
+                out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 \(index))")
+                owned.append((boxed, "basic_rt_value_release"))
+                let value = temp()
+                switch parameter.type {
+                case .number, .void: out.emit("\(value) = call double @basic_rt_value_number(ptr \(boxed), ptr null)")
+                case .boolean: out.emit("\(value) = call i1 @basic_rt_value_boolean(ptr \(boxed), ptr null)")
+                case .string: out.emit("\(value) = call ptr @basic_rt_value_string(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_string_release"))
+                case .composite(let name): out.emit("\(value) = call ptr @\(objectModel.symbols.unbox)(ptr \(boxed), i64 \(module.typeIndex(of: name) ?? -1), ptr null)"); owned.append((value, objectModel.symbols.release))
+                case .dictionary: out.emit("\(value) = call ptr @basic_rt_value_dictionary(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_dictionary_release"))
+                case .closure: out.emit("\(value) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)"); owned.append((value, "basic_rt_closure_release"))
+                case .exact(let kind): out.emit("\(value) = call ptr @basic_rt_exact_coerce(ptr \(boxed), i64 \(basicExactKind(kind)), ptr null)"); owned.append((value, "basic_rt_value_release"))
+                case .variant, .system, .array: out.emit("\(value) = call ptr @basic_rt_value_copy(ptr \(boxed))"); owned.append((value, "basic_rt_value_release"))
+                }
+                arguments.append("\(FunctionEmitter.llvmType(of: parameter)) \(value)")
+            }
+            let call = "call \(FunctionEmitter.llvmType(function.returnType)) @\"F.\(function.name)\"(\(arguments.joined(separator: ", ")))"
+            var result = temp()
+            if function.returnType == .void {
+                out.emit(call)
+                out.emit("\(result) = call ptr @basic_rt_value_empty()")
+            } else {
+                let value = temp()
+                out.emit("\(value) = \(call)")
+                switch function.returnType {
+                case .number: out.emit("\(result) = call ptr @basic_rt_value_from_number(double \(value))")
+                case .string: out.emit("\(result) = call ptr @basic_rt_value_from_string(ptr \(value))"); owned.append((value, "basic_rt_string_release"))
+                case .boolean: out.emit("\(result) = call ptr @basic_rt_value_from_boolean(i1 \(value))")
+                case .composite: out.emit("\(result) = call ptr @\(objectModel.symbols.box)(ptr \(value))"); owned.append((value, objectModel.symbols.release))
+                case .dictionary: out.emit("\(result) = call ptr @basic_rt_value_from_dictionary(ptr \(value))"); owned.append((value, "basic_rt_dictionary_release"))
+                case .closure: out.emit("\(result) = call ptr @basic_rt_value_from_closure(ptr \(value))"); owned.append((value, "basic_rt_closure_release"))
+                case .variant, .system, .exact: result = value
+                case .void, .array: out.emit("\(result) = call ptr @basic_rt_value_empty()")
+                }
+            }
+            for (value, release) in owned { out.emit("call void @\(release)(ptr \(value))") }
+            out.emit("ret ptr \(result)")
             out.raw("}")
             out.raw("")
         }
@@ -438,6 +498,11 @@ struct LLVMLowering {
     declare void @basic_rt_fail_missing(ptr)
     declare void @basic_rt_gosub_push(i64)
     declare i64 @basic_rt_trap_poll(i64)
+    declare void @basic_rt_eval_begin()
+    declare void @basic_rt_eval_bind(ptr, ptr)
+    declare void @basic_rt_eval_function(ptr, ptr)
+    declare void @basic_rt_eval_option(double)
+    declare ptr @basic_rt_eval(ptr)
     declare void @basic_rt_trap_set(double, double, double, double)
     declare void @basic_rt_trap_state(double, double, double)
     declare void @basic_rt_key_define(double, ptr)
@@ -947,6 +1012,9 @@ struct FunctionEmitter {
             }
             for handler in module.namedHandlers {
                 out.emit("call void @basic_rt_handler_register(ptr \(constants.constant(handler.name)), ptr @\"E.\(handler.function)\")")
+            }
+            for function in module.evalFunctions {
+                out.emit("call void @basic_rt_eval_function(ptr \(constants.constant(function)), ptr @\"V.\(function)\")")
             }
         }
         if usesGosub {

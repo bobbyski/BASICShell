@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 294 entry points, by name.
+    /// 299 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -96,6 +96,11 @@ enum RTEntryPoints {
         "basic_rt_err": RTEntryPoint(arity: 0) { a in basic_rt_err() },
         "basic_rt_error_handler": RTEntryPoint(arity: 0) { a in Double(basic_rt_error_handler()) },
         "basic_rt_error_install": RTEntryPoint(arity: 1) { a in basic_rt_error_install(unsafeBitCast(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), to: UnsafeMutableRawPointer.self)); return 0 },
+        "basic_rt_eval": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_eval(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
+        "basic_rt_eval_begin": RTEntryPoint(arity: 0) { a in basic_rt_eval_begin(); return 0 },
+        "basic_rt_eval_bind": RTEntryPoint(arity: 2) { a in basic_rt_eval_bind(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1]))); return 0 },
+        "basic_rt_eval_function": RTEntryPoint(arity: 2) { a in basic_rt_eval_function(unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[0])), to: UnsafePointer<CChar>.self), WasmCallbacks.trampoline(.ptrPtr, forTableIndex: a[1])); return 0 },
+        "basic_rt_eval_option": RTEntryPoint(arity: 1) { a in basic_rt_eval_option(a[0]); return 0 },
         "basic_rt_event_post": RTEntryPoint(arity: 3) { a in basic_rt_event_post(unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[0])), to: UnsafePointer<CChar>.self), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[1])), to: UnsafePointer<CChar>.self), UnsafeMutableRawPointer(bitPattern: UInt(a[2]))); return 0 },
         "basic_rt_event_register": RTEntryPoint(arity: 4) { a in basic_rt_event_register(unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[0])), to: UnsafePointer<CChar>.self), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[1])), to: UnsafePointer<CChar>.self), WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[2]), Int(a[3])); return 0 },
         "basic_rt_events_drain": RTEntryPoint(arity: 1) { a in basic_rt_events_drain(Int(a[0])); return 0 },

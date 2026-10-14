@@ -57,6 +57,8 @@ public enum BASICKeywords {
         // VB.NET's for a base-10 one. PI is not here: it is a variable the
         // interpreter seeds, so a program that assigns PI keeps its own.
         "DEG", "LN", "LOG10",
+        // EVAL(s$): an expression in a string (BBC add-ins A10, ruling B8).
+        "EVAL",
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
         // KEYDOWN(k$): whether a key is held now, for games (BASICKeyState).
         "KEYDOWN",
@@ -231,7 +233,7 @@ public enum BASICKeywords {
     public static let options: Set<String> = [
         "AIBASIC", "ALL", "AUTO", "CAPTURES", "ERR", "ERRORS", "EXCLUDE", "EXITVAR",
         "GAMEPAD", "GRAPHICS", "HIDE", "IBM", "KEEP", "KEYS", "LENGTH", "MAX", "MIDI",
-        "MODE", "MOUSE", "OFF", "ONLY", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT",
+        "MODE", "MOUSE", "OFF", "ONLY", "FULL", "PURE", "SEEK", "SHELLMODE", "STRINGSUB", "TIMEOUT",
         "TROFF", "TRON", "TTY", "USING",
     ]
 

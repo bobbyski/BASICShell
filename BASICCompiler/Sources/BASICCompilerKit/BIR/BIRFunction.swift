@@ -539,6 +539,10 @@ public struct BIRModule: Sendable {
     /// a string could reach.
     public var namedHandlers: [(name: String, function: String)] = []
 
+    /// The FUNCTIONs an `EVAL` string may call, by normalized name, when the
+    /// program calls `EVAL`: each gets a trampoline, `V.NAME`.
+    public var evalFunctions: [String] = []
+
     /// The display name a task shows for an async function (`<TASK #n Name>`).
     public var asyncDisplayNames: [String: String] = [:]
 

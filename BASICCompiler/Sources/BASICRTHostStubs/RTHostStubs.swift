@@ -108,3 +108,9 @@ public func basic_rt_host_db_new(_ typeName: UnsafePointer<CChar>, _ count: Int,
 public func basic_rt_host_db_call(_ typeName: UnsafePointer<CChar>, _ id: Int, _ method: UnsafePointer<CChar>, _ count: Int, _ arguments: UnsafePointer<UnsafeMutableRawPointer?>) -> UnsafeMutableRawPointer {
     rtStubFail("Databases are not supported by this host")
 }
+
+/// EVAL parses and evaluates with BASICCore, which this runtime has none of.
+@_cdecl("basic_rt_host_eval")
+public func basic_rt_host_eval(_ text: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    rtStubFail("EVAL is not supported by this host: it needs BASICCore, which a package's stub runtime leaves out")
+}

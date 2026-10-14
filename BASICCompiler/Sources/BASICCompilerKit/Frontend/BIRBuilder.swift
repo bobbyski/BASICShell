@@ -146,6 +146,14 @@ public struct BIRBuilder {
                 module.namedHandlers.append((name: model.functions[name]?.displayName ?? name, function: name))
             }
         }
+        if model.usesEval {
+            // Every FUNCTION a string could name, but not one that takes an
+            // array: its trampoline would need the array itself.
+            module.evalFunctions = module.functions.filter { function in
+                model.functions[function.name] != nil && !function.isAsync && !function.isExternal
+                    && function.parameters.allSatisfy { $0.rank == nil }
+            }.map(\.name)
+        }
         module.functions.append(contentsOf: closures.functions)
         module.types.append(contentsOf: closures.environmentTypes)
         // A payload ENUM's print table rides in its record type's descriptor
@@ -1024,6 +1032,8 @@ final class FunctionBuilder {
             break  // Resolved by the analyzer for the whole program.
         case .optionKeyMode(let mode):
             emit(.keyMode(mode == .ibm ? 1 : 0))
+        case .optionEval(let fullAccess):
+            emit(.discard(.hostCall("basic_rt_eval_option", [.number(fullAccess ? 1 : 0)], returns: .void)))
         case .optionShellMode, .optionEventInput, .optionGraphicsOnStop:
             // Host-facing options: key encoding for INKEY$, shell-mode
             // command dispatch, mouse/gamepad gating, and what the shell does
@@ -2622,6 +2632,24 @@ final class FunctionBuilder {
                 format: try lowerExpression(arguments[0], expecting: .string, context: "USING$"),
                 values: try arguments.dropFirst().map { try lowerExpression($0) }
             )
+        }
+        if name.normalized == "EVAL" {
+            // The string first, as the interpreter evaluates it first; then
+            // every variable in scope, bound by name (A10.7).
+            guard arguments.count == 1 else { throw CompileError("EVAL expects 1 argument", at: location) }
+            model.noteEval()
+            let text = hidden("eval", .string)
+            emit(.store(text, try lowerExpression(arguments[0], expecting: .string, context: "EVAL")))
+            emit(.discard(.hostCall("basic_rt_eval_begin", [], returns: .void)))
+            var bound: Set<String> = []
+            let names = (functionName.flatMap { model.localOrder[$0] } ?? []) + model.globalOrder + SemanticModel.seededNumbers.keys.sorted()
+            for name in names where bound.insert(name).inserted {
+                guard model.info(name, in: functionName) != nil || SemanticModel.seededNumbers[name] != nil,
+                      let value = try? lowerExpression(.variable(VariableName(name: name, column: 0))),
+                      value.type != .void else { continue }
+                emit(.discard(.hostCall("basic_rt_eval_bind", [.string(name), boxed(value)], returns: .void)))
+            }
+            return .hostCall("basic_rt_eval", [.load(text)], returns: .variant)
         }
         if name.normalized == "TOJSONSTRING" {
             guard arguments.count == 2 else { throw CompileError("\(name.name) expects 2 arguments", at: location) }

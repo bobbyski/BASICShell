@@ -34,6 +34,8 @@ enum RTError {
         if message.localizedCaseInsensitiveContains("type mismatch") { return 13 }
         if message == "Overflow" { return 6 }
         if message == "Device unavailable" { return 68 }
+        // A string EVAL cannot parse: GW's Syntax error.
+        if message.hasPrefix("Syntax error in EVAL") { return 2 }
         return 5
     }
 
