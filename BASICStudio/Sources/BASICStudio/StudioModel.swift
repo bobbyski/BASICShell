@@ -1840,9 +1840,9 @@ final class StudioModel: ObservableObject {
         appendConsole(text)
     }
 
-    /// Echoes `JIT` at the prompt, as Run echoes `RUN`.
-    func echoConsoleCommandForJIT() {
-        echoConsoleCommand("JIT")
+    /// A path typed at the console, resolved as `LOAD` resolves one.
+    func consolePath(_ path: String) -> String {
+        expandedPath(path)
     }
 
     /// Echoes a command at the prompt, for runs made outside this file.
@@ -1980,6 +1980,13 @@ final class StudioModel: ObservableObject {
             return
         }
         #endif
+
+        // `JIT`, read as BASICShell reads it: what ⚡ does (JIT.md). The
+        // session has no JIT of its own, since running basicc is a host's.
+        if let jit = BASICJIT.command(trimmed) {
+            runTypedJIT(jit)
+            return
+        }
 
         if let startLine = runStartLine(from: trimmed) {
             startProgramRun(startLine: startLine, command: .run)

@@ -25,8 +25,9 @@ import Darwin
 /// prime directive wants them.
 ///
 /// There is no debugger here. A compiled program has no interpreter to step,
-/// and DWARF is not emitted yet, so a host that offers `JIT` alongside a
-/// debugger has to say that breakpoints do not apply to it.
+/// and no host reads the DWARF basicc writes (only `lldb` does), so a host
+/// that offers `JIT` alongside a debugger has to say that breakpoints do not
+/// apply to it.
 public enum BASICJIT {
 
     /// What a compile produced.
@@ -137,6 +138,43 @@ public enum BASICJIT {
         }
         return .built(binary: binary)
         #endif
+    }
+
+    /// A typed `JIT`, as BASICShell's prompt and BASICStudio's console both
+    /// read it.
+    ///
+    /// ```text
+    ///   JIT                     the loaded program
+    ///   JIT SWIFT               … compiled with the Rev 2 dialect; TRADITIONAL names the default
+    ///   JIT "file.bas"          that file, leaving the loaded program alone
+    /// ```
+    public struct Command: Equatable, Sendable {
+        /// `swift` or `traditional`, when the command names one.
+        public let dialect: String?
+        /// The file to compile instead of the loaded program, as typed.
+        public let file: String?
+
+        public init(dialect: String? = nil, file: String? = nil) {
+            self.dialect = dialect
+            self.file = file
+        }
+    }
+
+    /// `input` as a `JIT` command, or nil when it is not one.
+    public static func command(_ input: String) -> Command? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let uppercased = trimmed.uppercased()
+        guard uppercased == "JIT" || uppercased.hasPrefix("JIT ") else { return nil }
+        var rest = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+        // Both compilers are supported permanently, so naming one is a
+        // choice for this run, never a migration.
+        var dialect: String?
+        for name in ["SWIFT", "TRADITIONAL"] where rest.uppercased() == name || rest.uppercased().hasPrefix(name + " ") {
+            dialect = name.lowercased()
+            rest = String(rest.dropFirst(name.count)).trimmingCharacters(in: .whitespaces)
+        }
+        let file = rest.isEmpty ? nil : rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        return Command(dialect: dialect, file: file)
     }
 
     /// The text of a program, as a file the compiler can read.

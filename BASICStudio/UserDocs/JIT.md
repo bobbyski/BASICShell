@@ -18,17 +18,17 @@ Give it a file name to compile that file without disturbing the program you have
 jit "mathbench.bas"
 ```
 
-In BASICStudio the same thing is on the Run menu as **JIT** (Cmd-Shift-R).
+In BASICStudio, type it at the console, as in the shell, or use the toolbar's ⚡ or the Run menu's **JIT** (Cmd-Shift-R). Settings ▸ "⚡ builds with" chooses what Studio builds: LLVM, a native program (the Mac's default), or WebAssembly, run inside Studio, which is the only choice on iPhone and iPad. `JIT SWIFT` needs LLVM.
 
 ## What it needs
 
-`basicc`, the compiler, must be on your `PATH`. It is run as a program, not linked in — a host without it says so and carries on interpreting. Set `BASICC` in the environment to point at a particular build instead.
+For a native program, `basicc`, the compiler, must be on your `PATH`; a WebAssembly build in Studio needs nothing installed. It is run as a program, not linked in — a host without it says so and carries on interpreting. Set `BASICC` in the environment to point at a particular build instead.
 
 The program is compiled from the file it was loaded from when it has one, so `IMPORT` resolves against the directory it lives in, exactly as it does under `RUN`.
 
 ## What is different
 
-There is no debugger. A compiled program has no interpreter to step and carries no debug information yet, so breakpoints do not apply to a `JIT` run — use `RUN` to step through a program and `JIT` to see it go fast.
+A native `JIT` run has no debugger in Studio or the shell: breakpoints do not apply to it. Use `RUN` to step through a program and `JIT` to see it go fast. In Studio, a `JIT` built as WebAssembly does stop at breakpoints, and a native build can be debugged with `lldb`, since `basicc` writes debug information by default.
 
 Compilation is at `-O0`. A `JIT` is asked for interactively, and the optimizer buys a few percent for a noticeably longer wait.
 

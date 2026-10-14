@@ -22,8 +22,9 @@ extension StudioModel {
     /// program is a separate process with no interpreter inside it.
     ///
     /// - **No debugger.** Breakpoints, stepping, and the variable panes
-    ///   belong to the interpreter, and there is no DWARF yet for anything
-    ///   else to read. The panes are left alone rather than shown as empty.
+    ///   belong to the interpreter, and nothing in Studio reads the DWARF
+    ///   basicc writes. The panes are left alone rather than shown as empty.
+    ///   (Built as WebAssembly instead, ⚡ has the WebAssembly debugger.)
     /// - **No graphics overlay.** VTG reaches Studio's canvas through the
     ///   host; a separate process writes escape sequences to a pipe, and
     ///   nothing here reads them back.
@@ -31,23 +32,56 @@ extension StudioModel {
     ///   the pipe is not a terminal and say so, exactly as it does under the
     ///   shell without one.
     func jitEditorProgram() {
+        runJIT(BASICJIT.Command(), echo: "JIT")
+    }
+
+    /// `JIT` typed at the console, already echoed there: what ⚡ does, with
+    /// BASICShell's `JIT SWIFT` and `JIT "file.bas"`, which compiles that
+    /// file and leaves the editor's program alone (JIT.md).
+    func runTypedJIT(_ command: BASICJIT.Command) {
+        runJIT(command, echo: nil)
+    }
+
+    private func runJIT(_ command: BASICJIT.Command, echo: String?) {
         guard !isProgramRunning, jitProcess == nil else { return }
+        // A file is found as LOAD finds one: beside the console's folder.
+        let file = command.file.map(consolePath)
+        func refuse(_ message: String) {
+            selectedPane = .console
+            if let echo { echoConsoleCommandForRun(echo) }
+            appendJITOutput("JIT: \(message)\n")
+            appendJITOutput(prompt)
+        }
+        if let file, !FileManager.default.fileExists(atPath: file) {
+            refuse("\(command.file ?? file) does not exist")
+            return
+        }
         if effectiveCompiledRunTarget == .webAssembly {
-            runAsWebAssembly(echo: "JIT")
+            if command.dialect == "swift" {
+                refuse("SWIFT needs ⚡ to build with LLVM; it builds with WebAssembly here, which compiles the traditional dialect")
+                return
+            }
+            runAsWebAssembly(echo: echo, file: file)
             return
         }
         rebuildProgramFromEditor()
         selectedPane = .console
-        echoConsoleCommandForJIT()
+        if let echo { echoConsoleCommandForRun(echo) }
         guard BASICPlatform.runsOtherPrograms else {
             appendJITOutput(BASICPlatform.notAvailableMessage("JIT") + "; RUN still interprets\n")
             appendJITOutput(prompt)
             return
         }
+        if file == nil, session.program.isEmpty {
+            appendJITOutput("JIT: nothing to compile\n")
+            appendJITOutput(prompt)
+            return
+        }
 
-        let source = BASICJIT.text(of: session.program)
-        let path = currentProgramURL?.path
-        switch BASICJIT.compile(source: source, path: path) {
+        // A file is compiled as itself, so its IMPORTs resolve beside it.
+        let source = file == nil ? BASICJIT.text(of: session.program) : ""
+        let path = file ?? currentProgramURL?.path
+        switch BASICJIT.compile(source: source, path: path, dialect: command.dialect) {
         case .unavailable(let reason):
             appendJITOutput("JIT: \(reason)\n")
             appendJITOutput(prompt)

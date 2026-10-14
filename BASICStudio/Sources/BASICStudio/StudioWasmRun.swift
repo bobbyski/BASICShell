@@ -32,22 +32,35 @@ extension StudioModel {
     /// Compiles the editor's program to WebAssembly and runs it. `echo` is the
     /// command shown at the prompt: RUN or JIT. `debugCommand` starts it in
     /// the debugger: `.stepInto` stops at its first statement.
-    func runAsWebAssembly(echo: String, debugCommand: WasmDebugger.Command? = nil) {
+    /// Runs the editor's program as WebAssembly, or `file` when one is given
+    /// (a typed `JIT "file.bas"`), echoing `echo` at the prompt when the
+    /// console has not already.
+    func runAsWebAssembly(echo: String?, debugCommand: WasmDebugger.Command? = nil, file: String? = nil) {
         guard !isProgramRunning, !isJITRunning else { return }
         rebuildProgramFromEditor()
         selectedPane = .console
-        echoConsoleCommandForRun(echo)
-        let (source, editorLines) = BASICJIT.compiledText(of: session.program)
-        let name = currentProgramURL.map { $0.deletingPathExtension().lastPathComponent } ?? "program"
+        if let echo { echoConsoleCommandForRun(echo) }
+        let compiled = BASICJIT.compiledText(of: session.program)
+        var source = compiled.text
+        var editorLines: [Int?]? = compiled.editorLines
+        var name = currentProgramURL.map { $0.deletingPathExtension().lastPathComponent } ?? "program"
         // Where the text belongs, so its IMPORTs are found as the
         // interpreter finds them, and the project it is in.
-        let path = compiledRunSourcePath
+        var path = compiledRunSourcePath
+        if let file {
+            source = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+            editorLines = nil
+            name = ((file as NSString).lastPathComponent as NSString).deletingPathExtension
+            path = file
+        }
         let projectRoot = projectDirectoryURL.flatMap { project in
             path.hasPrefix(project.standardizedFileURL.path + "/") ? project.path : nil
         }
         // Built for the debugger when it will be wanted: a slower build, so
-        // not for every run.
-        let debugging = debugCommand != nil || activeBreakpoints.contains(where: \.isEnabled) || inspectorPane == .debug
+        // not for every run. Not for a named file: the debugger shows the
+        // editor's program, and that file is not it.
+        let debugging = file == nil
+            && (debugCommand != nil || activeBreakpoints.contains(where: \.isEnabled) || inspectorPane == .debug)
         let run = StudioWasmRun(model: self, source: source, name: name, path: path, projectRoot: projectRoot,
                                 directory: programWorkingDirectoryPath,
                                 debugCommand: debugging ? debugCommand ?? .run : nil,

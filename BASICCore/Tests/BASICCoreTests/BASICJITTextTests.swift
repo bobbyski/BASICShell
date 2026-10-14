@@ -31,3 +31,19 @@ struct BASICJITTextTests {
         #expect(BASICJIT.text(of: program) == "10 PRINT \"A\"\n20 GOTO 10\n")
     }
 }
+
+/// `JIT` as both BASICShell's prompt and BASICStudio's console read it.
+@Suite("The JIT command")
+struct BASICJITCommandTests {
+    @Test("JIT, JIT SWIFT, JIT TRADITIONAL and JIT \"file\", in any case; anything else is not JIT")
+    func forms() {
+        #expect(BASICJIT.command("JIT") == BASICJIT.Command())
+        #expect(BASICJIT.command("  jit  ") == BASICJIT.Command())
+        #expect(BASICJIT.command("JIT SWIFT") == BASICJIT.Command(dialect: "swift"))
+        #expect(BASICJIT.command("jit traditional \"bench.bas\"") == BASICJIT.Command(dialect: "traditional", file: "bench.bas"))
+        #expect(BASICJIT.command("JIT \"mathbench.bas\"") == BASICJIT.Command(file: "mathbench.bas"))
+        #expect(BASICJIT.command("JIT demos/x.bas") == BASICJIT.Command(file: "demos/x.bas"))
+        #expect(BASICJIT.command("JITTER = 1") == nil)
+        #expect(BASICJIT.command("RUN") == nil)
+    }
+}

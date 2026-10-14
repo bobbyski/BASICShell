@@ -4067,26 +4067,17 @@ func runShellCommand(_ command: String, foregroundProcessRegistry: ShellForegrou
 /// question. The compiler is run rather than linked, so a shell without
 /// `basicc` installed says so and nothing else changes.
 func isJITCommand(_ input: String) -> Bool {
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    let uppercased = trimmed.uppercased()
-    return uppercased == "JIT" || uppercased.hasPrefix("JIT ")
+    BASICJIT.command(input) != nil
 }
 
 @MainActor
 func runJITCommand(_ input: String) {
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    var rest = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-    // `JIT SWIFT` picks the Rev 2 compiler for this run; `JIT TRADITIONAL`
-    // names the default out loud. Both compilers are supported permanently,
-    // so this is a choice, never a migration.
-    var dialect: String?
-    for name in ["SWIFT", "TRADITIONAL"] where rest.uppercased() == name || rest.uppercased().hasPrefix(name + " ") {
-        dialect = name.lowercased()
-        rest = String(rest.dropFirst(name.count)).trimmingCharacters(in: .whitespaces)
-    }
-    // `JIT` compiles what is loaded; `JIT path.bas` compiles that file
-    // without disturbing what is loaded, the way you would try something.
-    let namedFile = rest.isEmpty ? nil : rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+    // `JIT SWIFT` picks the Rev 2 compiler for this run; `JIT path.bas`
+    // compiles that file without disturbing what is loaded, the way you
+    // would try something.
+    guard let command = BASICJIT.command(input) else { return }
+    let dialect = command.dialect
+    let namedFile = command.file
     if let namedFile, !FileManager.default.fileExists(atPath: namedFile) {
         host.printLine("JIT: \(namedFile) does not exist")
         return
