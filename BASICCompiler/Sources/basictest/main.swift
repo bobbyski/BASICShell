@@ -84,7 +84,21 @@ func runAsWebAssembly(_ path: String) throws -> String {
     let ir = try Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false)).llvmIR(sourcePath: path)
     let program = try WasmTranslator.translate(llvmIR: ir)
     let capture = Capture()
-    switch WasmRunner(program: program).run(host: capture) {
+    let runner = WasmRunner(program: program)
+    // A CHAIN finds its program beside this one, as a native build's does,
+    // and compiles it as a chain target.
+    runner.chainProgram = { file in
+        let directory = (path as NSString).deletingLastPathComponent
+        let names = (file as NSString).pathExtension.isEmpty ? [file + ".bas", file] : [file]
+        guard let source = names.map({ (directory as NSString).appendingPathComponent($0) })
+            .first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            throw WebAssemblyRunError(reason: "File not found: \(file)")
+        }
+        var options = CompileOptions(emitDebugInfo: false)
+        options.chainTarget = true
+        return try WasmTranslator.translate(llvmIR: try Compilation(dialect: TraditionalDialect(), options: options).llvmIR(sourcePath: source))
+    }
+    switch runner.run(host: capture) {
     case .notLoaded(let reason): throw WebAssemblyRunError(reason: "not loaded: \(reason)")
     case .trapped(let reason): throw WebAssemblyRunError(reason: "trapped: \(reason)")
     default: return capture.output

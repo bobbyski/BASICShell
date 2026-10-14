@@ -448,6 +448,20 @@ public final class SemanticModel {
     /// the AUI classes are system classes like the TUI ones.
     public internal(set) var hostedActiveUI = false
 
+    /// Whether the program takes part in `CHAIN` (BBC_ADINS.md A7.5): it
+    /// chains, declares `COMMON`, or is being built as another program's
+    /// chain target. Such a program can hand its variables over by name, and
+    /// take them, and a start line, from the program before it.
+    public internal(set) var chains = false
+    /// The variables every `COMMON` in the program names, normalized.
+    public internal(set) var commonNames: [String] = []
+    /// The files a `CHAIN`, `RUN` or `LOAD …, R` names literally, in order.
+    public internal(set) var chainTargets: [String] = []
+
+    func noteChainTarget(_ file: String) {
+        if !chainTargets.contains(file) { chainTargets.append(file) }
+    }
+
     /// Whether a name constructs a system object in this program: the
     /// shared classes, and ActiveUI's when the host provides it.
     func isSystemClassHere(_ name: String) -> Bool {

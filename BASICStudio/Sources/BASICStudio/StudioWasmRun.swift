@@ -266,6 +266,19 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         }
         let runner = WasmRunner(program: program)
         runner.debugger = debugger
+        // A CHAIN's program is found in the program's folder, as the
+        // interpreter finds it, and compiled as a chain target (A7.5).
+        runner.chainProgram = { [directory, projectRoot] file in
+            let names = (file as NSString).pathExtension.isEmpty ? [file + ".bas", file] : [file]
+            guard let source = names.map({ (directory as NSString).appendingPathComponent($0) })
+                .first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                throw StudioChainError(errorDescription: "File not found: \(file)")
+            }
+            let text = try String(contentsOfFile: source, encoding: .utf8)
+            return try WasmTranslator.translate(llvmIR: try StudioCompiler.llvmIR(
+                source: text, name: ((source as NSString).lastPathComponent as NSString).deletingPathExtension,
+                hostedActiveUI: true, path: source, projectRoot: projectRoot, chainTarget: true))
+        }
         lock.lock()
         self.runner = runner
         let stopEarly = stopped
@@ -333,4 +346,9 @@ final class StudioWasmRun: WasmHost, @unchecked Sendable {
         services.entries = frameworkEntries
         return services
     }
+}
+
+/// Why a `CHAIN` in a WebAssembly run could not have its program.
+private struct StudioChainError: LocalizedError {
+    let errorDescription: String?
 }

@@ -198,16 +198,41 @@ struct DiagnosticTests {
     /// cannot do yet (BBC_ADINS.md, decision B6). Refused by name at compile
     /// time, never built into something that behaves differently; `COMMON`
     /// alone is declarative and compiles.
-    @Test func chainingToAnotherProgramIsRefusedByName() throws {
+    @Test func chainingCompilesAndNamesItsTargets() throws {
         for source in ["CHAIN \"next.bas\"", "RUN \"next.bas\"", "RUN \"next.bas\", R", "LOAD \"next.bas\", R"] {
-            do {
-                _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "chain")
-                Issue.record("\(source) compiled")
-            } catch let error as CompileError {
-                #expect(String(describing: error).contains("cannot do yet"), "\(source): \(error)")
+            let module = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "chain")
+            #expect(module.chains)
+            #expect(module.chainTargets == ["next.bas"], "\(source)")
+        }
+        let common = try Compilation(dialect: TraditionalDialect()).bir(source: "COMMON A, B$\nPRINT 1", name: "common")
+        #expect(common.chains && common.chainTargets.isEmpty)
+        #expect(!(try Compilation(dialect: TraditionalDialect()).bir(source: "PRINT 1", name: "plain")).chains)
+    }
+
+    /// A compiled CHAIN (BBC_ADINS.md A7.5) to a program that is not there,
+    /// or to a start it does not have, fails as the interpreter does.
+    @Test func chainingFailsAsTheInterpreterDoes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-chain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "10 PRINT \"there\"".write(to: directory.appendingPathComponent("there.bas"), atomically: true, encoding: .utf8)
+        for (source, expected) in [
+            ("PRINT \"a\"\nCHAIN \"absent\"", "Runtime error: File not found: absent at 2"),
+            ("CHAIN \"there\", 999", "Missing line 999"),
+        ] {
+            let path = directory.appendingPathComponent("main.bas").path
+            try source.write(toFile: path, atomically: true, encoding: .utf8)
+            // Built apart from the sources, as basicc's Build/ is: the
+            // interpreter would take a binary named `there` for the program.
+            let output = directory.appendingPathComponent("Build/main").path
+            try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: path, output: output) }
+            let run = try ProcessRunner.run(output, [], environment: TestBuild.programEnvironment)
+            #expect(run.stdout.contains(expected), "\(run.stdout)")
+            #expect(run.exitCode == 1)
+            if let interpreter = TestBuild.interpreter {
+                #expect(try ProcessRunner.run(interpreter, [path], environment: TestBuild.programEnvironment).stdout.contains(expected))
             }
         }
-        _ = try Compilation(dialect: TraditionalDialect()).bir(source: "COMMON A, B$\nPRINT 1", name: "common")
     }
 
     @Test func chainMergeIsInterpreterOnly() throws {

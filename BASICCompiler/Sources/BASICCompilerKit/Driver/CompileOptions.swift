@@ -25,6 +25,12 @@ public struct CompileOptions: Sendable {
     /// AUI classes are refused at compile time, as they always were.
     public var hostedActiveUI: Bool = false
 
+    /// Whether this build is of a program another `CHAIN`s to (BBC_ADINS.md
+    /// A7.5): it takes the variables and start line handed over, even with
+    /// no CHAIN or COMMON of its own. basicc sets it for the programs it
+    /// builds beside a chaining one.
+    public var chainTarget: Bool = false
+
     /// Creates compile options; the defaults are a debug build for the host.
     public init(
         target: TargetTriple = .host,

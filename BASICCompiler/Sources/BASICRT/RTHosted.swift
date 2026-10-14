@@ -49,6 +49,10 @@ public enum RTHosted {
     /// Brings events the host collected on other threads into the queue: an
     /// ActiveUI click. Called at every drain, before the queue is read.
     nonisolated(unsafe) public static var collectEvents: (() -> Void)?
+    /// `CHAIN` in an app (BBC_ADINS.md A7.5): the host runs the chained
+    /// program in this one's place, given its file as the program wrote it
+    /// and the handover, and never returns here, or answers why it cannot.
+    nonisolated(unsafe) public static var chain: ((_ file: String, _ handover: Data) -> String?)?
     /// The next key pressed, waiting for one, for INPUT$(n); nil when the
     /// wait was cancelled (Stop). Nil: the terminal on stdin.
     nonisolated(unsafe) public static var readKey: (() -> String?)?
@@ -147,6 +151,18 @@ public enum RTHosted {
         RTKeys.partialEscape = []
         RTKeys.lastSeen = [:]
         RTKeys.repeating = []
+        RTKeys.kept = []
+        RTEventTraps.traps.reset()
+        RTEventTraps.frames = [:]
+        RTEval.bindings = [:]
+        RTEval.functions = [:]
+        RTEval.fullAccess = false
+        // Not `RTChain.pending`: a chained program's handover must reach it.
+        RTChain.names = []
+        RTChain.capture = nil
+        RTChain.restore = nil
+        RTChain.startLine = -1
+        RTChain.startLabel = ""
         RTSound.numbers = [:]
         RTSound.texts = [:]
         RTGraphics.currentColor = RTColor.legacy(1)

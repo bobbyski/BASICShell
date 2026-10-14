@@ -17,7 +17,7 @@ public struct Compilation: Sendable {
     /// The dialect doing the lowering.
     public let dialect: any DialectCompiler
     /// Options for this compilation.
-    public let options: CompileOptions
+    public var options: CompileOptions
     /// The tools.
     public let toolchain: Toolchain
 
@@ -46,11 +46,11 @@ public struct Compilation: Sendable {
         if let project = try ProjectManifest.load(at: sourcePath) {
             let libraries = try LibraryIndex.build(root: project.root, declared: project.libraries ?? [])
             let lines = try SourceLoader(projectRoot: project.root, libraries: libraries).load(path: project.entryPath)
-            return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution, hostedActiveUI: options.hostedActiveUI)
+            return try BIRBuilder(defaultStringSubstitution: project.stringSubstitution, hostedActiveUI: options.hostedActiveUI, chainTarget: options.chainTarget)
                 .build(lines, moduleName: project.name)
         }
         let lines = try SourceLoader().load(path: sourcePath)
-        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI).build(lines, moduleName: Self.moduleName(for: sourcePath))
+        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI, chainTarget: options.chainTarget).build(lines, moduleName: Self.moduleName(for: sourcePath))
     }
 
     /// The BIR for program text that belongs to the file at `path`, imports
@@ -68,14 +68,14 @@ public struct Compilation: Sendable {
             stringSubstitution = project.stringSubstitution
         }
         let lines = try loader.load(source: source, path: path)
-        return try BIRBuilder(defaultStringSubstitution: stringSubstitution, hostedActiveUI: options.hostedActiveUI)
+        return try BIRBuilder(defaultStringSubstitution: stringSubstitution, hostedActiveUI: options.hostedActiveUI, chainTarget: options.chainTarget)
             .build(lines, moduleName: name)
     }
 
     /// The BIR for program text, for tests.
     public func bir(source: String, name: String) throws -> BIRModule {
         let lines = try SourceLoader().parse(source, fileName: name + ".bas")
-        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI).build(lines, moduleName: name)
+        return try BIRBuilder(hostedActiveUI: options.hostedActiveUI, chainTarget: options.chainTarget).build(lines, moduleName: name)
     }
 
     /// The LLVM IR for a source file, for `--emit-llvm`.
@@ -90,7 +90,50 @@ public struct Compilation: Sendable {
     /// `<output>.build/` so `--emit-llvm` has something to show and a failed
     /// clang run leaves evidence.
     public func build(sourcePath: String, output: String) throws {
+        var built: Set<String> = [(sourcePath as NSString).standardizingPath]
+        try build(sourcePath: sourcePath, output: output, built: &built)
+    }
+
+    /// `build`, then the programs it `CHAIN`s to by name, each beside it;
+    /// `built` keeps a chain that comes back round from building forever.
+    private func build(sourcePath: String, output: String, built: inout Set<String>) throws {
         let (module, compilation) = try readModule.map { try $0(sourcePath, self) } ?? (try bir(sourcePath: sourcePath), self)
+        try link(module: module, compilation: compilation, sourcePath: sourcePath, output: output)
+        try buildChainTargets(module.chainTargets, of: sourcePath, beside: output, built: &built)
+    }
+
+    /// The file a chained program's binary is at, beside the program that
+    /// chains to it: the name the program gives, without `.bas`. The
+    /// runtime looks for the same name (`RTChain.binaryName`).
+    static func chainBinaryName(for file: String) -> String {
+        file.lowercased().hasSuffix(".bas") ? String(file.dropLast(4)) : file
+    }
+
+    /// Builds each program a `CHAIN`, `RUN` or `LOAD …, R` names literally,
+    /// as a chain target, where the runtime will look for it (BBC_ADINS.md
+    /// A7.5). A file that is not there is left for the run to report, as
+    /// the interpreter reports it: "File not found".
+    private func buildChainTargets(_ targets: [String], of sourcePath: String, beside output: String, built: inout Set<String>) throws {
+        guard !targets.isEmpty else { return }
+        var isDirectory: ObjCBool = false
+        let sourceDirectory = FileManager.default.fileExists(atPath: sourcePath, isDirectory: &isDirectory) && isDirectory.boolValue
+            ? sourcePath : (sourcePath as NSString).deletingLastPathComponent
+        let outputDirectory = (output as NSString).deletingLastPathComponent
+        for target in targets {
+            let names = (target as NSString).pathExtension.isEmpty ? [target + ".bas", target] : [target]
+            guard let source = names.map({ (sourceDirectory as NSString).appendingPathComponent($0) })
+                .first(where: { FileManager.default.fileExists(atPath: $0) }) else { continue }
+            guard built.insert((source as NSString).standardizingPath).inserted else { continue }
+            let targetOutput = (outputDirectory as NSString).appendingPathComponent(Self.chainBinaryName(for: target))
+            guard (targetOutput as NSString).standardizingPath != (output as NSString).standardizingPath else { continue }
+            var chained = self
+            chained.options.chainTarget = true
+            try chained.build(sourcePath: source, output: targetOutput, built: &built)
+        }
+    }
+
+    /// Lowers, assembles and links one program.
+    private func link(module: BIRModule, compilation: Compilation, sourcePath: String, output: String) throws {
         let lowered = try compilation.dialect.lower(module, options: compilation.options)
 
         let buildDir = output + ".build"

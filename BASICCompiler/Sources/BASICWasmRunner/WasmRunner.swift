@@ -184,9 +184,28 @@ public final class WasmRunner: @unchecked Sendable {
         "pow": RTEntryPoint(arity: 2) { pow($0[0], $0[1]) },
     ]
 
-    /// Runs the program to its end. Call it on a thread with a large stack:
-    /// the runtime and JavaScriptCore both recurse.
+    /// The program a `CHAIN` in this run names, compiled as a chain target:
+    /// given the file as the program wrote it, or throwing why it cannot be
+    /// had. Nil: a `CHAIN` says it is not supported here.
+    public var chainProgram: ((String) throws -> WasmProgram)?
+    /// The program to run next, and what to hand it, after a `CHAIN`.
+    private var chained: (program: WasmProgram, handover: Data)?
+
+    /// Runs the program to its end, and the programs it `CHAIN`s to after
+    /// it, each in the last one's place (BBC_ADINS.md A7.5). Call it on a
+    /// thread with a large stack: the runtime and JavaScriptCore both recurse.
     public func run(host: WasmHost) -> WasmRunOutcome {
+        var next = program
+        while true {
+            let outcome = run(next, host: host)
+            guard let handover = chained else { return outcome }
+            chained = nil
+            RTChain.pending = handover.handover
+            next = handover.program
+        }
+    }
+
+    private func run(_ program: WasmProgram, host: WasmHost) -> WasmRunOutcome {
         let extra = host.services.entries
         let missing = Self.missingImports(of: program, extra: extra)
         guard missing.isEmpty else {
@@ -211,6 +230,16 @@ public final class WasmRunner: @unchecked Sendable {
             if self.isStopRequested { basic_wasm_unwind(Self.stopCode) }
         }
         RTHosted.isStopRequested = { [unowned self] in self.isStopRequested }
+        RTHosted.chain = { [unowned self] file, handover in
+            guard let chainProgram = self.chainProgram else { return "CHAIN is not supported by this host" }
+            do {
+                self.chained = (try chainProgram(file), handover)
+            } catch {
+                return (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            // This program ends here; `run` starts the next.
+            basic_wasm_unwind(Self.stopCode)
+        }
         let services = host.services
         WasmCallbacks.clearQueued()
         RTHostHosted.install(
@@ -236,6 +265,7 @@ public final class WasmRunner: @unchecked Sendable {
             RTHosted.unwind = nil
             RTHosted.checkStop = nil
             RTHosted.isStopRequested = nil
+            RTHosted.chain = nil
             RTHostHosted.uninstall()
             WasmCallbacks.clearQueued()
             WasmCallbacks.reset()
@@ -302,6 +332,7 @@ public final class WasmRunner: @unchecked Sendable {
                 return .failed
             }
             if thrown.isEqual(to: stopValue) {
+                if chained != nil { return .finished(0) }
                 RTHosted.finish()
                 host.write(RTHosted.breakMessage() + "\n")
                 return .stopped

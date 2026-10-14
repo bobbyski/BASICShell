@@ -31,7 +31,8 @@ import Foundation
 ///
 /// The file is found the way `IMPORT` finds one — relative to the program
 /// doing the chaining — and GW's `.BAS` is assumed when the name has no
-/// extension and nothing matches without one.
+/// extension ("The .BAS extension is assumed unless another is specified"),
+/// so a compiled program's binary beside its source is never read as one.
 enum BASICChain {
     /// `CHAIN MERGE`'s overlay: the lines to delete before it is laid down.
     struct Merge {
@@ -60,13 +61,14 @@ enum BASICChain {
         return names
     }
 
-    /// The paths to try for `path`, in order: as resolved beside the chaining
-    /// program, as written, and each with `.bas` when it has no extension.
+    /// The paths to try for `path`, in order: with `.bas` first when it has
+    /// no extension, then as written; each as resolved beside the chaining
+    /// program, then as given.
     static func candidatePaths(for path: String, resolvedBesideProgram resolved: String) -> [String] {
         var candidates = [resolved]
         if resolved != path { candidates.append(path) }
         if (path as NSString).pathExtension.isEmpty {
-            candidates += candidates.map { $0 + ".bas" }
+            candidates = candidates.map { $0 + ".bas" } + candidates
         }
         return candidates
     }

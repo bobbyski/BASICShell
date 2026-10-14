@@ -96,6 +96,11 @@ struct LLVMLowering {
             text += "@\"G.\(variable.name)\" = global \(FunctionEmitter.llvmType(of: variable)) \(FunctionEmitter.zero(of: variable))\(attachment)\n"
         }
         text += "\n" + renderDataTables() + "\n"
+        if module.chains, !module.globals.isEmpty {
+            // Each global's name, in slot order, for CHAIN to hand over by.
+            text += "@\"globals.names\" = private constant [\(module.globals.count) x ptr] ["
+                + module.globals.map { "ptr \(constants.constant($0.name))" }.joined(separator: ", ") + "]\n"
+        }
         if !locations.isEmpty {
             text += "@\"basic.here\" = global i64 -1\n"
             text += "@\"basic.locations.lines\" = private constant [\(locations.count) x i64] [" + locations.map { "i64 \($0.line)" }.joined(separator: ", ") + "]\n"
@@ -122,7 +127,9 @@ struct LLVMLowering {
             text += "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] "
             text += "[{ i32, ptr, ptr } { i32 65535, ptr @\"basic.library.setup\", ptr null }]\n"
         }
-        if module.functions.contains(where: \.isAsync) {
+        // A chaining program hands its globals over with the same capture
+        // and restore an async one snapshots them with.
+        if module.functions.contains(where: \.isAsync) || module.chains {
             functions.append(renderTaskSupport())
         }
         if module.functions.contains(where: \.isEventHandler) {
@@ -498,6 +505,12 @@ struct LLVMLowering {
     declare void @basic_rt_fail_missing(ptr)
     declare void @basic_rt_gosub_push(i64)
     declare i64 @basic_rt_trap_poll(i64)
+    declare void @basic_rt_chain(ptr, double, ptr, double, ptr, double)
+    declare void @basic_rt_chain_install(ptr, i64, ptr, ptr)
+    declare void @basic_rt_chain_receive()
+    declare double @basic_rt_chain_start_line()
+    declare ptr @basic_rt_chain_start_label()
+    declare void @basic_rt_chain_start_unmatched()
     declare void @basic_rt_eval_begin()
     declare void @basic_rt_eval_bind(ptr, ptr)
     declare void @basic_rt_eval_function(ptr, ptr)
@@ -1015,6 +1028,10 @@ struct FunctionEmitter {
             }
             for function in module.evalFunctions {
                 out.emit("call void @basic_rt_eval_function(ptr \(constants.constant(function)), ptr @\"V.\(function)\")")
+            }
+            if module.chains {
+                let names = module.globals.isEmpty ? "null" : "@\"globals.names\""
+                out.emit("call void @basic_rt_chain_install(ptr \(names), i64 \(module.globals.count), ptr @\"globals.capture\", ptr @\"globals.restore\")")
             }
         }
         if usesGosub {

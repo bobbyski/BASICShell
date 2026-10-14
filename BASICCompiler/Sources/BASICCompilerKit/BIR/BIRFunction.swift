@@ -539,6 +539,13 @@ public struct BIRModule: Sendable {
     /// a string could reach.
     public var namedHandlers: [(name: String, function: String)] = []
 
+    /// Whether the program takes part in `CHAIN`: its globals get a name
+    /// table and capture and restore functions the runtime hands over with.
+    public var chains = false
+    /// The files a `CHAIN`, `RUN` or `LOAD …, R` names literally: basicc
+    /// builds each beside the program, for it to hand over to.
+    public var chainTargets: [String] = []
+
     /// The FUNCTIONs an `EVAL` string may call, by normalized name, when the
     /// program calls `EVAL`: each gets a trampoline, `V.NAME`.
     public var evalFunctions: [String] = []

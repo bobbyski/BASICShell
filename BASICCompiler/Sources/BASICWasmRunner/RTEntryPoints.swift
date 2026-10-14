@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 299 entry points, by name.
+    /// 305 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -44,6 +44,12 @@ enum RTEntryPoints {
         "basic_rt_beep": RTEntryPoint(arity: 0) { a in basic_rt_beep(); return 0 },
         "basic_rt_capture_begin": RTEntryPoint(arity: 0) { a in basic_rt_capture_begin(); return 0 },
         "basic_rt_capture_end": RTEntryPoint(arity: 0) { a in Double(UInt(bitPattern: basic_rt_capture_end())) },
+        "basic_rt_chain": RTEntryPoint(arity: 6) { a in basic_rt_chain(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1], UnsafeMutableRawPointer(bitPattern: UInt(a[2])), a[3], UnsafeMutableRawPointer(bitPattern: UInt(a[4])), a[5]); return 0 },
+        "basic_rt_chain_install": RTEntryPoint(arity: 4) { a in basic_rt_chain_install(UnsafePointer<UnsafePointer<CChar>>(OpaquePointer(bitPattern: UInt(a[0]))), Int(a[1]), WasmCallbacks.trampoline(.voidPtr, forTableIndex: a[2]), WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[3])); return 0 },
+        "basic_rt_chain_receive": RTEntryPoint(arity: 0) { a in basic_rt_chain_receive(); return 0 },
+        "basic_rt_chain_start_label": RTEntryPoint(arity: 0) { a in Double(UInt(bitPattern: basic_rt_chain_start_label())) },
+        "basic_rt_chain_start_line": RTEntryPoint(arity: 0) { a in basic_rt_chain_start_line() },
+        "basic_rt_chain_start_unmatched": RTEntryPoint(arity: 0) { a in basic_rt_chain_start_unmatched(); return 0 },
         "basic_rt_chr": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_chr(a[0]))) },
         "basic_rt_closure_environment": RTEntryPoint(arity: 1) { a in (basic_rt_closure_environment(UnsafeMutableRawPointer(bitPattern: UInt(a[0])))).map { Double(UInt(bitPattern: $0)) } ?? 0 },
         "basic_rt_closure_function": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_closure_function(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },

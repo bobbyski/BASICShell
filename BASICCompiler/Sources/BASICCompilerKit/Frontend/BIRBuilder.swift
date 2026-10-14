@@ -31,17 +31,52 @@ public struct BIRBuilder {
     /// Whether the host running the program provides its ActiveUI windows
     /// (BASIC-45). See `CompileOptions.hostedActiveUI`.
     private let hostedActiveUI: Bool
+    /// Whether the program is being built as another's `CHAIN` target. See
+    /// `CompileOptions.chainTarget`.
+    private let chainTarget: Bool
 
     /// Creates a builder; `defaultStringSubstitution` is how OPTION
     /// STRING-SUB starts (the shell's default is on).
     public init(defaultStringSubstitution: Bool = true, externalClasses: [String: String] = [:],
                 externalFunctions: Set<String> = [], enumMembers: [String: [String: SemanticModel.EnumMemberRef]] = [:],
-                hostedActiveUI: Bool = false) {
+                hostedActiveUI: Bool = false, chainTarget: Bool = false) {
         self.defaultStringSubstitution = defaultStringSubstitution
         self.externalClasses = externalClasses
         self.externalFunctions = externalFunctions
         self.enumMembers = enumMembers
         self.hostedActiveUI = hostedActiveUI
+        self.chainTarget = chainTarget
+    }
+
+    /// Whether `statement` hands over to another program, or declares what
+    /// one carries, at any depth.
+    static func chains(_ statement: Statement) -> Bool {
+        switch statement {
+        case .chain, .runFile, .common: return true
+        case .sequence(let statements): return statements.contains(where: chains)
+        case .labeled(_, let inner): return chains(inner)
+        case .ifThen(_, let then, let otherwise):
+            return [then, otherwise].contains { action in
+                if case .statement(let inner)? = action { return chains(inner) }
+                return false
+            }
+        default: return false
+        }
+    }
+
+    /// The variables every `COMMON` names, normalized, in order.
+    static func commonNames(_ lines: [ParsedLine]) -> [String] {
+        var names: [String] = []
+        func collect(_ statement: Statement) {
+            switch statement {
+            case .common(let variables): names += variables.map(\.normalized).filter { !names.contains($0) }
+            case .sequence(let statements): statements.forEach(collect)
+            case .labeled(_, let inner): collect(inner)
+            default: break
+            }
+        }
+        lines.forEach { collect($0.statement) }
+        return names
     }
 
     /// Builds the module for a program.
@@ -60,6 +95,8 @@ public struct BIRBuilder {
         var analyzer = SemanticAnalyzer(lines: lines)
         analyzer.model.enumMembers = enumMembers
         analyzer.model.hostedActiveUI = hostedActiveUI
+        analyzer.model.chains = chainTarget || lines.contains { Self.chains($0.statement) }
+        analyzer.model.commonNames = Self.commonNames(lines)
         let model = try analyzer.run()
         var module = BIRModule(name: moduleName)
         module.sourceFile = lines.first { !$0.isImported }?.fileName
@@ -146,6 +183,8 @@ public struct BIRBuilder {
                 module.namedHandlers.append((name: model.functions[name]?.displayName ?? name, function: name))
             }
         }
+        module.chains = model.chains
+        module.chainTargets = model.chainTargets
         if model.usesEval {
             // Every FUNCTION a string could name, but not one that takes an
             // array: its trampoline would need the array itself.
@@ -445,7 +484,10 @@ final class FunctionBuilder {
         }
         try indexTargets()
         emitImplicitDimensions()
-        if signature == nil && closureLines == nil { emitSeededNumbers() }
+        if signature == nil && closureLines == nil {
+            emitSeededNumbers()
+            if model.chains { try emitChainReceive() }
+        }
         if signature == nil {
             tracksStatements = ownedLines.contains { index in
                 if case .onErrorGoto = lines[index].statement { return true }
@@ -1372,14 +1414,12 @@ final class FunctionBuilder {
             emit(.discard(.hostCall("basic_rt_task_background", [boxed(try lowerExpression(expression))], returns: .void)))
         case .load, .save, .cd, .pwd:
             throw CompileError("\(describe(statement)) is a direct-mode command and cannot be compiled", at: location)
-        // A compiled program has no program text to swap, and one binary
-        // holding several programs is decision B6 in BBC_ADINS.md. Refused
-        // by name, at compile time, rather than built into something that
-        // behaves differently from the interpreter.
-        case .chain:
-            throw CompileError("CHAIN runs another program in this one's place, which a compiled program cannot do yet; run it with BASICShell", at: location)
-        case .runFile:
-            throw CompileError("RUN (or LOAD ..., R) with a file name runs another program, which a compiled program cannot do yet; run it with BASICShell", at: location)
+        // A compiled program hands over to the chained program's own binary,
+        // which basicc builds beside it (decision B6 in BBC_ADINS.md).
+        case .chain(let file, let start, let keepsAll):
+            try lowerChain(file: file, start: start, carry: keepsAll ? 2 : 1, keepsFiles: true)
+        case .runFile(let file, let keepsFiles):
+            try lowerChain(file: file, start: nil, carry: 0, keepsFiles: keepsFiles)
         // Lays another file's lines over the running program's text, which a
         // compiled program does not have: interpreter only, by Bobby's
         // ruling on A7.8 in BBC_ADINS.md.
@@ -1830,6 +1870,56 @@ final class FunctionBuilder {
     /// evaluated and dropped, as the interpreter does.
     /// The function an `ON …` names, and the type index of the event object
     /// its parameter asks for (-1 for a VARIANT or DICTIONARY).
+    // MARK: - CHAIN
+
+    /// `CHAIN`, `RUN f$` and `LOAD f$, R`: the runtime hands the variables
+    /// `carry` says over to the chained program's binary (0 none, 1 those
+    /// COMMON names, 2 all) and runs it in this one's place.
+    private func lowerChain(file: Expression, start: ChainStart?, carry: Int, keepsFiles: Bool) throws {
+        guard signature == nil, closureLines == nil else {
+            emit(.fail("CHAIN and RUN cannot hand off from inside a FUNCTION or SUB"))
+            return
+        }
+        if case .string(let literal) = file { model.noteChainTarget(literal) }
+        var line = BIRExpression.number(-1)
+        var label = BIRExpression.string("")
+        switch start {
+        case .line(let expression)?: line = try lowerExpression(expression, expecting: .number, context: "CHAIN")
+        case .label(let name)?: label = .string(name.uppercased())
+        case nil: break
+        }
+        emit(.discard(.hostCall("basic_rt_chain", [
+            try lowerExpression(file, expecting: .string, context: "CHAIN"), line, label,
+            .number(Double(carry)), .string(model.commonNames.joined(separator: ",")), .number(keepsFiles ? 1 : 0),
+        ], returns: .void)))
+    }
+
+    /// At the top of a program that takes part in `CHAIN`: the variables the
+    /// program before it handed over, then the line or label it said to
+    /// start at, as the interpreter's `CHAIN` prepares its next program.
+    private func emitChainReceive() throws {
+        emit(.discard(.hostCall("basic_rt_chain_receive", [], returns: .void)))
+        let numbered = ownedLines.compactMap { lines[$0].number }
+        let labels = ownedLines.compactMap { lines[$0].statement.label?.uppercased() }
+        guard !numbered.isEmpty || !labels.isEmpty else { return }
+        let line = hidden("chain.line", .number)
+        emit(.store(line, .hostCall("basic_rt_chain_start_line", [], returns: .number)))
+        for number in numbered {
+            let next = newBlock("chain.line\(number).no")
+            terminate(.branch(.compare(.equal, .load(line), .number(Double(number))), then: try blockForTarget(.line(number)), else: next))
+            current = next
+        }
+        let label = hidden("chain.label", .string)
+        emit(.store(label, .hostCall("basic_rt_chain_start_label", [], returns: .string)))
+        for name in labels {
+            let next = newBlock("chain.label.\(name).no")
+            terminate(.branch(.compare(.equal, .load(label), .string(name)), then: try blockForTarget(.label(name)), else: next))
+            current = next
+        }
+        // Asked for a start this program does not have.
+        emit(.discard(.hostCall("basic_rt_chain_start_unmatched", [], returns: .void)))
+    }
+
     // MARK: - Event traps
 
     /// Whether `statement` sets a GW-BASIC event trap, at any depth.
