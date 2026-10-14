@@ -60,3 +60,13 @@ option graphics-on-stop keep
 ```
 
 BASICStudio has the same choice in its settings, under Console ▸ Graphics, and does not read this option. A compiled program accepts it and ignores it.
+
+## OPTION EVAL
+
+What an [EVAL](EVAL.md) string may reach. `OPTION EVAL PURE` is the default: variables, operators, the program's own functions, and the builtins that touch nothing outside the program. `OPTION EVAL FULL` opens the rest: `SYSTEM$`, `ENVIRON$`, files, HTTP, the keyboard, methods and `NEW`. Use it only when the program wrote the string itself, never for text a user typed.
+
+```basic
+option eval full
+print eval("environ$(" + chr$(34) + "HOME" + chr$(34) + ")")
+option eval pure
+```

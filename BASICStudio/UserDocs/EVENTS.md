@@ -28,3 +28,5 @@ A game controller reports each button and stick direction as its own control, wi
 Handlers run between statements, so a program has to keep running for them to fire — a loop reading [INKEY$](INKEY.md), or a TUI application's own loop. A program that has ended is not listening.
 
 See [TUTORIAL_GRAPHICS](TUTORIAL_GRAPHICS.md) for a worked example.
+
+GW-BASIC's own traps, `ON TIMER(n) GOSUB line` and the rest, are [Event Trapping](EVENT_TRAPPING.md).
