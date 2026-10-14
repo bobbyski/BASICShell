@@ -187,11 +187,17 @@ public func basic_rt_capture_end() -> UnsafeMutableRawPointer {
 /// input is not a terminal, and neither does this.
 @_cdecl("basic_rt_input_chars")
 public func basic_rt_input_chars(_ countValue: Double) -> UnsafeMutableRawPointer {
-    let count = max(0, Int(countValue.rounded()))
+    // Keys read past while looking for a trapped one come first.
+    var kept = ""
+    while kept.count < max(0, Int(countValue.rounded())), !RTKeys.kept.isEmpty {
+        kept += RTKeys.kept.removeFirst()
+    }
+    let count = max(0, Int(countValue.rounded())) - kept.count
+    guard count > 0 else { return rtOwned(kept) }
     if let readKey = RTHosted.readKey {
         // The host's blocking read, as the interpreter's keyboard host waits.
-        var text = ""
-        while text.count < count {
+        var text = kept
+        while text.count < count + kept.count {
             guard let key = readKey() else {
                 RTHosted.checkStop?()
                 break
@@ -212,5 +218,5 @@ public func basic_rt_input_chars(_ countValue: Double) -> UnsafeMutableRawPointe
         guard read(STDIN_FILENO, &byte, 1) == 1 else { break }
         bytes.append(byte)
     }
-    return rtOwned(String(decoding: bytes, as: UTF8.self))
+    return rtOwned(kept + String(decoding: bytes, as: UTF8.self))
 }

@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 290 entry points, by name.
+    /// 294 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -177,6 +177,7 @@ enum RTEntryPoints {
         "basic_rt_integer_divide": RTEntryPoint(arity: 2) { a in basic_rt_integer_divide(a[0], a[1]) },
         "basic_rt_json_decode": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_json_decode(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1] != 0))) },
         "basic_rt_json_encode": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_json_encode(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1] != 0))) },
+        "basic_rt_key_define": RTEntryPoint(arity: 2) { a in basic_rt_key_define(a[0], UnsafeMutableRawPointer(bitPattern: UInt(a[1]))); return 0 },
         "basic_rt_key_mode": RTEntryPoint(arity: 1) { a in basic_rt_key_mode(Int(a[0])); return 0 },
         "basic_rt_keydown": RTEntryPoint(arity: 1) { a in basic_rt_keydown(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))) },
         "basic_rt_lct": RTEntryPoint(arity: 1) { a in basic_rt_lct(a[0]) },
@@ -275,6 +276,9 @@ enum RTEntryPoints {
         "basic_rt_timer": RTEntryPoint(arity: 0) { a in basic_rt_timer() },
         "basic_rt_timer_new": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_timer_new(a[0]))) },
         "basic_rt_timer_on": RTEntryPoint(arity: 4) { a in basic_rt_timer_on(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1], WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[2]), Int(a[3])); return 0 },
+        "basic_rt_trap_poll": RTEntryPoint(arity: 1) { a in Double(basic_rt_trap_poll(Int(a[0]))) },
+        "basic_rt_trap_set": RTEntryPoint(arity: 4) { a in basic_rt_trap_set(a[0], a[1], a[2], a[3]); return 0 },
+        "basic_rt_trap_state": RTEntryPoint(arity: 3) { a in basic_rt_trap_state(a[0], a[1], a[2]); return 0 },
         "basic_rt_type_register": RTEntryPoint(arity: 2) { a in basic_rt_type_register(Int(a[0]), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[1])), to: UnsafePointer<CChar>.self)); return 0 },
         "basic_rt_using_begin": RTEntryPoint(arity: 1) { a in basic_rt_using_begin(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_using_end": RTEntryPoint(arity: 1) { a in basic_rt_using_end(a[0] != 0); return 0 },

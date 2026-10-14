@@ -247,6 +247,10 @@ public enum BIRTerminator: Sendable {
     case ret(BIRExpression?)
     /// `RESUME NEXT`: continue at the statement after the one that failed.
     case resumeNext
+    /// Where a line of a program with event traps starts (BBC_ADINS.md A14):
+    /// a trap that fires `GOSUB`s to its handler, which returns to `resume`
+    /// (this line, polled again); otherwise the line goes on at `next`.
+    case trapPoll(resume: BIRBlockID, next: BIRBlockID)
     /// The block was never finished — a builder bug if it survives.
     case unterminated
 }
@@ -316,6 +320,9 @@ public struct BIRFunction: Sendable {
     /// For `main` when the program uses `ON ERROR`: the block that begins
     /// statement `id + 1`, i.e. where `RESUME NEXT` after statement `id` goes.
     public var statementResumeBlocks: [BIRBlockID] = []
+    /// For `main` when the program sets event traps: each handler an
+    /// `ON event GOSUB` names, by the number the runtime hands back.
+    public var trapTargetBlocks: [BIRBlockID] = []
     /// Where each statement this function marks with `.here` is: the line
     /// a runtime error reports, the column its caret goes under, and the
     /// source line it prints.
@@ -342,6 +349,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return [target]
         case .branch(_, let then, let otherwise): return [then, otherwise]
         case .gosub(let target, let resume): return [target, resume]
+        case .trapPoll(let resume, let next): return [resume, next]
         case .returnFromGosub, .end, .ret, .resumeNext, .unterminated: return []
         }
     }
@@ -352,7 +360,7 @@ public struct BIRFunction: Sendable {
         var reachable = Set<BIRBlockID>()
         // Resume and handler blocks are entered by runtime dispatch, so they
         // are roots too.
-        var worklist: [BIRBlockID] = [0] + statementResumeBlocks + errorHandlerBlocks + externalEntryBlocks
+        var worklist: [BIRBlockID] = [0] + statementResumeBlocks + errorHandlerBlocks + externalEntryBlocks + trapTargetBlocks
         while let id = worklist.popLast() {
             guard reachable.insert(id).inserted else { continue }
             worklist.append(contentsOf: Self.successors(of: blocks[id].terminator))
@@ -368,6 +376,7 @@ public struct BIRFunction: Sendable {
         }
         statementResumeBlocks = statementResumeBlocks.map { renumbered[$0]! }
         errorHandlerBlocks = errorHandlerBlocks.map { renumbered[$0]! }
+        trapTargetBlocks = trapTargetBlocks.map { renumbered[$0]! }
         externalEntryBlocks = externalEntryBlocks.map { renumbered[$0]! }
     }
 
@@ -376,6 +385,7 @@ public struct BIRFunction: Sendable {
         case .jump(let target): return .jump(map[target]!)
         case .branch(let condition, let then, let otherwise): return .branch(condition, then: map[then]!, else: map[otherwise]!)
         case .gosub(let target, let resume): return .gosub(map[target]!, resume: map[resume]!)
+        case .trapPoll(let resume, let next): return .trapPoll(resume: map[resume]!, next: map[next]!)
         case .returnFromGosub, .end, .ret, .resumeNext: return terminator
         case .unterminated: return .end
         }

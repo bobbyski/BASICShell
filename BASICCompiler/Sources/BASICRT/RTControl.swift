@@ -139,6 +139,8 @@ public func basic_rt_gosub_pop() -> Int {
     guard let resume = RTGosubStack.entries.popLast() else {
         basic_rt_fail("RETURN without GOSUB")
     }
+    // A trap's handler returning: the trap is no longer held.
+    RTEventTraps.returned(toDepth: RTGosubStack.entries.count)
     return resume
 }
 

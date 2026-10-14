@@ -146,6 +146,18 @@ public indirect enum Statement: Equatable {
     /// `DELETE` removes `range` from it. Interpreter only (A7.8 in
     /// BBC_ADINS.md): basicc refuses it by name.
     case chainMerge(file: Expression, start: ChainStart?, keepsAllVariables: Bool, delete: LineRange?)
+    /// `ON TIMER(n)`, `ON KEY(n)`, `ON PLAY(n)`, `ON STRIG(n)`, `ON COM(n)` or
+    /// `ON PEN` `GOSUB line`: GW-BASIC's event traps (A14 in BBC_ADINS.md).
+    /// `target` nil is `GOSUB 0`, which turns the trap off.
+    case onEventTrap(EventTrap, target: BranchTarget?)
+    /// `TIMER ON`, `KEY(n) OFF`, `PLAY STOP` and the rest.
+    case eventTrapState(EventTrap, EventTrapState)
+    /// `KEY n, x$`: what key 15–20 is, for `ON KEY(n)`.
+    case keyDefinition(number: Expression, definition: Expression)
+    /// A GW-BASIC switch for something there is none of here, which does
+    /// nothing: `KEY ON` and `KEY OFF` (the function-key line), `STRIG ON`
+    /// and `STRIG OFF` (the joystick's buttons).
+    case hardwareSwitch(String)
     /// `COMMON a, b$, c()` — the variables a `CHAIN` carries into the next
     /// program. Declarative, as in GW-BASIC: `CHAIN` reads every `COMMON` in
     /// the program, wherever it sits, and executing one does nothing.
@@ -231,6 +243,31 @@ public struct ClosureBodyLine: Equatable {
 public enum ChainStart: Equatable {
     case line(Expression)
     case label(String)
+}
+
+/// What an event trap watches, and its number: `KEY(3)` is `.key` with 3.
+/// `TIMER`'s and `PLAY`'s numbers are given only in `ON … GOSUB`, as seconds
+/// and as a count of notes; `PEN` has none.
+public struct EventTrap: Equatable {
+    public enum Kind: String, CaseIterable, Sendable {
+        case timer = "TIMER", key = "KEY", play = "PLAY", strig = "STRIG", com = "COM", pen = "PEN"
+
+        /// Whether `KIND(n) ON` names one of several: a key, a button, a port.
+        public var isNumbered: Bool { self == .key || self == .strig || self == .com }
+    }
+
+    public let kind: Kind
+    public let argument: Expression?
+
+    public init(kind: Kind, argument: Expression?) {
+        self.kind = kind
+        self.argument = argument
+    }
+}
+
+/// `ON`, `OFF` or `STOP` after an event trap's name.
+public enum EventTrapState: String, Equatable, Sendable {
+    case on = "ON", off = "OFF", stop = "STOP"
 }
 
 /// Line numbers from `first` to `last`, inclusive, as `DELETE` writes them:

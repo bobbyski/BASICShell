@@ -947,6 +947,8 @@ struct GosubFrame {
     let localContextIndex: Int
     let functionDepth: Int
     let displayName: String
+    /// The event, when a trap made this GOSUB: its RETURN releases the trap.
+    var trap: BASICEventTraps.Event? = nil
 }
 
 struct FunctionCallResult {

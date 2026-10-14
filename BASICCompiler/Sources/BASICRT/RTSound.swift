@@ -38,6 +38,10 @@ enum RTSound {
         return session
     }
 
+    /// The notes still to play on the music voice, for `ON PLAY`: none
+    /// before the program's first note, and no session is made to say so.
+    static var musicQueueCount: Int { current?.musicQueueCount() ?? 0 }
+
     /// Lets background notes play out before the program exits, as the
     /// interpreter does when a program ends.
     static func finish() {

@@ -86,11 +86,17 @@ final class BASICRuntime {
 
     /// The run's `SOUND`, `PLAY` and `BEEP`, made on first use.
     var sound: BASICSoundSession?
+    /// `ON TIMER`, `ON KEY` and the rest (BBC_ADINS.md A14).
+    let eventTraps = BASICEventTraps()
+    /// Keys read while looking for a trapped one, waiting for `INKEY$`.
+    var keptKeys: [String] = []
 
     func resetForRun() {
         endFrameworkRun()
         sound?.stop()
         sound = nil
+        eventTraps.reset()
+        keptKeys.removeAll()
         globals.removeAll()
         locals.removeAll()
         fileObjects.removeAll()

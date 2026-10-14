@@ -217,6 +217,7 @@ public struct BIRPrinter {
         case .end: return "end"
         case .ret(let value): return "ret" + (value.map { " " + render($0) } ?? "")
         case .resumeNext: return "resume next"
+        case .trapPoll(let resume, let next): return "trap poll resume \(label(resume)) else \(label(next))"
         case .unterminated: return "<unterminated>"
         }
     }

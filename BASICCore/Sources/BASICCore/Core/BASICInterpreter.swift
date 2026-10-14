@@ -42,6 +42,9 @@ public final class BASICInterpreter {
     /// for direct mode or a task: a direct command has no program line, and
     /// a task's error is text a program reads back with ERROR$.
     var locatesRuntimeErrors = false
+    /// Whether GW-BASIC's event traps are polled as lines start: set for a
+    /// program's run, as `locatesRuntimeErrors` is, and never for direct mode.
+    var trapsEvents = false
 
     /// The statement a runtime error began at, recorded by the innermost
     /// statement loop it passes through, so a failure deep in a function is
@@ -684,6 +687,9 @@ public final class BASICInterpreter {
                 }
                 updateExecutionLocation(current)
                 try checkExecutionBreak()
+                if trapsEvents, !isHandlingError, try fireEventTrap() {
+                    continue
+                }
                 traceExecution(current)
                 faultLine = nil
                 let next = try execute(current.statement, pc: pc, parsed: parsedLines)
@@ -1255,6 +1261,37 @@ public final class BASICInterpreter {
         case .stopMIDI:
             soundSession().stopMIDI()
             return .next
+        case .onEventTrap(let trap, let target):
+            // Its handler is a line of the main program, which a GOSUB from
+            // a routine cannot reach; basicc refuses it at compile time.
+            guard functionStack.isEmpty else {
+                throw BASICError.runtime("ON \(trap.kind.rawValue) GOSUB cannot be set inside a FUNCTION or SUB")
+            }
+            let event = try BASICEventTrapping.event(for: trap, number: integer)
+            let argument = trap.kind == .timer || trap.kind == .play ? try trap.argument.map { try numeric(evaluate($0)) } : nil
+            let index = try target.map { target -> Int in
+                switch target {
+                case .line(let line):
+                    guard let index = lineIndexByNumber[line] else { throw BASICError.missingLine(line) }
+                    return index
+                case .label(let label):
+                    guard let index = lineIndexByLabel[label.uppercased()] else { throw BASICError.missingLabel(label) }
+                    return index
+                }
+            }
+            try withSoundErrors { try runtime.eventTraps.setTarget(event, argument: argument, target: index) }
+            return .next
+        case .eventTrapState(let trap, let state):
+            let event = try BASICEventTrapping.event(for: trap, number: integer)
+            try withSoundErrors { try runtime.eventTraps.setState(event, BASICEventTrapping.state(state)) }
+            return .next
+        case .keyDefinition(let number, let definition):
+            let key = try integer(number)
+            let text = try rawString(definition)
+            try withSoundErrors { try runtime.eventTraps.defineKey(key, as: text) }
+            return .next
+        case .hardwareSwitch:
+            return .next
         case .play(let expression):
             guard let macro = try evaluate(expression).string else {
                 throw BASICError.runtime("Type mismatch")
@@ -1735,6 +1772,17 @@ public final class BASICInterpreter {
             synchronizeHostInput(for: selector.type)
             return .next
         case .onTimerEvent(let timer, let ticksExpression, let handler):
+            if timer.normalized == "TIMER", functionDefinitions[handler.normalized] == nil, let ticksExpression,
+               let index = lineIndexByLabel[handler.name.uppercased()] {
+                // GW's `ON TIMER(n) GOSUB label`: a trap, not a SecondsTimer's
+                // handler, which is always a FUNCTION.
+                guard functionStack.isEmpty else {
+                    throw BASICError.runtime("ON TIMER GOSUB cannot be set inside a FUNCTION or SUB")
+                }
+                let seconds = try numeric(evaluate(ticksExpression))
+                try withSoundErrors { try runtime.eventTraps.setTarget(.timer, argument: seconds, target: index) }
+                return .next
+            }
             guard let definition = functionDefinitions[handler.normalized] else {
                 throw BASICError.runtime("Timer handler \(handler.name) must be a FUNCTION")
             }
@@ -1778,6 +1826,7 @@ public final class BASICInterpreter {
             if let frame = gosubStack.last, frame.functionDepth == functionStack.count {
                 _ = gosubStack.popLast()
                 runtime.popLocalContext()
+                if let trap = frame.trap { runtime.eventTraps.release(trap) }
                 return .returnTo(frame.returnIndex)
             }
             if !functionStack.isEmpty {
@@ -1788,6 +1837,7 @@ public final class BASICInterpreter {
                 throw BASICError.runtime("RETURN without GOSUB")
             }
             runtime.popLocalContext()
+            if let trap = frame.trap { runtime.eventTraps.release(trap) }
             return .returnTo(frame.returnIndex)
         case .returnValue(let expression):
             guard !functionStack.isEmpty else {
@@ -2830,7 +2880,7 @@ public final class BASICInterpreter {
             return .task(handle)
         case "INKEY$":
             try requireArgumentCount(name.name, arguments, 0)
-            let rawKey = (host as? BASICKeyboardHost)?.readKey() ?? ""
+            let rawKey = runtime.keptKeys.isEmpty ? (host as? BASICKeyboardHost)?.readKey() ?? "" : runtime.keptKeys.removeFirst()
             try checkExecutionBreak()
             let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
             let key = BASICKeyNormalizer.normalize(rawKey, encoding: encoding)
@@ -4641,6 +4691,30 @@ public final class BASICInterpreter {
         return .jump(self.pc)
     }
 
+    /// GW-BASIC's event traps, as a line of the main program starts: a trap
+    /// that fires is a `GOSUB` to its handler, which returns to this line.
+    /// True when one fired and `pc` is now the handler's.
+    private func fireEventTrap() throws -> Bool {
+        // GW: "Trapping will never take place when BASIC is not executing a
+        // program", so a session sets `trapsEvents` only for a program's run.
+        let traps = runtime.eventTraps
+        guard traps.isWatching else { return false }
+        if traps.isWatchingKeys, let keyboard = host as? BASICKeyboardHost {
+            let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
+            BASICEventTrapping.takeKeys(for: traps, from: { keyboard.readKey() }, encoding: encoding, keeping: &runtime.keptKeys)
+        }
+        guard let fired = traps.poll(playCount: runtime.sound?.musicQueueCount() ?? 0) else { return false }
+        gosubStack.append(GosubFrame(
+            returnIndex: pc,
+            localContextIndex: runtime.pushLocalContext(),
+            functionDepth: functionStack.count,
+            displayName: BASICEventTrapping.frameName(fired.event),
+            trap: fired.event
+        ))
+        pc = fired.target
+        return true
+    }
+
     /// The run's sound, made on first use with the host's output.
     private func soundSession() -> BASICSoundSession {
         if let sound = runtime.sound { return sound }
@@ -5100,6 +5174,13 @@ public final class BASICInterpreter {
 
         let encoding: BASICKeyEncoding = runtime.keyMode == .ibm ? .ibm : .aibasic
         var result = ""
+        // Keys read past while looking for a trapped one come first.
+        while result.count < count, !runtime.keptKeys.isEmpty {
+            result += BASICKeyNormalizer.normalize(runtime.keptKeys.removeFirst(), encoding: encoding)
+        }
+        if result.count >= count {
+            return .string(BASICString(String(result.prefix(count))))
+        }
         if let keyboardHost = host as? BASICBlockingKeyboardHost {
             while result.count < count {
                 try checkExecutionBreak()

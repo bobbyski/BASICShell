@@ -336,6 +336,9 @@ final class FunctionBuilder {
     /// True when main uses ON ERROR: every statement then starts a block and
     /// is marked, so the runtime can report ERL and RESUME NEXT.
     private var tracksStatements = false
+    /// Whether the program sets GW-BASIC event traps, so each line of main
+    /// starts by polling them (BBC_ADINS.md A14).
+    private var tracksTraps = false
     /// `OPTION STRING-SUB`: whether plain strings interpolate `${…}` too.
     /// BASICShell turns this on for every program it runs, so a compiled
     /// program starts the same way; tracked in program order from there.
@@ -441,8 +444,12 @@ final class FunctionBuilder {
                 return false
             }
         }
-        if tracksStatements {
-            // Every statement gets a block so RESUME NEXT has somewhere to go.
+        if signature == nil && closureLines == nil {
+            tracksTraps = ownedLines.contains { setsEventTrap(lines[$0].statement) }
+        }
+        if tracksStatements || tracksTraps {
+            // Every statement gets a block so RESUME NEXT, and a trap's
+            // RETURN, have somewhere to go.
             for index in ownedLines where blockForLine[index] == nil {
                 blockForLine[index] = newBlock("s\(index)")
             }
@@ -454,6 +461,13 @@ final class FunctionBuilder {
             if let block = blockForLine[index] {
                 terminate(.jump(block))
                 current = block
+                if tracksTraps {
+                    // GW polls its traps as each statement starts; a
+                    // handler returns here, to poll again.
+                    let body = newBlock("s\(index).run")
+                    terminate(.trapPoll(resume: block, next: body))
+                    current = body
+                }
             }
             // A closure body's lines have no source: an error there is
             // placed at the statement that called it, as the interpreter
@@ -1317,6 +1331,21 @@ final class FunctionBuilder {
         case .onEventCall(let selector, let handler):
             let (name, payload) = try eventHandler(handler)
             emit(.onEvent(type: selector.type, subtype: selector.subtype ?? "", handler: name, payloadType: payload))
+        case .onTimerEvent(let timer, let ticks, let handler) where isTimerTrap(timer: timer, handler: handler):
+            // GW's `ON TIMER(n) GOSUB label`, not a SecondsTimer's handler.
+            try lowerEventTrap(EventTrap(kind: .timer, argument: ticks), target: .label(handler.name))
+        case .onEventTrap(let trap, let target):
+            try lowerEventTrap(trap, target: target)
+        case .eventTrapState(let trap, let state):
+            let code: Double = state == .on ? 1 : state == .off ? 0 : 2
+            emit(.discard(.hostCall("basic_rt_trap_state", [.number(Self.trapCode(trap.kind)), try trapNumber(trap), .number(code)], returns: .void)))
+        case .keyDefinition(let number, let definition):
+            emit(.discard(.hostCall("basic_rt_key_define", [
+                try lowerExpression(number, expecting: .number, context: "KEY"),
+                try lowerExpression(definition, expecting: .string, context: "KEY"),
+            ], returns: .void)))
+        case .hardwareSwitch:
+            break
         case .onTimerEvent(let timer, let ticks, let handler):
             let (name, payload) = try eventHandler(handler)
             let object = BIRExpression.load(variable(timer))
@@ -1791,6 +1820,78 @@ final class FunctionBuilder {
     /// evaluated and dropped, as the interpreter does.
     /// The function an `ON …` names, and the type index of the event object
     /// its parameter asks for (-1 for a VARIANT or DICTIONARY).
+    // MARK: - Event traps
+
+    /// Whether `statement` sets a GW-BASIC event trap, at any depth.
+    private func setsEventTrap(_ statement: Statement) -> Bool {
+        switch statement {
+        case .onEventTrap: return true
+        case .onTimerEvent(let timer, _, let handler): return isTimerTrap(timer: timer, handler: handler)
+        case .sequence(let statements): return statements.contains(where: setsEventTrap)
+        case .labeled(_, let inner): return setsEventTrap(inner)
+        case .ifThen(_, let then, let otherwise):
+            return [then, otherwise].contains { action in
+                if case .statement(let inner)? = action { return setsEventTrap(inner) }
+                return false
+            }
+        default: return false
+        }
+    }
+
+    /// `ON TIMER(n) GOSUB name` is GW's trap when `name` is a label rather
+    /// than a FUNCTION: a SecondsTimer's handler is always a FUNCTION.
+    private func isTimerTrap(timer: VariableName, handler: VariableName) -> Bool {
+        timer.normalized == "TIMER" && model.functions[handler.normalized] == nil
+            && lineIndexByLabel[handler.name.uppercased()] != nil
+    }
+
+    /// The runtime's number for each kind, in `EventTrap.Kind`'s order:
+    /// `RTEventTraps.event(code:number:)` reads them back.
+    private static func trapCode(_ kind: EventTrap.Kind) -> Double {
+        Double(EventTrap.Kind.allCases.firstIndex(of: kind)!)
+    }
+
+    /// `KEY(n)`'s, `STRIG(n)`'s or `COM(n)`'s number; 0 for the others.
+    private func trapNumber(_ trap: EventTrap) throws -> BIRExpression {
+        guard trap.kind.isNumbered else { return .number(0) }
+        guard let argument = trap.argument else { throw CompileError("Expected (n) after \(trap.kind.rawValue)", at: location) }
+        return try lowerExpression(argument, expecting: .number, context: trap.kind.rawValue)
+    }
+
+    /// `ON event GOSUB target`: the handler's block joins the ones the
+    /// runtime can name, and a missing one fails here, as in the interpreter.
+    private func lowerEventTrap(_ trap: EventTrap, target: BranchTarget?) throws {
+        guard signature == nil, closureLines == nil else {
+            throw CompileError("ON \(trap.kind.rawValue) GOSUB cannot be set inside a FUNCTION or SUB", at: location)
+        }
+        var handler = -1
+        if let target {
+            switch target {
+            case .line(let number) where lineIndexByNumber[number] == nil:
+                emit(.failMissing("Missing line \(number)"))
+                return
+            case .label(let name) where lineIndexByLabel[name.uppercased()] == nil:
+                emit(.failMissing("Missing label \(name)"))
+                return
+            default:
+                let block = try blockForTarget(target)
+                if let existing = function.trapTargetBlocks.firstIndex(of: block) {
+                    handler = existing
+                } else {
+                    function.trapTargetBlocks.append(block)
+                    handler = function.trapTargetBlocks.count - 1
+                }
+            }
+        }
+        var argument = BIRExpression.number(0)
+        if trap.kind == .timer || trap.kind == .play, let given = trap.argument {
+            argument = try lowerExpression(given, expecting: .number, context: "ON \(trap.kind.rawValue)")
+        }
+        emit(.discard(.hostCall("basic_rt_trap_set", [
+            .number(Self.trapCode(trap.kind)), try trapNumber(trap), argument, .number(Double(handler)),
+        ], returns: .void)))
+    }
+
     private func eventHandler(_ handler: VariableName) throws -> (name: String, payloadType: Int) {
         guard let function = model.functions[handler.normalized] else {
             throw CompileError("Function \(handler.name) is not defined", at: location)

@@ -39,6 +39,37 @@ struct WasmRunnerTests {
         }
     }
 
+    /// A console with keys waiting, as INKEY$ reads them from a host.
+    final class Keyboard: WasmHost {
+        var output = ""
+        var keys: [String]
+        init(keys: [String]) { self.keys = keys }
+        func write(_ text: String) { output += text }
+        func readLine(prompt: String) -> String? { nil }
+        func inkey() -> String { keys.isEmpty ? "" : keys.removeFirst() }
+    }
+
+    @Test("ON KEY(n) takes its key before INKEY$ does, and leaves the rest, as the interpreter does")
+    func keyTrap() throws {
+        let source = """
+        10 ON KEY(11) GOSUB 100
+        20 KEY(11) ON: S = TIMER()
+        30 A$ = INKEY$: IF A$ = "" AND TIMER() - S < 2 THEN 30
+        40 B$ = INKEY$: IF B$ = "" AND TIMER() - S < 2 THEN 40
+        50 PRINT A$; B$; HITS
+        60 END
+        100 HITS = HITS + 1: RETURN
+        """
+        let output = try WasmTranslatorTests.onLargeStack { () -> String in
+            let compilation = Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false))
+            let ir = try compilation.dialect.lower(try compilation.bir(source: source, name: "test"), options: compilation.options).llvmIR
+            let keyboard = Keyboard(keys: ["x", "[H", "y"])
+            _ = WasmRunner(program: try WasmTranslator.translate(llvmIR: ir)).run(host: keyboard)
+            return keyboard.output
+        }
+        #expect(output == "xy1\n", "\(output)")
+    }
+
     @Test("Output, input and a function, as the interpreter prints them")
     func basics() throws {
         let (outcome, output) = try Self.run("""

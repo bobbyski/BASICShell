@@ -199,6 +199,12 @@ public final class BASICSoundSession {
         try playGW(notes)
     }
 
+    /// The notes still to play on the music voice, in either mode: what
+    /// `ON PLAY(n)` watches.
+    public func musicQueueCount() -> Int {
+        unfinished(voice: 1)
+    }
+
     /// `PLAY(n)`: notes still queued in the background; 0 in the foreground,
     /// as GW's manual says.
     public func queuedNotes() -> Int {

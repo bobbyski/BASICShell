@@ -336,6 +336,27 @@ enum RTKeys {
     /// that is a terminal event — a VTG response, a mouse report — is posted
     /// as an event and read past, the way the Shell reads its own.
     static func inkey() -> String {
+        if !kept.isEmpty { return kept.removeFirst() }
+        return readKey()
+    }
+
+    /// Keys read past while looking for a trapped one (`ON KEY`), waiting
+    /// for `INKEY$` and `INPUT$`, in order.
+    nonisolated(unsafe) static var kept: [String] = []
+
+    /// Reads every key waiting, giving each to a key trap that wants it and
+    /// keeping the rest for `INKEY$`, as the interpreter does.
+    static func takeTrappedKeys(_ take: (String) -> Bool) {
+        while true {
+            let key = readKey()
+            guard !key.isEmpty else { return }
+            if let name = keyName(key), take(name) { continue }
+            kept.append(key)
+        }
+    }
+
+    /// The next key from the terminal or the host, past what `kept` holds.
+    private static func readKey() -> String {
         if let inkey = RTHosted.inkey { return inkey() }
         let raw: String? = withRawTerminal(blocking: false) { fd -> String? in
             while true {

@@ -74,7 +74,7 @@ struct DebugInfoTests {
         }
 
         // It still runs: debug information changes nothing the program does.
-        let run = try ProcessRunner.run(built.output, [])
+        let run = try ProcessRunner.run(built.output, [], environment: TestBuild.programEnvironment)
         #expect(run.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "14")
     }
 

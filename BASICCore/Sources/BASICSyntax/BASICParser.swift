@@ -168,6 +168,7 @@ public struct Parser {
             return .label(name)
         }
         if matchIdentifier("REM") { return .remark }
+        if let trapStatement = try parseEventTrapStatement() { return trapStatement }
         if matchIdentifier("PRINT") {
             if matchIdentifier("USING") {
                 let using = try parseUsingClause()
@@ -389,9 +390,9 @@ public struct Parser {
             if matchIdentifier("MIDI") {
                 return matchIdentifier("STOP") ? .stopMIDI : .playMIDI(try parseExpression())
             }
-            // GW's PLAY ON/OFF/STOP arm ON PLAY events, which are not built.
-            if isWord("ON") || isWord("OFF") || isWord("STOP") {
-                throw syntax("PLAY ON, OFF and STOP are not supported yet")
+            // GW's PLAY ON/OFF/STOP arm ON PLAY's trap.
+            if let state = matchTrapState() {
+                return .eventTrapState(EventTrap(kind: .play, argument: nil), state)
             }
             return .play(try parseExpression())
         }
@@ -1316,10 +1317,8 @@ public struct Parser {
     }
 
     private mutating func parseOnStatement() throws -> Statement {
-        // Refused by name: read as an ordinary computed GOSUB it would parse,
-        // and quietly mean "GOSUB when PLAY(n) happens to equal 1".
-        if isWord("PLAY"), peekNext == .leftParen {
-            throw syntax("ON PLAY is not supported yet")
+        if let trap = try parseOnEventTrap() {
+            return trap
         }
         if matchIdentifier("ERROR") {
             guard matchIdentifier("GOTO") else { throw syntax("Expected GOTO after ON ERROR") }
@@ -1343,6 +1342,94 @@ public struct Parser {
             return .computedGosub(try parseBranchTargetList(), selector)
         }
         throw syntax("Expected GOTO or GOSUB after ON expression")
+    }
+
+    /// `ON TIMER(n)`, `KEY(n)`, `PLAY(n)`, `STRIG(n)`, `COM(n)` or `PEN`
+    /// `GOSUB line`: GW-BASIC's event traps. Read in GW's way, ahead of a
+    /// computed `GOSUB` on an array of that name, which it would otherwise be.
+    ///
+    /// `ON TIMER(n) GOSUB name` is left to `parseTimerEventStatement`: it is a
+    /// `SecondsTimer` variable's handler when `name` is a FUNCTION, and a trap
+    /// only when `name` is a label, which a single line cannot tell.
+    private mutating func parseOnEventTrap() throws -> Statement? {
+        guard case .identifier(let word) = peek, let kind = EventTrap.Kind(rawValue: word.uppercased()) else { return nil }
+        let checkpoint = current
+        _ = advance()
+        var argument: Expression?
+        if kind != .pen {
+            guard match(.leftParen) else {
+                current = checkpoint
+                return nil
+            }
+            argument = try parseExpression()
+            guard match(.rightParen) else { throw syntax("Expected ) after ON \(kind.rawValue)(n") }
+        }
+        guard isWord("GOSUB") else {
+            current = checkpoint
+            return nil
+        }
+        _ = advance()
+        let trap = EventTrap(kind: kind, argument: argument)
+        if case .number(let value) = peek, value == 0 {
+            _ = advance()
+            return .onEventTrap(trap, target: nil)
+        }
+        if kind == .timer, case .identifier = peek {
+            current = checkpoint
+            return nil
+        }
+        return .onEventTrap(trap, target: try consumeBranchTarget("Expected line number or label after GOSUB"))
+    }
+
+    /// `TIMER ON`, `KEY(n) STOP`, `STRIG(n) OFF`, `COM(n) ON`, `PEN OFF`;
+    /// `KEY n, x$`; and GW's `KEY ON`/`OFF` and `STRIG ON`/`OFF`, which have
+    /// nothing to do here. Nil, with nothing consumed, for anything else: a
+    /// variable named `KEY`, say. (`PLAY ON` is `PLAY`'s.)
+    private mutating func parseEventTrapStatement() throws -> Statement? {
+        guard case .identifier(let word) = peek, let kind = EventTrap.Kind(rawValue: word.uppercased()), kind != .play else {
+            return nil
+        }
+        let checkpoint = current
+        _ = advance()
+        var argument: Expression?
+        if kind.isNumbered, peek == .leftParen {
+            _ = advance()
+            guard let number = try? parseExpression(), match(.rightParen) else {
+                current = checkpoint
+                return nil
+            }
+            argument = number
+        }
+        if let state = matchTrapState() {
+            switch (kind, argument) {
+            case (.key, nil), (.strig, nil):
+                guard state != .stop else { throw syntax("Expected (n) after \(kind.rawValue)") }
+                return .hardwareSwitch("\(kind.rawValue) \(state.rawValue)")
+            case (.com, nil):
+                throw syntax("Expected (n) after COM")
+            default:
+                return .eventTrapState(EventTrap(kind: kind, argument: argument), state)
+            }
+        }
+        if kind == .key, argument == nil {
+            if isWord("LIST") { throw syntax("KEY LIST is not supported: there is no function-key line") }
+            if case .number = peek {
+                let number = try parseExpression()
+                guard match(.comma) else { throw syntax("Expected , after KEY n") }
+                return .keyDefinition(number: number, definition: try parseExpression())
+            }
+        }
+        current = checkpoint
+        return nil
+    }
+
+    /// `ON`, `OFF` or `STOP`, when that is the next word.
+    private mutating func matchTrapState() -> EventTrapState? {
+        guard case .identifier(let word) = peek, let state = EventTrapState(rawValue: word.uppercased()) else { return nil }
+        // Only where the statement then ends: `PLAY ON + x$` is not a switch.
+        guard isStatementEnd(after: 1) else { return nil }
+        _ = advance()
+        return state
     }
 
     private mutating func parseTimerEventStatement() throws -> Statement? {

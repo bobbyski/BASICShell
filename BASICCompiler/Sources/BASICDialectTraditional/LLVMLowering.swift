@@ -437,6 +437,10 @@ struct LLVMLowering {
     declare void @basic_rt_fail_type(ptr)
     declare void @basic_rt_fail_missing(ptr)
     declare void @basic_rt_gosub_push(i64)
+    declare i64 @basic_rt_trap_poll(i64)
+    declare void @basic_rt_trap_set(double, double, double, double)
+    declare void @basic_rt_trap_state(double, double, double)
+    declare void @basic_rt_key_define(double, ptr)
     declare i64 @basic_rt_gosub_pop()
     declare i64 @basic_rt_gosub_depth()
     declare void @basic_rt_randomize(double)
@@ -859,6 +863,7 @@ struct FunctionEmitter {
     mutating func render() -> String {
         for block in function.blocks {
             if case .gosub(_, let resume) = block.terminator { gosubResumes.append(resume); usesGosub = true }
+            if case .trapPoll(let resume, _) = block.terminator { gosubResumes.append(resume); usesGosub = true }
             if case .returnFromGosub = block.terminator { usesGosub = true }
         }
         scratchRank = max(1, (function.locals + module.globals).compactMap(\.rank).max() ?? 1)
@@ -1964,6 +1969,16 @@ struct FunctionEmitter {
             emitReturn(value)
         case .resumeNext:
             out.emit("br label %\"resume.dispatch\"")
+        case .trapPoll(let resume, let next):
+            // The runtime pushes the GOSUB itself when a trap fires, marked
+            // with its event, and says which handler; -1 is none.
+            let index = gosubResumes.firstIndex(of: resume)!
+            let fired = out.temp()
+            out.emit("\(fired) = call i64 @basic_rt_trap_poll(i64 \(index))")
+            let cases = function.trapTargetBlocks.enumerated()
+                .map { "i64 \($0.offset), label \(label($0.element))" }
+                .joined(separator: " ")
+            out.emit("switch i64 \(fired), label \(label(next)) [ \(cases) ]")
         case .unterminated:
             out.emit("unreachable")
         }

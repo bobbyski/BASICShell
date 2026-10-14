@@ -97,12 +97,6 @@ struct BASICSoundStatementTests {
         #expect(recorder.played.first?.event == .tone(frequency: 800, duration: 0.25, volume: 1))
     }
 
-    @Test("ON PLAY and PLAY ON, OFF and STOP are refused by name")
-    func eventFormsAreRefused() {
-        #expect(run("ON PLAY(2) GOSUB 100").lines.joined().contains("ON PLAY is not supported yet"))
-        #expect(run("PLAY ON").lines.joined().contains("PLAY ON, OFF and STOP are not supported yet"))
-    }
-
     @Test("ENVELOPE shapes a BBC SOUND, and takes exactly fourteen numbers")
     func envelopeShapesSound() {
         let recorder = NoteRecorder()

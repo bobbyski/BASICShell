@@ -1014,6 +1014,7 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
             outputCoordinator: outputCoordinator
         )
         interpreter.locatesRuntimeErrors = true
+        interpreter.trapsEvents = true
         activeInterpreter = interpreter
         do {
             try interpreter.run(startLine: startLine)

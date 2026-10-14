@@ -394,6 +394,44 @@ struct SoundParityTests {
         #expect(compiled.trace == interpreted.trace)
     }
 
+    /// `ON PLAY(n)` (BBC_ADINS.md A9.4, A14): the trap fires as the
+    /// background queue drains below n, at the same line in both engines,
+    /// and the notes played are the same.
+    @Test func playTrapsMatch() throws {
+        guard let interpreter = TestBuild.interpreter else { return }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-onplay-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("onplay.bas").path
+        try """
+            10 ON PLAY(2) GOSUB 100
+            20 PLAY ON
+            30 PLAY "MB L16 CDE"
+            40 PRINT "queued"; PLAY(0)
+            50 PLAY "MF L64 P64"
+            60 PRINT "after"; FIRED
+            70 PLAY STOP: PLAY "MB L16 FGA"
+            80 PLAY "MF L64 P64"
+            90 PRINT "stopped"; FIRED: PLAY ON: PRINT "on"; FIRED: END
+            100 FIRED = FIRED + 1: RETURN
+            """.write(toFile: source, atomically: true, encoding: .utf8)
+        let binary = directory.appendingPathComponent("onplay").path
+        try TestBuild.onDeepStack { try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: binary) }
+
+        func traced(_ executable: String, _ arguments: [String], into name: String) throws -> (stdout: String, trace: String) {
+            let trace = directory.appendingPathComponent(name).path
+            var environment = TestBuild.programEnvironment
+            environment["BASIC_SOUND_TRACE"] = trace
+            let result = try ProcessRunner.run(executable, arguments, environment: environment)
+            return (result.stdout, try String(contentsOfFile: trace, encoding: .utf8))
+        }
+        let compiled = try traced(binary, [], into: "compiled.trace")
+        let interpreted = try traced(interpreter, [source], into: "interpreted.trace")
+        #expect(compiled.stdout == "queued3\nafter1\nstopped1\non2\n", "\(compiled.stdout)")
+        #expect(compiled.stdout == interpreted.stdout)
+        #expect(compiled.trace == interpreted.trace)
+    }
+
     /// `ENVELOPE`, a release cut short by the next note, and `PLAY MIDI`,
     /// played from the program's own directory by both engines.
     @Test func envelopesAndSongsMatch() throws {
