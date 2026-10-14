@@ -164,6 +164,62 @@ struct ScratchCaptureTests {
         }
     }
 
+    /// Scratch (BASIC-47): how long Stop takes to reach a loop, per engine.
+    @Test func stopLatency() async throws {
+        guard ProcessInfo.processInfo.environment["SCRATCH_STOP"] != nil else { return }
+        let programs = [
+            ("tight", "n = 0\nwhile 1\n    n = n + 1\nwend"),
+            ("heavy", "big$ = STRING$(2000000, \"x\")\nn = 0\nwhile 1\n    p = INSTR(big$, \"y\")\n    n = n + 1\nwend"),
+        ]
+        for (name, source) in programs {
+            for engine in ["interpreter", "wasm"] {
+                let studio = StudioHarness(program: source)
+                let model = studio.model
+                switch engine {
+                case "interpreter": model.runEditorProgram()
+                case "llvm": model.compiledRunTarget = .llvm; model.jitEditorProgram()
+                default: model.compiledRunTarget = .webAssembly; model.jitEditorProgram()
+                }
+                try await studio.waitUntil("running", timeout: .seconds(60)) { model.isProgramRunning || model.isJITRunning }
+                try await Task.sleep(for: .seconds(2))
+                let clock = ContinuousClock()
+                let start = clock.now
+                model.stopProgram()
+                try? await studio.waitUntil("stopped", timeout: .seconds(30)) { !model.isProgramRunning && !model.isJITRunning }
+                let took = clock.now - start
+                let broke = model.consoleText.contains("Break")
+                print("SCRATCHSTOP \(name) \(engine): \(took) break=\(broke)")
+            }
+        }
+    }
+
+    /// Scratch: what a TUI app in Studio says about VTG, both engines.
+    @Test func tuiVTGReport() async throws {
+        guard let out = ProcessInfo.processInfo.environment["SCRATCH_VTG"] else { return }
+        for target in [StudioRunTarget.interpreter, .webAssembly] {
+            let path = out + "-" + target.rawValue + ".txt"
+            try? FileManager.default.removeItem(atPath: path)
+            let studio = StudioHarness(program: """
+            GLOBAL app = TUIApp()
+            function Check() as variant
+                OPEN "\(path)" FOR OUTPUT AS #1
+                PRINT #1, app.vtgreport()
+                CLOSE #1
+                app.stop()
+                return 0
+            end function
+            shell = TUIShell()
+            app.after(300, "Check")
+            app.run(shell)
+            """)
+            studio.model.runTarget = target
+            studio.model.runEditorProgram()
+            try await studio.waitUntil("the report", timeout: .seconds(60)) { FileManager.default.fileExists(atPath: path) }
+            try await studio.waitUntil("the end", timeout: .seconds(30)) { !studio.model.isProgramRunning && !studio.model.isJITRunning }
+            print("SCRATCHVTG \(target): \((try? String(contentsOfFile: path, encoding: .utf8)) ?? "none")")
+        }
+    }
+
     /// Scratch: a captured stream, applied to SwiftTerm's own scene.
     @Test func sceneOf() throws {
         guard let path = ProcessInfo.processInfo.environment["SCRATCH_STREAM"] else { return }
