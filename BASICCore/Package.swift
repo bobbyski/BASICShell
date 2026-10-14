@@ -4,10 +4,11 @@ import PackageDescription
 
 let package = Package(
     name: "BASICCore",
-    // macOS 16 is TUIKit's floor, inherited when BASICCore took the dependency
-    // (TUIKIT_PLAN.md §5). Free today: BASICShell and BASICStudio are both
-    // already .macOS("16.0"). It does close the door on a macOS 14 consumer.
-    platforms: [.macOS("16.0"), .iOS("17.0")],
+    // macOS 26. TUIKit's floor is "16.0", inherited when BASICCore took the
+    // dependency (TUIKIT_PLAN.md §5), and Apple renumbered 16 as 26: clang
+    // reads 16.0 as 26.0 and warns that it did, so every package here says
+    // 26.0. It closes the door on a macOS 15 or earlier consumer.
+    platforms: [.macOS("26.0"), .iOS("17.0")],
     products: [
         .library(name: "BASICCore", targets: ["BASICCore"]),
         // MongoDB, as its own product so a host opts in (DB11, D8). Linking

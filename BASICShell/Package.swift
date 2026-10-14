@@ -13,7 +13,7 @@ let vectorTerminalSDKPath = ProcessInfo.processInfo.environment["VECTORTERMINALS
 
 let package = Package(
     name: "BASICShell",
-    platforms: [.macOS("16.0")],
+    platforms: [.macOS("26.0")],
     dependencies: [
         .package(path: "../BASICCore"),
         .package(path: "../DocumentArchive"),

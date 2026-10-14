@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "BASICStudio",
-    platforms: [.macOS("16.0")],
+    platforms: [.macOS("26.0")],
     dependencies: [
         .package(path: "../BASICCore"),
         // New-project recipes, shared with basicc and the IDEs (BASIC-24).

@@ -19,14 +19,14 @@ name: BASICCore
 options:
   bundleIdPrefix: com.aibasic
   deploymentTarget:
-    macOS: "16.0"
+    macOS: "26.0"
 packages:
   BASICCore:
     path: .
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "16.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
 targets:
   # Builds every product the package ships; see XcodeSupport/main.swift.
   BASICCoreProducts:

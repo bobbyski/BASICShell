@@ -26,7 +26,7 @@ struct SwiftClassMetadataTests {
     /// The triple this toolchain compiles for by default.
     ///
     /// Not `TargetTriple.host`: that is the compiler's own deployment target
-    /// (`macosx16.0`), and a generated `.swiftinterface` has to name the
+    /// (`macosx26.0`), and a generated `.swiftinterface` has to name the
     /// triple the *toolchain* uses or the module it produces is rejected as
     /// "no such module" — which reads like a missing file and is not one.
     static let hostSwiftTarget: String = {

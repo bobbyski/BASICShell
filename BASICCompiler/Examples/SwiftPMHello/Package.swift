@@ -8,7 +8,7 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftPMHello",
-    platforms: [.macOS("16.0")],
+    platforms: [.macOS("26.0")],
     dependencies: [
         .package(path: "../.."),
     ],

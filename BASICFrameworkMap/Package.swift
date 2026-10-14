@@ -15,7 +15,7 @@ import PackageDescription
 // Studio builds in Swift 6. A package of its own keeps them in theirs.
 let package = Package(
     name: "BASICFrameworkMap",
-    platforms: [.macOS("16.0"), .iOS("17.0")],
+    platforms: [.macOS("26.0"), .iOS("17.0")],
     products: [
         .library(name: "BASICFrameworkMap", targets: ["BASICFrameworkMap"]),
     ],

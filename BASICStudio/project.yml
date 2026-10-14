@@ -2,7 +2,7 @@ name: BASICStudio
 options:
   bundleIdPrefix: com.aibasic
   deploymentTarget:
-    macOS: "16.0"
+    macOS: "26.0"
   createIntermediateGroups: true
 packages:
   BASICCore:
@@ -47,7 +47,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "16.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
 targets:
   BASICStudio:
     type: application
