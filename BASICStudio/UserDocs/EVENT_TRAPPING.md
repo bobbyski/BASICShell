@@ -2,7 +2,7 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen) ![BASICShell](https://img.shields.io/badge/BASICShell-supported-brightgreen)
 
-GW-BASIC's event traps: a `GOSUB` to a line when something happens, checked as each line of the program starts.
+GW-BASIC's event traps: a `GOSUB` to a line when something happens, checked as each statement of the program starts.
 
 ```basic
 ON TIMER(n) GOSUB line      ' n seconds after TIMER ON, and every n after

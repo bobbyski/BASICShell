@@ -247,9 +247,9 @@ public enum BIRTerminator: Sendable {
     case ret(BIRExpression?)
     /// `RESUME NEXT`: continue at the statement after the one that failed.
     case resumeNext
-    /// Where a line of a program with event traps starts (BBC_ADINS.md A14):
+    /// Where a statement of a program with event traps starts (BBC_ADINS.md A14):
     /// a trap that fires `GOSUB`s to its handler, which returns to `resume`
-    /// (this line, polled again); otherwise the line goes on at `next`.
+    /// (this statement, polled again); otherwise it goes on at `next`.
     case trapPoll(resume: BIRBlockID, next: BIRBlockID)
     /// The block was never finished — a builder bug if it survives.
     case unterminated

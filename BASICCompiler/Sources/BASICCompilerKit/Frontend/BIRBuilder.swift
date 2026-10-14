@@ -383,7 +383,7 @@ final class FunctionBuilder {
     /// True when main uses ON ERROR: every statement then starts a block and
     /// is marked, so the runtime can report ERL and RESUME NEXT.
     private var tracksStatements = false
-    /// Whether the program sets GW-BASIC event traps, so each line of main
+    /// Whether the program sets GW-BASIC event traps, so each statement of main
     /// starts by polling them (BBC_ADINS.md A14).
     private var tracksTraps = false
     /// `OPTION STRING-SUB`: whether plain strings interpolate `${…}` too.

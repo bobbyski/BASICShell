@@ -9,7 +9,7 @@ import Foundation
 // (BBC_ADINS.md A14).
 //
 // The rules are BASICSound's `BASICEventTraps`, the model the interpreter
-// polls too. A program that sets a trap polls as each line of main starts
+// polls too. A program that sets a trap polls as each statement of main starts
 // (BIR's `.trapPoll`): when one fires, the runtime pushes the GOSUB, marked
 // with its event, and names the handler; the handler's RETURN releases the
 // trap. No poll runs while an ON ERROR handler does, as in the interpreter.
@@ -80,7 +80,7 @@ public func basic_rt_key_define(_ number: Double, _ definition: UnsafeMutableRaw
     RTEventTraps.checked { try RTEventTraps.traps.defineKey(Int(number.rounded()), as: text) }
 }
 
-/// As a line of main starts: the handler to GOSUB to, with the GOSUB to
+/// As a statement of main starts: the handler to GOSUB to, with the GOSUB to
 /// `resume` already pushed, or -1.
 @_cdecl("basic_rt_trap_poll")
 public func basic_rt_trap_poll(_ resume: Int) -> Int {

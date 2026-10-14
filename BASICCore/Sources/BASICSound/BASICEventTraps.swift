@@ -22,7 +22,8 @@ import Foundation
 /// The rules are the GW-BASIC User's Guide's ("ON COM(n), ON KEY(n), ON PEN,
 /// ON PLAY(n), ON STRIG(n), and ON TIMER(n) Statements"):
 ///
-/// - An engine asks `poll` as each line of the main program starts. An event
+/// - An engine asks `poll` as each statement of the main program starts (a
+///   line of colon-separated statements is several). An event
 ///   that has happened to a trap that is `ON`, with a line to go to, fires:
 ///   the engine `GOSUB`s there, returning to the line it was about to run.
 /// - A trap that fires is held, "so recursive traps can never take place",
@@ -165,7 +166,7 @@ public final class BASICEventTraps {
         return false
     }
 
-    /// At the start of a line: the trap to fire now, and where its handler
+    /// At the start of a statement: the trap to fire now, and where its handler
     /// is, or nil. `playCount` is how many notes the music queue holds. The
     /// trap fired is held until `release`.
     public func poll(playCount: Int) -> (event: Event, target: Int)? {

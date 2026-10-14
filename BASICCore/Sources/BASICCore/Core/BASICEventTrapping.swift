@@ -11,7 +11,7 @@ import Foundation
 /// share (BBC_ADINS.md A14): which event a statement names, and the keys a
 /// trap has to see before `INKEY$` does.
 ///
-/// The interpreter polls the model as each line of the main program starts,
+/// The interpreter polls the model as each statement of the main program starts,
 /// and a trap that fires is a `GOSUB` whose frame remembers the event, so
 /// its `RETURN` can release it.
 enum BASICEventTrapping {

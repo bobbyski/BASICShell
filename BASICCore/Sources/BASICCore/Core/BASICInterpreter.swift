@@ -4715,8 +4715,9 @@ public final class BASICInterpreter {
         return .jump(self.pc)
     }
 
-    /// GW-BASIC's event traps, as a line of the main program starts: a trap
-    /// that fires is a `GOSUB` to its handler, which returns to this line.
+    /// GW-BASIC's event traps, as a statement of the main program starts: a
+    /// trap that fires is a `GOSUB` to its handler, which returns to this
+    /// statement.
     /// True when one fired and `pc` is now the handler's.
     private func fireEventTrap() throws -> Bool {
         // GW: "Trapping will never take place when BASIC is not executing a
