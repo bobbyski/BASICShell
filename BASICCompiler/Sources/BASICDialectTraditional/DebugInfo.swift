@@ -104,7 +104,7 @@ final class DebugInfo {
         // `main` keeps its C name, so `b main` and a backtrace agree with the
         // symbol; a BASIC function is named as BASIC names it, with the
         // mangled `F.NAME` as its linkage name.
-        let name = isMain ? "main" : function.name
+        let name = isMain ? "main" : function.displayName ?? function.name
         let linkage = isMain ? "" : "linkageName: \(Self.quoted(linkageName)), "
         nodes[id] = "distinct !DISubprogram(name: \(Self.quoted(name)), \(linkage)scope: \(fileRef), file: \(fileRef), "
             + "line: \(line), type: \(ref(subroutineTypeID)), scopeLine: \(line), "

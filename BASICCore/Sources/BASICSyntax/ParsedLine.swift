@@ -158,7 +158,7 @@ public enum ProgramParser {
                     throw Failure(fileName: bodyLine.fileName, lineNumber: bodyLine.sourceLineNumber ?? index + 1, error: error)
                 }
                 body.append(ClosureBodyLine(fileName: bodyLine.fileName, sourceLineNumber: bodyLine.sourceLineNumber ?? index + 1,
-                                            statement: namingClosures(statement)))
+                                            statement: namingClosures(statement), source: bodyLine.source))
                 index += 1
             }
             throw BASICError.runtime("FUNCTION closure without END FUNCTION")

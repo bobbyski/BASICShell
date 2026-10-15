@@ -232,12 +232,16 @@ public struct ClosureBodyLine: Equatable {
     public let fileName: String?
     public let sourceLineNumber: Int
     public let statement: Statement
+    /// The line as written: where an error in it points its caret, and what
+    /// a debugger stopping on it shows (Documents/CLOSURES.md 4.6, 4.9).
+    public let source: String
 
     /// Creates a value from its parts.
-    public init(fileName: String?, sourceLineNumber: Int, statement: Statement) {
+    public init(fileName: String?, sourceLineNumber: Int, statement: Statement, source: String = "") {
         self.fileName = fileName
         self.sourceLineNumber = sourceLineNumber
         self.statement = statement
+        self.source = source
     }
 }
 

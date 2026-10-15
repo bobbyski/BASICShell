@@ -96,6 +96,48 @@ struct WasmDebuggerTests {
         #expect(Self.value("TOTAL", in: pauses[2].globals) == "6")
     }
 
+    @Test("Closures: a breakpoint in a body stops there, a shared local shows in both frames, and a closure shows its name, line and captures (CLOSURES.md 4.8, 4.9)")
+    func closures() throws {
+        let program = """
+        FUNCTION TYPE Counter() AS INTEGER
+        FUNCTION MakeCounter() AS Counter
+          LOCAL count AS INTEGER = 0
+          LOCAL tick AS Counter
+          tick = FUNCTION() AS INTEGER
+            count = count + 1
+            RETURN count
+          END FUNCTION
+          RETURN tick
+        END FUNCTION
+        c = MakeCounter()
+        PRINT c(); c()
+        """
+        let debugger = WasmDebugger()
+        debugger.setBreakpoints([BASICBreakpointLocation(lineNumber: 7), BASICBreakpointLocation(lineNumber: 9)])
+        var pauses: [WasmDebugger.Pause] = []
+        let (outcome, output) = try Self.debug(program, debugger: debugger) { pause in
+            pauses.append(pause)
+            return .run
+        }
+        #expect(outcome == .finished(0))
+        #expect(output == "12\n", "\(output)")
+        try #require(pauses.count == 3)
+        let maker = pauses[0]
+        #expect(maker.location.lineNumber == 9)
+        #expect(Self.value("COUNT", in: maker.frameLocals[0]) == "0", "a local the closure shares, read through its cell")
+        let tick = try #require(maker.frameLocals[0].first { $0.name == "TICK" })
+        #expect(tick.value == "<FUNCTION tick>")
+        #expect(tick.children.contains { $0.name == "Made At" && $0.value == "line 5" })
+        let captures = try #require(tick.children.first { $0.name == "Captured Values" })
+        #expect(captures.children.contains { $0.name == "COUNT" && $0.value == "0 [Shared]" })
+        let body = pauses[1]
+        #expect(body.location.lineNumber == 7)
+        #expect(body.source == "    RETURN count")
+        #expect(body.callStack.first?.name == "tick")
+        #expect(Self.value("COUNT", in: body.frameLocals[0]) == "1")
+        #expect(Self.value("COUNT", in: pauses[2].frameLocals[0]) == "2")
+    }
+
     @Test("Step into, over and out, from the first statement")
     func stepping() throws {
         let debugger = WasmDebugger(command: .stepInto)

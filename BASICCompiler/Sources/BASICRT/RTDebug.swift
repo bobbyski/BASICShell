@@ -68,7 +68,7 @@ public enum RTDebug {
         case .date(let text), .time(let text), .datetime(let text):
             return RTDebugValue(name: name, typeName: typed("DATE"), value: text)
         case .decimal(let decimal): return RTDebugValue(name: name, typeName: typed("DECIMAL"), value: "\(decimal)")
-        case .closure: return RTDebugValue(name: name, typeName: typed("FUNCTION"), value: "<FUNCTION>")
+        case .closure(let closure): return describe(name: name, typeName: typed("FUNCTION"), closure: closure)
         case .task(let task): return RTDebugValue(name: name, typeName: typed("TASK"), value: "<TASK \(task.name)>")
         case .system(let object): return RTDebugValue(name: name, typeName: object.typeName, value: "<\(object.typeName)>")
         case .cell: return RTDebugValue(name: name, typeName: typed("VARIANT"), value: "<shared>")
@@ -143,5 +143,41 @@ public enum RTDebug {
             remainder /= max(1, size)
         }
         return "(\(indexes.map(String.init).joined(separator: ",")))"
+    }
+}
+
+extension RTDebug {
+    /// A closure as the interpreter's pane shows one (Documents/CLOSURES.md
+    /// 4.8): its name, its shape, the line it was made on, and each capture
+    /// with how the closure holds it.
+    static func describe(name: String, typeName: String, closure: RTClosure) -> RTDebugValue {
+        var children = [RTDebugValue(name: "Name", typeName: "STRING", value: closure.name)]
+        if !closure.shape.isEmpty {
+            children.append(RTDebugValue(name: "Signature", typeName: "FUNCTION", value: closure.shape))
+        }
+        if closure.line > 0 {
+            children.append(RTDebugValue(name: "Made At", typeName: "LINE", value: "line \(closure.line)"))
+        }
+        if let environment = closure.environment, environment.typeIndex >= 0, environment.typeIndex < RTTypes.registry.count,
+           let environmentType = RTTypes.registry[environment.typeIndex] {
+            let captures = zip(environmentType.fields, environment.fields).enumerated().map { index, pair -> RTDebugValue in
+                let (field, value) = pair
+                let policy = index < closure.policies.count ? closure.policies[index] : ""
+                let shown: RTDebugValue
+                switch value {
+                case .cell(let cell): shown = cell.debugValue(name: field.displayName, typeName: "")
+                case .system(let box) where box.payload is RTWeak:
+                    let object = (box.payload as? RTWeak)?.object
+                    shown = RTDebugValue(name: field.displayName, typeName: "OBJECT", value: object.map { "<\(type(of: $0))>" } ?? "NULL")
+                default: shown = describe(name: field.displayName, typeName: "", value: value)
+                }
+                return RTDebugValue(name: shown.name, typeName: shown.typeName,
+                                    value: policy.isEmpty ? shown.value : "\(shown.value) [\(policy)]", children: shown.children)
+            }
+            if !captures.isEmpty {
+                children.append(RTDebugValue(name: "Captured Values", typeName: "CAPTURES", value: "\(captures.count) captures", children: captures))
+            }
+        }
+        return RTDebugValue(name: name, typeName: typeName, value: "<FUNCTION \(closure.name)>", children: children)
     }
 }

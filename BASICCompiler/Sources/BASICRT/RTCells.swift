@@ -27,6 +27,8 @@ package final class RTCell {
         case array
         /// Released by the function the compiler passed (an object model's own).
         case custom
+        /// A BOOLEAN: nothing to release, read as one byte.
+        case boolean
     }
 
     let storage: UnsafeMutableRawPointer
@@ -44,7 +46,7 @@ package final class RTCell {
         let held = storage.load(as: UnsafeMutableRawPointer?.self)
         if let held {
             switch kind {
-            case .plain: break
+            case .plain, .boolean: break
             case .string: basic_rt_string_release(held)
             case .closure: basic_rt_closure_release(held)
             // A runtime record or a Swift object of an object model's (an
@@ -62,6 +64,18 @@ package final class RTCell {
             }
         }
         RTCell.free(storage)
+    }
+
+    /// What the cell holds, for a debugger (Documents/CLOSURES.md 4.8): a
+    /// number or a truth value read as one, anything else as the runtime
+    /// object its eight bytes point at.
+    func debugValue(name: String, typeName: String) -> RTDebugValue {
+        switch kind {
+        case .plain: return RTDebugValue(name: name, typeName: typeName.isEmpty ? "DOUBLE" : typeName,
+                                         value: RTDebug.number(storage.load(as: Double.self)))
+        case .boolean: return RTDebugValue(name: name, typeName: "BOOLEAN", value: storage.load(as: UInt8.self) & 1 == 1 ? "TRUE" : "FALSE")
+        default: return RTDebug.describe(name: name, typeName: typeName, pointer: storage.load(as: UnsafeMutableRawPointer?.self))
+        }
     }
 
     // MARK: Storage

@@ -1,0 +1,4 @@
+BEFORE
+  RETURN x / y
+  ^
+Runtime error: Division by zero at 5

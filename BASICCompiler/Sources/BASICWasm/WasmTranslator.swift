@@ -268,7 +268,16 @@ private struct ModuleTranslation {
                     name: name, isProgram: function.name == "main",
                     locals: translation.debugSlots.map { slot in
                         let name = String(slot.register.dropFirst(2))
-                        return debugVariable(name: name, type: slot.type, typeName: types[name], offset: slot.offset)
+                        guard slot.register.hasPrefix("D.") else {
+                            return debugVariable(name: name, type: slot.type, typeName: types[name], offset: slot.offset)
+                        }
+                        // A cell's address: the value's storage follows from its type.
+                        let typeName = types[name] ?? ""
+                        let valueType: IRType = ["DOUBLE", "INTEGER", "SINGLE", "LONG"].contains(typeName) ? .double
+                            : typeName == "BOOLEAN" ? .int(1) : .pointer
+                        var variable = debugVariable(name: name, type: valueType, typeName: types[name], offset: slot.offset)
+                        variable.indirect = true
+                        return variable
                     },
                     frameSize: translation.frameSize))
             }
@@ -886,7 +895,8 @@ private struct FunctionTranslation {
             for instruction in block.instructions {
                 guard case .alloca(let type) = instruction.kind, let result = instruction.result else { continue }
                 // A debug build keeps the program's variables in the frame.
-                let inspected = module.debug && ModuleTranslation.isProgramVariable(result, prefix: "L.")
+                let inspected = module.debug && (ModuleTranslation.isProgramVariable(result, prefix: "L.")
+                    || ModuleTranslation.isProgramVariable(result, prefix: "D."))
                 if !escaping.contains(result), !inspected, let wasm = module.wasmType(type) {
                     promotedAlloca.insert(result)
                     local[result] = newLocal(wasm)

@@ -172,4 +172,51 @@ struct BASICClosureSyntaxTests {
         #expect(slow.children.contains { $0.name == "Signature" && $0.value.hasPrefix("ASYNC ") })
         #expect(slow.children.contains { $0.name == "Running As" && $0.value.hasPrefix("task #") })
     }
+
+    @Test("a breakpoint inside a closure's body stops there, with the closure's locals and frame, and Continue goes on (4.6)")
+    func breakpointInClosureBody() throws {
+        let host = TestHost()
+        let session = BASICSession(host: host)
+        let control = BASICExecutionControl()
+        let inBody = BASICBreakpointLocation(lineNumber: 4, statementNumber: 0)
+        control.setBreakpoints([BASICBreakpoint(location: inBody)])
+        session.program.loadSource("""
+        total = 0
+        add = FUNCTION(n AS INTEGER) AS INTEGER
+          LOCAL doubled AS INTEGER = n * 2
+          total = total + doubled
+          RETURN total
+        END FUNCTION
+        x = add(5)
+        PRINT x
+        """)
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint(let location) {
+            #expect(location == inBody)
+        }
+        #expect(session.debugLocalVariables.contains { $0.name == "doubled" && $0.value == "10" })
+        #expect(session.debugLocalVariables.contains { $0.name == "n" && $0.value == "5" })
+        #expect(session.debugCallStack.contains { $0.name == "add" })
+        control.ignoreBreakpointOnce(at: inBody)
+        try session.continueProgram(executionControl: control)
+        #expect(host.output == ["10"])
+    }
+
+    /// `BASICCompiler/Tests/Programs/closure-error.bas`: an error in a
+    /// closure's body is placed on its own line, in both engines (4.9).
+    @Test("an error inside a closure's body is placed on its line, as basicc places it")
+    func errorInClosureBody() {
+        #expect(run("""
+            ' A runtime error inside a closure's body is placed on its own line, in
+            ' both engines, as one in a FUNCTION is (Documents/CLOSURES.md 4.9).
+            divide = FUNCTION(x AS INTEGER) AS INTEGER
+              LOCAL y AS INTEGER = 0
+              RETURN x / y
+            END FUNCTION
+            PRINT "BEFORE"
+            PRINT divide(1)
+            """) == ["BEFORE", "  RETURN x / y\n  ^\nRuntime error: Division by zero at 5"])
+    }
 }

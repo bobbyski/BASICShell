@@ -33,6 +33,9 @@ public struct WasmDebugInfo: Sendable {
         public let storage: Storage
         /// A global's offset in memory; a local's from its frame.
         public let offset: Int
+        /// The place holds the address of the value, not the value: a local
+        /// a closure shares lives in a cell (Documents/CLOSURES.md 4.8).
+        public var indirect = false
     }
 
     /// A function, by the number the hook passes.

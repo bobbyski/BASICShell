@@ -82,7 +82,7 @@ public indirect enum BIRExpression: Sendable {
     case fileService(method: String, arguments: [BIRExpression], returns: BIRType)
     /// Makes a closure: its body function, the environment type holding the
     /// captures, and the captured values in field order. Owned.
-    case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String, name: String)
+    case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String, info: BIRClosureInfo)
     /// A closure environment's `WEAK` field: the imported object, or null
     /// once it is gone. Owned.
     case weakField(BIRExpression, index: Int, type: BIRType)

@@ -147,6 +147,43 @@ struct ActiveUIDebugPaneTests {
         try await studio.waitUntilStopped()
     }
 
+    @Test("A closure's row opens into its name, where it was made and its captures, each with its policy (CLOSURES.md 4.7)")
+    func closureCaptures() async throws {
+        let studio = StudioHarness(program: """
+        total = 0
+        add = FUNCTION(n AS INTEGER) AS INTEGER CAPTURES STRONG mine
+          total = total + n
+          RETURN total
+        END FUNCTION
+        x = add(4)
+        PRINT x
+        """)
+        studio.model.openDebugger()
+        studio.model.toggleDebuggerBreakpoint(atSourceLine: 7)
+        try await studio.run()
+        let pane = DebugPaneAUI(model: studio.model)
+        func row(_ name: String) -> AUIView? {
+            func search(_ view: AUIView) -> AUIView? {
+                if view.children.contains(where: { ($0 as? AUILabel)?.text == name }) { return view }
+                for child in view.children { if let found = search(child) { return found } }
+                return nil
+            }
+            return search(pane.sections[3].content)
+        }
+        Click.simulate(try #require(row("add")))
+        let opened = texts(pane.sections[3].content)
+        #expect(opened.contains("Name"))
+        #expect(opened.contains("Made At"))
+        #expect(opened.contains("line 2"))
+        Click.simulate(try #require(row("Captured Values")))
+        let captures = texts(pane.sections[3].content)
+        #expect(captures.contains("total"))
+        #expect(captures.contains { $0.contains("[Shared, rev 1]") })
+        #expect(captures.contains { $0.contains("[Strong Copy, rev 0]") })
+        DebugPaneModel.perform(.continueExecution, on: studio.model)
+        try await studio.waitUntilStopped()
+    }
+
     @Test("D17 · The code view takes 62% until dragged, and the list the rest")
     func bodyLayout() {
         let pane = DebugPaneAUI(model: StudioHarness().model)

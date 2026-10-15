@@ -302,6 +302,24 @@ public enum BIRCell: Sendable, Hashable {
     case environment(Int)
 }
 
+/// What a closure being made says of itself, for printing and debuggers.
+public struct BIRClosureInfo: Sendable {
+    /// A block closure's variable, an AddressOf's function, else
+    /// `[anonymous closure]`.
+    public let name: String
+    /// The line it is made on.
+    public let line: Int
+    /// How it holds each capture, in environment field order: `Shared`,
+    /// `Strong Copy`, `Read Only`, `Weak` (Documents/CLOSURES.md 4.4).
+    public let policies: [String]
+
+    public init(name: String, line: Int, policies: [String]) {
+        self.name = name
+        self.line = line
+        self.policies = policies
+    }
+}
+
 /// One capture of a closure being made, in environment field order.
 public enum BIRCapture: Sendable {
     /// A copy of the value, which the body copies into its local (READONLY).
@@ -354,6 +372,9 @@ public struct BIRFunction: Sendable {
     /// An `ASYNC FUNCTION(…)` closure's body: called through a task
     /// trampoline (`A.closure$N`) when the closure is called.
     public var isAsyncClosureBody = false
+    /// A closure body's name as BASIC knows it, for a debugger's call stack:
+    /// its variable, or `[anonymous closure]`.
+    public var displayName: String?
     /// A member of an imported Swift class: declared so calls type-check and
     /// dispatch as any method's do, but with no body here — the object model
     /// supplies the definition, a thunk onto the framework's symbol.

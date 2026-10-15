@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 320 entry points, by name.
+    /// 321 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -62,6 +62,7 @@ enum RTEntryPoints {
         "basic_rt_closure_function": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_closure_function(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_closure_invoke_void": RTEntryPoint(arity: 1) { a in basic_rt_closure_invoke_void(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_closure_new": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_closure_new(unsafeBitCast(UnsafeRawPointer(bitPattern: UInt(a[0])), to: UnsafeRawPointer.self), UnsafeMutableRawPointer(bitPattern: UInt(a[1]))))) },
+        "basic_rt_closure_origin": RTEntryPoint(arity: 3) { a in basic_rt_closure_origin(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
         "basic_rt_closure_release": RTEntryPoint(arity: 1) { a in basic_rt_closure_release(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_closure_retain": RTEntryPoint(arity: 1) { a in basic_rt_closure_retain(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_closure_text": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_closure_text(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },

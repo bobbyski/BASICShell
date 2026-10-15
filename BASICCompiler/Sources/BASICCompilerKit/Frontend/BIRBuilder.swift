@@ -2658,6 +2658,7 @@ final class FunctionBuilder {
         var bodyReadOnly: [String: String] = [:]
         var bodyWeak = Set<String>()
         var fieldTypes: [BIRType] = []
+        var policyLabels: [String: String] = [:]
         for name in captureNames where !parameterNames.contains(name) && !declaredLocals.contains(name) {
             let outer = variable(VariableName(name: name, column: 0))
             var access = policies[name]?.access ?? .shared
@@ -2700,6 +2701,7 @@ final class FunctionBuilder {
                 }
             }
             captured.append(local)
+            policyLabels[name] = access.rawValue
             // A cell or a weak reference is held as the runtime's own value,
             // whatever the variable's type.
             fieldTypes.append(bodyCells[name] != nil || bodyWeak.contains(name) ? .variant : outer.type)
@@ -2744,8 +2746,12 @@ final class FunctionBuilder {
             bodyBuilder.terminate(.ret(resolvedReturn == .void ? nil : value))
             bodyBuilder.function.pruneUnreachableBlocks()
         case .block(let bodyLines):
+            // With their source, so each statement is located for errors and
+            // for a debugger, as a FUNCTION's are (CLOSURES.md 4.9).
             let parsed = bodyLines.enumerated().map { index, bodyLine in
-                ParsedLine(number: nil, displayLineNumber: bodyLine.sourceLineNumber, fileName: bodyLine.fileName, sourceLineNumber: bodyLine.sourceLineNumber, statementNumber: index, isImported: false, statement: bodyLine.statement)
+                ParsedLine(number: nil, displayLineNumber: bodyLine.sourceLineNumber, fileName: bodyLine.fileName, sourceLineNumber: bodyLine.sourceLineNumber,
+                           statementNumber: index, isImported: false, statement: bodyLine.statement,
+                           source: bodyLine.source, column: ParsedLine.firstColumn(of: bodyLine.source))
             }
             // LOCALs declared in the body are locals too.
             for parsedLine in parsed {
@@ -2776,9 +2782,11 @@ final class FunctionBuilder {
             try bodyBuilder.run()
         }
         bodyBuilder.function.isAsyncClosureBody = isAsync
+        bodyBuilder.function.displayName = closureName
         closures.functions.append(bodyBuilder.function)
 
-        return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical, name: closureName)
+        let info = BIRClosureInfo(name: closureName, line: location.line, policies: captured.map { policyLabels[$0.name] ?? "" })
+        return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical, info: info)
     }
 
     /// `AddressOf Name`: the named `FUNCTION` as a closure that captures

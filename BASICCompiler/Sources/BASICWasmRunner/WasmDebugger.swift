@@ -233,7 +233,14 @@ public final class WasmDebugger: @unchecked Sendable {
         let name = spelled(variable.name)
         let value: RTDebugValue
         if let base {
-            let place = base + address
+            var place = base + address
+            // A cell's slot holds where the value is (CLOSURES.md 4.8).
+            if variable.indirect {
+                guard let cell = UnsafeMutableRawPointer(bitPattern: UInt(place.loadUnaligned(as: UInt64.self))) else {
+                    return Self.snapshot(RTDebugValue(name: name, typeName: variable.typeName, value: ""), scope: scope, path: "\(scope.rawValue):\(name)")
+                }
+                place = cell
+            }
             switch variable.storage {
             case .double:
                 value = RTDebugValue(name: name, typeName: variable.typeName.isEmpty ? "DOUBLE" : variable.typeName,

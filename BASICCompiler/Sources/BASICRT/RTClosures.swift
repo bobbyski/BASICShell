@@ -18,6 +18,11 @@ public final class RTClosure {
     var name = "[anonymous closure]"
     var arity = 0
     var shape = ""
+    /// The line it was made on, and how it holds each capture, in its
+    /// environment's field order (`Shared`, `Strong Copy`, …): what a
+    /// debugger shows (Documents/CLOSURES.md 4.8).
+    var line = 0
+    var policies: [String] = []
     var boxed: RTEvalTrampoline?
     /// An `ASYNC FUNCTION(…)` closure: a call starts a task on this
     /// trampoline (Documents/CLOSURES.md 3.9).
@@ -57,6 +62,16 @@ public final class RTClosure {
 @_cdecl("basic_rt_closure_async")
 public func basic_rt_closure_async(_ pointer: UnsafeMutableRawPointer?, _ trampoline: UnsafeMutableRawPointer) {
     rtClosure(pointer).asyncTrampoline = unsafeBitCast(trampoline, to: RTTaskTrampoline.self)
+}
+
+/// Says where a closure just made was made, and how it holds its captures:
+/// their policies, `|`-separated in field order.
+@_cdecl("basic_rt_closure_origin")
+public func basic_rt_closure_origin(_ pointer: UnsafeMutableRawPointer?, _ line: Int, _ policies: UnsafePointer<CChar>) {
+    let closure = rtClosure(pointer)
+    closure.line = line
+    let text = String(cString: policies)
+    closure.policies = text.isEmpty ? [] : text.components(separatedBy: "|")
 }
 
 /// Says what a closure just made is (owned by the caller, unchanged).

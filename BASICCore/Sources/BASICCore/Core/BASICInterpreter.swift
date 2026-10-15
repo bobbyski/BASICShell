@@ -4491,15 +4491,19 @@ public final class BASICInterpreter {
         ))
         defer { _ = functionStack.popLast() }
 
-        let parsed = bodyStatements.enumerated().map { index, line in
+        // Each body line is a whole source line, statement 0 of it, so a
+        // breakpoint set on it in the editor is found (CLOSURES.md 4.6).
+        let parsed = bodyStatements.map { line in
             ParsedLine(
                 number: nil,
                 displayLineNumber: line.sourceLineNumber,
                 fileName: line.fileName,
                 sourceLineNumber: line.sourceLineNumber,
-                statementNumber: index,
+                statementNumber: 0,
                 isImported: false,
-                statement: line.statement
+                statement: line.statement,
+                source: line.source,
+                column: ParsedLine.firstColumn(of: line.source)
             )
         }
         var labelIndexByName: [String: Int] = [:]
@@ -4511,28 +4515,49 @@ public final class BASICInterpreter {
 
         var pc = 0
         while pc < parsed.count {
-            let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
-            switch flow {
-            case .next:
-                pc += 1
-            case .jump(let index):
-                pc = index
-            case .gotoLabel(let label):
-                guard let index = labelIndexByName[label.uppercased()] else {
-                    throw BASICError.missingLabel(label)
+            do {
+                if let task, task.isCancellationRequested {
+                    throw CancellationError()
                 }
-                pc = index
-            case .goto(let line):
-                throw BASICError.runtime("GOTO line \(line) is not supported inside closure bodies yet")
-            case .returnTo:
-                throw BASICError.runtime("RETURN without GOSUB")
-            case .exitSelect:
-                guard let index = matchingEndSelect(after: pc, in: parsed) else {
-                    throw BASICError.runtime("EXIT SELECT without SELECT")
+                // A closure's body stops at breakpoints and steps as a FUNCTION's does.
+                updateExecutionLocation(parsed[pc])
+                try checkExecutionBreak()
+                let flow = try execute(parsed[pc].statement, pc: pc, parsed: parsed)
+                switch flow {
+                case .next:
+                    pc += 1
+                case .jump(let index):
+                    pc = index
+                case .gotoLabel(let label):
+                    guard let index = labelIndexByName[label.uppercased()] else {
+                        throw BASICError.missingLabel(label)
+                    }
+                    pc = index
+                case .goto(let line):
+                    throw BASICError.runtime("GOTO line \(line) is not supported inside closure bodies yet")
+                case .returnTo:
+                    throw BASICError.runtime("RETURN without GOSUB")
+                case .exitSelect:
+                    guard let index = matchingEndSelect(after: pc, in: parsed) else {
+                        throw BASICError.runtime("EXIT SELECT without SELECT")
+                    }
+                    pc = index + 1
+                case .functionReturn, .end:
+                    return try closureResult(closure, returnType)
                 }
-                pc = index + 1
-            case .functionReturn, .end:
-                return try closureResult(closure, returnType)
+                if executionControl?.shouldPauseAfterStep(callDepth: debugCallDepth, taskID: task?.id) == true, pc < parsed.count {
+                    updateExecutionLocation(parsed[pc])
+                    throw BASICError.stepComplete(parsed[pc].breakpointLocation)
+                }
+            } catch let error as BASICError {
+                if error.isDebugPause {
+                    snapshotPausedDebugState()
+                } else if faultLine == nil, !parsed[pc].source.isEmpty {
+                    // An error in a closure's body is placed on its line, as
+                    // a FUNCTION's is, and as basicc places it.
+                    faultLine = parsed[pc]
+                }
+                throw error
             }
         }
         return try closureResult(closure, returnType)

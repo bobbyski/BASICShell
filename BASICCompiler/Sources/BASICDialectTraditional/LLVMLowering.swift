@@ -672,6 +672,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_cell_new(i64, ptr)
     declare void @basic_rt_closure_describe(ptr, ptr, ptr, i64, ptr)
     declare void @basic_rt_closure_async(ptr, ptr)
+    declare void @basic_rt_closure_origin(ptr, i64, ptr)
     declare ptr @basic_rt_composite_get_closure(ptr, i64)
     declare ptr @basic_rt_closure_text(ptr)
     declare void @basic_rt_composite_set_closure(ptr, i64, ptr)
@@ -1021,11 +1022,13 @@ struct FunctionEmitter {
                 out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
                 out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
                 out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
+                declareCellForDebugger(local)
                 continue
             case .environment(let index):
                 out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_composite_get_cell(ptr %p0, i64 \(index))")
                 out.emit("call void @basic_rt_cell_retain(ptr %\"C.\(local.name)\")")
                 out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
+                declareCellForDebugger(local)
                 continue
             case nil:
                 break
@@ -1161,6 +1164,18 @@ struct FunctionEmitter {
             out.label("gosub.bad")
             out.emit("unreachable")
         }
+    }
+
+    /// A celled local, for a debug build: a frame slot `D.NAME` holds where
+    /// its value is, and the debugger is told to look there (`DW_OP_deref`).
+    /// The WebAssembly debugger reads a `D.` slot the same way (4.8).
+    private mutating func declareCellForDebugger(_ local: BIRVariable) {
+        guard let debug, let debugScope else { return }
+        out.emit("%\"D.\(local.name)\" = alloca ptr")
+        out.emit("store ptr %\"L.\(local.name)\", ptr %\"D.\(local.name)\"")
+        let argument = function.parameters.firstIndex { $0.name == local.name }.map { $0 + 1 }
+        guard let variable = debug.localVariable(local, argument: argument, in: debugScope, module: module) else { return }
+        out.emit("call void @llvm.dbg.declare(metadata ptr %\"D.\(local.name)\", metadata \(variable), metadata !DIExpression(DW_OP_deref))")
     }
 
     /// Tells the debugger which alloca holds a variable, so `frame variable`
@@ -1722,7 +1737,8 @@ struct FunctionEmitter {
     private func cellKind(of variable: BIRVariable) -> (kind: Int, release: String) {
         if variable.rank != nil { return (6, "null") }
         switch variable.type {
-        case .number, .boolean, .void: return (0, "null")
+        case .number, .void: return (0, "null")
+        case .boolean: return (8, "null")
         case .string: return (1, "null")
         case .closure: return (2, "null")
         case .variant, .system, .exact: return (4, "null")
@@ -2574,7 +2590,8 @@ struct FunctionEmitter {
             }
         case .fileService(let method, let arguments, _):
             return lowerFileService(method, arguments)
-        case .makeClosure(let functionName, let environment, let captures, let signature, let closureName):
+        case .makeClosure(let functionName, let environment, let captures, let signature, let info):
+            let closureName = info.name
             var env = "null"
             if let environment, let type = module.types.first(where: { $0.name == environment }) {
                 let created = out.temp()
@@ -2639,6 +2656,7 @@ struct FunctionEmitter {
             let arity = module.functions.first { $0.name == functionName }.map { $0.parameters.count - 1 } ?? 0
             let shape = module.signatures[signature]?.shape ?? signature
             out.emit("call void @basic_rt_closure_describe(ptr \(result), ptr @\"V.\(functionName)\", ptr \(constants.constant(closureName)), i64 \(arity), ptr \(constants.constant(shape)))")
+            out.emit("call void @basic_rt_closure_origin(ptr \(result), i64 \(info.line), ptr \(constants.constant(info.policies.joined(separator: "|"))))")
             if module.functions.contains(where: { $0.name == functionName && $0.isAsyncClosureBody }) {
                 out.emit("call void @basic_rt_closure_async(ptr \(result), ptr @\"A.\(functionName)\")")
             }
