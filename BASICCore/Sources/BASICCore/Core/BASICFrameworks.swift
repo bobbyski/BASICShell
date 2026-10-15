@@ -153,6 +153,17 @@ public protocol BASICFrameworkHost: AnyObject {
     func frameworkPoll() throws
     /// The run is over: let go of its objects.
     func frameworkRunEnded()
+    /// For a closure's `WEAK` capture (CLOSURES.md C5): lets go of every
+    /// object but those in `kept`, which the program can still reach, and
+    /// `handle`; then answers whether anything still holds `handle` — the
+    /// framework, say, which keeps a window it shows — and lets go of it if
+    /// nothing does.
+    func frameworkCollect(keeping kept: Set<Int>, asking handle: Int) -> Bool
+}
+
+extension BASICFrameworkHost {
+    /// A host that cannot tell says yes, so no object is ever let go early.
+    public func frameworkCollect(keeping kept: Set<Int>, asking handle: Int) -> Bool { true }
 }
 
 // MARK: - The runtime's side
@@ -187,6 +198,51 @@ extension BASICRuntime {
             current = classDefinitions[currentName.uppercased()]?.baseClassName
         }
         return nil
+    }
+
+    /// A `WEAK` capture's value as a closure call starts (CLOSURES.md C5):
+    /// the imported object while anything holds it, else `NULL`. Nothing in
+    /// the interpreter counts references, so "anything" is asked of the host
+    /// (the framework's own hold) and found by walking the program's values;
+    /// an object neither holds is let go, as a compiled program's would be.
+    func weakCaptureValue(_ value: BASICValue) -> BASICValue {
+        guard case .systemObject(let typeName, let handle) = value, typeName.contains(".") else { return value }
+        guard frameworkObjects[handle] != nil else { return .null }
+        let kept = reachableFrameworkObjects()
+        if kept.contains(handle) { return value }
+        // What the program cannot reach goes first: one of those may be
+        // all that holds this object, as a stack holds its children.
+        let lives = frameworkHost?.frameworkCollect(keeping: kept, asking: handle) ?? true
+        frameworkObjects = frameworkObjects.filter { kept.contains($0.key) || ($0.key == handle && lives) }
+        return lives ? value : .null
+    }
+
+    /// The framework objects any value the program can still reach refers
+    /// to: its variables, every frame's locals, what closures share or copy
+    /// (not their WEAK captures), and the closures it handed the framework.
+    private func reachableFrameworkObjects() -> Set<Int> {
+        var found: Set<Int> = []
+        var seenClosures: Set<ObjectIdentifier> = []
+        func visit(_ value: BASICValue) {
+            switch value {
+            case .systemObject(let typeName, let id) where typeName.contains("."):
+                found.insert(id)
+            case .record(_, let fields), .object(_, let fields):
+                fields.values.forEach(visit)
+            case .array(let array):
+                array.values.forEach(visit)
+            case .dictionary(let dictionary):
+                dictionary.values.values.forEach(visit)
+            case .closure(let closure):
+                guard seenClosures.insert(ObjectIdentifier(closure)).inserted else { return }
+                for cell in closure.environment.orderedCells where cell.access != .weak { visit(cell.value) }
+            default:
+                break
+            }
+        }
+        allBindings().forEach { visit($0.value) }
+        for case .closure(let closure) in frameworkCallables.values { visit(.closure(closure)) }
+        return found
     }
 
     /// The framework object a value is, with its handle.

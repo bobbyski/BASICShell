@@ -349,7 +349,7 @@ final class BASICRuntime {
     /// A shared capture moves the variable itself into a cell, so the scope
     /// and every closure sharing it see one value (C1, C3). `STRONG` and
     /// `READONLY` take a copy of the value as it is now (C2, C4).
-    func captureCell(for variable: VariableName, access: BASICCapturedReferenceAccess) -> BASICSharedValueCell? {
+    func captureCell(for variable: VariableName, access: BASICCapturedReferenceAccess) throws -> BASICSharedValueCell? {
         let normalized = variable.normalized
         let context = visibleContext(for: normalized)
         let existing = context.flatMap { binding(in: $0, normalized: normalized) }
@@ -366,7 +366,21 @@ final class BASICRuntime {
             return cell
         }
         let type = existing?.type ?? resolvedDeclaredType(inferredType(name: variable.name, value: nil))
-        return copyCell(existing?.displayName ?? variable.name, existing?.value ?? defaultValue(for: type), type, access)
+        let value = existing?.value ?? defaultValue(for: type)
+        if access == .weak {
+            // An imported object, or nothing yet (C5).
+            switch value {
+            case .null, .empty: break
+            default:
+                guard frameworkObject(value) != nil else { throw BASICError.runtime("WEAK needs an imported object") }
+            }
+        }
+        return copyCell(existing?.displayName ?? variable.name, value, type, access)
+    }
+
+    /// Every variable binding there is: globals, then each frame's locals.
+    func allBindings() -> [VariableBinding] {
+        Array(globals.values) + locals.flatMap(\.values)
     }
 
     private func copyCell(_ name: String, _ value: BASICValue, _ type: BASICType, _ access: BASICCapturedReferenceAccess) -> BASICSharedValueCell {
@@ -384,9 +398,11 @@ final class BASICRuntime {
         switch cell.access {
         case .shared, .strongCopy:
             binding = VariableBinding(displayName: cell.name, type: type, value: .empty, cell: cell)
-        case .readOnly, .weak:
+        case .readOnly:
             binding = VariableBinding(displayName: cell.name, type: type, value: cell.value)
-            binding.isReadOnlyCapture = cell.access == .readOnly
+            binding.isReadOnlyCapture = true
+        case .weak:
+            binding = VariableBinding(displayName: cell.name, type: type, value: weakCaptureValue(cell.value))
         }
         locals[index][cell.name.uppercased()] = binding
     }

@@ -285,6 +285,45 @@ final class StudioInterpretedFrameworks: WasmCallbackHost, @unchecked Sendable {
         return held
     }
 
+    /// For a closure's `WEAK` capture (CLOSURES.md C5): lets go of every
+    /// object but `kept` and `handle`, then answers whether anything but
+    /// this table holds `handle`, letting go of it too when nothing does.
+    /// The letting go happens on the main thread, where a UI object lives,
+    /// and is waited for, so an object only they held is gone by the answer.
+    func collect(keeping kept: Set<Int>, asking handle: Int) -> Bool {
+        var dropped: [AnyObject] = []
+        for key in Array(objects.keys) where !kept.contains(key) && key != handle {
+            dropped.append(forget(key)!)
+        }
+        let kind = classOfHandle[handle]
+        guard var held = forget(handle) else { return false }
+        // Let go, and see whether anything else kept it: a weak reference
+        // outlives the object only when something does. An object nothing
+        // else held is gone now, as a compiled program's would be.
+        let lives = WasmMainThread.run {
+            dropped.removeAll()
+            weak var probe = held
+            held = NSNull()
+            guard let survivor = probe else { return 0 }
+            held = survivor
+            return 1
+        } != 0
+        if lives {
+            // Something kept it: it is the program's again, as it was.
+            objects[handle] = held
+            handles[ObjectIdentifier(held)] = handle
+            classOfHandle[handle] = kind
+        }
+        return lives
+    }
+
+    private func forget(_ handle: Int) -> AnyObject? {
+        guard let held = objects.removeValue(forKey: handle) else { return nil }
+        handles.removeValue(forKey: ObjectIdentifier(held))
+        classOfHandle.removeValue(forKey: handle)
+        return held
+    }
+
     private func bits(of handle: Int) throws -> Double {
         Double(UInt(bitPattern: Unmanaged.passUnretained(try object(handle)).toOpaque()))
     }
@@ -818,5 +857,9 @@ extension StudioModel: BASICFrameworkHost {
     nonisolated func frameworkRunEnded() {
         StudioInterpretedFrameworks.current?.end()
         StudioInterpretedFrameworks.current = nil
+    }
+
+    nonisolated func frameworkCollect(keeping kept: Set<Int>, asking handle: Int) -> Bool {
+        StudioInterpretedFrameworks.current?.collect(keeping: kept, asking: handle) ?? true
     }
 }

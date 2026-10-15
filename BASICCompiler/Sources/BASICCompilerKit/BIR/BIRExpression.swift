@@ -83,6 +83,9 @@ public indirect enum BIRExpression: Sendable {
     /// Makes a closure: its body function, the environment type holding the
     /// captures, and the captured values in field order. Owned.
     case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String)
+    /// A closure environment's `WEAK` field: the imported object, or null
+    /// once it is gone. Owned.
+    case weakField(BIRExpression, index: Int, type: BIRType)
     /// Calls a closure value.
     case callClosure(BIRExpression, [BIRExpression], returns: BIRType)
     /// Calls a method on a record or object place: the receiver is copied in
@@ -169,6 +172,8 @@ public indirect enum BIRExpression: Sendable {
             return returns
         case .makeClosure(_, _, _, let signature):
             return .closure(signature)
+        case .weakField(_, _, let type):
+            return type
         case .callClosure(_, _, let returns):
             return returns
         case .callMethod(_, _, _, let returns):
@@ -209,7 +214,7 @@ public indirect enum BIRExpression: Sendable {
         switch self {
         case .call, .callClosure, .callMethod, .hostCall, .systemNew, .systemCall, .asyncLaunch, .fileService, .construct, .constructWith:
             return true
-        case .number, .exactLiteral, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary:
+        case .number, .exactLiteral, .string, .boolean, .load, .loadArray, .emptyValue, .nullValue, .newDictionary, .weakField:
             return false
         case .negate(let a), .logicalNot(let a), .text(let a), .enumText(let a, _), .field(let a, _, _), .box(let a), .unbox(let a, _, _), .valueLen(let a), .arrayLen(let a, _), .valueField(let a, _, _), .exactCoerce(let a, _, _):
             return a.mayRunCode

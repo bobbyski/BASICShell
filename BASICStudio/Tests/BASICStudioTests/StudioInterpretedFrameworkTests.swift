@@ -88,6 +88,30 @@ struct StudioInterpretedFrameworkTests {
         #expect(compiled == interpreted)
     }
 
+    @Test("A closure's WEAK capture does not keep an imported object alive (CLOSURES.md C5)")
+    func weakCapture() async throws {
+        let (interpreted, compiled) = try await bothWays("""
+        IMPORT "ActiveUI"
+        FUNCTION TYPE Peek() AS STRING
+        DIM Caption AS AUILabel
+        Caption = NEW AUILabel("Hello")
+        DIM Look AS Peek
+        Look = FUNCTION() AS STRING CAPTURES WEAK Caption
+          IF Caption = NULL THEN RETURN "gone"
+          RETURN Caption.text
+        END FUNCTION
+        PRINT "held: "; Look()
+        DIM Other AS AUILabel
+        Other = Caption
+        Caption = NULL
+        PRINT "held by another: "; Look()
+        Other = NULL
+        PRINT "after: "; Look()
+        """)
+        #expect(interpreted == "held: Hello\nheld by another: Hello\nafter: gone\n")
+        #expect(compiled == interpreted)
+    }
+
     @Test("A BASIC class inheriting AUIView: own fields, the base's properties, an override ActiveUI calls")
     func inheritAUIView() async throws {
         let (interpreted, compiled) = try await bothWays("""

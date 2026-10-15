@@ -674,7 +674,9 @@ public func basic_rt_value_from_boolean(_ value: Bool) -> UnsafeMutableRawPointe
 /// Boxes a copy of a record or object.
 @_cdecl("basic_rt_value_from_composite")
 public func basic_rt_value_from_composite(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let pointer else { return rtOwned(RTValue.empty) }
+    // No object at all is NULL, as the interpreter has it: an object variable
+    // set to NULL, or a WEAK capture whose imported object is gone.
+    guard let pointer else { return rtOwned(RTValue.null) }
     return rtOwned(.composite(rtComposite(pointer).copy()))
 }
 

@@ -130,6 +130,11 @@ frozen = FUNCTION() AS STRING CAPTURES READONLY q$
 END FUNCTION
 r$ = frozen()
 PRINT "AFTER TRAP "; q$
+
+' WEAK is for imported objects only (C5).
+w = 5
+weakly = FUNCTION() AS INTEGER CAPTURES WEAK w = 1
+PRINT "AFTER WEAK"
 END
 
 Trapped:

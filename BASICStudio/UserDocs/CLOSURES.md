@@ -85,6 +85,7 @@ prints `LOCKED= 22`: `prefix$` was frozen when the closure was made, and `bonus`
 | `STRONG` | The closure's own copy, taken when it is made. The closure may change it, and its changes are kept from one call to the next, but they never reach the variable outside. |
 | `READONLY` | A copy frozen when the closure is made. Assigning it inside the closure stops with `X is captured READONLY`, which `ON ERROR` can trap. |
 | `READ-ONLY` | The same as `READONLY`. |
+| `WEAK` | For an object an `IMPORT`ed framework made (an ActiveUI label, a TUIKit window): the closure does not keep it alive, and once nothing else holds it, the closure sees `NULL`. On anything else, `WEAK` stops with `WEAK needs an imported object`. |
 
 Separate several with commas: `captures readonly a$, strong b`.
 
@@ -98,6 +99,21 @@ print own(); own(); n
 ```
 
 prints `111210`: the closure counts its own copy, and `n` is still 10.
+
+```basic
+import "ActiveUI"
+dim caption as AUILabel
+caption = new AUILabel("Hello")
+look = function() as string captures weak caption
+    if caption = NULL then return "gone"
+    return caption.text
+end function
+print look()
+caption = NULL
+print look()
+```
+
+prints `Hello`, then `gone`: once `caption` lets go, nothing holds the label.
 
 Objects and records are values in BASIC, so inside a class method a closure that uses `ME` gets its own copy of the object, as with `STRONG`. It can change that copy, but the changes never reach the object itself.
 

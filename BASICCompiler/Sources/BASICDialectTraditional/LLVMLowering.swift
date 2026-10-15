@@ -650,6 +650,8 @@ struct LLVMLowering {
     declare ptr @basic_rt_cell_storage(ptr)
     declare void @basic_rt_composite_set_cell(ptr, i64, ptr)
     declare ptr @basic_rt_composite_get_cell(ptr, i64)
+    declare void @basic_rt_composite_set_weak(ptr, i64, ptr)
+    declare ptr @basic_rt_composite_get_weak(ptr, i64)
     declare ptr @basic_rt_array_copy(ptr)
     declare void @basic_rt_closure_retain(ptr)
     declare void @basic_rt_closure_release(ptr)
@@ -1683,8 +1685,8 @@ struct FunctionEmitter {
         return type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary || type.isSystem
     }
 
-    /// How a cell lets go of what it holds (`RTCell.Kind`), and the release
-    /// function for an object model's own records.
+    /// How a cell lets go of what it holds (`RTCell.Kind`), and a release
+    /// function for `.custom` (none is needed yet).
     private func cellKind(of variable: BIRVariable) -> (kind: Int, release: String) {
         if variable.rank != nil { return (6, "null") }
         switch variable.type {
@@ -1694,8 +1696,7 @@ struct FunctionEmitter {
         case .variant, .system, .exact: return (4, "null")
         case .dictionary: return (5, "null")
         case .array: return (6, "null")
-        case .composite:
-            return objects.release == "basic_rt_composite_release" ? (3, "null") : (7, "@\(objects.release)")
+        case .composite: return (3, "null")
         }
     }
 
@@ -2548,8 +2549,7 @@ struct FunctionEmitter {
                         continue
                     case .copy(let value):
                         // A new cell, the closure's own, holding a copy.
-                        let local = type.fields[index]
-                        let variable = BIRVariable(name: local.name, type: local.type, scope: .local, storage: value.isArrayLoad ? .array(rank: 1) : .scalar)
+                        let variable = BIRVariable(name: type.fields[index].name, type: value.type, scope: .local, storage: value.isArrayLoad ? .array(rank: 1) : .scalar)
                         let (kind, release) = cellKind(of: variable)
                         let cell = out.temp(), storage = out.temp()
                         out.emit("\(cell) = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
@@ -2566,6 +2566,11 @@ struct FunctionEmitter {
                         }
                         out.emit("call void @basic_rt_composite_set_cell(ptr \(created), i64 \(index), ptr \(cell))")
                         out.emit("call void @basic_rt_cell_release(ptr \(cell))")
+                        continue
+                    case .weak(let value):
+                        // Swift's own weak reference to the imported object (C5).
+                        let (object, _) = lowerValue(value)
+                        out.emit("call void @basic_rt_composite_set_weak(ptr \(created), i64 \(index), ptr \(object))")
                         continue
                     case .value(let value):
                         capture = value
@@ -2594,6 +2599,13 @@ struct FunctionEmitter {
             return (result, true)
         case .callClosure(let closure, let arguments, let returns):
             return lowerClosureCall(closure, arguments, returns)
+        case .weakField(let base, let index, _):
+            let (env, _) = lowerValue(base)
+            let result = out.temp()
+            out.emit("\(result) = call ptr @basic_rt_composite_get_weak(ptr \(env), i64 \(index))")
+            owned.append(result)
+            ownedComposites.insert(result)
+            return (result, true)
         case .callMethod(let receiver, let candidates, let arguments, let returns):
             let result = lowerMethodCall(receiver, candidates, arguments)!
             if Self.isManaged(returns) {

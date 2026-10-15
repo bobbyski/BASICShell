@@ -47,7 +47,10 @@ package final class RTCell {
             case .plain: break
             case .string: basic_rt_string_release(held)
             case .closure: basic_rt_closure_release(held)
-            case .composite: basic_rt_composite_release(held)
+            // A runtime record or a Swift object of an object model's (an
+            // imported one, or a CLASS laid out as Swift's): both are Swift
+            // objects, released the same way.
+            case .composite: Unmanaged<AnyObject>.fromOpaque(held).release()
             case .value: basic_rt_value_release(held)
             case .dictionary: basic_rt_dictionary_release(held)
             case .array: basic_rt_array_release(held)
@@ -142,4 +145,32 @@ public func basic_rt_composite_set_cell(_ pointer: UnsafeMutableRawPointer?, _ f
 public func basic_rt_composite_get_cell(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer? {
     guard case .cell(let cell) = rtComposite(pointer).fields[field] else { basic_rt_fail("A shared variable was never made") }
     return Unmanaged.passUnretained(cell).toOpaque()
+}
+
+// MARK: - WEAK captures
+
+/// A closure's `WEAK` capture of an imported object (Documents/CLOSURES.md,
+/// ruling C5): it does not keep the object alive, and reads as `NULL` once
+/// the object is gone. An imported object is a Swift object, so this is
+/// Swift's own weak reference.
+package final class RTWeak {
+    weak var object: AnyObject?
+    init(_ object: AnyObject?) { self.object = object }
+}
+
+/// Puts a weak reference to an imported object (borrowed; null is NULL) in a
+/// closure environment's field.
+@_cdecl("basic_rt_composite_set_weak")
+public func basic_rt_composite_set_weak(_ pointer: UnsafeMutableRawPointer?, _ field: Int, _ object: UnsafeMutableRawPointer?) {
+    let held = object.map { Unmanaged<AnyObject>.fromOpaque($0).takeUnretainedValue() }
+    rtComposite(pointer).fields[field] = .system(RTSystemObject(typeName: "WEAK", payload: RTWeak(held)))
+}
+
+/// The object a closure environment's weak field refers to, owned (+1), or
+/// null once it is gone.
+@_cdecl("basic_rt_composite_get_weak")
+public func basic_rt_composite_get_weak(_ pointer: UnsafeMutableRawPointer?, _ field: Int) -> UnsafeMutableRawPointer? {
+    guard case .system(let box) = rtComposite(pointer).fields[field], let weak = box.payload as? RTWeak,
+          let object = weak.object else { return nil }
+    return Unmanaged.passRetained(object).toOpaque()
 }

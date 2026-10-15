@@ -1448,7 +1448,7 @@ public final class BASICInterpreter {
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
             return .next
         case .closureAssignment(let kind, let variable, let declaredType, let parameters, let returnType, let captures, let body):
-            let environment = captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
+            let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
             try runtime.assign(
                 kind: kind,
                 variable: variable,
@@ -6143,7 +6143,7 @@ public final class BASICInterpreter {
         case .null:
             return .null
         case .closure(let parameters, let returnType, let captures, let body):
-            let environment = captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
+            let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
             return .closure(BASICCapturedClosure(
                 name: "<closure>",
                 parameters: parameters,
@@ -6546,7 +6546,7 @@ public final class BASICInterpreter {
     /// its body uses, shared. `ME` is the closure's own copy unless the list
     /// says otherwise (C6).
     private func captureEnvironment(parameters: [FunctionParameter], captures: [ClosureCaptureSpec],
-                                    uses: [VariableName]) -> BASICCapturedEnvironment {
+                                    uses: [VariableName]) throws -> BASICCapturedEnvironment {
         let environment = BASICCapturedEnvironment()
         let parameterNames = Set(parameters.map { $0.variable.normalized })
         var specs = captures.filter { !parameterNames.contains($0.variable.normalized) }
@@ -6556,7 +6556,7 @@ public final class BASICInterpreter {
             .map { ClosureCaptureSpec(variable: $0, access: .shared) }
         for spec in specs {
             let access = spec.variable.normalized == "ME" && spec.access == .shared ? .strongCopy : spec.access
-            if let cell = runtime.captureCell(for: spec.variable, access: access) {
+            if let cell = try runtime.captureCell(for: spec.variable, access: access) {
                 environment.adopt(cell)
             }
         }

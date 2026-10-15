@@ -327,13 +327,18 @@ struct BASICClosureCaptureTests {
         END FUNCTION
         r$ = frozen()
         PRINT "AFTER TRAP "; q$
+
+        ' WEAK is for imported objects only (C5).
+        w = 5
+        weakly = FUNCTION() AS INTEGER CAPTURES WEAK w = 1
+        PRINT "AFTER WEAK"
         END
 
         Trapped:
           PRINT "TRAPPED"; ERR
           RESUME NEXT
         """)
-        #expect(output == ["COUNTERS1231", "TOTAL12", "AFTER101", "CALLER102102", "MUTABLE11", "STRONG1112", "STRONG1350", "LOCKED= 22", "ARRAY4249", "STACK3040", "ME675", "RECORD655", "TRAPPED5", "AFTER TRAP A"])
+        #expect(output == ["COUNTERS1231", "TOTAL12", "AFTER101", "CALLER102102", "MUTABLE11", "STRONG1112", "STRONG1350", "LOCKED= 22", "ARRAY4249", "STACK3040", "ME675", "RECORD655", "TRAPPED5", "AFTER TRAP A", "TRAPPED5", "AFTER WEAK"])
     }
 
     /// UserDocs/CLOSURES.md's examples, as the page prints them.

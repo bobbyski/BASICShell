@@ -310,11 +310,14 @@ public enum BIRCapture: Sendable {
     case shared(BIRVariable)
     /// A new cell holding a copy of the value: the closure's own (STRONG, C2).
     case copy(BIRExpression)
+    /// A weak reference to an imported object, which the body takes as a
+    /// local, `NULL` once the object is gone (WEAK, C5).
+    case weak(BIRExpression)
 
     /// The expression read when the closure is made, if any.
     public var expression: BIRExpression? {
         switch self {
-        case .value(let expression), .copy(let expression): return expression
+        case .value(let expression), .copy(let expression), .weak(let expression): return expression
         case .shared: return nil
         }
     }
@@ -338,6 +341,9 @@ public struct BIRFunction: Sendable {
     /// this is a closure body and the cell is its environment's. The frame
     /// holds the cell for its whole run.
     public var cells: [String: BIRCell] = [:]
+    /// For a closure body: its `WEAK` captures, taken from the environment
+    /// as the object or `NULL` (CLOSURES.md C5), rather than copied.
+    public var weakCaptures: Set<String> = []
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
     /// A handler an `ON … CALL` registered: called through an event

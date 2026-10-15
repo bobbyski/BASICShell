@@ -292,8 +292,11 @@ public struct BIRPrinter {
                 case .value(let expression): return render(expression)
                 case .shared(let variable): return "&\(variable.name)"
                 case .copy(let expression): return "copy " + render(expression)
+                case .weak(let expression): return "weak " + render(expression)
                 }
             }.joined(separator: ", ") + "]"
+        case .weakField(let base, let index, _):
+            return "weak \(render(base)).#\(index)"
         case .callClosure(let closure, let arguments, _):
             return "\(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
         case .callMethod(let receiver, let candidates, let arguments, _):

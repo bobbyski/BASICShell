@@ -475,7 +475,11 @@ final class FunctionBuilder {
         guard let environment = function.environment else { return }
         let env = function.parameters[0]
         for (index, local) in environment.locals.enumerated() where function.cells[local.name] == nil {
-            emit(.store(local, .field(.load(env), index: index, type: local.type)))
+            if function.weakCaptures.contains(local.name) {
+                emit(.store(local, .weakField(.load(env), index: index, type: local.type)))
+            } else {
+                emit(.store(local, .field(.load(env), index: index, type: local.type)))
+            }
         }
     }
 
@@ -2630,6 +2634,8 @@ final class FunctionBuilder {
         var made: [BIRCapture] = []
         var bodyCells: [String: BIRCell] = [:]
         var bodyReadOnly: [String: String] = [:]
+        var bodyWeak = Set<String>()
+        var fieldTypes: [BIRType] = []
         for name in captureNames where !parameterNames.contains(name) && !declaredLocals.contains(name) {
             let outer = variable(VariableName(name: name, column: 0))
             var access = policies[name]?.access ?? .shared
@@ -2640,7 +2646,6 @@ final class FunctionBuilder {
                 policies[name] = (.readOnly, enclosing)
             }
             if access == .shared, outer.scope == .global { continue }
-            if access == .weak { throw unsupported("a WEAK capture") }
             let local = BIRVariable(name: name, type: outer.type, scope: .local, storage: outer.storage, isInteger: outer.isInteger)
             let read: BIRExpression = outer.rank == nil ? .load(outer) : .loadArray(outer)
             switch access {
@@ -2651,17 +2656,31 @@ final class FunctionBuilder {
             case .strongCopy:
                 bodyCells[name] = .environment(captured.count)
                 made.append(.copy(read))
-            case .readOnly, .weak:
+            case .weak:
+                // An imported object only (C5): anything else is the
+                // interpreter's error, raised where the closure is made.
+                guard isImportedObject(outer.type) else {
+                    emit(.fail("WEAK needs an imported object"))
+                    continue
+                }
+                bodyWeak.insert(name)
+                made.append(.weak(read))
+            case .readOnly:
                 bodyReadOnly[name] = policies[name]?.display ?? name
-                if outer.rank == nil {
+                if outer.rank == nil && !isImportedObject(outer.type) {
                     made.append(.value(read))
                 } else {
-                    // An array is copied into a cell of its own, frozen by the check on writes.
+                    // An array, or an imported object no record field may
+                    // hold, is copied into a cell of its own, frozen by the
+                    // check on writes.
                     bodyCells[name] = .environment(captured.count)
                     made.append(.copy(read))
                 }
             }
             captured.append(local)
+            // A cell or a weak reference is held as the runtime's own value,
+            // whatever the variable's type.
+            fieldTypes.append(bodyCells[name] != nil || bodyWeak.contains(name) ? .variant : outer.type)
         }
 
         let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
@@ -2673,12 +2692,13 @@ final class FunctionBuilder {
         if captured.isEmpty {
             bodyFunction = BIRFunction(name: bodyName, parameters: [BIRVariable(name: "$ENV", type: .composite("$NONE"), scope: .local)] + parameterVariables, returnType: resolvedReturn)
         } else {
-            let name = closures.addEnvironment(fields: captured.map { BIRField(name: $0.name, type: $0.type) }, number: number)
+            let name = closures.addEnvironment(fields: zip(captured, fieldTypes).map { BIRField(name: $0.name, type: $1) }, number: number)
             environmentName = name
             bodyFunction = BIRFunction(name: bodyName, parameters: [BIRVariable(name: "$ENV", type: .composite(name), scope: .local)] + parameterVariables, returnType: resolvedReturn)
             bodyFunction.locals += captured
             bodyFunction.environment = (name, captured)
             bodyFunction.cells = bodyCells
+            bodyFunction.weakCaptures = bodyWeak
         }
 
         // Build the body with its own builder, in a scope of parameters + captures + LOCALs.
@@ -2726,6 +2746,12 @@ final class FunctionBuilder {
         closures.functions.append(bodyBuilder.function)
 
         return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical)
+    }
+
+    /// Whether a type is a class an imported Swift framework declared.
+    private func isImportedObject(_ type: BIRType) -> Bool {
+        guard case .composite(let className) = type else { return false }
+        return externalClasses.contains(className)
     }
 
     /// A quick static type for a LOCAL's initial value inside a closure body.
