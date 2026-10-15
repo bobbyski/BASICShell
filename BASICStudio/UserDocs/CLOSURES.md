@@ -185,6 +185,26 @@ prints `12` and `21`. Moving a closure from a `VARIANT` into a variable of a fun
 
 `=` and `<>` ask whether two values are the *same* closure, as Visual Basic's `Is` does: two closures written alike are still two closures.
 
+## Async closures
+
+`ASYNC FUNCTION(…)` makes a closure whose call starts a task, as calling an `ASYNC FUNCTION` does. `AWAIT` waits for its result. An `ASYNC FUNCTION TYPE` holds one, and only one: a plain closure does not fit an async function type, nor an async closure a plain one.
+
+```basic
+async function type Loader(n as integer) as string
+
+dim loader as Loader
+loader = async function(n as integer) as string
+    return "LOADED" + str$(n)
+end function
+
+t = loader(7)
+print await t
+quick = async function(x as integer) as integer = x * 2
+print await quick(21)
+```
+
+prints `LOADED 7`, then `42`. A task shares what its closure shares, as the closure itself does.
+
 ## AddressOf
 
 `AddressOf` makes a closure of a named `FUNCTION`, as in Visual Basic:

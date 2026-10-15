@@ -129,7 +129,7 @@ struct LLVMLowering {
         }
         // A chaining program hands its globals over with the same capture
         // and restore an async one snapshots them with.
-        if module.functions.contains(where: \.isAsync) || module.chains {
+        if module.functions.contains(where: { $0.isAsync || $0.isAsyncClosureBody }) || module.chains {
             functions.append(renderTaskSupport())
         }
         if module.functions.contains(where: \.isEventHandler) {
@@ -379,7 +379,8 @@ struct LLVMLowering {
         out.raw("")
 
         // trampolines
-        for function in module.functions where function.isAsync {
+        // An async closure's takes the closure first, for its environment.
+        for function in module.functions where function.isAsync || function.isAsyncClosureBody {
             out.raw("define ptr @\"A.\(function.name)\"(ptr %args) {")
             out.label("entry")
             out.emit("%jmpbuf = alloca [64 x i64]")
@@ -390,7 +391,18 @@ struct LLVMLowering {
             out.label("run")
             var arguments: [String] = []
             var owned: [(String, String)] = []
-            for (index, parameter) in function.parameters.enumerated() {
+            var parameters = function.parameters[...]
+            if function.isAsyncClosureBody {
+                let boxed = temp(), closure = temp(), environment = temp()
+                out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 0)")
+                out.emit("\(closure) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)")
+                out.emit("\(environment) = call ptr @basic_rt_closure_environment(ptr \(closure))")
+                owned += [(boxed, "basic_rt_value_release"), (closure, "basic_rt_closure_release")]
+                arguments.append("ptr \(environment)")
+                parameters = parameters.dropFirst()
+            }
+            for (offset, parameter) in parameters.enumerated() {
+                let index = function.isAsyncClosureBody ? offset + 1 : offset
                 let boxed = temp()
                 out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 \(index))")
                 owned.append((boxed, "basic_rt_value_release"))
@@ -659,6 +671,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_closure_new(ptr, ptr)
     declare ptr @basic_rt_cell_new(i64, ptr)
     declare void @basic_rt_closure_describe(ptr, ptr, ptr, i64, ptr)
+    declare void @basic_rt_closure_async(ptr, ptr)
     declare ptr @basic_rt_composite_get_closure(ptr, i64)
     declare ptr @basic_rt_closure_text(ptr)
     declare void @basic_rt_composite_set_closure(ptr, i64, ptr)
@@ -1065,7 +1078,7 @@ struct FunctionEmitter {
                 out.emit("call void @basic_rt_db_schema(ptr \(constants.constant(schema)))")
             }
             out.emit("call void @basic_rt_data_register(i64 \(module.data.count), ptr @data.kinds, ptr @data.numbers, ptr @data.strings)")
-            if module.functions.contains(where: \.isAsync) {
+            if module.functions.contains(where: { $0.isAsync || $0.isAsyncClosureBody }) {
                 out.emit("call void @basic_rt_tasks_install(ptr @\"globals.capture\", ptr @\"globals.restore\")")
             }
             for handler in module.namedHandlers {
@@ -2626,6 +2639,9 @@ struct FunctionEmitter {
             let arity = module.functions.first { $0.name == functionName }.map { $0.parameters.count - 1 } ?? 0
             let shape = module.signatures[signature]?.shape ?? signature
             out.emit("call void @basic_rt_closure_describe(ptr \(result), ptr @\"V.\(functionName)\", ptr \(constants.constant(closureName)), i64 \(arity), ptr \(constants.constant(shape)))")
+            if module.functions.contains(where: { $0.name == functionName && $0.isAsyncClosureBody }) {
+                out.emit("call void @basic_rt_closure_async(ptr \(result), ptr @\"A.\(functionName)\")")
+            }
             owned.append(result)
             ownedClosures.insert(result)
             return (result, true)

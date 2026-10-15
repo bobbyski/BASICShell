@@ -634,6 +634,13 @@ struct VariableBinding: Equatable, Sendable {
         }
     }
 
+    /// Hands the variable to `cell`, made holding its value already: moving
+    /// it is not a write, so the cell's revision count does not move.
+    mutating func attach(_ cell: BASICSharedValueCell) {
+        self.cell = cell
+        storedValue = .empty
+    }
+
     /// Moves the value into `cell`, which then holds it for every binding
     /// that shares it.
     mutating func adopt(_ cell: BASICSharedValueCell) {
@@ -842,6 +849,31 @@ final class BASICCapturedClosure: @unchecked Sendable {
     let bodyExpression: Expression?
     let bodyStatements: [ClosureBodyLine]?
     private let operation: BASICCapturedClosureOperation
+    /// `ASYNC FUNCTION(…)`: a call starts a task (CLOSURES.md 3.9).
+    var isAsync = false
+    /// The line the closure was made on, for the debugger (4.3).
+    var creationLine: Int?
+    private let taskLock = NSLock()
+    private var runningTasks: [Int] = []
+
+    /// The tasks running this closure now, for the debugger (4.5).
+    var runningTaskIDs: [Int] {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return runningTasks
+    }
+
+    func taskStarted(_ id: Int) {
+        taskLock.lock()
+        runningTasks.append(id)
+        taskLock.unlock()
+    }
+
+    func taskFinished(_ id: Int) {
+        taskLock.lock()
+        runningTasks.removeAll { $0 == id }
+        taskLock.unlock()
+    }
 
     init(
         name: String,
@@ -895,7 +927,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
     }
 
     func matchesSignature(of definition: BASICFunctionTypeDefinition) -> Bool {
-        guard !definition.isAsync else { return false }
+        guard definition.isAsync == isAsync else { return false }
         return returnType == definition.returnType
             && parameters.map(\.type) == definition.parameters.map(\.type)
     }
@@ -904,6 +936,15 @@ final class BASICCapturedClosure: @unchecked Sendable {
         guard bodyExpression != nil || bodyStatements != nil else {
             return try call(arguments: arguments)
         }
+        if isAsync {
+            return try interpreter.startAsyncClosure(self, arguments: arguments)
+        }
+        return try callBody(arguments: arguments, interpreter: interpreter)
+    }
+
+    /// The call itself, on this interpreter: what a task running an async
+    /// closure does.
+    func callBody(arguments: [BASICValue], interpreter: BASICInterpreter) throws -> BASICValue {
         guard arguments.count == parameters.count else {
             throw BASICError.runtime("Function \(name) expects \(parameters.count) arguments, got \(arguments.count)")
         }
@@ -1021,6 +1062,31 @@ struct FunctionCallResult {
 
 struct BASICHostReference: @unchecked Sendable {
     let host: BASICHost
+}
+
+/// An async closure's call, run as a task on an interpreter of its own, as
+/// an `ASYNC FUNCTION`'s is (Documents/CLOSURES.md 3.9). The closure's shared
+/// variables are cells, so the task and the program share them.
+struct BASICAsyncClosureJob: @unchecked Sendable {
+    let program: BASICProgram
+    let host: BASICHostReference
+    let runtimeSnapshot: BASICRuntimeSnapshot
+    let closure: BASICCapturedClosure
+    let argumentValues: [BASICValue]
+    let outputCoordinator: BASICHostOutputCoordinator
+
+    func run(task: BASICTask, taskScheduler: BASICTaskScheduler, eventLoop: BASICEventLoop?,
+             executionControl: BASICExecutionControl?) async throws -> BASICValue {
+        await Task.yield()
+        try Task.checkCancellation()
+        let runtime = BASICRuntime()
+        runtime.restore(snapshot: runtimeSnapshot)
+        let interpreter = BASICInterpreter(program: program, host: host.host, runtime: runtime, fileState: BASICFileState(),
+                                           executionControl: executionControl, task: task, taskScheduler: taskScheduler,
+                                           eventLoop: eventLoop, outputCoordinator: outputCoordinator)
+        try interpreter.prepare(startLine: nil)
+        return try closure.callBody(arguments: argumentValues, interpreter: interpreter)
+    }
 }
 
 struct BASICAsyncFunctionJob: @unchecked Sendable {

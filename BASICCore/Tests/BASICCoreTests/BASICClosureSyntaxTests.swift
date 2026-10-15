@@ -101,4 +101,75 @@ struct BASICClosureSyntaxTests {
         #expect(run("f = FUNCTION(x AS INTEGER) AS INTEGER\n  RETURN x\nEND FUNCTION, 3").joined().contains("Unexpected text after END FUNCTION"))
         #expect(run("f = FUNCTION(x AS INTEGER) AS INTEGER\n  RETURN x * 2\nEND FUNCTION ' doubles\nPRINT f(4)") == ["8"])
     }
+
+    /// `BASICCompiler/Tests/Programs/closure-async.bas` (CLOSURES.md 3.9,
+    /// 3.10), which a `basicc` binary must print the same.
+    @Test("the async closure conformance program prints what basicc prints")
+    func asyncConformanceProgram() {
+        #expect(run("""
+            ' Async closures (Documents/CLOSURES.md 3.9, 3.10): ASYNC FUNCTION(...)
+            ' makes a closure whose call starts a task, as an ASYNC FUNCTION's does,
+            ' and an ASYNC FUNCTION TYPE variable holds one.
+            ASYNC FUNCTION TYPE Loader(n AS INTEGER) AS STRING
+            FUNCTION TYPE Plain(n AS INTEGER) AS STRING
+
+            DIM loader AS Loader
+            loader = ASYNC FUNCTION(n AS INTEGER) AS STRING
+              RETURN "LOADED" + STR$(n)
+            END FUNCTION
+            t = loader(7)
+            PRINT AWAIT t
+
+            quick = ASYNC FUNCTION(x AS INTEGER) AS INTEGER = x * 2
+            PRINT "QUICK"; AWAIT quick(21)
+
+            ' A task shares what its closure shares.
+            counter = 10
+            bump = ASYNC FUNCTION() AS INTEGER
+              counter = counter + 1
+              RETURN counter
+            END FUNCTION
+            PRINT "BUMPED"; AWAIT bump()
+
+            ' An async closure is not a plain function type's, nor the other way round.
+            ON ERROR GOTO Trapped
+            DIM v AS VARIANT
+            v = loader
+            DIM plain AS Plain
+            plain = v
+            PRINT "AFTER PLAIN"
+            v = FUNCTION(n AS INTEGER) AS STRING = "SYNC"
+            loader = v
+            PRINT "AFTER LOADER"
+            END
+
+            Trapped:
+              PRINT "TRAPPED"; ERR
+              RESUME NEXT
+            """) == ["LOADED 7", "QUICK42", "BUMPED11", "TRAPPED13", "AFTER PLAIN", "TRAPPED13", "AFTER LOADER"])
+    }
+
+    @Test("a closure running as a task shows its task in the debugger, with its name and where it was made")
+    func debuggerShowsTasks() throws {
+        let control = BASICExecutionControl()
+        control.setBreakpoints([BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 6, statementNumber: 0))])
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        slow = ASYNC FUNCTION() AS INTEGER
+          n = AWAIT SLEEP(500)
+          RETURN 1
+        END FUNCTION
+        t = slow()
+        yield
+        """)
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint {}
+        let slow = try #require(session.debugGlobalVariables.first { $0.name == "slow" })
+        #expect(slow.children.contains { $0.name == "Name" && $0.value == "[anonymous closure]" })
+        #expect(slow.children.contains { $0.name == "Made At" && $0.value == "line 1" })
+        #expect(slow.children.contains { $0.name == "Signature" && $0.value.hasPrefix("ASYNC ") })
+        #expect(slow.children.contains { $0.name == "Running As" && $0.value.hasPrefix("task #") })
+    }
 }

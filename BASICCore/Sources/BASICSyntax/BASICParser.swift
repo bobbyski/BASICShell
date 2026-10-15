@@ -1999,6 +1999,10 @@ public struct Parser {
             if uppercased == "FUNCTION" {
                 return try parseClosureExpression()
             }
+            if uppercased == "ASYNC", case .identifier(let next) = peek, next.uppercased() == "FUNCTION" {
+                _ = advance()
+                return .asyncClosure(try parseClosureExpression())
+            }
             if uppercased == "ADDRESSOF" {
                 return .addressOf(try consumeVariableName("Expected a FUNCTION name after AddressOf"))
             }

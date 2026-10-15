@@ -351,6 +351,9 @@ public struct BIRFunction: Sendable {
     public var isEventHandler = false
     /// `ASYNC FUNCTION`: called through a task trampoline.
     public var isAsync = false
+    /// An `ASYNC FUNCTION(…)` closure's body: called through a task
+    /// trampoline (`A.closure$N`) when the closure is called.
+    public var isAsyncClosureBody = false
     /// A member of an imported Swift class: declared so calls type-check and
     /// dispatch as any method's do, but with no body here — the object model
     /// supplies the definition, a thunk onto the framework's symbol.
@@ -488,25 +491,29 @@ public struct BIRSignature: Sendable {
     /// type, so the shape does too (Documents/CLOSURES.md 2.9).
     public let integers: [Bool]
     public let returnsInteger: Bool
+    /// `ASYNC FUNCTION TYPE`: a call starts a task (Documents/CLOSURES.md 3.10).
+    public let isAsync: Bool
 
-    public init(name: String, parameterTypes: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) {
+    public init(name: String, parameterTypes: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false, isAsync: Bool = false) {
         self.name = name
         self.parameterTypes = parameterTypes
         self.returnType = returnType
         self.integers = integers.isEmpty ? parameterTypes.map { _ in false } : integers
         self.returnsInteger = returnsInteger
+        self.isAsync = isAsync
     }
 
-    /// The structural shape, `(integer,string)->string`: two signatures fit
-    /// each other when their shapes are the same.
+    /// The structural shape, `(integer,string)->string` (`async (…)->…` for
+    /// an async one): two signatures fit each other when their shapes are
+    /// the same.
     public var shape: String {
-        BIRSignature.shape(parameters: parameterTypes, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+        BIRSignature.shape(parameters: parameterTypes, returnType: returnType, integers: integers, returnsInteger: returnsInteger, isAsync: isAsync)
     }
 
-    public static func shape(parameters: [BIRType], returnType: BIRType, integers: [Bool], returnsInteger: Bool) -> String {
+    public static func shape(parameters: [BIRType], returnType: BIRType, integers: [Bool], returnsInteger: Bool, isAsync: Bool = false) -> String {
         func name(_ type: BIRType, _ integer: Bool) -> String { integer && type == .number ? "integer" : type.name }
         let flags = integers.isEmpty ? parameters.map { _ in false } : integers
-        return "(" + zip(parameters, flags).map(name).joined(separator: ",") + ")->" + name(returnType, returnsInteger)
+        return (isAsync ? "async " : "") + "(" + zip(parameters, flags).map(name).joined(separator: ",") + ")->" + name(returnType, returnsInteger)
     }
 }
 

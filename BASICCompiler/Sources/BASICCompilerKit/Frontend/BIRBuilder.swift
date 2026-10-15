@@ -2065,8 +2065,12 @@ final class FunctionBuilder {
             }
             if BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                let signature = model.signature(of: variable(name).type) {
-                if case .callClosure(let closure, let lowered, _) = try lowerClosureCall(.load(variable(name)), signature: signature, arguments, name: name.name) {
+                let call = try lowerClosureCall(.load(variable(name)), signature: signature, arguments, name: name.name)
+                if case .callClosure(let closure, let lowered, _) = call {
                     emit(.callClosure(closure, lowered))
+                } else {
+                    // An async closure's: the task starts, its handle unused.
+                    emit(.discard(call))
                 }
                 return
             }
@@ -2379,6 +2383,12 @@ final class FunctionBuilder {
             return try addressOf(name)
         case .blockClosure(let parameters, let returnType, let captures, let body):
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body))
+        case .asyncClosure(.closure(let parameters, let returnType, let captures, let body)):
+            return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body), isAsync: true)
+        case .asyncClosure(.blockClosure(let parameters, let returnType, let captures, let body)):
+            return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body), isAsync: true)
+        case .asyncClosure:
+            throw CompileError("ASYNC needs a FUNCTION closure", at: location)
         case .newObject(let className, let arguments):
             if model.isSystemClassHere(className.uppercased()), model.types[className.uppercased()] == nil {
                 let systemClass = className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased()
@@ -2612,7 +2622,7 @@ final class FunctionBuilder {
     /// - **`READONLY`**: a copy the body takes as a local, which it may not
     ///   assign. `ME` is a `STRONG` copy unless the list says otherwise.
     private func makeClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: ClosureBody,
-                             name closureName: String = "[anonymous closure]") throws -> BIRExpression {
+                             name closureName: String = "[anonymous closure]", isAsync: Bool = false) throws -> BIRExpression {
         let number = closures.next()
         let line = ParsedLine(number: location.lineNumber, displayLineNumber: location.line, fileName: location.file, sourceLineNumber: location.line, statementNumber: location.statement, isImported: false, statement: .empty)
         let parameterVariables = try parameters.map {
@@ -2697,9 +2707,9 @@ final class FunctionBuilder {
 
         let integers = parameters.map { SemanticModel.isInteger($0.type) }
         let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn,
-                                                         integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+                                                         integers: integers, returnsInteger: SemanticModel.isInteger(returnType), isAsync: isAsync)
         model.addSignature(name: canonical, parameters: parameterVariables.map(\.type), returnType: resolvedReturn,
-                           integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+                           integers: integers, returnsInteger: SemanticModel.isInteger(returnType), isAsync: isAsync)
 
         let bodyName = "closure$\(number)"
         var environmentName: String?
@@ -2765,6 +2775,7 @@ final class FunctionBuilder {
             bodyBuilder.closureLocals = locals
             try bodyBuilder.run()
         }
+        bodyBuilder.function.isAsyncClosureBody = isAsync
         closures.functions.append(bodyBuilder.function)
 
         return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical, name: closureName)
@@ -2841,6 +2852,11 @@ final class FunctionBuilder {
         }
         let lowered = try zip(arguments, signature.parameterTypes).map { argument, type in
             try lowerExpression(argument, expecting: type, context: "\(name) parameter")
+        }
+        // An async closure's call starts a task, through the runtime, which
+        // answers its handle (Documents/CLOSURES.md 3.9).
+        if signature.isAsync {
+            return .valueIndex(boxed(closure), lowered.map(boxed), name: name)
         }
         return .callClosure(closure, lowered, returns: signature.returnType)
     }

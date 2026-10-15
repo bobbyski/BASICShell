@@ -361,7 +361,7 @@ final class BASICRuntime {
             let cell = BASICSharedValueCell(id: nextCaptureCellID, name: binding.displayName, value: binding.value,
                                             access: .shared, type: binding.type)
             nextCaptureCellID += 1
-            binding.adopt(cell)
+            binding.attach(cell)
             store(binding, in: context, normalized: normalized)
             return cell
         }
@@ -3164,16 +3164,17 @@ final class BASICRuntime {
         scope: BASICVariableScope,
         parentPath: String
     ) -> [BASICVariableSnapshot] {
+        func leaf(_ name: String, _ typeName: String, _ value: String) -> BASICVariableSnapshot {
+            BASICVariableSnapshot(path: "\(parentPath).\(name)", name: name, typeName: typeName, value: value, scope: scope, children: [])
+        }
+        // Its name, where it was made, and the tasks running it (CLOSURES.md 4.2–4.5).
         var children = [
-            BASICVariableSnapshot(
-                path: "\(parentPath).Signature",
-                name: "Signature",
-                typeName: "FUNCTION",
-                value: closure.signatureDescription,
-                scope: scope,
-                children: []
-            )
+            leaf("Name", "STRING", closure.name),
+            leaf("Signature", "FUNCTION", (closure.isAsync ? "ASYNC " : "") + closure.signatureDescription)
         ]
+        if let line = closure.creationLine { children.append(leaf("Made At", "LINE", "line \(line)")) }
+        let tasks = closure.runningTaskIDs
+        if !tasks.isEmpty { children.append(leaf("Running As", "TASK", tasks.map { "task #\($0)" }.joined(separator: ", "))) }
         let captures = closure.capturedSnapshots
         guard !captures.isEmpty else { return children }
         children.append(

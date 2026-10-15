@@ -345,6 +345,19 @@ struct BASICClosureCaptureTests {
     @Test("the manual's examples print what the manual says")
     func manualExamples() {
         #expect(run("""
+            async function type Loader(n as integer) as string
+
+            dim loader as Loader
+            loader = async function(n as integer) as string
+                return "LOADED" + str$(n)
+            end function
+
+            t = loader(7)
+            print await t
+            quick = async function(x as integer) as integer = x * 2
+            print await quick(21)
+            """) == ["LOADED 7", "42"])
+        #expect(run("""
             function type Unary(x as integer) as integer
 
             function Apply(f as Unary, n as integer) as integer
@@ -447,5 +460,32 @@ struct BASICClosureCaptureTests {
 
             print Apply$(function(v as integer) as string = "N=" + str$(v), 4)
             """) == ["[N= 4]"])
+    }
+
+    @Test("the debugger labels each capture with its policy, and a shared one's revision count moves as it is written (4.4)")
+    func debuggerPolicyLabels() throws {
+        let control = BASICExecutionControl()
+        control.setBreakpoints([BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 9, statementNumber: 0))])
+        let session = BASICSession(host: TestHost())
+        session.program.loadSource("""
+        total = 0
+        frozen$ = "F"
+        mine = 5
+        add = FUNCTION(n AS INTEGER) AS INTEGER CAPTURES READONLY frozen$, STRONG mine
+          total = total + n + mine - 5
+          RETURN total
+        END FUNCTION
+        x = add(1): x = add(2)
+        yield
+        """)
+        do {
+            try session.runProgram(executionControl: control)
+            Issue.record("Expected breakpoint")
+        } catch BASICError.breakpoint {}
+        let add = try #require(session.debugGlobalVariables.first { $0.name == "add" })
+        let captures = try #require(add.children.first { $0.name == "Captured Values" })
+        #expect(captures.children.contains { $0.name == "total" && $0.value == "3 [Shared, rev 2]" })
+        #expect(captures.children.contains { $0.name == "frozen$" && $0.value == "F [Read Only, rev 0]" })
+        #expect(captures.children.contains { $0.name == "mine" && $0.value == "5 [Strong Copy, rev 0]" })
     }
 }

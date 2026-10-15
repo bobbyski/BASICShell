@@ -510,8 +510,8 @@ public final class SemanticModel {
 
     /// The canonical name of a closure shape, so compatibility is structural:
     /// `(number,string)->string`.
-    public static func canonicalSignature(parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) -> String {
-        BIRSignature.shape(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+    public static func canonicalSignature(parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false, isAsync: Bool = false) -> String {
+        BIRSignature.shape(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger, isAsync: isAsync)
     }
 
     /// Whether a declared type is `INTEGER`, which a function type's shape
@@ -519,11 +519,11 @@ public final class SemanticModel {
     public static func isInteger(_ type: BASICType) -> Bool { type == .scalar(.integer) }
 
     /// Registers a signature under `name` (and under its canonical shape).
-    func addSignature(name: String, parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) {
-        signatures[name] = BIRSignature(name: name, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
-        let canonical = Self.canonicalSignature(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+    func addSignature(name: String, parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false, isAsync: Bool = false) {
+        signatures[name] = BIRSignature(name: name, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger, isAsync: isAsync)
+        let canonical = Self.canonicalSignature(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger, isAsync: isAsync)
         if signatures[canonical] == nil {
-            signatures[canonical] = BIRSignature(name: canonical, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+            signatures[canonical] = BIRSignature(name: canonical, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger, isAsync: isAsync)
         }
     }
 

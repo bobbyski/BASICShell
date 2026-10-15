@@ -93,7 +93,7 @@ enum BASICEval {
             return impure("a method such as \(method.name)") ?? first(reference.indexes + arguments)
         case .newObject(let type, let arguments):
             return impure("NEW \(type)") ?? first(arguments)
-        case .closure, .blockClosure:
+        case .closure, .blockClosure, .asyncClosure:
             return impure("a closure")
         case .systemFunction(let argument):
             return impure("SYSTEM$") ?? first([argument])
@@ -141,7 +141,7 @@ enum BASICEval {
                 visit(point.x)
                 visit(point.y)
             case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure,
-                 .pwdFunction, .timerFunction, .addressOf, .blockClosure:
+                 .pwdFunction, .timerFunction, .addressOf, .blockClosure, .asyncClosure:
                 break
             }
         }

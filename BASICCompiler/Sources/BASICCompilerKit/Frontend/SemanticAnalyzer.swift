@@ -322,22 +322,22 @@ struct SemanticAnalyzer {
     private mutating func collectSignatures() throws {
         for (index, line) in lines.enumerated() where owner[index] == nil {
             guard case .functionTypeDeclaration(let name, let parameters, let returnType, let isAsync) = line.statement else { continue }
-            guard !isAsync else { throw CompileError("ASYNC FUNCTION TYPE is not supported by basicc yet", at: Self.location(of: line)) }
             let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
             let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name, at: line)
             model.addSignature(name: name.uppercased(), parameters: parameterTypes, returnType: resolvedReturn,
-                               integers: parameters.map { SemanticModel.isInteger($0.type) }, returnsInteger: SemanticModel.isInteger(returnType))
+                               integers: parameters.map { SemanticModel.isInteger($0.type) }, returnsInteger: SemanticModel.isInteger(returnType),
+                               isAsync: isAsync)
             owner[index] = Self.declaration
         }
     }
 
     /// The closure type of a closure literal, from its own declared shape.
-    func closureType(parameters: [FunctionParameter], returnType: BASICType, at line: ParsedLine) throws -> BIRType {
+    func closureType(parameters: [FunctionParameter], returnType: BASICType, at line: ParsedLine, isAsync: Bool = false) throws -> BIRType {
         let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
         let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: "closure", at: line)
         let integers = parameters.map { SemanticModel.isInteger($0.type) }
-        let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
-        model.addSignature(name: canonical, parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+        let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType), isAsync: isAsync)
+        model.addSignature(name: canonical, parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType), isAsync: isAsync)
         return .closure(canonical)
     }
 
@@ -663,6 +663,8 @@ struct SemanticAnalyzer {
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .closure(let parameters, _, let captures, let body):
             noteClosureReferences(parameters: parameters, captures: captures, names: Self.freeVariables(in: body, model: model), bodyLines: [], at: line, in: function, changed: &changed)
+        case .asyncClosure(let inner):
+            try noteReferences(in: inner, at: line, in: function, changed: &changed)
         case .blockClosure(let parameters, _, let captures, let body):
             noteClosureReferences(parameters: parameters, captures: captures, names: body.flatMap { Self.freeVariables(in: $0.statement, model: model) }, bodyLines: body, at: line, in: function, changed: &changed)
         case .functionCall(_, let arguments):
@@ -867,9 +869,12 @@ struct SemanticAnalyzer {
             if ["FIELDMETA", "FIELDVALUE", "SETFIELD", "ASYNCVALUE", "SLEEP"].contains(name.normalized) { return .variant }
             if model.isSystemClassHere(name.normalized), model.info(name.normalized, in: function) == nil { return .system(SemanticModel.systemTypeName(name.normalized)) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
-            if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
+            // An async closure's call answers its task (CLOSURES.md 3.9).
+            if let variableType, let signature = model.signature(of: variableType) { return signature.isAsync ? .variant : signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
             return variableType
+        case .asyncClosure(.closure(let parameters, let returnType, _, _)), .asyncClosure(.blockClosure(let parameters, let returnType, _, _)):
+            return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty), isAsync: true)
         case .closure(let parameters, let returnType, _, _), .blockClosure(let parameters, let returnType, _, _):
             return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
         case .lenFunction, .pointFunction, .timerFunction: return .number
@@ -1081,6 +1086,8 @@ struct SemanticAnalyzer {
                 let inner = Set(parameters.map(\.variable.normalized))
                 captures.map(\.variable).forEach(append)
                 for name in freeVariables(in: body, model: model) where !inner.contains(name) { append(VariableName(name: name, column: 0)) }
+            case .asyncClosure(let wrapped):
+                visit(wrapped)
             case .blockClosure(let parameters, _, let captures, let body):
                 let inner = Set(parameters.map(\.variable.normalized))
                 captures.map(\.variable).forEach(append)

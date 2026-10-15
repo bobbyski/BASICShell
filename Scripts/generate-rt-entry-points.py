@@ -26,6 +26,7 @@ CALLBACKS = {
     "basic_rt_task_launch": {1: "ptrPtr"},
     "basic_rt_eval_function": {1: "ptrPtr"},
     "basic_rt_closure_describe": {1: "ptrPtr"},
+    "basic_rt_closure_async": {1: "ptrPtr"},
     "basic_rt_chain_install": {2: "voidPtr", 3: "ptrVoid"},
     "basic_rt_tasks_install": {0: "voidPtr", 1: "ptrVoid"},
 }

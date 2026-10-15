@@ -430,6 +430,9 @@ public indirect enum Expression: Equatable {
     /// after RETURN, assigned to a field — its body the lines up to its
     /// `END FUNCTION` (Documents/CLOSURES.md 3.6–3.8).
     case blockClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: [ClosureBodyLine])
+    /// `ASYNC FUNCTION(…) …`: a closure (either form) whose call starts a
+    /// task, as calling an `ASYNC FUNCTION` does (Documents/CLOSURES.md 3.9).
+    case asyncClosure(Expression)
     /// `AddressOf Name`: a named `FUNCTION` as a callable value, as VB's
     /// `AddressOf` makes a delegate of one (Documents/CLOSURES.md).
     case addressOf(VariableName)

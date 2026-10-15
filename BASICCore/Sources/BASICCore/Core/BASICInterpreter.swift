@@ -58,6 +58,9 @@ public final class BASICInterpreter {
     /// statement loop it passes through, so a failure deep in a function is
     /// placed there and not at the call at the top of the program.
     private var faultLine: ParsedLine?
+    /// The line of the statement running now: where a closure made by it
+    /// was made (Documents/CLOSURES.md 4.3).
+    private var executingLine: Int?
     private var outputColumn = 0
     private var pausedDebugCallStack: [BASICCallStackFrame]?
     private var pausedDebugLocalVariables: [BASICVariableSnapshot]?
@@ -1144,6 +1147,7 @@ public final class BASICInterpreter {
     }
 
     private func execute(_ statement: Statement, pc: Int, parsed: [ParsedLine] = []) throws -> Flow {
+        executingLine = (parsed.isEmpty ? parsedLines[safe: pc] : parsed[safe: pc])?.displayLineNumber
         do {
             let flow = try executeUnchecked(statement, pc: pc, parsed: parsed)
             clearLegacyFileError(for: statement)
@@ -1472,18 +1476,10 @@ public final class BASICInterpreter {
             return .next
         case .closureAssignment(let kind, let variable, let declaredType, let parameters, let returnType, let captures, let body):
             let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
-            try runtime.assign(
-                kind: kind,
-                variable: variable,
-                declaredType: declaredType,
-                value: .closure(BASICCapturedClosure(
-                    name: variable.name,
-                    parameters: parameters,
-                    returnType: returnType,
-                    bodyStatements: body,
-                    environment: environment
-                ))
-            )
+            let closure = BASICCapturedClosure(name: variable.name, parameters: parameters, returnType: returnType,
+                                               bodyStatements: body, environment: environment)
+            closure.creationLine = executingLine
+            try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: .closure(closure))
             return .next
         case .referenceAssignment(let reference, let expression):
             // A payload member's fields are read, not written (E3) — as in
@@ -4408,6 +4404,8 @@ public final class BASICInterpreter {
             return "addressof \(name.name)"
         case .blockClosure:
             return "function(...) ... end function"
+        case .asyncClosure(let inner):
+            return "async \(traceText(for: inner))"
         case .chrFunction(let expression):
             return "chr$(\(traceText(for: expression)))"
         case .lenFunction(let expression):
@@ -6177,13 +6175,10 @@ public final class BASICInterpreter {
             return .null
         case .closure(let parameters, let returnType, let captures, let body):
             let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
-            return .closure(BASICCapturedClosure(
-                name: "[anonymous closure]",
-                parameters: parameters,
-                returnType: returnType,
-                bodyExpression: body,
-                environment: environment
-            ))
+            let closure = BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
+                                               bodyExpression: body, environment: environment)
+            closure.creationLine = executingLine
+            return .closure(closure)
         case .variable(let name):
             if name.normalized == "ERR" {
                 return .number(Double(runtime.lastErrorNumber))
@@ -6372,8 +6367,14 @@ public final class BASICInterpreter {
             return .closure(try addressOf(name))
         case .blockClosure(let parameters, let returnType, let captures, let body):
             let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
-            return .closure(BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
-                                                 bodyStatements: body, environment: environment))
+            let closure = BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
+                                               bodyStatements: body, environment: environment)
+            closure.creationLine = executingLine
+            return .closure(closure)
+        case .asyncClosure(let inner):
+            guard case .closure(let closure) = try evaluate(inner) else { throw BASICError.runtime("ASYNC needs a FUNCTION closure") }
+            closure.isAsync = true
+            return .closure(closure)
         case .pointFunction(let point):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
@@ -6581,6 +6582,30 @@ public final class BASICInterpreter {
         return taskID
     }
 
+    /// Starts a task that calls an async closure, and answers its handle,
+    /// as calling an `ASYNC FUNCTION` does (Documents/CLOSURES.md 3.9).
+    func startAsyncClosure(_ closure: BASICCapturedClosure, arguments: [BASICValue]) throws -> BASICValue {
+        guard let taskScheduler, let host else {
+            throw BASICError.runtime("An ASYNC closure requires a running BASIC session")
+        }
+        guard arguments.count == closure.parameters.count else {
+            throw BASICError.runtime("Function \(closure.name) expects \(closure.parameters.count) arguments, got \(arguments.count)")
+        }
+        let job = BASICAsyncClosureJob(program: program, host: BASICHostReference(host: host),
+                                       runtimeSnapshot: runtime.snapshotForAsyncLaunch(), closure: closure,
+                                       argumentValues: arguments, outputCoordinator: outputCoordinator)
+        let handle = taskScheduler.startBASICOperationTaskWithResult(
+            name: closure.name,
+            parentID: task?.id ?? taskScheduler.currentTask?.id
+        ) { [eventLoop, executionControl] asyncTask in
+            defer { closure.taskFinished(asyncTask.id) }
+            return try await job.run(task: asyncTask, taskScheduler: taskScheduler, eventLoop: eventLoop, executionControl: executionControl)
+        }
+        // Running from now: the debugger shows the task at once (4.5).
+        closure.taskStarted(handle.id)
+        return .task(handle)
+    }
+
     /// `obj.Handler(args)`: a closure held in a field, called (Documents/
     /// CLOSURES.md C12). Nil when the last field holds no closure, or takes no
     /// arguments, for the caller to read it as before.
@@ -6660,6 +6685,8 @@ public final class BASICInterpreter {
                 let inner = Set(parameters.map { $0.variable.normalized })
                 captures.map(\.variable).forEach(append)
                 capturedVariableNames(in: body).filter { !inner.contains($0.normalized) }.forEach(append)
+            case .asyncClosure(let inner):
+                visit(inner)
             case .variable(let name):
                 append(name)
             case .variableReference(let reference):

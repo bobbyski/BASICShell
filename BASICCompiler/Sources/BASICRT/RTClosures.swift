@@ -19,6 +19,9 @@ public final class RTClosure {
     var arity = 0
     var shape = ""
     var boxed: RTEvalTrampoline?
+    /// An `ASYNC FUNCTION(…)` closure: a call starts a task on this
+    /// trampoline (Documents/CLOSURES.md 3.9).
+    var asyncTrampoline: RTTaskTrampoline?
 
     init(function: UnsafeRawPointer, environment: RTComposite?) {
         self.function = function
@@ -34,12 +37,26 @@ public final class RTClosure {
         }
         let list = RTArray(element: .variant, dims: [arguments.count])
         list.values = [.closure(self)] + arguments
+        // An async closure's call is a task, launched as an ASYNC FUNCTION's.
+        if let asyncTrampoline {
+            let task = RTTasks.create(name: name, state: .running)
+            task.trampoline = asyncTrampoline
+            task.arguments = list
+            task.snapshot = RTTasks.capture?()
+            return .task(task)
+        }
         let array = Unmanaged.passRetained(list).toOpaque()
         defer { Unmanaged<RTArray>.fromOpaque(array).release() }
         guard let result = boxed(array) else { return .empty }
         defer { basic_rt_value_release(result) }
         return rtValue(result)
     }
+}
+
+/// Marks a closure just made as an async one, its task trampoline given.
+@_cdecl("basic_rt_closure_async")
+public func basic_rt_closure_async(_ pointer: UnsafeMutableRawPointer?, _ trampoline: UnsafeMutableRawPointer) {
+    rtClosure(pointer).asyncTrampoline = unsafeBitCast(trampoline, to: RTTaskTrampoline.self)
 }
 
 /// Says what a closure just made is (owned by the caller, unchanged).
