@@ -85,6 +85,23 @@ struct BASICClosureValueTests {
             shout = AddressOf Say
             shout("HI")
 
+            ' A closure written in a class keeps the class's access (C13).
+            FUNCTION TYPE Peek() AS INTEGER
+            CLASS Vault
+              PRIVATE Secret AS INTEGER
+              FUNCTION Open(n AS INTEGER) AS VOID
+                ME.Secret = n
+              END FUNCTION
+              FUNCTION Peeker() AS Peek
+                RETURN FUNCTION() AS INTEGER = ME.Secret
+              END FUNCTION
+            END CLASS
+            DIM vault AS Vault
+            vault = NEW Vault()
+            vault.Open(42)
+            peek = vault.Peeker()
+            PRINT "PRIVATE"; peek()
+
             ' What each prints.
             PRINT u
             PRINT sq
@@ -93,7 +110,7 @@ struct BASICClosureValueTests {
             Trapped:
               PRINT "TRAPPED"; ERR
               RESUME NEXT
-            """) == ["VARIANT12", "UNBOXED15", "TRAPPED13", "AFTER DUNARY", "FIELD18", "PRESS21", "SAME1010", "OTHER01", "TRAPPED13", "ADDRESSOF81", "SAY HI", "<FUNCTION [anonymous closure]>", "<FUNCTION Square>"])
+            """) == ["VARIANT12", "UNBOXED15", "TRAPPED13", "AFTER DUNARY", "FIELD18", "PRESS21", "SAME1010", "OTHER01", "TRAPPED13", "ADDRESSOF81", "SAY HI", "PRIVATE42", "<FUNCTION [anonymous closure]>", "<FUNCTION Square>"])
     }
 
     @Test("AddressOf a name that is no FUNCTION says so")

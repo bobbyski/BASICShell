@@ -853,6 +853,9 @@ final class BASICCapturedClosure: @unchecked Sendable {
     var isAsync = false
     /// The line the closure was made on, for the debugger (4.3).
     var creationLine: Int?
+    /// The class it was written in: its body keeps that class's access to
+    /// PRIVATE and PROTECTED members wherever it is called (C13).
+    var classContext: String?
     private let taskLock = NSLock()
     private var runningTasks: [Int] = []
 
@@ -967,7 +970,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
         _ = localContextIndex
         if let bodyExpression {
             return try interpreter.runtime.coerce(
-                interpreter.evaluate(bodyExpression),
+                interpreter.evaluateClosureExpression(self, bodyExpression),
                 to: returnType,
                 variable: VariableName(name: name, column: 0)
             )

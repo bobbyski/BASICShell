@@ -431,14 +431,14 @@ final class FunctionBuilder {
     /// branches to them: a FUNCTION reaches them with GOSUB.
     var entryLabels: Set<String> = []
 
-    init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?], closures: ClosureContext) {
+    init(lines: [ParsedLine], model: SemanticModel, function: String?, owner: [String?], closures: ClosureContext, ownerClass: String? = nil) {
         self.lines = lines
         self.model = model
         self.functionName = function
         self.signature = function.flatMap { model.functions[$0] }
         self.owner = owner
         self.closures = closures
-        self.ownerClass = self.signature?.owner
+        self.ownerClass = ownerClass ?? self.signature?.owner
         if let signature = self.signature {
             self.function = BIRFunction(name: signature.name, parameters: signature.parameters, returnType: signature.returnType)
             self.function.locals = model.localVariables(of: signature.name)
@@ -2747,7 +2747,8 @@ final class FunctionBuilder {
         }
 
         // Build the body with its own builder, in a scope of parameters + captures + LOCALs.
-        let bodyBuilder = FunctionBuilder(lines: lines, model: model, function: nil, owner: owner, closures: closures)
+        // Written in a class, the body keeps the class's access (C13).
+        let bodyBuilder = FunctionBuilder(lines: lines, model: model, function: nil, owner: owner, closures: closures, ownerClass: ownerClass)
         bodyBuilder.function = bodyFunction
         var locals: [String: BIRVariable] = [:]
         for parameter in parameterVariables { locals[parameter.name] = parameter }

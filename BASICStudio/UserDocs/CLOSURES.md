@@ -185,6 +185,8 @@ prints `12` and `21`. Moving a closure from a `VARIANT` into a variable of a fun
 
 `=` and `<>` ask whether two values are the *same* closure, as Visual Basic's `Is` does: two closures written alike are still two closures.
 
+A closure written inside a class method can use that class's `PRIVATE` and `PROTECTED` members, wherever it is called from later.
+
 ## Async closures
 
 `ASYNC FUNCTION(…)` makes a closure whose call starts a task, as calling an `ASYNC FUNCTION` does. `AWAIT` waits for its result. An `ASYNC FUNCTION TYPE` holds one, and only one: a plain closure does not fit an async function type, nor an async closure a plain one.

@@ -63,6 +63,23 @@ DIM shout AS Shout
 shout = AddressOf Say
 shout("HI")
 
+' A closure written in a class keeps the class's access (C13).
+FUNCTION TYPE Peek() AS INTEGER
+CLASS Vault
+  PRIVATE Secret AS INTEGER
+  FUNCTION Open(n AS INTEGER) AS VOID
+    ME.Secret = n
+  END FUNCTION
+  FUNCTION Peeker() AS Peek
+    RETURN FUNCTION() AS INTEGER = ME.Secret
+  END FUNCTION
+END CLASS
+DIM vault AS Vault
+vault = NEW Vault()
+vault.Open(42)
+peek = vault.Peeker()
+PRINT "PRIVATE"; peek()
+
 ' What each prints.
 PRINT u
 PRINT sq

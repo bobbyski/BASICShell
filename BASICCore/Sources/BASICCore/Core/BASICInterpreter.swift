@@ -1479,6 +1479,7 @@ public final class BASICInterpreter {
             let closure = BASICCapturedClosure(name: variable.name, parameters: parameters, returnType: returnType,
                                                bodyStatements: body, environment: environment)
             closure.creationLine = executingLine
+            closure.classContext = currentClassContext
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: .closure(closure))
             return .next
         case .referenceAssignment(let reference, let expression):
@@ -4481,7 +4482,8 @@ public final class BASICInterpreter {
             parameters: closure.parameters,
             returnType: returnType,
             startIndex: 0,
-            endIndex: bodyStatements.count
+            endIndex: bodyStatements.count,
+            ownerClassName: closure.classContext
         )
         functionStack.append(FunctionFrame(
             definition: definition,
@@ -4561,6 +4563,18 @@ public final class BASICInterpreter {
             }
         }
         return try closureResult(closure, returnType)
+    }
+
+    /// A one-line closure's expression, in a frame of the closure's own: its
+    /// class's access (C13), and its name on the call stack.
+    func evaluateClosureExpression(_ closure: BASICCapturedClosure, _ expression: Expression) throws -> BASICValue {
+        let definition = FunctionDefinition(displayName: closure.name, normalizedName: closure.name.uppercased(),
+                                            parameters: closure.parameters, returnType: closure.returnType,
+                                            startIndex: 0, endIndex: 0, ownerClassName: closure.classContext)
+        functionStack.append(FunctionFrame(definition: definition, receiverClassName: nil, localContextIndex: 0,
+                                           returnValue: .empty))
+        defer { _ = functionStack.popLast() }
+        return try evaluate(expression)
     }
 
     /// What a block closure answers: its RETURN value as its type, or nothing
@@ -6203,6 +6217,7 @@ public final class BASICInterpreter {
             let closure = BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
                                                bodyExpression: body, environment: environment)
             closure.creationLine = executingLine
+            closure.classContext = currentClassContext
             return .closure(closure)
         case .variable(let name):
             if name.normalized == "ERR" {
@@ -6395,6 +6410,7 @@ public final class BASICInterpreter {
             let closure = BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
                                                bodyStatements: body, environment: environment)
             closure.creationLine = executingLine
+            closure.classContext = currentClassContext
             return .closure(closure)
         case .asyncClosure(let inner):
             guard case .closure(let closure) = try evaluate(inner) else { throw BASICError.runtime("ASYNC needs a FUNCTION closure") }
