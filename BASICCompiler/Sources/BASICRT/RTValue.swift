@@ -70,7 +70,7 @@ package indirect enum RTValue {
             // prints either.
             if let table = RTTypes.enumTables[composite.typeIndex] { return rtEnumPayloadText(composite, table) }
             return "<\(RTTypes.type(composite.typeIndex).name)>"
-        case .closure: return "<FUNCTION>"
+        case .closure(let closure): return "<FUNCTION \(closure.name)>"
         case .system(let object): return "<\(object.typeName)>"
         case .task(let task): return "<TASK #\(task.id) \(task.name)>"
         case .cell: return "<SHARED>"
@@ -751,6 +751,17 @@ public func basic_rt_value_dictionary(_ pointer: UnsafeMutableRawPointer?, _ nam
     }
 }
 
+/// A VARIANT's closure for a variable of a function type: a closure of
+/// another shape is a Type Mismatch, as in the interpreter (C9).
+@_cdecl("basic_rt_value_closure_typed")
+public func basic_rt_value_closure_typed(_ pointer: UnsafeMutableRawPointer?, _ shape: UnsafePointer<CChar>, _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
+    if case .closure(let closure) = rtValue(pointer) {
+        let expected = String(cString: shape)
+        guard expected.isEmpty || closure.shape.isEmpty || closure.shape == expected else { basic_rt_fail_type("Type Mismatch") }
+    }
+    return basic_rt_value_closure(pointer, name)
+}
+
 @_cdecl("basic_rt_value_closure")
 public func basic_rt_value_closure(_ pointer: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
     switch rtValue(pointer) {
@@ -800,8 +811,12 @@ public func basic_rt_value_index(_ pointer: UnsafeMutableRawPointer?, _ count: I
         return rtOwned(array.values[array.offset(of: keys, name: displayName)].copied())
     case .dictionary(let dictionary):
         return rtOwned((dictionary.values[rtDictionaryKey(keys, name: displayName)] ?? .empty).copied())
+    // A closure is called: `v(4)` where v holds one (Documents/CLOSURES.md 2.5).
+    case .closure(let closure):
+        return rtOwned(closure.callBoxed(keys))
+    // Anything else cannot be called or indexed (2.8).
     default:
-        basic_rt_fail("\(displayName) is not an array")
+        basic_rt_fail_type("Type Mismatch")
     }
 }
 

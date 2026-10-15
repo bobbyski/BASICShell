@@ -510,16 +510,20 @@ public final class SemanticModel {
 
     /// The canonical name of a closure shape, so compatibility is structural:
     /// `(number,string)->string`.
-    public static func canonicalSignature(parameters: [BIRType], returnType: BIRType) -> String {
-        "(" + parameters.map(\.name).joined(separator: ",") + ")->" + returnType.name
+    public static func canonicalSignature(parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) -> String {
+        BIRSignature.shape(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
     }
 
+    /// Whether a declared type is `INTEGER`, which a function type's shape
+    /// keeps apart from `DOUBLE` as the interpreter does.
+    public static func isInteger(_ type: BASICType) -> Bool { type == .scalar(.integer) }
+
     /// Registers a signature under `name` (and under its canonical shape).
-    func addSignature(name: String, parameters: [BIRType], returnType: BIRType) {
-        signatures[name] = BIRSignature(name: name, parameterTypes: parameters, returnType: returnType)
-        let canonical = Self.canonicalSignature(parameters: parameters, returnType: returnType)
+    func addSignature(name: String, parameters: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) {
+        signatures[name] = BIRSignature(name: name, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+        let canonical = Self.canonicalSignature(parameters: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
         if signatures[canonical] == nil {
-            signatures[canonical] = BIRSignature(name: canonical, parameterTypes: parameters, returnType: returnType)
+            signatures[canonical] = BIRSignature(name: canonical, parameterTypes: parameters, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
         }
     }
 
@@ -707,7 +711,7 @@ public final class SemanticModel {
         if case .exact = source { return target == .string }
         if case .system(let from) = source, case .system(let to) = target { return from == to }
         if let from = signature(of: source), let to = signature(of: target) {
-            return from.parameterTypes == to.parameterTypes && from.returnType == to.returnType
+            return from.shape == to.shape
         }
         guard case .composite(let from) = source, case .composite(let to) = target, let targetType = types[to] else { return false }
         switch targetType.kind {

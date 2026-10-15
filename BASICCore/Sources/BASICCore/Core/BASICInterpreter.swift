@@ -3438,6 +3438,7 @@ public final class BASICInterpreter {
         var fieldReference = receiver
         fieldReference.fields.append(method.name)
         fieldReference.fieldIndexes.append(arguments)
+        if let called = try callClosureField(fieldReference) { return called }
         do {
             return try runtime.value(
                 for: fieldReference,
@@ -4380,6 +4381,8 @@ public final class BASICInterpreter {
             return "await \(traceText(for: expression))"
         case .pointFunction(let point):
             return "point\(traceText(for: point))"
+        case .addressOf(let name):
+            return "addressof \(name.name)"
         case .chrFunction(let expression):
             return "chr$(\(traceText(for: expression)))"
         case .lenFunction(let expression):
@@ -4506,11 +4509,16 @@ public final class BASICInterpreter {
                 }
                 pc = index + 1
             case .functionReturn, .end:
-                let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: returnType)
-                return try runtime.coerce(value, to: returnType, variable: VariableName(name: closure.name, column: 0))
+                return try closureResult(closure, returnType)
             }
         }
+        return try closureResult(closure, returnType)
+    }
 
+    /// What a block closure answers: its RETURN value as its type, or nothing
+    /// for a VOID one.
+    private func closureResult(_ closure: BASICCapturedClosure, _ returnType: BASICType) throws -> BASICValue {
+        guard returnType != .void else { return .empty }
         let value = functionStack.last?.returnValue ?? runtime.defaultValue(for: returnType)
         return try runtime.coerce(value, to: returnType, variable: VariableName(name: closure.name, column: 0))
     }
@@ -6145,7 +6153,7 @@ public final class BASICInterpreter {
         case .closure(let parameters, let returnType, let captures, let body):
             let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
             return .closure(BASICCapturedClosure(
-                name: "<closure>",
+                name: "[anonymous closure]",
                 parameters: parameters,
                 returnType: returnType,
                 bodyExpression: body,
@@ -6190,6 +6198,7 @@ public final class BASICInterpreter {
                 try runtime.throwPendingFrameworkError()
                 return runtime.basicValue(answer)
             }
+            if let called = try callClosureField(reference) { return called }
             return try runtime.value(
                 for: reference,
                 indexes: try reference.indexes.map(evaluate),
@@ -6334,6 +6343,8 @@ public final class BASICInterpreter {
             return try awaitTaskValueIfKnown(value) ?? value
         case .functionCall(let name, let arguments):
             return try callFunction(name: name, arguments: arguments)
+        case .addressOf(let name):
+            return .closure(try addressOf(name))
         case .pointFunction(let point):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
@@ -6541,6 +6552,37 @@ public final class BASICInterpreter {
         return taskID
     }
 
+    /// `obj.Handler(args)`: a closure held in a field, called (Documents/
+    /// CLOSURES.md C12). Nil when the last field holds no closure, or takes no
+    /// arguments, for the caller to read it as before.
+    private func callClosureField(_ reference: VariableReference) throws -> BASICValue? {
+        guard let last = reference.fields.indices.last, reference.fieldIndexes.indices.contains(last),
+              !reference.fieldIndexes[last].isEmpty else { return nil }
+        var bare = reference
+        bare.fieldIndexes[last] = []
+        guard runtime.hasVariable(bare.base),
+              case .closure(let closure) = try runtime.value(for: bare, indexes: try bare.indexes.map(evaluate),
+                                                             fieldIndexes: try evaluatedFieldIndexes(for: bare),
+                                                             accessClassName: currentClassContext) else { return nil }
+        return try closure.call(arguments: try reference.fieldIndexes[last].map(evaluate), interpreter: self)
+    }
+
+    /// `AddressOf Name`: the named `FUNCTION` as a closure that captures
+    /// nothing and calls it, named for it (Documents/CLOSURES.md 2.10).
+    private func addressOf(_ name: VariableName) throws -> BASICCapturedClosure {
+        guard let definition = functionDefinitions[name.normalized] else {
+            throw BASICError.runtime("AddressOf \(name.name): there is no FUNCTION \(name.name)")
+        }
+        let call = Expression.callOrArray(name, definition.parameters.map { .variable($0.variable) })
+        if definition.returnType == .void {
+            return BASICCapturedClosure(name: definition.displayName, parameters: definition.parameters, returnType: .void,
+                                        bodyStatements: [ClosureBodyLine(fileName: nil, sourceLineNumber: 0, statement: .expression(call))],
+                                        environment: BASICCapturedEnvironment())
+        }
+        return BASICCapturedClosure(name: definition.displayName, parameters: definition.parameters, returnType: definition.returnType,
+                                    bodyExpression: call, environment: BASICCapturedEnvironment())
+    }
+
     /// What a closure being made captures (Documents/CLOSURES.md C1–C7):
     /// each name its `CAPTURES` list gives a policy, and every other name
     /// its body uses, shared. `ME` is the closure's own copy unless the list
@@ -6578,7 +6620,7 @@ public final class BASICInterpreter {
 
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null:
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .addressOf:
                 return
             case .closure(let parameters, _, let captures, let body):
                 // What a nested closure uses has to be here when it is made.

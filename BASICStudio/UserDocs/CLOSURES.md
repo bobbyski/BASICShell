@@ -135,6 +135,50 @@ prints `[N= 4]`. A closure fits a function type when its parameter types and its
 
 Assign `NULL` to a closure variable to clear it. Calling a cleared one stops with `Closure was never set`.
 
+## Closures as values
+
+A closure is a value like any other. A `VARIANT` can hold one, and calling the `VARIANT` calls it; a record or class field of a function type holds one, called as `object.Field(arguments)`:
+
+```basic
+function type Unary(x as integer) as integer
+class Button
+    public OnPress as Unary
+end class
+
+dim v as variant
+v = function(x as integer) as integer = x * 3
+print v(4)
+
+dim b as Button
+b = new Button()
+b.OnPress = v
+print b.OnPress(7)
+```
+
+prints `12` and `21`. Moving a closure from a `VARIANT` into a variable of a function type checks its shape, as any assignment does. Calling a `VARIANT` that holds something other than a closure or an array is a `Type Mismatch`.
+
+`=` and `<>` ask whether two values are the *same* closure, as Visual Basic's `Is` does: two closures written alike are still two closures.
+
+## AddressOf
+
+`AddressOf` makes a closure of a named `FUNCTION`, as in Visual Basic:
+
+```basic
+function type Unary(x as integer) as integer
+function Square(n as integer) as integer
+    return n * n
+end function
+
+dim f as Unary
+f = AddressOf Square
+print f(9)
+print f
+```
+
+prints `81`, then `<FUNCTION Square>`: a closure prints as `<FUNCTION name>`, the name being its variable for a multi-line closure, its function for `AddressOf`, and `[anonymous closure]` otherwise.
+
+A closure is a value of the running program only: `ToJsonString` refuses one.
+
 ## Compiled programs
 
 `basicc` compiles closures, with the same sharing and `CAPTURES` rules, for native binaries and WebAssembly. It needs the return type: a closure with no `AS`, or `AS VARIANT`, is not compiled yet.

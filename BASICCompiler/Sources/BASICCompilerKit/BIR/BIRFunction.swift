@@ -483,11 +483,30 @@ public struct BIRSignature: Sendable {
     public let name: String
     public let parameterTypes: [BIRType]
     public let returnType: BIRType
+    /// Which `.number` parameters were declared `INTEGER`, and whether the
+    /// result was: the interpreter tells INTEGER from DOUBLE in a function
+    /// type, so the shape does too (Documents/CLOSURES.md 2.9).
+    public let integers: [Bool]
+    public let returnsInteger: Bool
 
-    public init(name: String, parameterTypes: [BIRType], returnType: BIRType) {
+    public init(name: String, parameterTypes: [BIRType], returnType: BIRType, integers: [Bool] = [], returnsInteger: Bool = false) {
         self.name = name
         self.parameterTypes = parameterTypes
         self.returnType = returnType
+        self.integers = integers.isEmpty ? parameterTypes.map { _ in false } : integers
+        self.returnsInteger = returnsInteger
+    }
+
+    /// The structural shape, `(integer,string)->string`: two signatures fit
+    /// each other when their shapes are the same.
+    public var shape: String {
+        BIRSignature.shape(parameters: parameterTypes, returnType: returnType, integers: integers, returnsInteger: returnsInteger)
+    }
+
+    public static func shape(parameters: [BIRType], returnType: BIRType, integers: [Bool], returnsInteger: Bool) -> String {
+        func name(_ type: BIRType, _ integer: Bool) -> String { integer && type == .number ? "integer" : type.name }
+        let flags = integers.isEmpty ? parameters.map { _ in false } : integers
+        return "(" + zip(parameters, flags).map(name).joined(separator: ",") + ")->" + name(returnType, returnsInteger)
     }
 }
 

@@ -325,7 +325,8 @@ struct SemanticAnalyzer {
             guard !isAsync else { throw CompileError("ASYNC FUNCTION TYPE is not supported by basicc yet", at: Self.location(of: line)) }
             let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
             let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: name, at: line)
-            model.addSignature(name: name.uppercased(), parameters: parameterTypes, returnType: resolvedReturn)
+            model.addSignature(name: name.uppercased(), parameters: parameterTypes, returnType: resolvedReturn,
+                               integers: parameters.map { SemanticModel.isInteger($0.type) }, returnsInteger: SemanticModel.isInteger(returnType))
             owner[index] = Self.declaration
         }
     }
@@ -337,8 +338,9 @@ struct SemanticAnalyzer {
             throw CompileError("a closure needs AS <type>; basicc cannot infer VARIANT", at: Self.location(of: line))
         }
         let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: "closure", at: line)
-        let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn)
-        model.addSignature(name: canonical, parameters: parameterTypes, returnType: resolvedReturn)
+        let integers = parameters.map { SemanticModel.isInteger($0.type) }
+        let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+        model.addSignature(name: canonical, parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
         return .closure(canonical)
     }
 
@@ -670,6 +672,8 @@ struct SemanticAnalyzer {
         case .pointFunction(let point):
             try noteReferences(in: point.x, at: line, in: function, changed: &changed)
             try noteReferences(in: point.y, at: line, in: function, changed: &changed)
+        case .addressOf:
+            break
         case .binary(let left, _, let right):
             try noteReferences(in: left, at: line, in: function, changed: &changed)
             try noteReferences(in: right, at: line, in: function, changed: &changed)
@@ -1049,7 +1053,7 @@ struct SemanticAnalyzer {
         }
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .pwdFunction, .timerFunction: return
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .pwdFunction, .timerFunction, .addressOf: return
             case .closure(let parameters, _, let captures, let body):
                 // What a nested closure uses has to be at hand where it is made.
                 let inner = Set(parameters.map(\.variable.normalized))

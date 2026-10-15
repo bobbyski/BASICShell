@@ -345,6 +345,32 @@ struct BASICClosureCaptureTests {
     @Test("the manual's examples print what the manual says")
     func manualExamples() {
         #expect(run("""
+            function type Unary(x as integer) as integer
+            class Button
+                public OnPress as Unary
+            end class
+
+            dim v as variant
+            v = function(x as integer) as integer = x * 3
+            print v(4)
+
+            dim b as Button
+            b = new Button()
+            b.OnPress = v
+            print b.OnPress(7)
+            """) == ["12", "21"])
+        #expect(run("""
+            function type Unary(x as integer) as integer
+            function Square(n as integer) as integer
+                return n * n
+            end function
+
+            dim f as Unary
+            f = AddressOf Square
+            print f(9)
+            print f
+            """) == ["81", "<FUNCTION Square>"])
+        #expect(run("""
             bonus = 5
             score = function(v as integer) as string = "SCORE=" + str$(v + bonus)
             bonus = 100

@@ -426,6 +426,9 @@ public indirect enum Expression: Equatable {
     case binary(Expression, BinaryOperation, Expression)
     case await(Expression)
     case functionCall(VariableName, [Expression])
+    /// `AddressOf Name`: a named `FUNCTION` as a callable value, as VB's
+    /// `AddressOf` makes a delegate of one (Documents/CLOSURES.md).
+    case addressOf(VariableName)
     case pointFunction(GraphicsPoint)
     case chrFunction(Expression)
     case lenFunction(Expression)

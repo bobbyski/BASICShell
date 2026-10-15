@@ -82,7 +82,7 @@ public indirect enum BIRExpression: Sendable {
     case fileService(method: String, arguments: [BIRExpression], returns: BIRType)
     /// Makes a closure: its body function, the environment type holding the
     /// captures, and the captured values in field order. Owned.
-    case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String)
+    case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String, name: String)
     /// A closure environment's `WEAK` field: the imported object, or null
     /// once it is gone. Owned.
     case weakField(BIRExpression, index: Int, type: BIRType)
@@ -170,7 +170,7 @@ public indirect enum BIRExpression: Sendable {
             return .string
         case .fileService(_, _, let returns):
             return returns
-        case .makeClosure(_, _, _, let signature):
+        case .makeClosure(_, _, _, let signature, _):
             return .closure(signature)
         case .weakField(_, _, let type):
             return type
@@ -224,12 +224,15 @@ public indirect enum BIRExpression: Sendable {
             return a.mayRunCode || b.mayRunCode
         case .intrinsic(_, let list), .element(_, let list):
             return list.contains(where: \.mayRunCode)
-        case .makeClosure(_, _, let captures, _):
+        case .makeClosure(_, _, let captures, _, _):
             return captures.contains { $0.expression?.mayRunCode ?? false }
         case .usingString(let format, let values):
             return format.mayRunCode || values.contains(where: \.mayRunCode)
-        case .elementOf(let a, let list, _), .valueIndex(let a, let list, _):
+        case .elementOf(let a, let list, _):
             return a.mayRunCode || list.contains(where: \.mayRunCode)
+        // A VARIANT holding a closure is called (Documents/CLOSURES.md 2.5).
+        case .valueIndex:
+            return true
         case .valueCall:
             return true
         }

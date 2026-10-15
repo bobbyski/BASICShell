@@ -286,7 +286,7 @@ public struct BIRPrinter {
             return "USING$(" + ([format] + values).map(render).joined(separator: ", ") + ")"
         case .fileService(let method, let arguments, _):
             return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
-        case .makeClosure(let function, _, let captures, _):
+        case .makeClosure(let function, _, let captures, _, _):
             return "closure \(function)[" + captures.map { capture in
                 switch capture {
                 case .value(let expression): return render(expression)

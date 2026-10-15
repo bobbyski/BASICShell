@@ -107,6 +107,8 @@ enum BASICEval {
             return first([left, right])
         case .pointFunction(let point):
             return first([point.x, point.y])
+        case .addressOf:
+            return nil
         }
     }
 
@@ -139,7 +141,7 @@ enum BASICEval {
                 visit(point.x)
                 visit(point.y)
             case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure,
-                 .pwdFunction, .timerFunction:
+                 .pwdFunction, .timerFunction, .addressOf:
                 break
             }
         }

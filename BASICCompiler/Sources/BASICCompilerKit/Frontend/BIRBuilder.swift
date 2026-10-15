@@ -1378,7 +1378,7 @@ final class FunctionBuilder {
             break
         case .closureAssignment(_, let name, _, let parameters, let returnType, let captures, let body):
             let target = variable(name)
-            let made = try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body))
+            let made = try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body), name: name.name)
             guard model.isAssignable(made.type, to: target.type) else {
                 throw CompileError("Type error: Cannot assign this closure to \(name.name) (\(target.type.name))", at: location)
             }
@@ -1708,6 +1708,10 @@ final class FunctionBuilder {
            let found = model.field(method.normalized, of: typeName) {
             try checkAccess(found.field.visibility, owner: found.field.owner, what: method.name)
             var fieldPlace = BIRPlace.field(place, index: found.index, type: found.field.type)
+            // A closure held in a field is called (C12).
+            if let signature = model.signature(of: found.field.type) {
+                return try lowerClosureCall(load(fieldPlace), signature: signature, arguments, name: method.name)
+            }
             if !arguments.isEmpty {
                 guard case .array(_, let rank) = found.field.type else { throw CompileError("\(method.name) is not an array", at: location) }
                 guard rank == arguments.count else { throw CompileError("\(method.name) expects \(rank) indexes", at: location) }
@@ -2367,9 +2371,12 @@ final class FunctionBuilder {
             if case .system(let typeName) = variable(reference.base).type, reference.indexes.isEmpty, reference.fields.count == 1 {
                 return try lowerSystemCall(.load(variable(reference.base)), typeName, VariableName(name: reference.fields[0], column: reference.base.column), [])
             }
+            if let call = try lowerClosureFieldCall(reference) { return call }
             return load(try lowerPlace(reference))
         case .closure(let parameters, let returnType, let captures, let body):
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
+        case .addressOf(let name):
+            return try addressOf(name)
         case .newObject(let className, let arguments):
             if model.isSystemClassHere(className.uppercased()), model.types[className.uppercased()] == nil {
                 let systemClass = className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased()
@@ -2531,6 +2538,11 @@ final class FunctionBuilder {
             try requireNumbers(l, r, symbol)
             return .arithmetic(op, l, r)
         case .equal, .notEqual:
+            // Closures are equal when they are the same closure (C10),
+            // whatever their types are called.
+            if l.type.isClosure && r.type.isClosure {
+                return .compare(Self.comparison(for: operation)!, l, r)
+            }
             if dynamic || l.type.isComposite || l.type == .dictionary || l.type.isArray || r.type.isComposite || r.type == .dictionary || r.type.isArray {
                 let equal = BIRExpression.valueEqual(boxed(l), boxed(r))
                 return operation == .equal ? equal : .arithmetic(.subtract, .number(1), equal)
@@ -2597,7 +2609,8 @@ final class FunctionBuilder {
     /// - **`STRONG`**: a new cell holding a copy, the closure's own.
     /// - **`READONLY`**: a copy the body takes as a local, which it may not
     ///   assign. `ME` is a `STRONG` copy unless the list says otherwise.
-    private func makeClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: ClosureBody) throws -> BIRExpression {
+    private func makeClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: ClosureBody,
+                             name closureName: String = "[anonymous closure]") throws -> BIRExpression {
         let number = closures.next()
         let line = ParsedLine(number: location.lineNumber, displayLineNumber: location.line, fileName: location.file, sourceLineNumber: location.line, statementNumber: location.statement, isImported: false, statement: .empty)
         let parameterVariables = try parameters.map {
@@ -2683,8 +2696,11 @@ final class FunctionBuilder {
             fieldTypes.append(bodyCells[name] != nil || bodyWeak.contains(name) ? .variant : outer.type)
         }
 
-        let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
-        model.addSignature(name: canonical, parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
+        let integers = parameters.map { SemanticModel.isInteger($0.type) }
+        let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn,
+                                                         integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+        model.addSignature(name: canonical, parameters: parameterVariables.map(\.type), returnType: resolvedReturn,
+                           integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
 
         let bodyName = "closure$\(number)"
         var environmentName: String?
@@ -2745,7 +2761,22 @@ final class FunctionBuilder {
         }
         closures.functions.append(bodyBuilder.function)
 
-        return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical)
+        return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical, name: closureName)
+    }
+
+    /// `AddressOf Name`: the named `FUNCTION` as a closure that captures
+    /// nothing and calls it, named for it (Documents/CLOSURES.md 2.10).
+    private func addressOf(_ name: VariableName) throws -> BIRExpression {
+        for line in lines {
+            guard case .functionDeclaration(let declared, let parameters, let returnType, _, _, _, _) = line.statement,
+                  declared.normalized == name.normalized else { continue }
+            let call = Expression.callOrArray(name, parameters.map { .variable($0.variable) })
+            let body: ClosureBody = returnType == .void
+                ? .block([ClosureBodyLine(fileName: nil, sourceLineNumber: location.line, statement: .expression(call))])
+                : .expression(call)
+            return try makeClosure(parameters: parameters, returnType: returnType, captures: [], body: body, name: declared.name)
+        }
+        throw CompileError("AddressOf \(name.name): there is no FUNCTION \(name.name)", at: location)
     }
 
     /// Whether a type is a class an imported Swift framework declared.
@@ -2775,6 +2806,19 @@ final class FunctionBuilder {
     }
 
     /// A call through a closure value, checked against its signature.
+    /// `obj.Handler(args)` read as a field with indexes: the closure the field
+    /// holds, called (C12). Nil when the last field is not one.
+    private func lowerClosureFieldCall(_ reference: VariableReference) throws -> BIRExpression? {
+        guard let last = reference.fields.indices.last, reference.fieldIndexes.indices.contains(last),
+              !reference.fieldIndexes[last].isEmpty else { return nil }
+        var fieldIndexes = reference.fieldIndexes
+        fieldIndexes[last] = []
+        let bare = VariableReference(base: reference.base, indexes: reference.indexes, fields: reference.fields, fieldIndexes: fieldIndexes)
+        let place = try lowerPlace(bare)
+        guard let signature = model.signature(of: place.type) else { return nil }
+        return try lowerClosureCall(load(place), signature: signature, reference.fieldIndexes[last], name: reference.fields[last])
+    }
+
     private func lowerClosureCall(_ closure: BIRExpression, signature: BIRSignature, _ arguments: [Expression], name: String) throws -> BIRExpression {
         guard arguments.count == signature.parameterTypes.count else {
             throw CompileError("Function \(name) expects \(signature.parameterTypes.count) arguments, got \(arguments.count)", at: location)

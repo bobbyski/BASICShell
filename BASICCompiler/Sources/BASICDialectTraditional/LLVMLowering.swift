@@ -135,7 +135,7 @@ struct LLVMLowering {
         if module.functions.contains(where: \.isEventHandler) {
             functions.append(renderEventSupport())
         }
-        if !module.evalFunctions.isEmpty {
+        if !module.evalFunctions.isEmpty || module.functions.contains(where: { $0.name.hasPrefix("closure$") }) {
             functions.append(renderEvalSupport())
         }
         text += constants.definitions.joined(separator: "\n") + "\n\n"
@@ -204,12 +204,25 @@ struct LLVMLowering {
         var out = LLVMText()
         var counter = 0
         func temp() -> String { counter += 1; return "%v\(counter)" }
-        for function in module.functions where module.evalFunctions.contains(function.name) {
+        // A closure body's takes the closure first, for its environment, and
+        // is what calls one held in a VARIANT (Documents/CLOSURES.md 2.5).
+        for function in module.functions where module.evalFunctions.contains(function.name) || function.name.hasPrefix("closure$") {
             out.raw("define ptr @\"V.\(function.name)\"(ptr %args) {")
             out.label("entry")
             var arguments: [String] = []
             var owned: [(String, String)] = []
-            for (index, parameter) in function.parameters.enumerated() {
+            var parameters = function.parameters[...]
+            if function.name.hasPrefix("closure$") {
+                let boxed = temp(), closure = temp(), environment = temp()
+                out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 0)")
+                out.emit("\(closure) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)")
+                out.emit("\(environment) = call ptr @basic_rt_closure_environment(ptr \(closure))")
+                owned += [(boxed, "basic_rt_value_release"), (closure, "basic_rt_closure_release")]
+                arguments.append("ptr \(environment)")
+                parameters = parameters.dropFirst()
+            }
+            for (offset, parameter) in parameters.enumerated() {
+                let index = function.name.hasPrefix("closure$") ? offset + 1 : offset
                 let boxed = temp()
                 out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr %args, i64 \(index))")
                 owned.append((boxed, "basic_rt_value_release"))
@@ -645,6 +658,11 @@ struct LLVMLowering {
     declare ptr @basic_rt_composite_text(ptr)
     declare ptr @basic_rt_closure_new(ptr, ptr)
     declare ptr @basic_rt_cell_new(i64, ptr)
+    declare void @basic_rt_closure_describe(ptr, ptr, ptr, i64, ptr)
+    declare ptr @basic_rt_composite_get_closure(ptr, i64)
+    declare ptr @basic_rt_closure_text(ptr)
+    declare void @basic_rt_composite_set_closure(ptr, i64, ptr)
+    declare ptr @basic_rt_value_closure_typed(ptr, ptr, ptr)
     declare void @basic_rt_cell_retain(ptr)
     declare void @basic_rt_cell_release(ptr)
     declare ptr @basic_rt_cell_storage(ptr)
@@ -1191,7 +1209,8 @@ struct FunctionEmitter {
             case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(target), i64 \(index), double \(result))")
             case .boolean: out.emit("call void @basic_rt_composite_set_boolean(ptr \(target), i64 \(index), i1 \(result))")
             case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(target), i64 \(index), ptr \(result))")
-            case .composite, .void, .closure: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
+            case .composite, .void: out.emit("call void @basic_rt_composite_set_composite(ptr \(target), i64 \(index), ptr \(result))")
+            case .closure: out.emit("call void @basic_rt_composite_set_closure(ptr \(target), i64 \(index), ptr \(result))")
             case .variant, .dictionary, .system, .exact: out.emit("call void @basic_rt_composite_set_value(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             case .array: out.emit("call void @basic_rt_composite_set_array(ptr \(target), i64 \(index), ptr \(boxedPointer(result, value.type)), ptr \(fieldName))")
             }
@@ -1530,7 +1549,7 @@ struct FunctionEmitter {
                     case .array: out.emit("call void @basic_rt_print_array(ptr \(result), ptr \(constants.constant("array")))")
                     case .closure:
                         let text = out.temp()
-                        out.emit("\(text) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
+                        out.emit("\(text) = call ptr @basic_rt_closure_text(ptr \(result))")
                         owned.append(text)
                         out.emit("call void @basic_rt_print_text(ptr \(text))")
                     case .void: break
@@ -2321,8 +2340,12 @@ struct FunctionEmitter {
                 out.emit("\(result) = call ptr @basic_rt_composite_get_string(ptr \(parent), i64 \(index))")
                 owned.append(result)
                 return (result, true)
-            case .composite, .void, .closure:
+            case .composite, .void:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_composite(ptr \(parent), i64 \(index))")
+                return (result, false)
+            // A closure field holds the closure itself, not a record (C12).
+            case .closure:
+                out.emit("\(result) = call ptr @basic_rt_composite_get_closure(ptr \(parent), i64 \(index))")
                 return (result, false)
             case .array:
                 out.emit("\(result) = call ptr @basic_rt_composite_get_array(ptr \(parent), i64 \(index))")
@@ -2370,7 +2393,10 @@ struct FunctionEmitter {
                 own(result, as: .dictionary)
                 return (result, true)
             case .closure:
-                out.emit("\(result) = call ptr @basic_rt_value_closure(ptr \(box), ptr \(nameArgument))")
+                // Checked against the function type's shape, as the
+                // interpreter checks a closure's signature (C9).
+                let shape = module.signatures.values.first { BIRType.closure($0.name) == type }?.shape ?? ""
+                out.emit("\(result) = call ptr @basic_rt_value_closure_typed(ptr \(box), ptr \(constants.constant(shape)), ptr \(nameArgument))")
                 own(result, as: type)
                 return (result, true)
             case .variant, .array, .system:
@@ -2535,7 +2561,7 @@ struct FunctionEmitter {
             }
         case .fileService(let method, let arguments, _):
             return lowerFileService(method, arguments)
-        case .makeClosure(let functionName, let environment, let captures, _):
+        case .makeClosure(let functionName, let environment, let captures, let signature, let closureName):
             var env = "null"
             if let environment, let type = module.types.first(where: { $0.name == environment }) {
                 let created = out.temp()
@@ -2585,6 +2611,7 @@ struct FunctionEmitter {
                     case .string: out.emit("call void @basic_rt_composite_set_string(ptr \(created), i64 \(index), ptr \(value))")
                     case .variant, .dictionary, .system:
                         out.emit("call void @basic_rt_composite_set_value(ptr \(created), i64 \(index), ptr \(boxedPointer(value, capture.type)), ptr \(constants.constant("capture")))")
+                    case .closure: out.emit("call void @basic_rt_composite_set_closure(ptr \(created), i64 \(index), ptr \(value))")
                     default: out.emit("call void @basic_rt_composite_set_composite(ptr \(created), i64 \(index), ptr \(value))")
                     }
                 }
@@ -2594,6 +2621,11 @@ struct FunctionEmitter {
             }
             let result = out.temp()
             out.emit("\(result) = call ptr @basic_rt_closure_new(ptr @\"F.\(functionName)\", ptr \(env))")
+            // What the runtime needs to call it boxed (through a VARIANT), to
+            // check it against a function type, and to print and name it.
+            let arity = module.functions.first { $0.name == functionName }.map { $0.parameters.count - 1 } ?? 0
+            let shape = module.signatures[signature]?.shape ?? signature
+            out.emit("call void @basic_rt_closure_describe(ptr \(result), ptr @\"V.\(functionName)\", ptr \(constants.constant(closureName)), i64 \(arity), ptr \(constants.constant(shape)))")
             owned.append(result)
             ownedClosures.insert(result)
             return (result, true)
@@ -2689,7 +2721,7 @@ struct FunctionEmitter {
                 return (result, true)
             case .closure:
                 let result = out.temp()
-                out.emit("\(result) = call ptr @basic_rt_string_literal(ptr \(constants.constant("<FUNCTION>")), i64 10)")
+                out.emit("\(result) = call ptr @basic_rt_closure_text(ptr \(value))")
                 owned.append(result)
                 return (result, true)
             case .variant, .dictionary, .array, .system:
@@ -2866,7 +2898,8 @@ struct FunctionEmitter {
         case .boolean:
             out.emit("\(flag) = icmp \(op == .equal ? "eq" : "ne") i1 \(l), \(r)")
         case .composite, .closure:
-            out.emit("\(flag) = icmp eq ptr \(l), \(r)")
+            // `<>` is the opposite of `=`: the same object, or closure (C10).
+            out.emit("\(flag) = icmp \(op == .notEqual ? "ne" : "eq") ptr \(l), \(r)")
         case .variant, .dictionary, .array, .system:
             let equal = out.temp()
             out.emit("\(equal) = call i1 @basic_rt_value_equal(ptr \(boxedPointer(l, left.type)), ptr \(boxedPointer(r, right.type)))")

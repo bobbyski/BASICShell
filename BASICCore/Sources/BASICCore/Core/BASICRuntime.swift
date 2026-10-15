@@ -718,6 +718,11 @@ final class BASICRuntime {
                 if case .functionType? = declaredType(for: VariableReference(base: reference.base)) {
                     throw BASICError.runtime("Closure was never set")
                 }
+                // A VARIANT holding neither an array nor a closure cannot be
+                // indexed or called (Documents/CLOSURES.md 2.8).
+                if declaredType(for: VariableReference(base: reference.base)) == .scalar(.variant) {
+                    throw BASICError.type(message: "Type Mismatch")
+                }
                 throw BASICError.runtime("\(reference.base.name) is not an array")
             }
         }
