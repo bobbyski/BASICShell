@@ -952,7 +952,7 @@ final class BASICCapturedClosure: @unchecked Sendable {
             throw BASICError.runtime("Function \(name) expects \(parameters.count) arguments, got \(arguments.count)")
         }
 
-        let localContextIndex = interpreter.runtime.pushLocalContext()
+        let localContextIndex = interpreter.runtime.pushLocalContext(closure: true)
         defer { interpreter.runtime.popLocalContext() }
         // Each capture is a local of the call: the shared variable or the
         // closure's own copy through its cell, or a fresh READONLY copy.

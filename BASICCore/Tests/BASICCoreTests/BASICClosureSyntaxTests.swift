@@ -123,13 +123,28 @@ struct BASICClosureSyntaxTests {
             quick = ASYNC FUNCTION(x AS INTEGER) AS INTEGER = x * 2
             PRINT "QUICK"; AWAIT quick(21)
 
-            ' A task shares what its closure shares.
+            ' A task sees the globals as they were when it started, as an ASYNC
+            ' FUNCTION's does, and keeps what it assigns to them...
             counter = 10
             bump = ASYNC FUNCTION() AS INTEGER
               counter = counter + 1
               RETURN counter
             END FUNCTION
-            PRINT "BUMPED"; AWAIT bump()
+            PRINT "BUMPED"; AWAIT bump(); counter
+
+            ' ...and shares the locals its closure shares.
+            ASYNC FUNCTION TYPE Adder() AS INTEGER
+            FUNCTION Tally() AS INTEGER
+              LOCAL n AS INTEGER = 0
+              LOCAL inc AS Adder
+              inc = ASYNC FUNCTION() AS INTEGER
+                n = n + 5
+                RETURN n
+              END FUNCTION
+              x = AWAIT inc()
+              RETURN n
+            END FUNCTION
+            PRINT "TALLY"; Tally()
 
             ' An async closure is not a plain function type's, nor the other way round.
             ON ERROR GOTO Trapped
@@ -146,7 +161,7 @@ struct BASICClosureSyntaxTests {
             Trapped:
               PRINT "TRAPPED"; ERR
               RESUME NEXT
-            """) == ["LOADED 7", "QUICK42", "BUMPED11", "TRAPPED13", "AFTER PLAIN", "TRAPPED13", "AFTER LOADER"])
+            """) == ["LOADED 7", "QUICK42", "BUMPED1110", "TALLY5", "TRAPPED13", "AFTER PLAIN", "TRAPPED13", "AFTER LOADER"])
     }
 
     @Test("a closure running as a task shows its task in the debugger, with its name and where it was made")

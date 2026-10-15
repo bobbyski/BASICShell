@@ -10,6 +10,10 @@ final class BASICRuntime {
     }
     private var globals: [String: VariableBinding] = [:]
     private var locals: [[String: VariableBinding]] = []
+    /// The local contexts that are closure calls: a name not found in one
+    /// is looked for in the globals, never in its callers' locals, so a
+    /// closure's names mean what they meant where it was written (C1).
+    private var closureContexts: Set<Int> = []
     var recordDefinitions: [String: BASICRecordDefinition] = [:]
     /// Normalized names of the program's `ENUM`s (E1).
     ///
@@ -104,6 +108,7 @@ final class BASICRuntime {
         evalFullAccess = false
         globals.removeAll()
         locals.removeAll()
+        closureContexts.removeAll()
         fileObjects.removeAll()
         timerObjects.removeAll()
         httpClientObjects.removeAll()
@@ -329,13 +334,15 @@ final class BASICRuntime {
         }
     }
 
-    func pushLocalContext() -> Int {
+    func pushLocalContext(closure: Bool = false) -> Int {
         locals.append([:])
+        if closure { closureContexts.insert(locals.count - 1) }
         return locals.count - 1
     }
 
     func popLocalContext() {
         if !locals.isEmpty {
+            closureContexts.remove(locals.count - 1)
             _ = locals.removeLast()
         }
     }
@@ -354,7 +361,10 @@ final class BASICRuntime {
         let context = visibleContext(for: normalized)
         let existing = context.flatMap { binding(in: $0, normalized: normalized) }
         if access == .shared {
-            guard let context, var binding = existing else { return nil }
+            // A global is reached directly, as basicc reaches it: a task the
+            // closure runs as then sees the globals it started with, as an
+            // ASYNC FUNCTION's does.
+            guard let context, case .local = context, var binding = existing else { return nil }
             if let cell = binding.cell { return cell }
             // An enclosing closure's READONLY copy stays read-only here too.
             guard !binding.isReadOnlyCapture else { return copyCell(binding.displayName, binding.value, binding.type, .readOnly) }
@@ -1206,6 +1216,7 @@ final class BASICRuntime {
             if locals[index][normalized] != nil {
                 return .local(index)
             }
+            if closureContexts.contains(index) { break }
         }
         if globals[normalized] != nil {
             return .global

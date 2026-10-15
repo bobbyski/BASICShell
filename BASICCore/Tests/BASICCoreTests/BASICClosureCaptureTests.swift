@@ -489,16 +489,19 @@ struct BASICClosureCaptureTests {
     @Test("the debugger labels each capture with its policy, and a shared one's revision count moves as it is written (4.4)")
     func debuggerPolicyLabels() throws {
         let control = BASICExecutionControl()
-        control.setBreakpoints([BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 9, statementNumber: 0))])
+        control.setBreakpoints([BASICBreakpoint(location: BASICBreakpointLocation(lineNumber: 12, statementNumber: 0))])
         let session = BASICSession(host: TestHost())
         session.program.loadSource("""
-        total = 0
-        frozen$ = "F"
-        mine = 5
-        add = FUNCTION(n AS INTEGER) AS INTEGER CAPTURES READONLY frozen$, STRONG mine
-          total = total + n + mine - 5
-          RETURN total
+        FUNCTION Make() AS VARIANT
+          LOCAL total = 0
+          LOCAL frozen$ = "F"
+          LOCAL mine = 5
+          RETURN FUNCTION(n AS INTEGER) AS INTEGER CAPTURES READONLY frozen$, STRONG mine
+            total = total + n + mine - 5
+            RETURN total
+          END FUNCTION
         END FUNCTION
+        add = Make()
         x = add(1): x = add(2)
         yield
         """)

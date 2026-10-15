@@ -150,16 +150,20 @@ struct ActiveUIDebugPaneTests {
     @Test("A closure's row opens into its name, where it was made and its captures, each with its policy (CLOSURES.md 4.7)")
     func closureCaptures() async throws {
         let studio = StudioHarness(program: """
-        total = 0
-        add = FUNCTION(n AS INTEGER) AS INTEGER CAPTURES STRONG mine
-          total = total + n
-          RETURN total
+        FUNCTION Make() AS VARIANT
+          LOCAL total = 0
+          LOCAL mine = 5
+          RETURN FUNCTION(n AS INTEGER) AS INTEGER CAPTURES STRONG mine
+            total = total + n
+            RETURN total
+          END FUNCTION
         END FUNCTION
+        add = Make()
         x = add(4)
         PRINT x
         """)
         studio.model.openDebugger()
-        studio.model.toggleDebuggerBreakpoint(atSourceLine: 7)
+        studio.model.toggleDebuggerBreakpoint(atSourceLine: 12)
         try await studio.run()
         let pane = DebugPaneAUI(model: studio.model)
         func row(_ name: String) -> AUIView? {
@@ -174,7 +178,7 @@ struct ActiveUIDebugPaneTests {
         let opened = texts(pane.sections[3].content)
         #expect(opened.contains("Name"))
         #expect(opened.contains("Made At"))
-        #expect(opened.contains("line 2"))
+        #expect(opened.contains("line 4"))
         Click.simulate(try #require(row("Captured Values")))
         let captures = texts(pane.sections[3].content)
         #expect(captures.contains("total"))

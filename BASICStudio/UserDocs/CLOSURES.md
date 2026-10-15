@@ -205,7 +205,7 @@ quick = async function(x as integer) as integer = x * 2
 print await quick(21)
 ```
 
-prints `LOADED 7`, then `42`. A task shares what its closure shares, as the closure itself does.
+prints `LOADED 7`, then `42`. A task shares the local variables its closure shares. Like an `ASYNC FUNCTION`'s task, it sees the program's globals as they were when it started, and what it assigns to them stays its own.
 
 ## AddressOf
 
