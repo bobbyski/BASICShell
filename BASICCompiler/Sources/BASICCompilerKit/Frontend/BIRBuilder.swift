@@ -369,6 +369,10 @@ final class FunctionBuilder {
     var closureLines: [ParsedLine]?
     /// For a closure body: the declared return type, so RETURN checks it.
     var closureSignatureReturn: BIRType?
+    /// The variables this function's statements, or its closures, may write:
+    /// a local none of them writes is captured by copy, not in a cell (5.3).
+    private lazy var writtenNames: Set<String> = SemanticAnalyzer.writtenVariables(in: ownedLines.map { sourceLines[$0].statement })
+
     /// For a closure body: its `READONLY` captures, by normalized name, with
     /// the name as written. Assigning one is a runtime error (CLOSURES.md C4).
     var readOnlyCaptures: [String: String] = [:]
@@ -957,6 +961,7 @@ final class FunctionBuilder {
             }
             if kind != .local { guardWritable(name) }
             var target = variable(name)
+            if kind == .local, target.scope == .local { emit(.freshLocal(target)) }
             if kind == .global, signature != nil {
                 target = model.variable(name.normalized, in: nil)
             }
@@ -991,8 +996,9 @@ final class FunctionBuilder {
             }
             guard let stored = try value.map({ try lowerAssigned($0, to: place.type, name: reference.base.name) }) ?? defaultValue(for: place.type) else { return }
             emitStore(place, stored)
-        case .dim(_, let name, let dimensions, _):
+        case .dim(let kind, let name, let dimensions, _):
             let target = variable(name)
+            if kind == .local, target.scope == .local { emit(.freshLocal(target)) }
             if dimensions.isEmpty {
                 // An interface- or closure-typed slot starts empty, like the interpreter's.
                 if !isInterface(target.type), !target.type.isClosure { emit(.store(target, defaultValue(for: target.type))) }
@@ -2063,7 +2069,7 @@ final class FunctionBuilder {
                 emit(.call(userFunction.name, try lowerArguments(arguments, for: userFunction)))
                 return
             }
-            if BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
+            if BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil, variable(name).rank == nil,
                let signature = model.signature(of: variable(name).type) {
                 let call = try lowerClosureCall(.load(variable(name)), signature: signature, arguments, name: name.name)
                 if case .callClosure(let closure, let lowered, _) = call {
@@ -2671,6 +2677,18 @@ final class FunctionBuilder {
             if access == .shared, outer.scope == .global { continue }
             let local = BIRVariable(name: name, type: outer.type, scope: .local, storage: outer.storage, isInteger: outer.isInteger)
             let read: BIRExpression = outer.rank == nil ? .load(outer) : .loadArray(outer)
+            // A local nothing writes once the closure exists reads the same
+            // through a copy as through a cell: a parameter, or a LOCAL only
+            // declared (a new declaration makes a new variable anyway). Only
+            // what the frame holds itself, and only plain values (5.3).
+            if access == .shared, function.cells[name] == nil, !writtenNames.contains(name),
+               outer.rank == nil, !isImportedObject(outer.type) {
+                made.append(.value(read))
+                captured.append(local)
+                policyLabels[name] = access.rawValue
+                fieldTypes.append(outer.type)
+                continue
+            }
             switch access {
             case .shared:
                 if function.cells[name] == nil { function.cells[name] = .frame }
@@ -2875,7 +2893,8 @@ final class FunctionBuilder {
         if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
            !BASICKeywords.intrinsicFunctionNames.contains(name.normalized) {
             let candidate = variable(name)
-            if let signature = model.signature(of: candidate.type) {
+            // A closure variable is called; an array of closures is indexed.
+            if candidate.rank == nil, let signature = model.signature(of: candidate.type) {
                 return try lowerClosureCall(.load(candidate), signature: signature, arguments, name: name.name)
             }
         }

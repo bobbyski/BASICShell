@@ -869,6 +869,8 @@ struct SemanticAnalyzer {
             if ["FIELDMETA", "FIELDVALUE", "SETFIELD", "ASYNCVALUE", "SLEEP"].contains(name.normalized) { return .variant }
             if model.isSystemClassHere(name.normalized), model.info(name.normalized, in: function) == nil { return .system(SemanticModel.systemTypeName(name.normalized)) }
             let variableType = model.info(name.normalized, in: function)?.type ?? Self.suffixType(name.normalized)
+            // An array of closures is indexed, not called: its element is the closure.
+            if model.info(name.normalized, in: function)?.rank != nil, let variableType, model.signature(of: variableType) != nil { return variableType }
             // An async closure's call answers its task (CLOSURES.md 3.9).
             if let variableType, let signature = model.signature(of: variableType) { return signature.isAsync ? .variant : signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
@@ -1161,6 +1163,56 @@ struct SemanticAnalyzer {
             }
         }
         return ordered
+    }
+
+    /// The variables `statements` may change other than by declaring them
+    /// with LOCAL, the bodies of every closure in them included: what keeps
+    /// a captured local in a heap cell (Documents/CLOSURES.md 5.3). It errs
+    /// toward a cell: a method call's receiver counts, a method being able to
+    /// change ME.
+    static func writtenVariables(in statements: [Statement]) -> Set<String> {
+        func base(_ target: ReadTarget) -> String {
+            switch target {
+            case .variable(let name): return name.normalized
+            case .reference(let reference): return reference.base.normalized
+            }
+        }
+        var written = Set<String>()
+        var pending = statements
+        while let statement = pending.popLast() {
+            forEachStatement(in: statement) { statement in
+                switch statement {
+                case .assignment(let kind, let name, _, _) where kind != .local: written.insert(name.normalized)
+                case .closureAssignment(let kind, let name, _, _, _, _, _) where kind != .local: written.insert(name.normalized)
+                case .dim(let kind, let name, _, _) where kind != .local: written.insert(name.normalized)
+                case .referenceAssignment(let reference, _): written.insert(reference.base.normalized)
+                case .forLoop(let name, _, _, _): written.insert(name.normalized)
+                case .input(_, let target), .lineInput(_, let target, _, _, _, _), .midAssignment(let target, _, _, _):
+                    written.insert(base(target))
+                case .read(let targets): targets.forEach { written.insert(base($0)) }
+                case .expression(.methodCall(let receiver, _, _)): written.insert(receiver.base.normalized)
+                default: break
+                }
+            }
+            pending += closureBodies(in: statement).flatMap { $0.map(\.statement) }
+        }
+        return written
+    }
+
+    /// Every multi-line closure body in `value` — a statement, an expression
+    /// or anything holding one — but not those inside them. Found by
+    /// reflection, so no statement's shape can be missed.
+    static func closureBodies(in value: Any) -> [[ClosureBodyLine]] {
+        var found: [[ClosureBodyLine]] = []
+        func visit(_ value: Any) {
+            if let lines = value as? [ClosureBodyLine] {
+                found.append(lines)
+                return
+            }
+            for child in Mirror(reflecting: value).children { visit(child.value) }
+        }
+        visit(value)
+        return found
     }
 
     /// Visits a statement and the statements nested in it.

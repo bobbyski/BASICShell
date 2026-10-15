@@ -679,6 +679,7 @@ struct LLVMLowering {
     declare ptr @basic_rt_value_closure_typed(ptr, ptr, ptr)
     declare void @basic_rt_cell_retain(ptr)
     declare void @basic_rt_cell_release(ptr)
+    declare void @basic_rt_cell_fresh(ptr)
     declare ptr @basic_rt_cell_storage(ptr)
     declare void @basic_rt_composite_set_cell(ptr, i64, ptr)
     declare ptr @basic_rt_composite_get_cell(ptr, i64)
@@ -1017,17 +1018,25 @@ struct FunctionEmitter {
             // heap cell (Documents/CLOSURES.md C1, C2): its slot is the
             // cell's storage, so every load and store below reaches the cell.
             switch function.cells[local.name] {
+            // `C.NAME` holds the cell the frame has now: a LOCAL that runs again
+            // gives the frame a fresh one over the same storage (C7).
             case .frame:
                 let (kind, release) = cellKind(of: local)
-                out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
-                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
+                let cell = out.temp()
+                out.emit("%\"C.\(local.name)\" = alloca ptr")
+                out.emit("\(cell) = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
+                out.emit("store ptr \(cell), ptr %\"C.\(local.name)\"")
+                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr \(cell))")
                 out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
                 declareCellForDebugger(local)
                 continue
             case .environment(let index):
-                out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_composite_get_cell(ptr %p0, i64 \(index))")
-                out.emit("call void @basic_rt_cell_retain(ptr %\"C.\(local.name)\")")
-                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
+                let cell = out.temp()
+                out.emit("%\"C.\(local.name)\" = alloca ptr")
+                out.emit("\(cell) = call ptr @basic_rt_composite_get_cell(ptr %p0, i64 \(index))")
+                out.emit("call void @basic_rt_cell_retain(ptr \(cell))")
+                out.emit("store ptr \(cell), ptr %\"C.\(local.name)\"")
+                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr \(cell))")
                 declareCellForDebugger(local)
                 continue
             case nil:
@@ -1308,7 +1317,8 @@ struct FunctionEmitter {
             case .string: kind = 1
             case .boolean: kind = 2
             case .composite(let name): kind = 3; elementType = module.typeIndex(of: name) ?? -1
-            case .variant: kind = 4
+            // An array of closures holds them as values, as the interpreter's does.
+            case .variant, .closure: kind = 4
             case .dictionary: kind = 5
             case .number where variable.isInteger: kind = 6
             default: break
@@ -1647,6 +1657,10 @@ struct FunctionEmitter {
             feedUsingValues(values)
             out.emit("call void @basic_rt_using_end(i1 \(newline ? "true" : "false"))")
 
+        case .freshLocal(let variable):
+            if function.cells[variable.name] == .frame {
+                out.emit("call void @basic_rt_cell_fresh(ptr %\"C.\(variable.name)\")")
+            }
         case .randomize(let seed):
             if let seed {
                 out.emit("call void @basic_rt_randomize(double \(lowerValue(seed).0))")
@@ -2211,7 +2225,9 @@ struct FunctionEmitter {
         // A celled local's value is the cell's to release, when its last
         // holder lets go; the frame lets go of its hold here.
         for local in function.locals where function.cells[local.name] != nil {
-            out.emit("call void @basic_rt_cell_release(ptr %\"C.\(local.name)\")")
+            let cell = out.temp()
+            out.emit("\(cell) = load ptr, ptr %\"C.\(local.name)\"")
+            out.emit("call void @basic_rt_cell_release(ptr \(cell))")
         }
         for local in function.locals where local.type == .string && local.rank == nil && function.cells[local.name] == nil {
             let old = out.temp()
@@ -2309,7 +2325,15 @@ struct FunctionEmitter {
             case .boolean:
                 out.emit("\(result) = call i1 @basic_rt_array_load_boolean(ptr \(array), i64 \(offset))")
                 return (result, false)
-            case .variant, .array, .closure, .system:
+            case .closure:
+                // The element's closure itself, out of the value it is kept as.
+                let boxed = out.temp()
+                out.emit("\(boxed) = call ptr @basic_rt_array_load_value(ptr \(array), i64 \(offset))")
+                out.emit("\(result) = call ptr @basic_rt_value_closure(ptr \(boxed), ptr null)")
+                out.emit("call void @basic_rt_value_release(ptr \(boxed))")
+                own(result, as: variable.type)
+                return (result, true)
+            case .variant, .array, .system:
                 out.emit("\(result) = call ptr @basic_rt_array_load_value(ptr \(array), i64 \(offset))")
                 own(result, as: .variant)
                 return (result, true)
@@ -2600,8 +2624,10 @@ struct FunctionEmitter {
                     let capture: BIRExpression
                     switch made {
                     case .shared(let variable):
-                        // The variable's own cell, which the frame made as it started.
-                        out.emit("call void @basic_rt_composite_set_cell(ptr \(created), i64 \(index), ptr %\"C.\(variable.name)\")")
+                        // The variable's own cell: the one the frame has now.
+                        let cell = out.temp()
+                        out.emit("\(cell) = load ptr, ptr %\"C.\(variable.name)\"")
+                        out.emit("call void @basic_rt_composite_set_cell(ptr \(created), i64 \(index), ptr \(cell))")
                         continue
                     case .copy(let value):
                         // A new cell, the closure's own, holding a copy.

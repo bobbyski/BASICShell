@@ -90,6 +90,27 @@ p = MakeStack()
 x = p()
 PRINT "STACK"; p(); p()
 
+' A LOCAL in a FUNCTION is a new variable on each pass of a loop, so each
+' closure keeps its own (C7); at the top level a LOCAL names a global.
+FUNCTION Build() AS INTEGER
+  DIM gs(3) AS Getter
+  FOR i = 1 TO 3
+    LOCAL v AS INTEGER = i * 10
+    gs(i) = FUNCTION() AS INTEGER = v
+  NEXT i
+  first = gs(1)
+  last = gs(3)
+  RETURN first() * 100 + last()
+END FUNCTION
+PRINT "FRESH"; Build()
+DIM tops(3) AS Getter
+FOR j = 1 TO 3
+  LOCAL w AS INTEGER = j
+  tops(j) = FUNCTION() AS INTEGER = w
+NEXT j
+early = tops(1)
+PRINT "GLOBAL"; early()
+
 ' ME is the closure's own copy (C6); a record can be READONLY or shared.
 FUNCTION TYPE Bump() AS INTEGER
 TYPE Pt

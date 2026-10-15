@@ -211,6 +211,11 @@ public enum BIROperation: Sendable {
     case printUsing(format: BIRExpression, values: [BIRExpression], newline: Bool)
     /// `RANDOMIZE [seed]`.
     case randomize(BIRExpression?)
+    /// `LOCAL name …` runs: a local a closure shares becomes a new variable,
+    /// so the closures made before keep the one they have, as VB's `Dim`
+    /// in a loop body gives each pass its own (Documents/CLOSURES.md C7).
+    /// Nothing for a local no closure shares.
+    case freshLocal(BIRVariable)
     /// Raises a runtime error unconditionally — the compiler knew this
     /// statement always fails here (e.g. `RETURN` with nothing to return to
     /// is detected at runtime, but `EXIT FUNCTION` outside a function is not).

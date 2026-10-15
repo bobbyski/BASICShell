@@ -1035,9 +1035,10 @@ final class BASICRuntime {
         let target = targetContext(kind: kind, normalized: normalized)
         let existing = binding(in: target, normalized: normalized)
         let type = try resolvedType(variable: variable, declaredType: declaredType, value: value, existing: existing)
-        // LOCAL declares a new variable, so a closure made on an earlier
-        // pass keeps the one it shared (as VB's Dim in a loop body does).
-        let declaring = kind == .local
+        // LOCAL in a FUNCTION or closure declares a new variable, so a closure
+        // made on an earlier pass keeps the one it shared (as VB's Dim in a
+        // loop body does). At the top level it names a global, as in basicc.
+        let declaring = kind == .local && !locals.isEmpty
         if case .array(let existingArray) = existing?.value, let value {
             let coercedArray = try coerceArray(value, toMatch: existingArray, variable: variable)
             let binding = VariableBinding(displayName: variable.name, type: existingArray.type, value: .array(coercedArray))
@@ -1055,7 +1056,7 @@ final class BASICRuntime {
             let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
             let binding = VariableBinding(displayName: variable.name, type: type, value: defaultValue(for: type))
             try set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized,
-                    declaring: kind == .local)
+                    declaring: kind == .local && !locals.isEmpty)
             return
         }
         guard dimensions.allSatisfy({ ($0 ?? 0) >= 0 }) else {
@@ -1072,7 +1073,7 @@ final class BASICRuntime {
         )
         let binding = VariableBinding(displayName: variable.name, type: type, value: .array(array))
         try set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized,
-                declaring: kind == .local)
+                declaring: kind == .local && !locals.isEmpty)
     }
 
     func assign(

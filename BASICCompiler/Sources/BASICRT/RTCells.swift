@@ -31,15 +31,28 @@ package final class RTCell {
         case boolean
     }
 
-    let storage: UnsafeMutableRawPointer
+    private(set) var storage: UnsafeMutableRawPointer
     let kind: Kind
     let release: UnsafeRawPointer?
 
-    init(kind: Kind, release: UnsafeRawPointer?) {
-        storage = RTCell.allocate()
-        storage.storeBytes(of: 0, as: UInt64.self)
+    init(kind: Kind, release: UnsafeRawPointer?, storage given: UnsafeMutableRawPointer? = nil) {
+        storage = given ?? RTCell.allocate()
+        if given == nil { storage.storeBytes(of: 0, as: UInt64.self) }
         self.kind = kind
         self.release = release
+    }
+
+    /// `LOCAL` ran again for a variable closures share: they keep its value,
+    /// moved to new storage, and the frame keeps its storage, at the address
+    /// its code already uses, for the new variable — in a new cell, which
+    /// this answers, owned (Documents/CLOSURES.md C7).
+    func refresh() -> RTCell {
+        let kept = RTCell.allocate()
+        kept.copyMemory(from: storage, byteCount: 8)
+        let frames = storage
+        storage = kept
+        frames.storeBytes(of: 0, as: UInt64.self)
+        return RTCell(kind: kind, release: release, storage: frames)
     }
 
     deinit {
@@ -187,4 +200,15 @@ public func basic_rt_composite_get_weak(_ pointer: UnsafeMutableRawPointer?, _ f
     guard case .system(let box) = rtComposite(pointer).fields[field], let weak = box.payload as? RTWeak,
           let object = weak.object else { return nil }
     return Unmanaged.passRetained(object).toOpaque()
+}
+
+/// `LOCAL` ran for a variable closures share: the cell in `slot` (the
+/// frame's) is handed to the closures, keeping its value, and the slot gets
+/// a fresh cell over the frame's storage (Documents/CLOSURES.md C7).
+@_cdecl("basic_rt_cell_fresh")
+public func basic_rt_cell_fresh(_ slot: UnsafeMutableRawPointer?) {
+    guard let slot, let old = slot.load(as: UnsafeMutableRawPointer?.self) else { return }
+    let fresh = rtCell(old).refresh()
+    slot.storeBytes(of: Unmanaged.passRetained(fresh).toOpaque(), as: UnsafeMutableRawPointer.self)
+    Unmanaged<RTCell>.fromOpaque(old).release()
 }

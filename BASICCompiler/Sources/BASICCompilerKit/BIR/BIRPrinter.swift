@@ -201,6 +201,8 @@ public struct BIRPrinter {
             return "print using \(render(format)); " + values.map(render).joined(separator: ", ") + (newline ? " newline" : "")
         case .randomize(let seed):
             return "randomize" + (seed.map { " " + render($0) } ?? "")
+        case .freshLocal(let variable):
+            return "fresh \(variable.name)"
         case .fail(let message):
             return "fail \"\(message)\""
         }
