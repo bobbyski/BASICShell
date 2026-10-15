@@ -157,8 +157,20 @@ public final class BASICInterpreter {
                 if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     continue
                 }
+                // A multi-line closure's END FUNCTION may go on with the
+                // statement it is part of; the whole is checked when the
+                // program is parsed.
+                if ProgramParser.endFunctionTail(line.source) != nil { continue }
                 var parser = try Parser(source: line.source)
-                _ = try parser.parseStatement()
+                var opensClosure = false
+                parser.blockClosureBody = { opensClosure = true; return ([], "") }
+                do {
+                    _ = try parser.parseStatement()
+                } catch where opensClosure {
+                    // A statement a multi-line closure is part of goes on
+                    // after its END FUNCTION: checked when the program is.
+                    continue
+                }
             } catch let error as BASICError {
                 diagnostics.append(
                     diagnostic(
@@ -497,8 +509,19 @@ public final class BASICInterpreter {
                     expanded.append(line)
                     continue
                 }
+                if ProgramParser.endFunctionTail(line.source) != nil {
+                    expanded.append(line)
+                    continue
+                }
                 var parser = try Parser(source: line.source)
-                parsedStatement = try parser.parseStatement()
+                var opensClosure = false
+                parser.blockClosureBody = { opensClosure = true; return ([], "") }
+                do {
+                    parsedStatement = try parser.parseStatement()
+                } catch where opensClosure {
+                    expanded.append(line)
+                    continue
+                }
             } catch let error as BASICError {
                 if line.isImported {
                     lastParseErrorLocation = (line.fileName, line.sourceLineNumber ?? expanded.count + 1)
@@ -4383,6 +4406,8 @@ public final class BASICInterpreter {
             return "point\(traceText(for: point))"
         case .addressOf(let name):
             return "addressof \(name.name)"
+        case .blockClosure:
+            return "function(...) ... end function"
         case .chrFunction(let expression):
             return "chr$(\(traceText(for: expression)))"
         case .lenFunction(let expression):
@@ -6345,6 +6370,10 @@ public final class BASICInterpreter {
             return try callFunction(name: name, arguments: arguments)
         case .addressOf(let name):
             return .closure(try addressOf(name))
+        case .blockClosure(let parameters, let returnType, let captures, let body):
+            let environment = try captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
+            return .closure(BASICCapturedClosure(name: "[anonymous closure]", parameters: parameters, returnType: returnType,
+                                                 bodyStatements: body, environment: environment))
         case .pointFunction(let point):
             guard let graphicsHost = host as? BASICGraphicsHost else {
                 throw BASICError.studioOnlyFeature
@@ -6624,6 +6653,10 @@ public final class BASICInterpreter {
                 return
             case .closure(let parameters, _, let captures, let body):
                 // What a nested closure uses has to be here when it is made.
+                let inner = Set(parameters.map { $0.variable.normalized })
+                captures.map(\.variable).forEach(append)
+                capturedVariableNames(in: body).filter { !inner.contains($0.normalized) }.forEach(append)
+            case .blockClosure(let parameters, _, let captures, let body):
                 let inner = Set(parameters.map { $0.variable.normalized })
                 captures.map(\.variable).forEach(append)
                 capturedVariableNames(in: body).filter { !inner.contains($0.normalized) }.forEach(append)

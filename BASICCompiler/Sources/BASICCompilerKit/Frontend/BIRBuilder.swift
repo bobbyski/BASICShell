@@ -2377,6 +2377,8 @@ final class FunctionBuilder {
             return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .expression(body))
         case .addressOf(let name):
             return try addressOf(name)
+        case .blockClosure(let parameters, let returnType, let captures, let body):
+            return try makeClosure(parameters: parameters, returnType: returnType, captures: captures, body: .block(body))
         case .newObject(let className, let arguments):
             if model.isSystemClassHere(className.uppercased()), model.types[className.uppercased()] == nil {
                 let systemClass = className.uppercased() == "VTG" ? "VECTORTERMINAL" : className.uppercased()
@@ -2616,9 +2618,6 @@ final class FunctionBuilder {
         let parameterVariables = try parameters.map {
             BIRVariable(name: $0.variable.normalized, type: try SemanticAnalyzer.mapWithModel(model, $0.type, for: $0.variable.name, at: line), scope: .local)
         }
-        guard returnType != .scalar(.variant) else {
-            throw CompileError("a closure needs AS <type>; basicc cannot infer VARIANT", at: location)
-        }
         let resolvedReturn: BIRType = returnType == .void ? .void : try SemanticAnalyzer.mapWithModel(model, returnType, for: "closure", at: line)
         let parameterNames = Set(parameterVariables.map(\.name))
 
@@ -2750,6 +2749,13 @@ final class FunctionBuilder {
                         }
                         locals[name.normalized] = BIRVariable(name: name.normalized, type: type, scope: .local)
                     }
+                    // A LOCAL holding a closure made in the body (3.8).
+                    if case .closureAssignment(.local, let name, let declared, let parameters, let returnType, _, _) = statement,
+                       locals[name.normalized] == nil {
+                        let type = declared.flatMap { try? SemanticAnalyzer.mapWithModel(self.model, $0, for: name.name, at: parsedLine) }
+                            ?? (try? self.closureLiteralType(parameters: parameters, returnType: returnType, at: parsedLine)) ?? .variant
+                        locals[name.normalized] = BIRVariable(name: name.normalized, type: type, scope: .local)
+                    }
                 }
             }
             for local in locals.values where !bodyBuilder.function.locals.contains(local) {
@@ -2783,6 +2789,16 @@ final class FunctionBuilder {
     private func isImportedObject(_ type: BIRType) -> Bool {
         guard case .composite(let className) = type else { return false }
         return externalClasses.contains(className)
+    }
+
+    /// The function type of a closure literal, its shape registered.
+    private func closureLiteralType(parameters: [FunctionParameter], returnType: BASICType, at line: ParsedLine) throws -> BIRType {
+        let types = try parameters.map { try SemanticAnalyzer.mapWithModel(model, $0.type, for: $0.variable.name, at: line) }
+        let resolved: BIRType = returnType == .void ? .void : try SemanticAnalyzer.mapWithModel(model, returnType, for: "closure", at: line)
+        let integers = parameters.map { SemanticModel.isInteger($0.type) }
+        let shape = SemanticModel.canonicalSignature(parameters: types, returnType: resolved, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+        model.addSignature(name: shape, parameters: types, returnType: resolved, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
+        return .closure(shape)
     }
 
     /// A quick static type for a LOCAL's initial value inside a closure body.

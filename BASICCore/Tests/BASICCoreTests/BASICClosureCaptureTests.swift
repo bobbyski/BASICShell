@@ -346,6 +346,25 @@ struct BASICClosureCaptureTests {
     func manualExamples() {
         #expect(run("""
             function type Unary(x as integer) as integer
+
+            function Apply(f as Unary, n as integer) as integer
+                return f(n)
+            end function
+
+            function MakeAdder(n as integer) as Unary
+                return function(x as integer) as integer
+                    return x + n
+                end function
+            end function
+
+            print Apply(function(x as integer) as integer
+                return x * 2 + 1
+            end function, 5)
+            add5 = MakeAdder(5)
+            print add5(10)
+            """) == ["11", "15"])
+        #expect(run("""
+            function type Unary(x as integer) as integer
             class Button
                 public OnPress as Unary
             end class

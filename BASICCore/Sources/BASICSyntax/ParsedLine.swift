@@ -107,9 +107,63 @@ public enum ProgramParser {
         public let error: BASICError
     }
 
+    /// What follows `END FUNCTION` on a line that is one, any case and
+    /// spacing, as written; nil for any other line.
+    public static func endFunctionTail(_ source: String) -> String? {
+        let text = source.drop { $0 == " " || $0 == "\t" }
+        guard text.prefix(3).uppercased() == "END" else { return nil }
+        let gap = text.dropFirst(3)
+        guard let space = gap.first, space == " " || space == "\t" else { return nil }
+        let word = gap.drop { $0 == " " || $0 == "\t" }
+        guard word.prefix(8).uppercased() == "FUNCTION" else { return nil }
+        let tail = word.dropFirst(8)
+        if let next = tail.first, next.isLetter || next.isNumber || next == "_" || next == "$" { return nil }
+        return String(tail)
+    }
+
+    /// `x = FUNCTION(…) … END FUNCTION` is a closure assignment however the
+    /// line was reached, so the closure is named for its variable.
+    static func namingClosures(_ statement: Statement) -> Statement {
+        switch statement {
+        case .assignment(let kind, let variable, let declared, .blockClosure(let parameters, let returnType, let captures, let body)?):
+            return .closureAssignment(kind, variable, declared, parameters, returnType, captures, body)
+        case .sequence(let statements):
+            return .sequence(statements.map(namingClosures))
+        default:
+            return statement
+        }
+    }
+
     public static func parse(_ sourceLines: [ProgramLine]) throws -> [ParsedLine] {
         var parsed: [ParsedLine] = []
         var index = 0
+
+        // A multi-line closure's body: the lines after the one `index` is on,
+        // up to its END FUNCTION — a closure nested in them gathers its own
+        // first, so the END FUNCTION found here is this one's. `index` is left
+        // on the END FUNCTION line, and what follows END FUNCTION there is
+        // handed back for the statement to go on with (CLOSURES.md 3.6–3.8).
+        func closureBody() throws -> (body: [ClosureBodyLine], tail: String) {
+            var body: [ClosureBodyLine] = []
+            index += 1
+            while index < sourceLines.count {
+                let bodyLine = sourceLines[index]
+                if let tail = endFunctionTail(bodyLine.source) { return (body, tail) }
+                var parser = try Parser(source: bodyLine.source)
+                parser.blockClosureBody = closureBody
+                let statement: Statement
+                do {
+                    statement = try parser.parseStatement()
+                } catch let error as BASICError {
+                    throw Failure(fileName: bodyLine.fileName, lineNumber: bodyLine.sourceLineNumber ?? index + 1, error: error)
+                }
+                body.append(ClosureBodyLine(fileName: bodyLine.fileName, sourceLineNumber: bodyLine.sourceLineNumber ?? index + 1,
+                                            statement: namingClosures(statement)))
+                index += 1
+            }
+            throw BASICError.runtime("FUNCTION closure without END FUNCTION")
+        }
+
         while index < sourceLines.count {
             let line = sourceLines[index]
             // `ENUM Suit ... END ENUM` is gathered before anything else is
@@ -172,33 +226,10 @@ public enum ProgramParser {
                 throw Failure(fileName: line.fileName, lineNumber: line.sourceLineNumber ?? index + 1, error: error)
             }
             if let header {
-                var body: [ClosureBodyLine] = []
-                index += 1
-                var foundEnd = false
-                while index < sourceLines.count {
-                    let bodyLine = sourceLines[index]
-                    var parser = try Parser(source: bodyLine.source)
-                    let statement: Statement
-                    do {
-                        statement = try parser.parseStatement()
-                    } catch let error as BASICError {
-                        throw Failure(fileName: bodyLine.fileName, lineNumber: bodyLine.sourceLineNumber ?? index + 1, error: error)
-                    }
-                    if case .endFunction = statement {
-                        foundEnd = true
-                        break
-                    }
-                    body.append(
-                        ClosureBodyLine(
-                            fileName: bodyLine.fileName,
-                            sourceLineNumber: bodyLine.sourceLineNumber ?? index + 1,
-                            statement: statement
-                        )
-                    )
-                    index += 1
-                }
-                guard foundEnd else {
-                    throw BASICError.runtime("FUNCTION closure without END FUNCTION")
+                let (body, tail) = try closureBody()
+                guard tail.allSatisfy({ $0 == " " || $0 == "\t" }) || tail.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("'") else {
+                    throw Failure(fileName: line.fileName, lineNumber: sourceLines[index].sourceLineNumber ?? index + 1,
+                                  error: .syntax("Unexpected text after END FUNCTION"))
                 }
                 parsed += ParsedLine.flatten(
                     number: line.number,
@@ -221,6 +252,8 @@ public enum ProgramParser {
             }
 
             var parser = try Parser(source: line.source)
+            parser.blockClosureBody = closureBody
+            let lineIndex = index
             let statement: Statement
             do {
                 statement = try parser.parseStatement()
@@ -230,9 +263,9 @@ public enum ProgramParser {
             parsed += ParsedLine.flatten(
                 number: line.number,
                 fileName: line.fileName,
-                sourceLineNumber: line.sourceLineNumber ?? index + 1,
+                sourceLineNumber: line.sourceLineNumber ?? lineIndex + 1,
                 isImported: line.isImported,
-                statement: statement,
+                statement: namingClosures(statement),
                 source: line.source,
                 columns: parser.statementColumns
             )

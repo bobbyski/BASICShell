@@ -426,6 +426,10 @@ public indirect enum Expression: Equatable {
     case binary(Expression, BinaryOperation, Expression)
     case await(Expression)
     case functionCall(VariableName, [Expression])
+    /// A multi-line closure written where an expression goes — an argument,
+    /// after RETURN, assigned to a field — its body the lines up to its
+    /// `END FUNCTION` (Documents/CLOSURES.md 3.6–3.8).
+    case blockClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: [ClosureBodyLine])
     /// `AddressOf Name`: a named `FUNCTION` as a callable value, as VB's
     /// `AddressOf` makes a delegate of one (Documents/CLOSURES.md).
     case addressOf(VariableName)

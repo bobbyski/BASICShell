@@ -36,7 +36,33 @@ print total
 
 prints `12`. Sharing works both ways: what the closure assigns reaches the variable.
 
-Every parameter needs `AS <type>`. On the one-line form, a missing return type means `VARIANT`.
+Every parameter needs `AS <type>`. On the one-line form, a missing return type means `VARIANT`; on the multi-line form it means `VOID`, as for a `FUNCTION`. A one-line closure can be `AS VOID` too, when its expression is a call made for what it does: `function() as void = Refresh()`.
+
+## Anywhere a value goes
+
+A multi-line closure can be written wherever a value can: as an argument, after `RETURN`, or assigned to a field. The statement goes on after `END FUNCTION`:
+
+```basic
+function type Unary(x as integer) as integer
+
+function Apply(f as Unary, n as integer) as integer
+    return f(n)
+end function
+
+function MakeAdder(n as integer) as Unary
+    return function(x as integer) as integer
+        return x + n
+    end function
+end function
+
+print Apply(function(x as integer) as integer
+    return x * 2 + 1
+end function, 5)
+add5 = MakeAdder(5)
+print add5(10)
+```
+
+prints `11`, then `15`. Closures can be written inside closures, each with its own `END FUNCTION`.
 
 ## A closure outlives the function that made it
 
@@ -181,4 +207,4 @@ A closure is a value of the running program only: `ToJsonString` refuses one.
 
 ## Compiled programs
 
-`basicc` compiles closures, with the same sharing and `CAPTURES` rules, for native binaries and WebAssembly. It needs the return type: a closure with no `AS`, or `AS VARIANT`, is not compiled yet.
+`basicc` compiles closures, with the same sharing and `CAPTURES` rules, for native binaries and WebAssembly.

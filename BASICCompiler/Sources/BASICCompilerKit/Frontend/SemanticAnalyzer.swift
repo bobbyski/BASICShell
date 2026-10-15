@@ -334,9 +334,6 @@ struct SemanticAnalyzer {
     /// The closure type of a closure literal, from its own declared shape.
     func closureType(parameters: [FunctionParameter], returnType: BASICType, at line: ParsedLine) throws -> BIRType {
         let parameterTypes = try parameters.map { try map($0.type, for: $0.variable.name, at: line) }
-        guard returnType != .scalar(.variant) else {
-            throw CompileError("a closure needs AS <type>; basicc cannot infer VARIANT", at: Self.location(of: line))
-        }
         let resolvedReturn: BIRType = returnType == .void ? .void : try map(returnType, for: "closure", at: line)
         let integers = parameters.map { SemanticModel.isInteger($0.type) }
         let canonical = SemanticModel.canonicalSignature(parameters: parameterTypes, returnType: resolvedReturn, integers: integers, returnsInteger: SemanticModel.isInteger(returnType))
@@ -520,6 +517,7 @@ struct SemanticAnalyzer {
                 try record(name, .scalar, try closureType(parameters: parameters, returnType: returnType, at: line), at: line, in: function, changed: &changed)
             }
             noteClosureReferences(parameters: parameters, captures: captures, names: body.flatMap { Self.freeVariables(in: $0.statement, model: model) }, bodyLines: body, at: line, in: function, changed: &changed)
+            try recordNestedClosures(in: body, at: line, changed: &changed)
         case .referenceAssignment(let reference, let value):
             let knownBase = model.info(reference.base.normalized, in: function)?.type
             let indexesKeyed = knownBase == .dictionary || knownBase == .variant
@@ -665,6 +663,8 @@ struct SemanticAnalyzer {
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .closure(let parameters, _, let captures, let body):
             noteClosureReferences(parameters: parameters, captures: captures, names: Self.freeVariables(in: body, model: model), bodyLines: [], at: line, in: function, changed: &changed)
+        case .blockClosure(let parameters, _, let captures, let body):
+            noteClosureReferences(parameters: parameters, captures: captures, names: body.flatMap { Self.freeVariables(in: $0.statement, model: model) }, bodyLines: body, at: line, in: function, changed: &changed)
         case .functionCall(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .unaryMinus(let inner), .logicalNot(let inner), .lenFunction(let inner), .chrFunction(let inner), .await(let inner), .systemFunction(let inner), .environmentFunction(let inner):
@@ -684,6 +684,28 @@ struct SemanticAnalyzer {
 
     /// A closure body's free names — captured or live — are variables of the
     /// creating scope; its parameters and LOCALs are not.
+    /// A closure assigned inside a closure's body to a name the body does not
+    /// declare is a global, as every such name is: its type is recorded here,
+    /// the analyzer not otherwise reading closure bodies (3.8).
+    private mutating func recordNestedClosures(in body: [ClosureBodyLine], at line: ParsedLine, changed: inout Bool) throws {
+        var nested: [(kind: AssignmentKind, name: VariableName, declared: BASICType?, parameters: [FunctionParameter], returnType: BASICType, body: [ClosureBodyLine])] = []
+        for bodyLine in body {
+            Self.forEachStatement(in: bodyLine.statement) { statement in
+                if case .closureAssignment(let kind, let name, let declared, let parameters, let returnType, _, let inner) = statement {
+                    nested.append((kind, name, declared, parameters, returnType, inner))
+                }
+            }
+        }
+        for closure in nested {
+            if closure.kind != .local {
+                let type = try closure.declared.map { try map($0, for: closure.name.name, at: line) }
+                    ?? closureType(parameters: closure.parameters, returnType: closure.returnType, at: line)
+                try record(closure.name, .scalar, type, at: line, in: nil, changed: &changed)
+            }
+            try recordNestedClosures(in: closure.body, at: line, changed: &changed)
+        }
+    }
+
     private mutating func noteClosureReferences(parameters: [FunctionParameter], captures: [ClosureCaptureSpec], names: [String], bodyLines: [ClosureBodyLine], at line: ParsedLine, in function: String?, changed: inout Bool) {
         var excluded = Set(parameters.map { $0.variable.normalized })
         for bodyLine in bodyLines {
@@ -848,7 +870,7 @@ struct SemanticAnalyzer {
             if let variableType, let signature = model.signature(of: variableType) { return signature.returnType }
             if !arguments.isEmpty, variableType == .dictionary || variableType == .variant { return .variant }
             return variableType
-        case .closure(let parameters, let returnType, _, _):
+        case .closure(let parameters, let returnType, _, _), .blockClosure(let parameters, let returnType, _, _):
             return try? closureType(parameters: parameters, returnType: returnType, at: ParsedLine(number: nil, displayLineNumber: 0, fileName: nil, sourceLineNumber: 0, statementNumber: 0, isImported: false, statement: .empty))
         case .lenFunction, .pointFunction, .timerFunction: return .number
         case .chrFunction, .systemFunction, .environmentFunction, .pwdFunction: return .string
@@ -1059,6 +1081,12 @@ struct SemanticAnalyzer {
                 let inner = Set(parameters.map(\.variable.normalized))
                 captures.map(\.variable).forEach(append)
                 for name in freeVariables(in: body, model: model) where !inner.contains(name) { append(VariableName(name: name, column: 0)) }
+            case .blockClosure(let parameters, _, let captures, let body):
+                let inner = Set(parameters.map(\.variable.normalized))
+                captures.map(\.variable).forEach(append)
+                for name in body.flatMap({ freeVariables(in: $0.statement, model: model) }) where !inner.contains(name) {
+                    append(VariableName(name: name, column: 0))
+                }
             case .variable(let name): append(name)
             case .variableReference(let reference):
                 append(reference.base); reference.indexes.forEach(visit); reference.fieldIndexes.flatMap { $0 }.forEach(visit)

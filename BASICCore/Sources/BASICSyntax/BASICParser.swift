@@ -9,6 +9,11 @@ public struct Parser {
     private var current = 0
     private var stopsAtElse = false
 
+    /// Supplies a multi-line closure's body when a closure signature ends
+    /// the line: the lines up to its `END FUNCTION`, and the rest of that
+    /// line, which the statement goes on with (`ProgramParser` sets it).
+    public var blockClosureBody: (() throws -> (body: [ClosureBodyLine], tail: String))?
+
     /// Where each statement `parseStatement` read began, as a column of the
     /// source, in order: one entry per statement of a colon-separated line.
     /// A runtime error points its caret here.
@@ -150,7 +155,8 @@ public struct Parser {
             return nil
         }
         try consumeEnd()
-        return (kind, variable, declaredType, signature.parameters, signature.returnType, signature.captures)
+        // A block closure with no AS is VOID, as a FUNCTION is (C14).
+        return (kind, variable, declaredType, signature.parameters, signature.returnType ?? .void, signature.captures)
     }
 
     private mutating func parseSingleStatement() throws -> Statement {
@@ -2090,13 +2096,32 @@ public struct Parser {
 
     private mutating func parseClosureExpression() throws -> Expression {
         let signature = try parseClosureSignature()
-        guard match(.equals) else { throw syntax("Expected = after closure signature") }
-        return .closure(parameters: signature.parameters, returnType: signature.returnType, captures: signature.captures, body: try parseExpression())
+        if match(.equals) {
+            let returnType = signature.returnType ?? .scalar(.variant)
+            let body = try parseExpression()
+            // `AS VOID = call` runs the call for its effect (CLOSURES.md 3.4).
+            if returnType == .void {
+                return .blockClosure(parameters: signature.parameters, returnType: .void, captures: signature.captures,
+                                     body: [ClosureBodyLine(fileName: nil, sourceLineNumber: 0, statement: .expression(body))])
+            }
+            return .closure(parameters: signature.parameters, returnType: returnType, captures: signature.captures, body: body)
+        }
+        // A signature that ends the line opens a multi-line closure: its body
+        // is the lines up to END FUNCTION, and the statement goes on with
+        // what follows END FUNCTION on its line (CLOSURES.md 3.6).
+        guard isAtEnd, let blockClosureBody else { throw syntax("Expected = after closure signature") }
+        let (body, tail) = try blockClosureBody()
+        var lexer = Lexer(source: tail)
+        tokens.replaceSubrange(current..<tokens.count, with: try lexer.tokenize())
+        return .blockClosure(parameters: signature.parameters, returnType: signature.returnType ?? .void,
+                             captures: signature.captures, body: body)
     }
 
+    /// A closure's parameters, return type (nil when there is no AS: the
+    /// one-line form is then VARIANT, the multi-line form VOID), and captures.
     private mutating func parseClosureSignature() throws -> (
         parameters: [FunctionParameter],
-        returnType: BASICType,
+        returnType: BASICType?,
         captures: [ClosureCaptureSpec]
     ) {
         guard match(.leftParen) else { throw syntax("Expected ( after FUNCTION") }
@@ -2111,12 +2136,7 @@ public struct Parser {
             guard match(.rightParen) else { throw syntax("Expected )") }
         }
 
-        let returnType: BASICType
-        if matchIdentifier("AS") {
-            returnType = try parseType(allowVoid: false)
-        } else {
-            returnType = .scalar(.variant)
-        }
+        let returnType: BASICType? = matchIdentifier("AS") ? try parseType(allowVoid: true) : nil
         let captures = try parseClosureCaptures()
         return (parameters, returnType, captures)
     }
