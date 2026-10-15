@@ -294,6 +294,32 @@ public struct BIRStatementSource: Sendable, Equatable {
     }
 }
 
+/// Where a celled local's cell comes from.
+public enum BIRCell: Sendable, Hashable {
+    /// Made as the function starts: a closure made here shares the local.
+    case frame
+    /// The closure environment's field at this index.
+    case environment(Int)
+}
+
+/// One capture of a closure being made, in environment field order.
+public enum BIRCapture: Sendable {
+    /// A copy of the value, which the body copies into its local (READONLY).
+    case value(BIRExpression)
+    /// The variable itself: its cell, which the body's local then is (C1).
+    case shared(BIRVariable)
+    /// A new cell holding a copy of the value: the closure's own (STRONG, C2).
+    case copy(BIRExpression)
+
+    /// The expression read when the closure is made, if any.
+    public var expression: BIRExpression? {
+        switch self {
+        case .value(let expression), .copy(let expression): return expression
+        case .shared: return nil
+        }
+    }
+}
+
 public struct BIRFunction: Sendable {
     /// The name as it appears in IR.
     public let name: String
@@ -304,8 +330,14 @@ public struct BIRFunction: Sendable {
     /// Frame-local variables (parameters and hidden temporaries included).
     public var locals: [BIRVariable]
     /// For a closure body: the environment type whose fields are copied into
-    /// the named locals at entry, in field order.
+    /// the named locals at entry, in field order. A local in ``cells`` is
+    /// not copied: its slot is the environment's cell.
     public var environment: (type: String, locals: [BIRVariable])?
+    /// Locals whose slot is a heap cell rather than the frame's own memory
+    /// (Documents/CLOSURES.md C1, C2): a closure made here shares them, or
+    /// this is a closure body and the cell is its environment's. The frame
+    /// holds the cell for its whole run.
+    public var cells: [String: BIRCell] = [:]
     /// The blocks; `blocks[0]` is the entry.
     public var blocks: [BIRBlock]
     /// A handler an `ON … CALL` registered: called through an event

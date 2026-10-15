@@ -4440,7 +4440,7 @@ struct BASICCoreTests {
         #expect(snapshot.typeName == "DOUBLE")
         #expect(snapshot.value == "100")
         #expect(snapshot.revision == 100)
-        #expect(snapshot.access == .strongMutable)
+        #expect(snapshot.access == .shared)
     }
 
     @Test("Read-only async value cell reports access and rejects mutation")
@@ -4519,7 +4519,7 @@ struct BASICCoreTests {
         let snapshot = try #require(environment.snapshot(named: "Counter"))
         #expect(snapshot.value == "100")
         #expect(snapshot.revision == 100)
-        #expect(snapshot.access == .strongMutable)
+        #expect(snapshot.access == .shared)
     }
 
     @Test("Captured closure reads and mutates captured environment")
@@ -4581,8 +4581,8 @@ struct BASICCoreTests {
         #expect(host.output == ["5", "6"])
     }
 
-    @Test("BASIC closure expressions capture surrounding values by snapshot")
-    func basicClosureExpressionsCaptureSurroundingValuesBySnapshot() {
+    @Test("BASIC closure expressions share the surrounding variables they use")
+    func basicClosureExpressionsShareSurroundingVariables() {
         let host = TestHost()
         let session = BASICSession(host: host)
 
@@ -4596,7 +4596,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["Score:  12"])
+        #expect(host.output == ["Changed:  107"])
     }
 
     @Test("BASIC closure expressions validate typed arguments")
@@ -4688,7 +4688,7 @@ struct BASICCoreTests {
         """)
         session.submit("RUN")
 
-        #expect(host.output == ["BLOCK= 10"])
+        #expect(host.output == ["LIVE= 106"])
     }
 
     @Test("FUNCTION TYPE declarations type closure variables structurally")

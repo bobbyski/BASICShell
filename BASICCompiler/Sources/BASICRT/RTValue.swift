@@ -30,6 +30,9 @@ package indirect enum RTValue {
     case system(RTSystemObject)
     /// An async task handle, shared by reference.
     case task(RTTask)
+    /// A closure environment's shared variable (CLOSURES.md C1), held by
+    /// reference; never a program's value.
+    case cell(RTCell)
     // DB19's four. The calendar kinds carry their *canonical padded* text --
     // `14:30:00.000000000` -- so comparison is lexicographic and exact, which
     // is what the interpreter gets by comparing components. PRINT trims it.
@@ -70,6 +73,7 @@ package indirect enum RTValue {
         case .closure: return "<FUNCTION>"
         case .system(let object): return "<\(object.typeName)>"
         case .task(let task): return "<TASK #\(task.id) \(task.name)>"
+        case .cell: return "<SHARED>"
         case .array(let array): return "<ARRAY \(array.element.name)>"
         case .dictionary(let dictionary): return "<DICTIONARY \(dictionary.values.count) entries>"
         }
@@ -86,7 +90,7 @@ package indirect enum RTValue {
         case .number(let value): return value != 0
         case .string(let value): return !value.description.isEmpty
         case .boolean(let value): return value
-        case .composite, .array, .dictionary, .closure, .system, .task: return true
+        case .composite, .array, .dictionary, .closure, .system, .task, .cell: return true
         }
     }
 
@@ -123,6 +127,7 @@ package indirect enum RTValue {
         case (.closure(let l), .closure(let r)): return l === r
         case (.system(let l), .system(let r)): return l === r
         case (.task(let l), .task(let r)): return l === r
+        case (.cell(let l), .cell(let r)): return l === r
         default: return false
         }
     }
@@ -143,6 +148,7 @@ package indirect enum RTValue {
         case .closure: return "FUNCTION"
         case .system(let object): return object.typeName
         case .task: return "TASK"
+        case .cell: return "SHARED"
         case .array(let array): return "ARRAY OF \(array.element.name)"
         case .dictionary: return "DICTIONARY"
         }
@@ -528,7 +534,7 @@ enum RTJSON {
         case .number(let number): return number
         case .string(let string): return string.rawString
         case .boolean(let boolean): return boolean
-        case .closure, .system, .task: throw .runtime("System objects, tasks, and closures cannot be encoded as JSON")
+        case .closure, .system, .task, .cell: throw .runtime("System objects, tasks, and closures cannot be encoded as JSON")
         case .array(let array): return try jsonArray(for: array)
         case .dictionary(let dictionary):
             var object: [String: Any] = [:]

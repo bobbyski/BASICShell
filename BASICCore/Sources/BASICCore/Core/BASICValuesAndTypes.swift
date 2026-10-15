@@ -608,7 +608,45 @@ public struct BASICEventHandlerRegistration: Equatable, Sendable {
 struct VariableBinding: Equatable, Sendable {
     var displayName: String
     var type: BASICType
-    var value: BASICValue
+    private var storedValue: BASICValue
+    /// Where the value lives once a closure shares the variable
+    /// (CLOSURES.md C1), or holds its own copy (`STRONG`, C2): every
+    /// binding with the same cell is the same variable.
+    private(set) var cell: BASICSharedValueCell?
+    /// A closure's `READONLY` capture (C4): assigning it is an error.
+    var isReadOnlyCapture = false
+
+    init(displayName: String, type: BASICType, value: BASICValue, cell: BASICSharedValueCell? = nil) {
+        self.displayName = displayName
+        self.type = type
+        self.storedValue = cell == nil ? value : .empty
+        self.cell = cell
+    }
+
+    var value: BASICValue {
+        get { cell?.value ?? storedValue }
+        set {
+            if let cell {
+                cell.store(newValue)
+            } else {
+                storedValue = newValue
+            }
+        }
+    }
+
+    /// Moves the value into `cell`, which then holds it for every binding
+    /// that shares it.
+    mutating func adopt(_ cell: BASICSharedValueCell) {
+        guard self.cell !== cell else { return }
+        cell.store(value)
+        self.cell = cell
+        storedValue = .empty
+    }
+
+    static func == (lhs: VariableBinding, rhs: VariableBinding) -> Bool {
+        lhs.displayName == rhs.displayName && lhs.type == rhs.type && lhs.cell === rhs.cell
+            && lhs.isReadOnlyCapture == rhs.isReadOnlyCapture && lhs.value == rhs.value
+    }
 }
 
 /// Debugger-facing summary of a shared captured value cell.
@@ -627,7 +665,8 @@ public struct BASICSharedValueSnapshot: Identifiable, Equatable, Sendable {
     public let access: BASICCapturedReferenceAccess
 }
 
-/// Thread-safe storage cell for future captured variables and shared async state.
+/// Thread-safe storage for a variable a closure captures, and for shared
+/// async state.
 final class BASICSharedValueCell: @unchecked Sendable {
     private let lock = NSLock()
     private var currentValue: BASICValue
@@ -636,12 +675,16 @@ final class BASICSharedValueCell: @unchecked Sendable {
     let id: Int
     let name: String
     let access: BASICCapturedReferenceAccess
+    /// The variable's declared type, so a closure's assignments to it are
+    /// coerced as the scope that made it would coerce them.
+    let type: BASICType?
 
-    init(id: Int, name: String, value: BASICValue, access: BASICCapturedReferenceAccess = .strongMutable) {
+    init(id: Int, name: String, value: BASICValue, access: BASICCapturedReferenceAccess = .shared, type: BASICType? = nil) {
         self.id = id
         self.name = name
         self.currentValue = value
         self.access = access
+        self.type = type
     }
 
     var value: BASICValue {
@@ -650,11 +693,19 @@ final class BASICSharedValueCell: @unchecked Sendable {
         return currentValue
     }
 
+    /// A variable's assignment, which the runtime has already allowed.
+    func store(_ value: BASICValue) {
+        lock.lock()
+        defer { lock.unlock() }
+        currentValue = value
+        revisionValue += 1
+    }
+
     @discardableResult
     func set(_ value: BASICValue) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard access == .strongMutable else { return false }
+        guard access.isWritable else { return false }
         currentValue = value
         revisionValue += 1
         return true
@@ -664,7 +715,7 @@ final class BASICSharedValueCell: @unchecked Sendable {
     func update(_ transform: (BASICValue) throws -> BASICValue) rethrows -> BASICValue? {
         lock.lock()
         defer { lock.unlock() }
-        guard access == .strongMutable else { return nil }
+        guard access.isWritable else { return nil }
         let newValue = try transform(currentValue)
         currentValue = newValue
         revisionValue += 1
@@ -692,12 +743,29 @@ final class BASICCapturedEnvironment: @unchecked Sendable {
     private var cells: [String: BASICSharedValueCell] = [:]
     private var order: [String] = []
 
+    /// Takes in a cell the closure shares with the scope that made it.
+    func adopt(_ cell: BASICSharedValueCell) {
+        let normalized = cell.name.uppercased()
+        lock.lock()
+        defer { lock.unlock() }
+        if cells[normalized] == nil { order.append(normalized) }
+        cells[normalized] = cell
+    }
+
+    /// Cells in creation order, for binding them as a call starts.
+    var orderedCells: [BASICSharedValueCell] {
+        lock.lock()
+        defer { lock.unlock() }
+        return order.compactMap { cells[$0] }
+    }
+
     /// Captures or replaces a named value in this environment.
     @discardableResult
     func capture(
         name: String,
         value: BASICValue,
-        access: BASICCapturedReferenceAccess = .strongMutable
+        access: BASICCapturedReferenceAccess = .shared,
+        type: BASICType? = nil
     ) -> BASICSharedValueSnapshot {
         let normalized = name.uppercased()
         let cell: BASICSharedValueCell
@@ -707,7 +775,7 @@ final class BASICCapturedEnvironment: @unchecked Sendable {
             _ = existing.set(value)
             return existing.snapshot()
         }
-        cell = BASICSharedValueCell(id: nextCellID, name: name, value: value, access: access)
+        cell = BASICSharedValueCell(id: nextCellID, name: name, value: value, access: access, type: type)
         nextCellID += 1
         cells[normalized] = cell
         order.append(normalized)
@@ -842,15 +910,10 @@ final class BASICCapturedClosure: @unchecked Sendable {
 
         let localContextIndex = interpreter.runtime.pushLocalContext()
         defer { interpreter.runtime.popLocalContext() }
-        for snapshot in environment.snapshots {
-            if let capturedValue = environment.value(named: snapshot.name) {
-                try interpreter.runtime.assign(
-                    kind: .local,
-                    variable: VariableName(name: snapshot.name, column: 0),
-                    declaredType: nil,
-                    value: capturedValue
-                )
-            }
+        // Each capture is a local of the call: the shared variable or the
+        // closure's own copy through its cell, or a fresh READONLY copy.
+        for cell in environment.orderedCells {
+            interpreter.runtime.bindCapture(cell)
         }
         for (parameter, argument) in zip(parameters, arguments) {
             try interpreter.runtime.assign(

@@ -199,14 +199,28 @@ public struct VariableReference: Equatable {
     }
 }
 
-/// How an async/captured-value reference is allowed to interact with storage.
+/// How a closure holds a variable it captures (Documents/CLOSURES.md,
+/// Bobby's rulings C1–C5, 2026-10-15).
+///
+/// ```text
+///   (no policy), MUTABLE   the variable itself, shared with the scope that made the closure
+///   STRONG                 the closure's own copy, which it may change from call to call
+///   READONLY, READ-ONLY    a copy frozen when the closure is made; assigning it is an error
+///   WEAK                   an imported object, not kept alive
+/// ```
 public enum BASICCapturedReferenceAccess: String, Sendable {
-    /// The reference may read and update the target value.
-    case strongMutable = "Strong Mutable"
-    /// The reference may read the target value but should not update it.
+    /// The closure and its scope share one variable: VB's rule, and the
+    /// default (C1). `CAPTURES MUTABLE x` spells it out (C3).
+    case shared = "Shared"
+    /// The closure's own changeable copy, taken when it is made (C2).
+    case strongCopy = "Strong Copy"
+    /// A copy frozen when the closure is made (C4).
     case readOnly = "Read Only"
-    /// Reserved for future object references that should not keep the target alive.
+    /// An imported object the closure does not keep alive (C5).
     case weak = "Weak"
+
+    /// Whether a closure may assign the variable.
+    public var isWritable: Bool { self == .shared || self == .strongCopy }
 }
 
 public struct FunctionParameter: Equatable {

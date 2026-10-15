@@ -38,6 +38,10 @@ public struct WasmProgram: Sendable {
     public let imports: [WasmImport]
     /// The memory it imports as `env.memory`: this many 64 KiB pages, never grown.
     public let memoryPages: Int
+    /// Where in that memory the runtime puts the cells of variables closures
+    /// share (Documents/CLOSURES.md C1), when the module makes any: the
+    /// module's loads and stores reach only its own memory.
+    public var cellArena: (offset: Int, size: Int)? = nil
     /// Where its statements and variables are, when it was translated for
     /// debugging (BASIC-46); nil otherwise.
     public let debugInfo: WasmDebugInfo?
@@ -82,6 +86,8 @@ public struct WasmTranslationError: Error, CustomStringConvertible {
 public enum WasmTranslator {
     /// Bytes reserved for the program's stack of memory-resident locals.
     public static let stackSize = 1 << 20
+    /// Bytes reserved for shared variables' cells, eight each, after the stack.
+    public static let cellArenaSize = 1 << 18
     /// The names the module exports.
     public static let runExport = "__run"
     public static let landedTagExport = "landed"
@@ -288,7 +294,8 @@ private struct ModuleTranslation {
         let landedType = type(WasmFunctionType(parameters: [], results: []))
 
         // The module.
-        let pages = max(1, (dataEndOffset + WasmTranslator.stackSize + 65535) / 65536)
+        let arenaSize = imports.contains { $0.name == "basic_rt_cell_new" } ? WasmTranslator.cellArenaSize : 0
+        let pages = max(1, (dataEndOffset + WasmTranslator.stackSize + arenaSize + 65535) / 65536)
         var out = WasmBuffer()
         out.append([0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00])
 
@@ -378,7 +385,9 @@ private struct ModuleTranslation {
             out.section(11, segment.bytes)
         }
 
-        return WasmProgram(bytes: out.bytes, imports: imports, memoryPages: pages, debugInfo: debug ? debugInfo() : nil)
+        var program = WasmProgram(bytes: out.bytes, imports: imports, memoryPages: pages, debugInfo: debug ? debugInfo() : nil)
+        if arenaSize > 0 { program.cellArena = (dataEndOffset + WasmTranslator.stackSize, arenaSize) }
+        return program
     }
 
     // MARK: Debugging (BASIC-46)

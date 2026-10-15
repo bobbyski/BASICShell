@@ -272,6 +272,7 @@ public final class WasmRunner: @unchecked Sendable {
             Self.current = nil
             runThread = nil
             WasmForward.clear()
+            RTCell.endArena()
             context = nil
         }
 
@@ -298,6 +299,10 @@ public final class WasmRunner: @unchecked Sendable {
         }
         base.storeBytes(of: 0, toByteOffset: 7, as: UInt8.self)
         debugger?.begin(info: program.debugInfo, base: base)
+        // Shared variables' cells go where the module's loads and stores reach.
+        if let arena = program.cellArena {
+            RTCell.useArena(base: base + arena.offset, size: arena.size)
+        }
 
         // The one native function every import goes through.
         let rt = JSObjectMakeFunctionWithCallback(context.jsGlobalContextRef, nil, importCallback)

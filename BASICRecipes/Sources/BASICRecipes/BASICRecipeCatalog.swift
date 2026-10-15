@@ -2263,9 +2263,7 @@ enum BASICRecipeCatalog {
                 ' the scroll position and the focus every time, and the person using it can
                 ' feel every one of those losses.
                 '
-                ' Handlers are named FUNCTIONs, and they have to be: a BASIC closure
-                ' captures by snapshot, so a closure used as a handler runs and quietly
-                ' throws away everything it did. Every "onclick" below names a function
+                ' Handlers are named FUNCTIONs: every "onclick" below names a function
                 ' further down this file.
 
                 ' Builds the one window and answers it, for the caller to present.

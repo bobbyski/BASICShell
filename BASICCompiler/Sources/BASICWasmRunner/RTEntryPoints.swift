@@ -20,10 +20,11 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 305 entry points, by name.
+    /// 312 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
+        "basic_rt_array_copy": RTEntryPoint(arity: 1) { a in (basic_rt_array_copy(UnsafeMutableRawPointer(bitPattern: UInt(a[0])))).map { Double(UInt(bitPattern: $0)) } ?? 0 },
         "basic_rt_array_count": RTEntryPoint(arity: 2) { a in basic_rt_array_count(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[1])), to: UnsafePointer<CChar>.self)) },
         "basic_rt_array_dim": RTEntryPoint(arity: 4) { a in Double(UInt(bitPattern: basic_rt_array_dim(Int(a[0]), unsafeBitCast(UnsafePointer<Double>(bitPattern: UInt(a[1])), to: UnsafePointer<Double>.self), Int(a[2]), Int(a[3])))) },
         "basic_rt_array_load_boolean": RTEntryPoint(arity: 2) { a in basic_rt_array_load_boolean(unsafeBitCast(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), to: UnsafeMutableRawPointer.self), Int(a[1])) ? 1 : 0 },
@@ -44,6 +45,10 @@ enum RTEntryPoints {
         "basic_rt_beep": RTEntryPoint(arity: 0) { a in basic_rt_beep(); return 0 },
         "basic_rt_capture_begin": RTEntryPoint(arity: 0) { a in basic_rt_capture_begin(); return 0 },
         "basic_rt_capture_end": RTEntryPoint(arity: 0) { a in Double(UInt(bitPattern: basic_rt_capture_end())) },
+        "basic_rt_cell_new": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_cell_new(Int(a[0]), UnsafeRawPointer(bitPattern: UInt(a[1]))))) },
+        "basic_rt_cell_release": RTEntryPoint(arity: 1) { a in basic_rt_cell_release(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
+        "basic_rt_cell_retain": RTEntryPoint(arity: 1) { a in basic_rt_cell_retain(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
+        "basic_rt_cell_storage": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_cell_storage(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_chain": RTEntryPoint(arity: 6) { a in basic_rt_chain(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), a[1], UnsafeMutableRawPointer(bitPattern: UInt(a[2])), a[3], UnsafeMutableRawPointer(bitPattern: UInt(a[4])), a[5]); return 0 },
         "basic_rt_chain_install": RTEntryPoint(arity: 4) { a in basic_rt_chain_install(UnsafePointer<UnsafePointer<CChar>>(OpaquePointer(bitPattern: UInt(a[0]))), Int(a[1]), WasmCallbacks.trampoline(.voidPtr, forTableIndex: a[2]), WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[3])); return 0 },
         "basic_rt_chain_receive": RTEntryPoint(arity: 0) { a in basic_rt_chain_receive(); return 0 },
@@ -62,6 +67,7 @@ enum RTEntryPoints {
         "basic_rt_composite_copy": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_composite_copy(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_composite_get_array": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_composite_get_array(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1])))) },
         "basic_rt_composite_get_boolean": RTEntryPoint(arity: 2) { a in basic_rt_composite_get_boolean(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1])) ? 1 : 0 },
+        "basic_rt_composite_get_cell": RTEntryPoint(arity: 2) { a in (basic_rt_composite_get_cell(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]))).map { Double(UInt(bitPattern: $0)) } ?? 0 },
         "basic_rt_composite_get_composite": RTEntryPoint(arity: 2) { a in (basic_rt_composite_get_composite(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]))).map { Double(UInt(bitPattern: $0)) } ?? 0 },
         "basic_rt_composite_get_dictionary": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_composite_get_dictionary(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1])))) },
         "basic_rt_composite_get_number": RTEntryPoint(arity: 2) { a in basic_rt_composite_get_number(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1])) },
@@ -71,6 +77,7 @@ enum RTEntryPoints {
         "basic_rt_composite_release": RTEntryPoint(arity: 1) { a in basic_rt_composite_release(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_composite_set_array": RTEntryPoint(arity: 4) { a in basic_rt_composite_set_array(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), UnsafeMutableRawPointer(bitPattern: UInt(a[2])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[3])), to: UnsafePointer<CChar>.self)); return 0 },
         "basic_rt_composite_set_boolean": RTEntryPoint(arity: 3) { a in basic_rt_composite_set_boolean(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), a[2] != 0); return 0 },
+        "basic_rt_composite_set_cell": RTEntryPoint(arity: 3) { a in basic_rt_composite_set_cell(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), UnsafeMutableRawPointer(bitPattern: UInt(a[2]))); return 0 },
         "basic_rt_composite_set_composite": RTEntryPoint(arity: 3) { a in basic_rt_composite_set_composite(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), UnsafeMutableRawPointer(bitPattern: UInt(a[2]))); return 0 },
         "basic_rt_composite_set_number": RTEntryPoint(arity: 3) { a in basic_rt_composite_set_number(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), a[2]); return 0 },
         "basic_rt_composite_set_string": RTEntryPoint(arity: 3) { a in basic_rt_composite_set_string(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1]), UnsafeMutableRawPointer(bitPattern: UInt(a[2]))); return 0 },

@@ -118,8 +118,9 @@ enum BASICSchemaLedger {
 /// the functions a string could reach at *build* time, from a known set — so a
 /// migration found by convention would run interpreted and silently do nothing
 /// compiled, which is D12's most deniable failure. And a *named function* rather
-/// than a closure: a BASIC closure captures by snapshot and its assignments do
-/// not escape, so a closure migration would run and discard its work.
+/// than a closure, chosen when a closure's assignments were lost; closures now
+/// share what they capture (Documents/CLOSURES.md C1), but a migration is
+/// still registered by name.
 struct BASICMigration: Equatable, Sendable {
     let className: String
     let fromVersion: Int

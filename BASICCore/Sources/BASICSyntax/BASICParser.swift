@@ -2137,13 +2137,18 @@ public struct Parser {
             guard match(.minus), matchIdentifier("ONLY") else { throw syntax("Expected READ-ONLY") }
             return .readOnly
         }
-        if matchIdentifier("STRONG") || matchIdentifier("MUTABLE") {
-            return .strongMutable
+        if matchIdentifier("STRONG") {
+            return .strongCopy
+        }
+        if matchIdentifier("MUTABLE") {
+            return .shared
         }
         if matchIdentifier("WEAK") {
             return .weak
         }
-        return .readOnly
+        // A name with no policy is shared, as every name the list leaves
+        // out is (CLOSURES.md C1, C7).
+        return .shared
     }
 
     private mutating func parsePoint(openParenAlreadyConsumed: Bool = false) throws -> GraphicsPoint {

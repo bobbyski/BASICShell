@@ -136,10 +136,9 @@ is `GLOBAL`.
 
 > **Why a name, and not the code itself?** Some languages let you write a
 > button's code right where you make the button. BASIC has something like
-> that, a *closure* ([CLOSURES](CLOSURES.md)), but a closure works on its own
-> copy of the program's variables, so anything it changed would be lost when
-> it finished. A handler is always a named `FUNCTION`, so what it changes
-> stays changed.
+> that, a *closure* ([CLOSURES](CLOSURES.md)), but a control's handler is
+> always a named `FUNCTION`: the control is given the function's name, and
+> calls it when it is pressed.
 
 ## Step 3: A box to type in
 

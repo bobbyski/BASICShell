@@ -287,7 +287,13 @@ public struct BIRPrinter {
         case .fileService(let method, let arguments, _):
             return "File.\(method)(" + arguments.map(render).joined(separator: ", ") + ")"
         case .makeClosure(let function, _, let captures, _):
-            return "closure \(function)[" + captures.map(render).joined(separator: ", ") + "]"
+            return "closure \(function)[" + captures.map { capture in
+                switch capture {
+                case .value(let expression): return render(expression)
+                case .shared(let variable): return "&\(variable.name)"
+                case .copy(let expression): return "copy " + render(expression)
+                }
+            }.joined(separator: ", ") + "]"
         case .callClosure(let closure, let arguments, _):
             return "\(render(closure))(" + arguments.map(render).joined(separator: ", ") + ")"
         case .callMethod(let receiver, let candidates, let arguments, _):

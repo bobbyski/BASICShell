@@ -644,6 +644,13 @@ struct LLVMLowering {
     declare void @basic_rt_print_composite(ptr)
     declare ptr @basic_rt_composite_text(ptr)
     declare ptr @basic_rt_closure_new(ptr, ptr)
+    declare ptr @basic_rt_cell_new(i64, ptr)
+    declare void @basic_rt_cell_retain(ptr)
+    declare void @basic_rt_cell_release(ptr)
+    declare ptr @basic_rt_cell_storage(ptr)
+    declare void @basic_rt_composite_set_cell(ptr, i64, ptr)
+    declare ptr @basic_rt_composite_get_cell(ptr, i64)
+    declare ptr @basic_rt_array_copy(ptr)
     declare void @basic_rt_closure_retain(ptr)
     declare void @basic_rt_closure_release(ptr)
     declare ptr @basic_rt_closure_function(ptr)
@@ -972,6 +979,24 @@ struct FunctionEmitter {
         out.emit("%\"scratch.indexes\" = alloca [\(scratchRank) x double]")
         out.emit("%\"scratch.values\" = alloca [\(scratchValues) x ptr]")
         for local in function.locals {
+            // A local a closure shares, or a closure's own copy, lives in a
+            // heap cell (Documents/CLOSURES.md C1, C2): its slot is the
+            // cell's storage, so every load and store below reaches the cell.
+            switch function.cells[local.name] {
+            case .frame:
+                let (kind, release) = cellKind(of: local)
+                out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
+                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
+                out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
+                continue
+            case .environment(let index):
+                out.emit("%\"C.\(local.name)\" = call ptr @basic_rt_composite_get_cell(ptr %p0, i64 \(index))")
+                out.emit("call void @basic_rt_cell_retain(ptr %\"C.\(local.name)\")")
+                out.emit("%\"L.\(local.name)\" = call ptr @basic_rt_cell_storage(ptr %\"C.\(local.name)\")")
+                continue
+            case nil:
+                break
+            }
             out.emit("%\"L.\(local.name)\" = alloca \(Self.llvmType(of: local))")
             out.emit("store \(Self.llvmType(of: local)) \(Self.zero(of: local)), ptr %\"L.\(local.name)\"")
             declareForDebugger(local)
@@ -1658,6 +1683,22 @@ struct FunctionEmitter {
         return type == .string || type.isComposite || type.isClosure || type == .variant || type == .dictionary || type.isSystem
     }
 
+    /// How a cell lets go of what it holds (`RTCell.Kind`), and the release
+    /// function for an object model's own records.
+    private func cellKind(of variable: BIRVariable) -> (kind: Int, release: String) {
+        if variable.rank != nil { return (6, "null") }
+        switch variable.type {
+        case .number, .boolean, .void: return (0, "null")
+        case .string: return (1, "null")
+        case .closure: return (2, "null")
+        case .variant, .system, .exact: return (4, "null")
+        case .dictionary: return (5, "null")
+        case .array: return (6, "null")
+        case .composite:
+            return objects.release == "basic_rt_composite_release" ? (3, "null") : (7, "@\(objects.release)")
+        }
+    }
+
     /// The runtime call that drops one reference of a managed value.
     static func releaseFunction(_ type: BIRType) -> String {
         releaseFunction(type, objects: .runtime)
@@ -2118,27 +2159,32 @@ struct FunctionEmitter {
             }
         }
         releaseOwned()
-        for local in function.locals where local.type == .string && local.rank == nil {
+        // A celled local's value is the cell's to release, when its last
+        // holder lets go; the frame lets go of its hold here.
+        for local in function.locals where function.cells[local.name] != nil {
+            out.emit("call void @basic_rt_cell_release(ptr %\"C.\(local.name)\")")
+        }
+        for local in function.locals where local.type == .string && local.rank == nil && function.cells[local.name] == nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_string_release(ptr \(old))")
         }
-        for local in function.locals where local.type.isComposite && local.rank == nil && local.name != "ME" && local.name != "$ENV" {
+        for local in function.locals where local.type.isComposite && local.rank == nil && local.name != "ME" && local.name != "$ENV" && function.cells[local.name] == nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @\(objects.release)(ptr \(old))")
         }
-        for local in function.locals where local.type.isClosure && local.rank == nil {
+        for local in function.locals where local.type.isClosure && local.rank == nil && function.cells[local.name] == nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_closure_release(ptr \(old))")
         }
-        for local in function.locals where (local.type == .variant || local.type == .dictionary || local.type.isSystem) && local.rank == nil && local.name != "ME" {
+        for local in function.locals where (local.type == .variant || local.type == .dictionary || local.type.isSystem) && local.rank == nil && local.name != "ME" && function.cells[local.name] == nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @\(Self.releaseFunction(local.type))(ptr \(old))")
         }
-        for local in function.locals where local.rank != nil {
+        for local in function.locals where local.rank != nil && function.cells[local.name] == nil {
             let old = out.temp()
             out.emit("\(old) = load ptr, ptr %\"L.\(local.name)\"")
             out.emit("call void @basic_rt_array_release(ptr \(old))")
@@ -2493,7 +2539,37 @@ struct FunctionEmitter {
             if let environment, let type = module.types.first(where: { $0.name == environment }) {
                 let created = out.temp()
                 out.emit("\(created) = call ptr @basic_rt_composite_new(i64 \(type.index))")
-                for (index, capture) in captures.enumerated() {
+                for (index, made) in captures.enumerated() {
+                    let capture: BIRExpression
+                    switch made {
+                    case .shared(let variable):
+                        // The variable's own cell, which the frame made as it started.
+                        out.emit("call void @basic_rt_composite_set_cell(ptr \(created), i64 \(index), ptr %\"C.\(variable.name)\")")
+                        continue
+                    case .copy(let value):
+                        // A new cell, the closure's own, holding a copy.
+                        let local = type.fields[index]
+                        let variable = BIRVariable(name: local.name, type: local.type, scope: .local, storage: value.isArrayLoad ? .array(rank: 1) : .scalar)
+                        let (kind, release) = cellKind(of: variable)
+                        let cell = out.temp(), storage = out.temp()
+                        out.emit("\(cell) = call ptr @basic_rt_cell_new(i64 \(kind), ptr \(release))")
+                        out.emit("\(storage) = call ptr @basic_rt_cell_storage(ptr \(cell))")
+                        let (result, isOwned) = lowerValue(value)
+                        if value.isArrayLoad {
+                            let copy = out.temp()
+                            out.emit("\(copy) = call ptr @basic_rt_array_copy(ptr \(result))")
+                            out.emit("store ptr \(copy), ptr \(storage)")
+                        } else if Self.isManaged(value.type) {
+                            storeManaged(result, owned: isOwned, into: storage, type: value.type)
+                        } else {
+                            out.emit("store \(Self.llvmType(value.type)) \(result), ptr \(storage)")
+                        }
+                        out.emit("call void @basic_rt_composite_set_cell(ptr \(created), i64 \(index), ptr \(cell))")
+                        out.emit("call void @basic_rt_cell_release(ptr \(cell))")
+                        continue
+                    case .value(let value):
+                        capture = value
+                    }
                     let (value, _) = lowerValue(capture)
                     switch capture.type {
                     case .number: out.emit("call void @basic_rt_composite_set_number(ptr \(created), i64 \(index), double \(value))")

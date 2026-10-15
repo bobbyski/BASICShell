@@ -82,7 +82,7 @@ public indirect enum BIRExpression: Sendable {
     case fileService(method: String, arguments: [BIRExpression], returns: BIRType)
     /// Makes a closure: its body function, the environment type holding the
     /// captures, and the captured values in field order. Owned.
-    case makeClosure(function: String, environment: String?, captures: [BIRExpression], signature: String)
+    case makeClosure(function: String, environment: String?, captures: [BIRCapture], signature: String)
     /// Calls a closure value.
     case callClosure(BIRExpression, [BIRExpression], returns: BIRType)
     /// Calls a method on a record or object place: the receiver is copied in
@@ -196,6 +196,12 @@ public indirect enum BIRExpression: Sendable {
         }
     }
 
+    /// Whether this reads a whole array variable.
+    public var isArrayLoad: Bool {
+        if case .loadArray = self { return true }
+        return false
+    }
+
     /// Whether evaluating this may run user or host code that writes output —
     /// what PRINT must evaluate before it writes anything of its own, since
     /// the interpreter renders a whole PRINT before printing it.
@@ -211,8 +217,10 @@ public indirect enum BIRExpression: Sendable {
              .valueAdd(let a, let b), .valueEqual(let a, let b), .dictionaryGet(let a, let b, _), .jsonEncode(let a, let b), .jsonDecode(let a, let b),
              .exactBinary(_, let a, let b, _):
             return a.mayRunCode || b.mayRunCode
-        case .intrinsic(_, let list), .element(_, let list), .makeClosure(_, _, let list, _):
+        case .intrinsic(_, let list), .element(_, let list):
             return list.contains(where: \.mayRunCode)
+        case .makeClosure(_, _, let captures, _):
+            return captures.contains { $0.expression?.mayRunCode ?? false }
         case .usingString(let format, let values):
             return format.mayRunCode || values.contains(where: \.mayRunCode)
         case .elementOf(let a, let list, _), .valueIndex(let a, let list, _):

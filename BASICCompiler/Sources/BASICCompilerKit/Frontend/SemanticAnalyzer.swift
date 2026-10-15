@@ -1049,7 +1049,12 @@ struct SemanticAnalyzer {
         }
         func visit(_ expression: Expression) {
             switch expression {
-            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .closure, .pwdFunction, .timerFunction: return
+            case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null, .pwdFunction, .timerFunction: return
+            case .closure(let parameters, _, let captures, let body):
+                // What a nested closure uses has to be at hand where it is made.
+                let inner = Set(parameters.map(\.variable.normalized))
+                captures.map(\.variable).forEach(append)
+                for name in freeVariables(in: body, model: model) where !inner.contains(name) { append(VariableName(name: name, column: 0)) }
             case .variable(let name): append(name)
             case .variableReference(let reference):
                 append(reference.base); reference.indexes.forEach(visit); reference.fieldIndexes.flatMap { $0 }.forEach(visit)
@@ -1072,6 +1077,12 @@ struct SemanticAnalyzer {
 
     /// The variables a statement refers to, for block closures.
     static func freeVariables(in statement: Statement, model: SemanticModel) -> [String] {
+        func baseName(_ target: ReadTarget) -> String {
+            switch target {
+            case .variable(let name): return name.normalized
+            case .reference(let reference): return reference.base.normalized
+            }
+        }
         var ordered: [String] = []
         func add(_ names: [String]) { for name in names where !ordered.contains(name) { ordered.append(name) } }
         SemanticAnalyzer.forEachStatement(in: statement) { statement in
@@ -1098,6 +1109,15 @@ struct SemanticAnalyzer {
                     case .range(let lower, let upper): add(freeVariables(in: lower, model: model)); add(freeVariables(in: upper, model: model))
                     }
                 }
+            case .closureAssignment(let kind, let name, _, let parameters, _, let captures, let body):
+                if kind != .local { add([name.normalized]) }
+                let inner = Set(parameters.map(\.variable.normalized))
+                add(captures.map(\.variable.normalized))
+                add(body.flatMap { freeVariables(in: $0.statement, model: model) }.filter { !inner.contains($0) })
+            case .input(_, let target), .lineInput(_, let target, _, _, _, _):
+                add([baseName(target)])
+            case .read(let targets):
+                add(targets.map(baseName))
             default: break
             }
         }

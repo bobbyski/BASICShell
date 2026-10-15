@@ -369,6 +369,9 @@ final class FunctionBuilder {
     var closureLines: [ParsedLine]?
     /// For a closure body: the declared return type, so RETURN checks it.
     var closureSignatureReturn: BIRType?
+    /// For a closure body: its `READONLY` captures, by normalized name, with
+    /// the name as written. Assigning one is a runtime error (CLOSURES.md C4).
+    var readOnlyCaptures: [String: String] = [:]
     var function: BIRFunction
 
     /// The block instructions are currently appended to.
@@ -465,13 +468,22 @@ final class FunctionBuilder {
     /// The statements being built: the program's, or a closure body's.
     private var sourceLines: [ParsedLine] { closureLines ?? lines }
 
-    /// A closure body starts by taking its captures out of the environment.
+    /// A closure body starts by taking its captures out of the environment:
+    /// a copy into a local, or for a celled one nothing, its slot being the
+    /// environment's cell already.
     private func emitEnvironmentPrologue() {
         guard let environment = function.environment else { return }
         let env = function.parameters[0]
-        for (index, local) in environment.locals.enumerated() {
+        for (index, local) in environment.locals.enumerated() where function.cells[local.name] == nil {
             emit(.store(local, .field(.load(env), index: index, type: local.type)))
         }
+    }
+
+    /// Assigning a closure's `READONLY` capture raises the interpreter's
+    /// error when the assignment runs (CLOSURES.md C4).
+    private func guardWritable(_ name: VariableName) {
+        guard let display = readOnlyCaptures[name.normalized] else { return }
+        emit(.fail("\(display) is captured READONLY"))
     }
 
     func run() throws {
@@ -567,7 +579,10 @@ final class FunctionBuilder {
     /// dimension) are created up front instead, and record/object variables
     /// start as default instances.
     private func emitImplicitDimensions() {
-        let variables = (signature == nil && closureLines == nil) ? model.globalVariables : function.locals.filter { !function.parameters.contains($0) }
+        // A closure's captures arrive with their values, from its environment.
+        let captures = Set(function.environment?.locals.map(\.name) ?? [])
+        let variables = (signature == nil && closureLines == nil) ? model.globalVariables
+            : function.locals.filter { !function.parameters.contains($0) && !captures.contains($0.name) }
         for variable in variables {
             if let rank = variable.rank {
                 if signature == nil, model.globals[variable.name]?.wasDimensioned == false {
@@ -936,6 +951,7 @@ final class FunctionBuilder {
                 emit(.store(resultSlot!, stored))
                 return
             }
+            if kind != .local { guardWritable(name) }
             var target = variable(name)
             if kind == .global, signature != nil {
                 target = model.variable(name.normalized, in: nil)
@@ -951,6 +967,7 @@ final class FunctionBuilder {
             emit(.store(target, stored))
         case .referenceAssignment(let reference, let value):
             guard !reference.hasEmptyIndexList else { throw unsupported("assigning a whole array") }
+            guardWritable(reference.base)
             // A payload member's fields are read, not written (E3); the
             // interpreter refuses the same assignment in the same words.
             if !reference.fields.isEmpty, case .composite(let typeName) = variable(reference.base).type,
@@ -983,9 +1000,11 @@ final class FunctionBuilder {
             }
 
         case .input(let prompt, .variable(let name)):
+            guardWritable(name)
             let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
             emit(.input(prompt: promptValue, into: variable(name), displayName: name.name))
         case .input(let prompt, .reference(let reference)):
+            guardWritable(reference.base)
             // INPUT into an element or field: read into a temporary of the
             // place's type, then store it there.
             let promptValue = try prompt.map { try lowerExpression($0, expecting: .string, context: "INPUT prompt") }
@@ -995,6 +1014,7 @@ final class FunctionBuilder {
             emit(.input(prompt: promptValue, into: slot, displayName: ([reference.base.name] + reference.fields).joined(separator: ".")))
             emitStore(place, convert(.load(slot), to: place.type, name: reference.base.name))
         case .lineInput(let prompt, .variable(let name), nil, nil, nil, nil):
+            guardWritable(name)
             let target = variable(name)
             guard target.type == .string, target.rank == nil else {
                 throw CompileError("Type error: LINE INPUT needs a string variable, got \(name.name)", at: location)
@@ -1085,6 +1105,12 @@ final class FunctionBuilder {
             // interpreter with no such host.
             break
         case .read(let targets):
+            for target in targets {
+                switch target {
+                case .variable(let name): guardWritable(name)
+                case .reference(let reference): guardWritable(reference.base)
+                }
+            }
             emit(.read(try targets.map(lowerReadTarget)))
         case .restore:
             emit(.restore)
@@ -1266,6 +1292,7 @@ final class FunctionBuilder {
             current = join
 
         case .forLoop(let name, let start, let end, let step):
+            guardWritable(name)
             try lowerFor(name, start, end, step)
         case .nextLoop(let names):
             if names.isEmpty {
@@ -2555,10 +2582,17 @@ final class FunctionBuilder {
     /// Builds a closure literal: decides the captures, synthesizes the body
     /// function and its environment type, and returns the make expression.
     ///
-    /// The interpreter's rule: with no capture list, every variable the body
-    /// refers to (that is not a parameter, function, or builtin) is captured
-    /// by snapshot; with one, only the listed names are, and the rest resolve
-    /// live. Captures become locals of each call.
+    /// The rules are Documents/CLOSURES.md's (Bobby's rulings C1–C6), the
+    /// interpreter's too. Every variable the body uses is captured; a
+    /// `CAPTURES` list sets the policy of the names it lists, and the rest
+    /// are shared:
+    ///
+    /// - **Shared** (the default, `MUTABLE`): the variable itself. A global
+    ///   is reached directly; a local of the scope making the closure moves
+    ///   into a heap cell its frame and the closure both hold.
+    /// - **`STRONG`**: a new cell holding a copy, the closure's own.
+    /// - **`READONLY`**: a copy the body takes as a local, which it may not
+    ///   assign. `ME` is a `STRONG` copy unless the list says otherwise.
     private func makeClosure(parameters: [FunctionParameter], returnType: BASICType, captures: [ClosureCaptureSpec], body: ClosureBody) throws -> BIRExpression {
         let number = closures.next()
         let line = ParsedLine(number: location.lineNumber, displayLineNumber: location.line, fileName: location.file, sourceLineNumber: location.line, statementNumber: location.statement, isImported: false, statement: .empty)
@@ -2571,19 +2605,17 @@ final class FunctionBuilder {
         let resolvedReturn: BIRType = returnType == .void ? .void : try SemanticAnalyzer.mapWithModel(model, returnType, for: "closure", at: line)
         let parameterNames = Set(parameterVariables.map(\.name))
 
-        // Captures, in first-reference order, typed as the creating scope sees them.
-        let captureNames: [String]
-        if captures.isEmpty {
-            switch body {
-            case .expression(let expression):
-                captureNames = SemanticAnalyzer.freeVariables(in: expression, model: model)
-            case .block(let bodyLines):
-                captureNames = bodyLines.flatMap { SemanticAnalyzer.freeVariables(in: $0.statement, model: model) }
-                    .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-            }
-        } else {
-            captureNames = captures.map { $0.variable.normalized }
+        // Captures: the listed names, then what the body uses, in first-reference order.
+        let used: [String]
+        switch body {
+        case .expression(let expression):
+            used = SemanticAnalyzer.freeVariables(in: expression, model: model)
+        case .block(let bodyLines):
+            used = bodyLines.flatMap { SemanticAnalyzer.freeVariables(in: $0.statement, model: model) }
         }
+        var policies: [String: (access: BASICCapturedReferenceAccess, display: String)] = [:]
+        for capture in captures { policies[capture.variable.normalized] = (capture.access, capture.variable.name) }
+        let captureNames = (captures.map(\.variable.normalized) + used).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         var declaredLocals = Set<String>()
         if case .block(let bodyLines) = body {
             for bodyLine in bodyLines {
@@ -2593,12 +2625,43 @@ final class FunctionBuilder {
                 }
             }
         }
-        let captured = captureNames.filter { !parameterNames.contains($0) && !declaredLocals.contains($0) }.map { name -> BIRVariable in
+
+        var captured: [BIRVariable] = []
+        var made: [BIRCapture] = []
+        var bodyCells: [String: BIRCell] = [:]
+        var bodyReadOnly: [String: String] = [:]
+        for name in captureNames where !parameterNames.contains(name) && !declaredLocals.contains(name) {
             let outer = variable(VariableName(name: name, column: 0))
-            return BIRVariable(name: name, type: outer.type, scope: .local)
-        }
-        for capture in captured where variable(VariableName(name: capture.name, column: 0)).rank != nil || capture.type.isComposite {
-            throw unsupported("capturing arrays or records in a closure")
+            var access = policies[name]?.access ?? .shared
+            if name == "ME", policies[name] == nil { access = .strongCopy }
+            // An enclosing closure's READONLY copy stays read-only in here too.
+            if access == .shared, let enclosing = readOnlyCaptures[name] {
+                access = .readOnly
+                policies[name] = (.readOnly, enclosing)
+            }
+            if access == .shared, outer.scope == .global { continue }
+            if access == .weak { throw unsupported("a WEAK capture") }
+            let local = BIRVariable(name: name, type: outer.type, scope: .local, storage: outer.storage, isInteger: outer.isInteger)
+            let read: BIRExpression = outer.rank == nil ? .load(outer) : .loadArray(outer)
+            switch access {
+            case .shared:
+                if function.cells[name] == nil { function.cells[name] = .frame }
+                bodyCells[name] = .environment(captured.count)
+                made.append(.shared(outer))
+            case .strongCopy:
+                bodyCells[name] = .environment(captured.count)
+                made.append(.copy(read))
+            case .readOnly, .weak:
+                bodyReadOnly[name] = policies[name]?.display ?? name
+                if outer.rank == nil {
+                    made.append(.value(read))
+                } else {
+                    // An array is copied into a cell of its own, frozen by the check on writes.
+                    bodyCells[name] = .environment(captured.count)
+                    made.append(.copy(read))
+                }
+            }
+            captured.append(local)
         }
 
         let canonical = SemanticModel.canonicalSignature(parameters: parameterVariables.map(\.type), returnType: resolvedReturn)
@@ -2615,6 +2678,7 @@ final class FunctionBuilder {
             bodyFunction = BIRFunction(name: bodyName, parameters: [BIRVariable(name: "$ENV", type: .composite(name), scope: .local)] + parameterVariables, returnType: resolvedReturn)
             bodyFunction.locals += captured
             bodyFunction.environment = (name, captured)
+            bodyFunction.cells = bodyCells
         }
 
         // Build the body with its own builder, in a scope of parameters + captures + LOCALs.
@@ -2624,6 +2688,7 @@ final class FunctionBuilder {
         for parameter in parameterVariables { locals[parameter.name] = parameter }
         for capture in captured { locals[capture.name] = capture }
         bodyBuilder.closureSignatureReturn = resolvedReturn
+        bodyBuilder.readOnlyCaptures = bodyReadOnly
         switch body {
         case .expression(let expression):
             bodyBuilder.closureLines = []
@@ -2660,7 +2725,7 @@ final class FunctionBuilder {
         }
         closures.functions.append(bodyBuilder.function)
 
-        return .makeClosure(function: bodyName, environment: environmentName, captures: captured.map { .load(variable(VariableName(name: $0.name, column: 0))) }, signature: canonical)
+        return .makeClosure(function: bodyName, environment: environmentName, captures: made, signature: canonical)
     }
 
     /// A quick static type for a LOCAL's initial value inside a closure body.

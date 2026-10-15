@@ -80,6 +80,8 @@ final class BASICRuntime {
     var pendingFrameworkError: Error?
     private var eventHandlers: [BASICEventSelector: BASICEventHandlerRegistration] = [:]
     private var nextFileObjectID = 1
+    /// Ids for the cells closures capture through, for the debugger.
+    private var nextCaptureCellID = 1
     private var nextVectorTerminalObjectID = 1
     private var nextTimerObjectID = 1
     private var nextHTTPClientObjectID = 1
@@ -336,6 +338,57 @@ final class BASICRuntime {
         if !locals.isEmpty {
             _ = locals.removeLast()
         }
+    }
+
+    // MARK: Closure captures (Documents/CLOSURES.md, rulings C1–C6)
+
+    /// The cell a closure being made holds `variable` through, or nil when
+    /// the scope making it has no such variable (the closure then finds the
+    /// name when it runs, as any statement would).
+    ///
+    /// A shared capture moves the variable itself into a cell, so the scope
+    /// and every closure sharing it see one value (C1, C3). `STRONG` and
+    /// `READONLY` take a copy of the value as it is now (C2, C4).
+    func captureCell(for variable: VariableName, access: BASICCapturedReferenceAccess) -> BASICSharedValueCell? {
+        let normalized = variable.normalized
+        let context = visibleContext(for: normalized)
+        let existing = context.flatMap { binding(in: $0, normalized: normalized) }
+        if access == .shared {
+            guard let context, var binding = existing else { return nil }
+            if let cell = binding.cell { return cell }
+            // An enclosing closure's READONLY copy stays read-only here too.
+            guard !binding.isReadOnlyCapture else { return copyCell(binding.displayName, binding.value, binding.type, .readOnly) }
+            let cell = BASICSharedValueCell(id: nextCaptureCellID, name: binding.displayName, value: binding.value,
+                                            access: .shared, type: binding.type)
+            nextCaptureCellID += 1
+            binding.adopt(cell)
+            store(binding, in: context, normalized: normalized)
+            return cell
+        }
+        let type = existing?.type ?? resolvedDeclaredType(inferredType(name: variable.name, value: nil))
+        return copyCell(existing?.displayName ?? variable.name, existing?.value ?? defaultValue(for: type), type, access)
+    }
+
+    private func copyCell(_ name: String, _ value: BASICValue, _ type: BASICType, _ access: BASICCapturedReferenceAccess) -> BASICSharedValueCell {
+        defer { nextCaptureCellID += 1 }
+        return BASICSharedValueCell(id: nextCaptureCellID, name: name, value: value, access: access, type: type)
+    }
+
+    /// A capture, bound as a local of the closure call that is starting: the
+    /// shared variable or the closure's own copy through its cell, or a fresh
+    /// copy of a `READONLY` one that cannot be assigned.
+    func bindCapture(_ cell: BASICSharedValueCell) {
+        guard let index = locals.indices.last else { return }
+        let type = cell.type ?? inferredType(name: cell.name, value: cell.value)
+        var binding: VariableBinding
+        switch cell.access {
+        case .shared, .strongCopy:
+            binding = VariableBinding(displayName: cell.name, type: type, value: .empty, cell: cell)
+        case .readOnly, .weak:
+            binding = VariableBinding(displayName: cell.name, type: type, value: cell.value)
+            binding.isReadOnlyCapture = cell.access == .readOnly
+        }
+        locals[index][cell.name.uppercased()] = binding
     }
 
     func value(for variable: VariableName) -> BASICValue {
@@ -961,15 +1014,18 @@ final class BASICRuntime {
         let target = targetContext(kind: kind, normalized: normalized)
         let existing = binding(in: target, normalized: normalized)
         let type = try resolvedType(variable: variable, declaredType: declaredType, value: value, existing: existing)
+        // LOCAL declares a new variable, so a closure made on an earlier
+        // pass keeps the one it shared (as VB's Dim in a loop body does).
+        let declaring = kind == .local
         if case .array(let existingArray) = existing?.value, let value {
             let coercedArray = try coerceArray(value, toMatch: existingArray, variable: variable)
             let binding = VariableBinding(displayName: variable.name, type: existingArray.type, value: .array(coercedArray))
-            set(binding, in: target, normalized: normalized)
+            try set(binding, in: target, normalized: normalized, declaring: declaring)
             return
         }
         let coerced = try coerce(value ?? defaultValue(for: type), to: type, variable: variable)
         let binding = VariableBinding(displayName: variable.name, type: type, value: coerced)
-        set(binding, in: target, normalized: normalized)
+        try set(binding, in: target, normalized: normalized, declaring: declaring)
     }
 
     func dim(kind: AssignmentKind, variable: VariableName, dimensions: [Int?], declaredType: BASICType?) throws {
@@ -977,7 +1033,8 @@ final class BASICRuntime {
         guard !dimensions.isEmpty else {
             let type = resolvedDeclaredType(declaredType ?? inferredType(name: variable.name, value: nil))
             let binding = VariableBinding(displayName: variable.name, type: type, value: defaultValue(for: type))
-            set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized)
+            try set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized,
+                    declaring: kind == .local)
             return
         }
         guard dimensions.allSatisfy({ ($0 ?? 0) >= 0 }) else {
@@ -993,7 +1050,8 @@ final class BASICRuntime {
             values: Array(repeating: defaultValue(for: type), count: elementCount)
         )
         let binding = VariableBinding(displayName: variable.name, type: type, value: .array(array))
-        set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized)
+        try set(binding, in: targetContext(kind: kind, normalized: variable.normalized), normalized: variable.normalized,
+                declaring: kind == .local)
     }
 
     func assign(
@@ -1040,10 +1098,10 @@ final class BASICRuntime {
                         declaredType: fieldSurfaceType(for: reference)
                     )
                 }
-                set(binding, in: context, normalized: normalized)
+                try set(binding, in: context, normalized: normalized)
                 array.values[offset] = element
                 binding.value = .array(array)
-                set(binding, in: context, normalized: normalized)
+                try set(binding, in: context, normalized: normalized)
                 return
             }
             if var dictionary = binding.value.takeDictionary() {
@@ -1061,10 +1119,10 @@ final class BASICRuntime {
                         declaredType: fieldSurfaceType(for: reference)
                     )
                 }
-                set(binding, in: context, normalized: normalized)
+                try set(binding, in: context, normalized: normalized)
                 dictionary.values[key] = element
                 binding.value = .dictionary(dictionary)
-                set(binding, in: context, normalized: normalized)
+                try set(binding, in: context, normalized: normalized)
                 return
             }
             throw BASICError.runtime("\(reference.base.name) is not an array")
@@ -1087,7 +1145,7 @@ final class BASICRuntime {
                 declaredType: fieldSurfaceType(for: reference)
             )
         }
-        set(binding, in: context, normalized: normalized)
+        try set(binding, in: context, normalized: normalized)
     }
 
     private enum TargetContext {
@@ -1147,7 +1205,24 @@ final class BASICRuntime {
         }
     }
 
-    private func set(_ binding: VariableBinding, in context: TargetContext, normalized: String) {
+    /// Stores a variable. Assigning a closure's `READONLY` capture is an
+    /// error (CLOSURES.md C4); assigning a variable a closure shares stores
+    /// into the shared cell, so every scope holding it sees the change (C1),
+    /// unless the statement declares a new variable (`LOCAL`).
+    private func set(_ binding: VariableBinding, in context: TargetContext, normalized: String, declaring: Bool = false) throws {
+        var binding = binding
+        if !declaring, let existing = self.binding(in: context, normalized: normalized) {
+            if existing.isReadOnlyCapture {
+                throw BASICError.runtime("\(existing.displayName) is captured READONLY")
+            }
+            if let cell = existing.cell {
+                binding.adopt(cell)
+            }
+        }
+        store(binding, in: context, normalized: normalized)
+    }
+
+    private func store(_ binding: VariableBinding, in context: TargetContext, normalized: String) {
         switch context {
         case .global:
             globals[normalized] = binding
@@ -1177,7 +1252,7 @@ final class BASICRuntime {
                 values: Array(repeating: defaultValue(for: type), count: count)
             ))
         )
-        set(binding, in: target, normalized: variable.normalized)
+        try set(binding, in: target, normalized: variable.normalized)
         return binding
     }
 

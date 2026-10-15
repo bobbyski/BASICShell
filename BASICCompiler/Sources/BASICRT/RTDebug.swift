@@ -71,6 +71,7 @@ public enum RTDebug {
         case .closure: return RTDebugValue(name: name, typeName: typed("FUNCTION"), value: "<FUNCTION>")
         case .task(let task): return RTDebugValue(name: name, typeName: typed("TASK"), value: "<TASK \(task.name)>")
         case .system(let object): return RTDebugValue(name: name, typeName: object.typeName, value: "<\(object.typeName)>")
+        case .cell: return RTDebugValue(name: name, typeName: typed("VARIANT"), value: "<shared>")
         case .composite(let composite):
             guard composite.typeIndex >= 0, composite.typeIndex < RTTypes.registry.count,
                   let type = RTTypes.registry[composite.typeIndex] else {

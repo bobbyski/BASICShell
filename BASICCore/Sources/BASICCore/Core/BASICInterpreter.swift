@@ -1448,20 +1448,7 @@ public final class BASICInterpreter {
             try runtime.assign(kind: kind, variable: variable, declaredType: declaredType, value: value)
             return .next
         case .closureAssignment(let kind, let variable, let declaredType, let parameters, let returnType, let captures, let body):
-            let environment = BASICCapturedEnvironment()
-            let parameterNames = Set(parameters.map { $0.variable.normalized })
-            let captureSpecs = captures.isEmpty
-                ? capturedVariableNames(in: body)
-                    .filter { !parameterNames.contains($0.normalized) }
-                    .map { ClosureCaptureSpec(variable: $0, access: .readOnly) }
-                : captures.filter { !parameterNames.contains($0.variable.normalized) }
-            for capture in captureSpecs {
-                _ = environment.capture(
-                    name: capture.variable.name,
-                    value: runtime.value(for: capture.variable),
-                    access: capture.access
-                )
-            }
+            let environment = captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
             try runtime.assign(
                 kind: kind,
                 variable: variable,
@@ -3102,16 +3089,16 @@ public final class BASICInterpreter {
             // DB19: one of the four gives its own text -- the same text PRINT
             // shows, and the same text that reads back as a literal. VB's
             // `CStr` does this too, so nothing new has to be learned.
-            if arguments.count == 1 {
-                let value = try evaluate(arguments[0])
-                switch value {
-                case .date, .time, .datetime, .decimal:
-                    return .string(BASICString(value.description))
-                default:
-                    break
-                }
+            // The argument is evaluated once: `STR$(f())` calls `f` once.
+            try requireArgumentCount(name.name, arguments, 1)
+            let argument = try evaluate(arguments[0])
+            switch argument {
+            case .date, .time, .datetime, .decimal:
+                return .string(BASICString(argument.description))
+            default:
+                break
             }
-            let value = try singleNumericArgument(name: name.name, arguments: arguments)
+            let value = try numeric(argument)
             let rendered = BASICValue.number(value).description
             return .string(BASICString(value >= 0 ? " " + rendered : rendered))
         case "STRING$":
@@ -3912,9 +3899,9 @@ public final class BASICInterpreter {
 
     /// Calls a BASIC function by name, for a TUI control's handler.
     ///
-    /// Named functions, not closures: a BASIC closure captures by snapshot and
-    /// its writes do not escape, so a closure used as a button handler would
-    /// run and silently discard everything it did (TUIKIT_PLAN.md §2.1).
+    /// A TUI control names its handler (TUIKIT_PLAN.md §2.1). That choice was
+    /// made when a closure's writes were lost; closures now share what they
+    /// capture (Documents/CLOSURES.md C1), but controls still take names.
     func callNamedHandler(_ name: String, arguments: [BASICValue] = []) throws {
         guard let definition = functionDefinitions[name.uppercased()] else {
             throw BASICError.runtime("No handler called \(name)")
@@ -6156,20 +6143,7 @@ public final class BASICInterpreter {
         case .null:
             return .null
         case .closure(let parameters, let returnType, let captures, let body):
-            let environment = BASICCapturedEnvironment()
-            let parameterNames = Set(parameters.map { $0.variable.normalized })
-            let captureSpecs = captures.isEmpty
-                ? capturedVariableNames(in: body)
-                    .filter { !parameterNames.contains($0.normalized) }
-                    .map { ClosureCaptureSpec(variable: $0, access: .readOnly) }
-                : captures.filter { !parameterNames.contains($0.variable.normalized) }
-            for capture in captureSpecs {
-                _ = environment.capture(
-                    name: capture.variable.name,
-                    value: runtime.value(for: capture.variable),
-                    access: capture.access
-                )
-            }
+            let environment = captureEnvironment(parameters: parameters, captures: captures, uses: capturedVariableNames(in: body))
             return .closure(BASICCapturedClosure(
                 name: "<closure>",
                 parameters: parameters,
@@ -6567,6 +6541,28 @@ public final class BASICInterpreter {
         return taskID
     }
 
+    /// What a closure being made captures (Documents/CLOSURES.md C1–C7):
+    /// each name its `CAPTURES` list gives a policy, and every other name
+    /// its body uses, shared. `ME` is the closure's own copy unless the list
+    /// says otherwise (C6).
+    private func captureEnvironment(parameters: [FunctionParameter], captures: [ClosureCaptureSpec],
+                                    uses: [VariableName]) -> BASICCapturedEnvironment {
+        let environment = BASICCapturedEnvironment()
+        let parameterNames = Set(parameters.map { $0.variable.normalized })
+        var specs = captures.filter { !parameterNames.contains($0.variable.normalized) }
+        let listed = Set(specs.map(\.variable.normalized))
+        specs += uses
+            .filter { !parameterNames.contains($0.normalized) && !listed.contains($0.normalized) }
+            .map { ClosureCaptureSpec(variable: $0, access: .shared) }
+        for spec in specs {
+            let access = spec.variable.normalized == "ME" && spec.access == .shared ? .strongCopy : spec.access
+            if let cell = runtime.captureCell(for: spec.variable, access: access) {
+                environment.adopt(cell)
+            }
+        }
+        return environment
+    }
+
     private func capturedVariableNames(in expression: Expression) -> [VariableName] {
         var ordered: [VariableName] = []
         var seen: Set<String> = []
@@ -6584,8 +6580,11 @@ public final class BASICInterpreter {
             switch expression {
             case .number, .decimal, .temporal, .string, .interpolatedString, .boolean, .null:
                 return
-            case .closure:
-                return
+            case .closure(let parameters, _, let captures, let body):
+                // What a nested closure uses has to be here when it is made.
+                let inner = Set(parameters.map { $0.variable.normalized })
+                captures.map(\.variable).forEach(append)
+                capturedVariableNames(in: body).filter { !inner.contains($0.normalized) }.forEach(append)
             case .variable(let name):
                 append(name)
             case .variableReference(let reference):
@@ -6688,13 +6687,20 @@ public final class BASICInterpreter {
                     localNames.insert(variable.normalized)
                 } else if kind == .bare, expression == nil {
                     localNames.insert(variable.normalized)
+                } else if kind == .bare || kind == .letValue {
+                    // Assigned, so shared: the write reaches the variable (C1).
+                    append(variable)
                 }
                 expression.map(visit)
-            case .closureAssignment(let kind, let variable, _, _, _, _, let nestedBody):
+            case .closureAssignment(let kind, let variable, _, let parameters, _, let captures, let nestedBody):
                 if kind == .local {
                     localNames.insert(variable.normalized)
+                } else if kind == .bare || kind == .letValue {
+                    append(variable)
                 }
-                for variable in capturedVariableNames(in: nestedBody) {
+                let inner = Set(parameters.map { $0.variable.normalized })
+                captures.map(\.variable).forEach(append)
+                for variable in capturedVariableNames(in: nestedBody) where !inner.contains(variable.normalized) {
                     append(variable)
                 }
             case .referenceAssignment(let reference, let expression):
@@ -6740,21 +6746,21 @@ public final class BASICInterpreter {
                 dimensions.compactMap { $0 }.forEach(visit)
             case .input(let prompt, let target):
                 prompt.map(visit)
-                visit(target, capturesBase: false)
+                visit(target, capturesBase: true)
             case .lineInput(let prompt, let target, let exitTarget, let fieldLength, let maxLength, let defaultValue):
                 prompt.map(visit)
                 fieldLength.map(visit)
                 maxLength.map(visit)
                 defaultValue.map(visit)
-                visit(target, capturesBase: false)
-                exitTarget.map { visit($0, capturesBase: false) }
+                visit(target, capturesBase: true)
+                exitTarget.map { visit($0, capturesBase: true) }
             case .openFile(let path, _, let number, let recordLength):
                 visit(path)
                 visit(number)
                 recordLength.map(visit)
             case .getFile(let number, let targets), .inputFile(let number, let targets):
                 visit(number)
-                targets.forEach { visit($0, capturesBase: false) }
+                targets.forEach { visit($0, capturesBase: true) }
             case .getRecordFile(let number, let record):
                 visit(number)
                 record.map(visit)
@@ -6768,7 +6774,7 @@ public final class BASICInterpreter {
                     append($0.variable)
                 }
             case .setFieldString(let target, let value, _):
-                visit(target, capturesBase: false)
+                visit(target, capturesBase: true)
                 visit(value)
             case .sound(let arguments), .envelope(let arguments):
                 arguments.forEach(visit)
@@ -6793,7 +6799,7 @@ public final class BASICInterpreter {
                 visit(number)
             case .lineInputFile(let number, let target):
                 visit(number)
-                visit(target, capturesBase: false)
+                visit(target, capturesBase: true)
             case .expression(let expression), .returnValue(let expression), .selectCase(let expression),
                  .blockIf(let expression):
                 visit(expression)
@@ -6821,7 +6827,7 @@ public final class BASICInterpreter {
             case .sequence(let statements):
                 statements.forEach(visit)
             case .read(let targets):
-                targets.forEach { visit($0, capturesBase: false) }
+                targets.forEach { visit($0, capturesBase: true) }
             case .computedGoto(_, let expression), .computedGosub(_, let expression), .elseIf(let expression):
                 visit(expression)
             case .defFunction(_, _, _, let body):

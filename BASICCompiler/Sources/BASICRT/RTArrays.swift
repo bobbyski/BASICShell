@@ -112,6 +112,14 @@ public func basic_rt_array_dim(_ rank: Int, _ bounds: UnsafePointer<Double>, _ k
     return Unmanaged.passRetained(RTArray(element: rtElementType(kind: kind, elementType: elementType), dims: dims)).toOpaque()
 }
 
+/// A copy of an array, owned (+1): a closure's own (CLOSURES.md C2) or
+/// frozen (C4) capture of one. Nil stays nil.
+@_cdecl("basic_rt_array_copy")
+public func basic_rt_array_copy(_ pointer: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    guard let pointer else { return nil }
+    return Unmanaged.passRetained(Unmanaged<RTArray>.fromOpaque(pointer).takeUnretainedValue().copy()).toOpaque()
+}
+
 @_cdecl("basic_rt_array_release")
 public func basic_rt_array_release(_ pointer: UnsafeMutableRawPointer?) {
     guard let pointer else { return }
