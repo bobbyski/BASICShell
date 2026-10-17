@@ -41,6 +41,13 @@ struct ScratchCaptureTests {
             studio.model.handleTerminalInput([.append(key == "_" ? " " : key)])
             try await Task.sleep(for: .milliseconds(120))
         }
+        // SCRATCH_MOUSE: "frame:SUBTYPE:x:y;..." posted once that many frames are drawn.
+        for step in (env["SCRATCH_MOUSE"] ?? "").split(separator: ";") {
+            let bits = step.split(separator: ":").map(String.init)
+            guard bits.count == 4, let at = Int(bits[0]), let x = Double(bits[2]), let y = Double(bits[3]) else { continue }
+            try await studio.waitUntil("mouse at \(at)", timeout: .seconds(300)) { count() >= at }
+            studio.model.postVTGMouseEvent(subtype: bits[1], x: x, y: y, button: 0, buttons: bits[1] == "UP" ? 0 : 1, duration: 0.05)
+        }
         if holdAfter > 0 { try await studio.waitUntil("hold point", timeout: .seconds(120)) { count() >= holdAfter } }
         for key in (env["SCRATCH_HOLD"] ?? "").split(separator: ",") { studio.model.heldKeys.set(String(key), down: true) }
         try await studio.waitUntil("\(frames) frames", timeout: .seconds(300)) { count() >= frames }

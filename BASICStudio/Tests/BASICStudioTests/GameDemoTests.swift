@@ -312,6 +312,101 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("error"), "\(studio.model.consoleText)")
     }
 
+    /// Scorch is played with the mouse or a finger, on buttons it draws
+    /// itself, so it is driven here by mouse events alone; as WebAssembly too,
+    /// which is how it runs on an iPad. At 960 by 640 the world is the
+    /// canvas, so a click lands where the program drew the button.
+    @Test("Scorch by mouse: two tanks from the first screen, START, a drag aims the barrel, FIRE shoots, the shell bursts and digs a crater, and it quits with the standings", arguments: [false, true])
+    func scorchByMouse(asWebAssembly: Bool) async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/scorch" })
+        #expect(example.title == "Scorch")
+        studio.model.loadBundledExample(example)
+        studio.model.updateLiveVTGCanvasSize(width: 960, height: 640)
+
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        if asWebAssembly {
+            studio.model.compiledRunTarget = .webAssembly
+            studio.model.jitEditorProgram()
+        } else {
+            studio.model.runEditorProgram()
+        }
+        func post(_ subtype: String, _ x: Double, _ y: Double) async throws {
+            studio.model.postVTGMouseEvent(subtype: subtype, x: x, y: y, button: 0, buttons: subtype == "UP" ? 0 : 1, duration: 0.05)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+
+        // The first screen: hills behind a panel of buttons, four tanks.
+        try await studio.waitUntil("the first screen", timeout: .seconds(120)) { sent.contains("id=panel,") && sent.contains("id=bt16,") }
+
+        // Its - twice: two tanks, you (RED) and the computer (BLUE). The
+        // screen is built again each time, with two buttons fewer.
+        try await post("DOWN", 422, 179)
+        try await post("UP", 422, 179)
+        try await post("DOWN", 422, 179)
+        try await post("UP", 422, 179)
+        try await studio.waitUntil("two tanks") { Self.lastCommand(of: "bt13", in: sent)?.hasPrefix("delete") == true }
+
+        // START: the bar along the top, and the round.
+        try await post("DOWN", 420, 540)
+        try await post("UP", 420, 540)
+        try await studio.waitUntil("the round") { sent.contains("id=barbg,") && sent.contains("id=tg0,") }
+
+        // Your turn, whenever BLUE has had its own: FIRE turns red.
+        try await studio.waitUntil("your turn", timeout: .seconds(90)) {
+            Self.lastCommand(of: "bt9", in: sent)?.contains("fill=#dc2626") == true
+        }
+
+        // A drag from the barrel's pivot up and toward the middle: the
+        // barrel turns to 45 degrees, and a guide line shows while dragging.
+        let barrel = try #require(Self.lastCommand(of: "tg0", in: sent))
+        let pivotX = Double(try #require(Self.value("x1", in: barrel)))
+        let pivotY = Double(try #require(Self.value("y1", in: barrel)))
+        let toward: Double = pivotX < 480 ? 1 : -1
+        try await post("DOWN", pivotX + toward * 100, pivotY - 100)
+        try await post("MOVE", pivotX + toward * 150, pivotY - 150)
+        try await studio.waitUntil("the guide") { sent.contains("id=guide,") }
+        try await post("UP", pivotX + toward * 150, pivotY - 150)
+        let turned = try #require(Self.lastCommand(of: "tg0", in: sent))
+        let tipX = try #require(Self.value("x2", in: turned))
+        #expect(abs(Double(tipX) - (pivotX + toward * 12)) <= 2, "barrel \(turned)")
+
+        // FIRE: a shell, its trail, a burst, and the sky reaching down into
+        // the crater.
+        let fired = sent.count
+        try await post("DOWN", 850, 57)
+        try await post("UP", 850, 57)
+        try await studio.waitUntil("the shell") { sent.dropFirst(fired).contains("circle,id=sh") && sent.dropFirst(fired).contains("line,id=tl0,") }
+        try await studio.waitUntil("the burst", timeout: .seconds(30)) { sent.dropFirst(fired).contains("circle,id=xo") }
+        let burst = sent.count
+        try await studio.waitUntil("the crater", timeout: .seconds(30)) { sent.dropFirst(burst).contains("rect,id=sk") }
+
+        studio.model.handleTerminalInput([.append("q")])
+        if asWebAssembly {
+            try await studio.waitUntil("the compiled run to end", timeout: .seconds(30)) { !studio.model.isJITRunning }
+        } else {
+            try await studio.waitUntilStopped(timeout: .seconds(20))
+        }
+        #expect(studio.model.consoleText.contains("Thanks for playing Scorch."), "\(studio.model.consoleText.suffix(300))")
+        #expect(studio.model.consoleText.contains("Final standings:"), "\(studio.model.consoleText.suffix(300))")
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
+    /// The last command sent for `id` — a delete as well as a drawing — from
+    /// its name to the end of its fields.
+    private static func lastCommand(of id: String, in sent: String) -> String? {
+        let found = ["id=\(id),", "id=\(id)\u{1B}"].compactMap { sent.range(of: $0, options: .backwards) }
+        guard let command = found.max(by: { $0.lowerBound < $1.lowerBound }) else { return nil }
+        let start = sent[..<command.lowerBound].lastIndex(of: ";").map { sent.index(after: $0) } ?? command.lowerBound
+        return String(sent[start...].prefix { $0 != "\u{1B}" })
+    }
+
+    /// The whole number in `field=` among a command's fields.
+    private static func value(_ field: String, in command: String) -> Int? {
+        command.split(separator: ",").first { $0.hasPrefix("\(field)=") }.flatMap { Int($0.dropFirst(field.count + 1)) }
+    }
+
     /// Whether sprite `id` has been turned 20 to 99 degrees clockwise.
     private static func turned(_ id: String, in sent: String) -> Bool {
         sent.range(of: #"(sprite|spriteTransform),id=\#(id),[^\x{1B}]*rotation=[2-9][0-9][,.\x{1B}]"#, options: .regularExpression) != nil
@@ -321,7 +416,7 @@ struct GameDemoTests {
     /// to the window computes them; at 1:1 a stray half can stay hidden.
     /// Munchies' score popup stopped the game this way in a window that
     /// scaled it to 0.76 — behind its own backdrop, so it looked like a hang.
-    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "outatime", "protector", "soft-landing"])
+    @Test("Every game runs at an awkward scale with no runtime error", arguments: ["brick-breaker", "bugs-from-space", "electric-storm", "incoming", "munchies", "outatime", "protector", "scorch", "soft-landing"])
     func awkwardScale(game: String) async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/\(game)" })
@@ -424,6 +519,7 @@ struct GameDemoTests {
         ("protector", ["stick", "fire", "bomb", "hyper", "pause"]),
         ("outatime", ["stick", "fire", "pause"]),
         ("soft-landing", ["stick", "thrust", "pause"]),
+        ("scorch", ["menu"]),
     ])
     func touchControlsPlaced(game: String, controls: [String]) async throws {
         let studio = StudioHarness()
