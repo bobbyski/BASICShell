@@ -145,6 +145,9 @@ public struct BASICTouchControlState: Equatable, Sendable {
 public protocol BASICTouchControlsHost: AnyObject {
     /// There is a touch screen to put controls on.
     var touchControlsAvailable: Bool { get }
+    /// The screen takes touch, whether or not controls are shown on it: what
+    /// `HASTOUCH` answers.
+    var hasTouchScreen: Bool { get }
     /// Shows `control`, replacing one with the same id.
     func placeTouchControl(_ control: BASICTouchControl)
     /// Takes away the control with this id, if there is one.
@@ -156,6 +159,12 @@ public protocol BASICTouchControlsHost: AnyObject {
     /// How far, in degrees, the wheel with this id has turned since this was
     /// last asked: clockwise positive.
     func takeTouchWheelTurn(id: String) -> Double
+}
+
+extension BASICTouchControlsHost {
+    /// A host that can show controls has a screen that takes touch. One whose
+    /// controls can be turned off says so itself.
+    public var hasTouchScreen: Bool { touchControlsAvailable }
 }
 
 /// The `TouchControls` object's members, and what it has placed: `Directions`

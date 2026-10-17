@@ -68,6 +68,9 @@ public enum RTHosted {
     nonisolated(unsafe) public static var keepsGraphicsAtEnd = false
     /// The host's `TouchControls`. Nil: none, as a terminal has.
     nonisolated(unsafe) package static var touchControls: ((_ method: String, _ arguments: [RTValue]) -> RTValue)?
+    /// Whether the host's screen takes touch, for HASTOUCH. Nil: a terminal,
+    /// which does not.
+    nonisolated(unsafe) package static var hasTouchScreen: (() -> Bool)?
 
     /// Whether a host has the runtime.
     public static var isActive: Bool { unwind != nil }

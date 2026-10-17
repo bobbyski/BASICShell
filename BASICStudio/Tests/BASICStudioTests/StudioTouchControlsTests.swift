@@ -224,8 +224,10 @@ struct StudioTouchControlsProgramTests {
         #expect(!model.touchControls.isShown)
         #expect(MenuCommandModel.isChecked(.showGameControls, in: model) == false)
         #expect(!model.touchControlsAvailable, "a program is told there are none")
+        #expect(model.hasTouchScreen == StudioTouchControls.screenHasTouch, "HASTOUCH still sees the screen (BASIC-70)")
         MenuCommandModel.perform(.showGameControls, on: model)
         #expect(model.touchControls.isShown)
+        #expect(model.hasTouchScreen == StudioTouchControls.screenHasTouch)
 
         // Only where there is a touch screen to put them on.
         #expect(MenuCommandModel.gameControlsEntries(model, screenHasTouch: false).isEmpty)

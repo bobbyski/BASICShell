@@ -55,6 +55,8 @@ While any controls are on the screen, the on-screen keyboard is put away so the 
 | `touch.Turn(id)` | How far a wheel has turned since the last call, in degrees, clockwise positive. |
 | `touch.Available` | TRUE where controls can be shown, so a program can show a hint only where they apply. |
 
+`Available` is FALSE on an iPad whose controls are turned off from Console ▸ Show On-Screen Game Controls, though its screen still takes touch. To ask whether the screen takes touch at all, without making a `TouchControls()` object, use [HASTOUCH](HASTOUCH.md).
+
 ## Reading them: as a game controller
 
 Every control also reports the way a game controller does, through [ON GAMEPAD](EVENTS.md), as controller -1. A game written for a gamepad therefore works with the on-screen controls with no changes.

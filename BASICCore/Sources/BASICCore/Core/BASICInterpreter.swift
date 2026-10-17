@@ -2921,6 +2921,10 @@ public final class BASICInterpreter {
                 return .number(held ? 1 : 0)
             }
             return .number(runtime.heldKeys.isDown(keyName, at: ProcessInfo.processInfo.systemUptime) ? 1 : 0)
+        case "HASTOUCH":
+            // Whether the screen takes touch, controls shown or not (BASIC-70).
+            try requireArgumentCount(name.name, arguments, 0)
+            return .number((host as? BASICTouchControlsHost)?.hasTouchScreen == true ? 1 : 0)
         case "INPUT$":
             return try intrinsicInputString(name: name.name, arguments: arguments)
         case "INSTR":

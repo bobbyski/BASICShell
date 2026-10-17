@@ -39,6 +39,7 @@ public enum RTHostHosted {
         RTHosted.touchControls = { method, arguments in
             callTouchControls(method, arguments, host: touchControls)
         }
+        RTHosted.hasTouchScreen = { touchControls?.hasTouchScreen ?? false }
         if let canvas {
             RTHostCanvas.installHosted(canvas, size: canvasSize ?? { (width: 0, height: 0) })
             RTHosted.keepsGraphicsAtEnd = true
@@ -54,6 +55,7 @@ public enum RTHostHosted {
         RTHosted.readKey = nil
         RTHosted.screenSize = nil
         RTHosted.touchControls = nil
+        RTHosted.hasTouchScreen = nil
         if RTHostCanvas.isHosted { RTHostCanvas.uninstallHosted() }
         RTHosted.keepsGraphicsAtEnd = false
         BASICCompiledEvents.reset()

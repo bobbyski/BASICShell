@@ -62,6 +62,8 @@ public enum BASICKeywords {
         "EXP", "FIX", "HCS", "HEX$", "HSN", "HTN", "INKEY$", "INPUT$", "INSTR", "INT", "EOF", "LCT", "LEFT$", "LOF",
         // KEYDOWN(k$): whether a key is held now, for games (BASICKeyState).
         "KEYDOWN",
+        // HASTOUCH: whether the screen takes touch, for games (BASIC-70).
+        "HASTOUCH",
         // PLAY(n): notes left in the background queue (BBC add-ins A9).
         "PLAY",
         "HTTPGETASYNC", "LOG", "LOC", "LTW", "MID$", "MKI$", "MKS$", "MKD$", "CVI", "CVS", "CVD", "RAD", "READFILEASYNC", "RIGHT$", "RND", "SCN", "SEC", "SEEK", "SGN", "SLEEP", "TASKERROR$", "TASKSTATUS$", "WRITEFILEASYNC",

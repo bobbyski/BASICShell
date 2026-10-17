@@ -402,6 +402,9 @@ extension StudioModel: BASICTouchControlsHost {
     /// A touch screen, with its controls not turned off from the Console menu.
     nonisolated var touchControlsAvailable: Bool { StudioTouchControls.screenHasTouch && touchControls.isShown }
 
+    /// A touch screen, whether or not its controls are turned off: HASTOUCH.
+    nonisolated var hasTouchScreen: Bool { StudioTouchControls.screenHasTouch }
+
     nonisolated func placeTouchControl(_ control: BASICTouchControl) {
         touchControls.place(control)
     }

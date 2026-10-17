@@ -3011,6 +3011,9 @@ final class FunctionBuilder {
         case "KEYDOWN":
             try count(1...1)
             return .hostCall("basic_rt_keydown", [try argument(0, .string, default: .string(""))], returns: .number)
+        case "HASTOUCH":
+            try count(0...0)
+            return .hostCall("basic_rt_hastouch", [], returns: .number)
         case "ASYNCVALUE":
             try count(1...1)
             return .hostCall("basic_rt_task_value", [boxed(try lowerExpression(arguments[0]))], returns: .variant)

@@ -33,7 +33,12 @@ private final class TouchHost: BASICHost, BASICTouchControlsHost {
     func printLine(_ text: String) { print(text, terminator: "\n") }
     func readLine(prompt: String) -> String? { nil }
 
-    var touchControlsAvailable: Bool { true }
+    /// Off: the person turned the on-screen controls off, and the screen
+    /// still takes touch.
+    var controlsShown = true
+
+    var touchControlsAvailable: Bool { controlsShown }
+    var hasTouchScreen: Bool { true }
     func placeTouchControl(_ control: BASICTouchControl) { placed.append(control) }
     func removeTouchControl(id: String) { removed.append(id) }
     func clearTouchControls() { clears += 1 }
@@ -67,6 +72,27 @@ struct BASICTouchControlsTests {
         PRINT "done"
         """, on: host)
         #expect(host.output.map { $0.replacingOccurrences(of: " ", with: "") } == ["FALSE0FALSE0", "done"])
+    }
+
+    @Test("HASTOUCH is 1 on a touch screen, controls shown or not, and 0 without one (BASIC-70)")
+    func hasTouch() {
+        let program = """
+        touch = TouchControls()
+        PRINT HASTOUCH; HASTOUCH(); touch.Available
+        IF HASTOUCH THEN PRINT "TAP" ELSE PRINT "CLICK"
+        """
+        let screen = TouchHost()
+        screen.controlsShown = false
+        run(program, on: screen)
+        #expect(screen.output == ["11FALSE", "TAP"])
+
+        let shown = TouchHost()
+        run(program, on: shown)
+        #expect(shown.output == ["11TRUE", "TAP"])
+
+        let terminal = TestHost()
+        run(program, on: terminal)
+        #expect(terminal.output == ["00FALSE", "CLICK"])
     }
 
     @Test("Each kind is placed with its anchor, offsets, size and the gamepad name it reports as")

@@ -25,7 +25,11 @@ struct WasmHostedTests {
     /// The touch screen: what was placed, and a stick held to the right.
     final class Touch: BASICTouchControlsHost, @unchecked Sendable {
         var placed: [BASICTouchControl] = []
-        var touchControlsAvailable: Bool { true }
+        /// Off: the person turned the on-screen controls off, and the screen
+        /// still takes touch.
+        var controlsShown = true
+        var touchControlsAvailable: Bool { controlsShown }
+        var hasTouchScreen: Bool { true }
         func placeTouchControl(_ control: BASICTouchControl) { placed.append(control) }
         func removeTouchControl(id: String) {}
         func clearTouchControls() { placed = [] }
@@ -131,6 +135,24 @@ struct WasmHostedTests {
         #expect(outcome == .finished(0), "\(output)")
         #expect(output == "TRUE\n1TRUEFALSE\n", "\(output)")
         #expect(touch.placed.map(\.id) == ["stick", "fire"])
+    }
+
+    @Test("HASTOUCH is the host's screen, controls shown or not, and 0 without a host (BASIC-70)")
+    func hasTouch() throws {
+        let program = """
+        let touch = TouchControls()
+        print HASTOUCH; HASTOUCH(); touch.Available()
+        if HASTOUCH then print "TAP" else print "CLICK"
+        """
+        let screen = Touch()
+        screen.controlsShown = false
+        let (outcome, output) = try Self.run(program, services: WasmHostServices(touchControls: screen))
+        #expect(outcome == .finished(0), "\(output)")
+        #expect(output == "11FALSE\nTAP\n", "\(output)")
+
+        let (bareOutcome, bare) = try Self.run(program, services: WasmHostServices())
+        #expect(bareOutcome == .finished(0), "\(bare)")
+        #expect(bare == "00FALSE\nCLICK\n", "\(bare)")
     }
 
     @Test("Without a touch screen TouchControls says so and does nothing, as the interpreter's does")

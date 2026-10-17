@@ -2011,7 +2011,7 @@ public struct Parser {
                 let arguments = peek == .leftParen ? try parseArgumentList() : []
                 return .newObject(className, arguments)
             }
-            if (uppercased == "RND" || uppercased == "INKEY$"), peek != .leftParen {
+            if (uppercased == "RND" || uppercased == "INKEY$" || uppercased == "HASTOUCH"), peek != .leftParen {
                 return .functionCall(VariableName(name: name, column: tokens[max(0, current - 1)].column), [])
             }
             if uppercased == "POINT", peek == .leftParen {

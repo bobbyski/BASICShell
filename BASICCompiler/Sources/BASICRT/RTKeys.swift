@@ -722,6 +722,13 @@ public func basic_rt_screen_width() -> Double { Double(rtTerminalSize().columns)
 @_cdecl("basic_rt_screen_height")
 public func basic_rt_screen_height() -> Double { Double(rtTerminalSize().rows) }
 
+/// `HASTOUCH`: 1 when the screen takes touch, as the host says; a terminal
+/// does not (BASIC-70).
+@_cdecl("basic_rt_hastouch")
+public func basic_rt_hastouch() -> Double {
+    RTHosted.hasTouchScreen?() == true ? 1 : 0
+}
+
 /// `LOCATE row, column`: the console host's ANSI positioning.
 @_cdecl("basic_rt_locate")
 public func basic_rt_locate(_ row: Double, _ column: Double) {

@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 322 entry points, by name.
+    /// 323 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -193,6 +193,7 @@ enum RTEntryPoints {
         "basic_rt_gosub_pop": RTEntryPoint(arity: 0) { a in Double(basic_rt_gosub_pop()) },
         "basic_rt_gosub_push": RTEntryPoint(arity: 1) { a in basic_rt_gosub_push(Int(a[0])); return 0 },
         "basic_rt_handler_register": RTEntryPoint(arity: 2) { a in basic_rt_handler_register(unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[0])), to: UnsafePointer<CChar>.self), WasmCallbacks.trampoline(.ptrVoid, forTableIndex: a[1])); return 0 },
+        "basic_rt_hastouch": RTEntryPoint(arity: 0) { a in basic_rt_hastouch() },
         "basic_rt_hcs": RTEntryPoint(arity: 1) { a in basic_rt_hcs(a[0]) },
         "basic_rt_hsn": RTEntryPoint(arity: 1) { a in basic_rt_hsn(a[0]) },
         "basic_rt_htn": RTEntryPoint(arity: 1) { a in basic_rt_htn(a[0]) },
