@@ -509,9 +509,8 @@ struct GameDemoTests {
         studio.model.touchControls.touchMoved(finger, to: CGPoint(x: frame.midX + CGFloat(x) * frame.width / 2, y: frame.midY + CGFloat(y) * frame.width / 2), in: screen)
     }
 
-    @Test("Every game places its touch controls, and takes them away when it ends", arguments: [
+    @Test("Every game with on-screen controls places them, and takes them away when it ends (Brick Breaker and Scorch have none)", arguments: [
         ("roids", ["stick", "fire", "jump", "pause"]),
-        ("brick-breaker", ["stick", "launch", "pause"]),
         ("electric-storm", ["wheel", "fire", "zap", "pause"]),
         ("incoming", ["stick", "fire", "silo1", "silo2", "silo3", "pause"]),
         ("munchies", ["pad", "pause"]),
@@ -519,7 +518,6 @@ struct GameDemoTests {
         ("protector", ["stick", "fire", "bomb", "hyper", "pause"]),
         ("outatime", ["stick", "fire", "pause"]),
         ("soft-landing", ["stick", "thrust", "pause"]),
-        ("scorch", ["menu"]),
     ])
     func touchControlsPlaced(game: String, controls: [String]) async throws {
         let studio = StudioHarness()
@@ -701,26 +699,28 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
     }
 
-    @Test("Brick Breaker by touch: a lean on the stick slides the paddle, and Launch serves")
-    func brickBreakerByTouch() async throws {
+    /// Brick Breaker has no on-screen controls: on a touch screen a finger is
+    /// the mouse, so a drag steers and lifting the finger serves.
+    @Test("Brick Breaker by finger: no on-screen controls, a drag slides the paddle, and lifting the finger serves")
+    func brickBreakerByFinger() async throws {
         let studio = StudioHarness()
         let example = try #require(studio.model.bundledExamples.first { $0.path == "games/brick-breaker" })
         studio.model.loadBundledExample(example)
         var sent = ""
         studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
         studio.model.runEditorProgram()
-        try await studio.waitUntil("the paddle") { sent.contains("id=paddle,") && !studio.model.touchControls.isEmpty }
+        try await studio.waitUntil("the paddle") { sent.contains("id=paddle,") }
+        #expect(studio.model.touchControls.isEmpty)
 
         let start = try #require(Self.lastX(of: "paddle", in: sent))
-        try Self.touch(studio, "stick", finger: 1)
-        try Self.slide(studio, "stick", finger: 1, x: -0.5, y: 0)
-        try await studio.waitUntil("the paddle to slide left") { (Self.lastX(of: "paddle", in: sent) ?? start) < start - 30 }
-        studio.model.touchControls.touchEnded(1)
-
         let balls = sent.components(separatedBy: "id=ball,").count
-        try Self.touch(studio, "launch", finger: 2)
-        studio.model.touchControls.touchEnded(2)
+        studio.model.postVTGMouseEvent(subtype: "DOWN", x: Double(start + 40), y: 600, button: 0, buttons: 1, duration: 0.05)
+        try await Task.sleep(for: .milliseconds(100))
+        studio.model.postVTGMouseEvent(subtype: "MOVE", x: Double(start - 160), y: 600, button: 0, buttons: 1, duration: 0.1)
+        try await studio.waitUntil("the paddle to slide left") { (Self.lastX(of: "paddle", in: sent) ?? start) < start - 30 }
+        studio.model.postVTGMouseEvent(subtype: "UP", x: Double(start - 160), y: 600, button: 0, buttons: 0, duration: 0.2)
         try await studio.waitUntil("the ball to fly") { sent.components(separatedBy: "id=ball,").count > balls + 5 }
+        #expect(studio.model.touchControls.isEmpty)
 
         studio.model.handleTerminalInput([.append("q")])
         try await studio.waitUntilStopped(timeout: .seconds(20))
