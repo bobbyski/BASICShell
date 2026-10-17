@@ -63,7 +63,14 @@ public struct SourceLoader {
 
     private func parse(_ lines: [ProgramLine]) throws -> [ParsedLine] {
         do {
-            return try ProgramParser.parse(lines)
+            // `OPTION CLASSIC` changes how the program is lexed, so it is found
+            // by looking at the source before any of it is parsed -- the same
+            // scan the interpreter does, from the same place, so a listing
+            // means one thing to both.
+            let classic = BASICClassicMode.isRequested(
+                in: lines.map(\.source).joined(separator: "\n")
+            )
+            return try ProgramParser.parse(lines, classic: classic)
         } catch let failure as ProgramParser.Failure {
             throw CompileError([
                 Diagnostic(severity: .error, file: failure.fileName, line: failure.lineNumber, message: failure.error.description)

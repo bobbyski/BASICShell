@@ -1102,6 +1102,8 @@ final class FunctionBuilder {
             substitutesStrings = enabled
         case .optionLetMode:
             break  // Resolved by the analyzer for the whole program.
+        case .optionClassic:
+            break  // Applied by the scan that ran before the source was lexed.
         case .optionKeyMode(let mode):
             emit(.keyMode(mode == .ibm ? 1 : 0))
         case .optionEval(let fullAccess):

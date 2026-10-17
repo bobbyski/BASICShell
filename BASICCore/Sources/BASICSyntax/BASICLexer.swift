@@ -7,16 +7,23 @@ public struct Lexer {
     private let source: String
     private var index: String.Index
     private var atStatementStart = true
+    /// Whether the program asked to be read as a 1970s listing (OPTION CLASSIC).
+    private let classic: Bool
+    /// Whether the token just produced was a number, which is the only place a
+    /// crunched keyword can appear.
+    private var afterNumber = false
 
-    public init(source: String) {
+    public init(source: String, classic: Bool = false) {
         self.source = source
         self.index = source.startIndex
+        self.classic = classic
     }
 
     public mutating func tokenize() throws -> [LexedToken] {
         var tokens: [LexedToken] = []
         while let token = try nextToken() {
             tokens.append(token)
+            if case .number = token.token { afterNumber = true } else { afterNumber = false }
             if token.token == .eof { break }
         }
         return tokens
@@ -175,6 +182,20 @@ public struct Lexer {
         return emit(forceInterpolated ? .interpolatedString(value) : .string(value), column: column)
     }
 
+    /// The keyword `name` begins with, when a 1970s listing crunched one onto
+    /// the end of a number. `TOQ1` is `TO` and `Q1`; `TOTAL` is just `TOTAL`,
+    /// because a keyword only counts when something follows it that could
+    /// start an operand.
+    static func crunchedKeyword(at name: String) -> String? {
+        let upper = name.uppercased()
+        for keyword in BASICClassicMode.crunchable where upper.hasPrefix(keyword) {
+            let rest = upper.dropFirst(keyword.count)
+            guard !rest.isEmpty else { return nil }   // the whole word *is* the keyword
+            return keyword
+        }
+        return nil
+    }
+
     private mutating func scanIdentifier() -> LexedToken {
         let start = index
         let column = self.column
@@ -184,7 +205,15 @@ public struct Lexer {
         if index < source.endIndex, source[index] == "$" || source[index] == "%" || source[index] == "#" {
             advance()
         }
-        let name = String(source[start..<index])
+        var name = String(source[start..<index])
+        // `1TO3` lexes as the number 1 and then the identifier `TO3`. Under
+        // OPTION CLASSIC, split the keyword back off -- but only here, right
+        // after a number, because `TOTAL` is a perfectly good name and only a
+        // 1970s listing writes `TO` with no space in front of it.
+        if classic, afterNumber, let keyword = Self.crunchedKeyword(at: name) {
+            index = source.index(start, offsetBy: keyword.count)
+            name = keyword
+        }
         if atStatementStart, name.uppercased() == "REM" {
             index = source.endIndex
         }

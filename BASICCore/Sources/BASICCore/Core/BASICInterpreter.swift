@@ -5,6 +5,14 @@ import Darwin
 
 public final class BASICInterpreter {
     private let program: BASICProgram
+    /// Whether this program asked to be read as a 1970s listing.
+    ///
+    /// Worked out once, from the source, because `OPTION CLASSIC` changes how
+    /// the program is *lexed* -- so it has to be known before the first token
+    /// exists, which is earlier than any statement can run.
+    private lazy var classic: Bool = BASICClassicMode.isRequested(
+        in: program.orderedLines.map(\.source).joined(separator: "\n")
+    )
     private weak var host: BASICHost?
     /// Resolved once so the per-statement trace hook does not repeat a dynamic cast.
     private weak var loggingHost: (any BASICLoggingHost)?
@@ -145,18 +153,18 @@ public final class BASICInterpreter {
         for (index, line) in rootLines.enumerated() {
             do {
                 if insideEnum {
-                    var member = try Parser(source: line.source)
+                    var member = try Parser(source: line.source, classic: classic)
                     if member.parseEndEnum() { insideEnum = false; continue }
                     var next = 0
                     _ = try member.parseEnumCase(next: &next)
                     continue
                 }
-                var enumHeaderParser = try Parser(source: line.source)
+                var enumHeaderParser = try Parser(source: line.source, classic: classic)
                 if enumHeaderParser.parseEnumHeader() != nil {
                     insideEnum = true
                     continue
                 }
-                var closureHeaderParser = try Parser(source: line.source)
+                var closureHeaderParser = try Parser(source: line.source, classic: classic)
                 if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     continue
                 }
@@ -164,7 +172,7 @@ public final class BASICInterpreter {
                 // statement it is part of; the whole is checked when the
                 // program is parsed.
                 if ProgramParser.endFunctionTail(line.source) != nil { continue }
-                var parser = try Parser(source: line.source)
+                var parser = try Parser(source: line.source, classic: classic)
                 var opensClosure = false
                 parser.blockClosureBody = { opensClosure = true; return ([], "") }
                 do {
@@ -350,7 +358,7 @@ public final class BASICInterpreter {
     private func parsedProgramLines(from sourceLines: [ProgramLine]) throws -> [ParsedLine] {
         lastParseErrorLocation = nil
         do {
-            return try ProgramParser.parse(sourceLines)
+            return try ProgramParser.parse(sourceLines, classic: classic)
         } catch let failure as ProgramParser.Failure {
             lastParseErrorLocation = (failure.fileName, failure.lineNumber)
             throw failure.error
@@ -496,18 +504,18 @@ public final class BASICInterpreter {
             let parsedStatement: Statement
             do {
                 if insideEnum {
-                    var member = try Parser(source: line.source)
+                    var member = try Parser(source: line.source, classic: classic)
                     if member.parseEndEnum() { insideEnum = false }
                     expanded.append(line)
                     continue
                 }
-                var enumHeaderParser = try Parser(source: line.source)
+                var enumHeaderParser = try Parser(source: line.source, classic: classic)
                 if enumHeaderParser.parseEnumHeader() != nil {
                     insideEnum = true
                     expanded.append(line)
                     continue
                 }
-                var closureHeaderParser = try Parser(source: line.source)
+                var closureHeaderParser = try Parser(source: line.source, classic: classic)
                 if try closureHeaderParser.parseClosureBlockAssignmentHeader() != nil {
                     expanded.append(line)
                     continue
@@ -516,7 +524,7 @@ public final class BASICInterpreter {
                     expanded.append(line)
                     continue
                 }
-                var parser = try Parser(source: line.source)
+                var parser = try Parser(source: line.source, classic: classic)
                 var opensClosure = false
                 parser.blockClosureBody = { opensClosure = true; return ([], "") }
                 do {
@@ -1518,6 +1526,11 @@ public final class BASICInterpreter {
             return .next
         case .optionKeyMode(let mode):
             runtime.keyMode = mode
+            return .next
+        case .optionClassic:
+            // Nothing to do: the scan before lexing already applied it. The
+            // case exists so the statement is not an error, and so a reader
+            // of this switch is not left wondering where it went.
             return .next
         case .optionEventInput(let type, let mode):
             switch type.uppercased() {
@@ -7344,7 +7357,7 @@ public final class BASICInterpreter {
                 guard !source.isEmpty else {
                     throw BASICError.runtime("Empty string interpolation")
                 }
-                var parser = try Parser(source: source)
+                var parser = try Parser(source: source, classic: classic)
                 output += try evaluate(parser.parseExpressionOnly()).description
                 index = template.index(after: expressionEnd)
             } else {

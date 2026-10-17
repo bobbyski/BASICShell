@@ -19,11 +19,16 @@ public struct Parser {
     /// A runtime error points its caret here.
     public private(set) var statementColumns: [Int] = []
 
-    public init(source: String) throws {
+    public init(source: String, classic: Bool = false) throws {
         self.source = source
-        var lexer = Lexer(source: source)
+        self.classic = classic
+        var lexer = Lexer(source: source, classic: classic)
         self.tokens = try lexer.tokenize()
     }
+
+    /// Whether the program asked to be read as a 1970s listing. Found by
+    /// scanning the source before any of it is lexed -- see ``BASICClassicMode``.
+    private let classic: Bool
 
     public mutating func parseStatement() throws -> Statement {
         var statements: [Statement] = []
@@ -1707,6 +1712,12 @@ public struct Parser {
             guard match(.minus), matchIdentifier("LET") else { throw syntax("Expected LOCAL-LET") }
             return .optionLetMode(.local)
         }
+        // Consumed by the scan that ran before lexing, so there is nothing left
+        // to do at run time -- but it still has to parse, or the line that
+        // turns classic mode on would be a syntax error in classic mode.
+        if matchIdentifier("CLASSIC") {
+            return .optionClassic
+        }
         if matchIdentifier("IBM") {
             guard match(.minus), matchIdentifier("KEYS") else { throw syntax("Expected IBM-KEYS") }
             return .optionKeyMode(.ibm)
@@ -1749,7 +1760,7 @@ public struct Parser {
             if matchIdentifier("KEEP") { return .optionGraphicsOnStop(.keep) }
             throw syntax("Expected HIDE, CLEAR, or KEEP after OPTION GRAPHICS-ON-STOP")
         }
-        throw syntax("Expected GLOBAL-LET, LOCAL-LET, IBM-KEYS, AIBASIC-KEYS, MOUSE, GAMEPAD, SHELLMODE, STRINGSUB, or GRAPHICS-ON-STOP")
+        throw syntax("Expected GLOBAL-LET, LOCAL-LET, CLASSIC, IBM-KEYS, AIBASIC-KEYS, MOUSE, GAMEPAD, SHELLMODE, STRINGSUB, or GRAPHICS-ON-STOP")
     }
 
     private mutating func parseEventInputMode(optionName: String) throws -> BASICEventInputMode {

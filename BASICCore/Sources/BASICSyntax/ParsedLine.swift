@@ -134,7 +134,12 @@ public enum ProgramParser {
         }
     }
 
-    public static func parse(_ sourceLines: [ProgramLine]) throws -> [ParsedLine] {
+    /// Parses a program.
+    ///
+    /// `classic` reads it as a 1970s listing (`OPTION CLASSIC`). It is passed
+    /// in rather than discovered here because it has to be known before the
+    /// first line is lexed -- see ``BASICClassicMode``.
+    public static func parse(_ sourceLines: [ProgramLine], classic: Bool = false) throws -> [ParsedLine] {
         var parsed: [ParsedLine] = []
         var index = 0
 
@@ -149,7 +154,7 @@ public enum ProgramParser {
             while index < sourceLines.count {
                 let bodyLine = sourceLines[index]
                 if let tail = endFunctionTail(bodyLine.source) { return (body, tail) }
-                var parser = try Parser(source: bodyLine.source)
+                var parser = try Parser(source: bodyLine.source, classic: classic)
                 parser.blockClosureBody = closureBody
                 let statement: Statement
                 do {
@@ -176,7 +181,7 @@ public enum ProgramParser {
             // its own is indistinguishable from a mistyped assignment unless
             // something knows it is inside an ENUM. Doing it here keeps every
             // line of the statement parser context-free.
-            var enumParser = try Parser(source: line.source)
+            var enumParser = try Parser(source: line.source, classic: classic)
             if let name = enumParser.parseEnumHeader() {
                 var cases: [EnumCase] = []
                 var next = 0
@@ -184,7 +189,7 @@ public enum ProgramParser {
                 index += 1
                 while index < sourceLines.count {
                     let member = sourceLines[index]
-                    var parser = try Parser(source: member.source)
+                    var parser = try Parser(source: member.source, classic: classic)
                     if parser.parseEndEnum() { foundEnd = true; break }
                     do {
                         if let parsed = try parser.parseEnumCase(next: &next) { cases.append(parsed) }
@@ -211,7 +216,7 @@ public enum ProgramParser {
                 continue
             }
 
-            var headerParser = try Parser(source: line.source)
+            var headerParser = try Parser(source: line.source, classic: classic)
             let header: (
                 kind: AssignmentKind,
                 variable: VariableName,
@@ -251,7 +256,7 @@ public enum ProgramParser {
                 continue
             }
 
-            var parser = try Parser(source: line.source)
+            var parser = try Parser(source: line.source, classic: classic)
             parser.blockClosureBody = closureBody
             let lineIndex = index
             let statement: Statement
