@@ -37,6 +37,7 @@
 		2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */; };
 		2F95A6FE16BD16C9A9F52D18 /* BASICDialectSwift in Frameworks */ = {isa = PBXBuildFile; productRef = C7A5AA02073F5A9A05DABF68 /* BASICDialectSwift */; };
 		3603E7F7922B3EDD3F53A883 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 50B80D301CFFA94A39A1AF20 /* DocumentArchive */; };
+		364D15018A3456474CC0A498 /* StudioNativeTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */; };
 		38BC0F614387753C63AE3A59 /* BASICWasm in Frameworks */ = {isa = PBXBuildFile; productRef = 5684BD2596BD155DEDDD9A70 /* BASICWasm */; };
 		3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */; };
 		3B6F98A8E6619180E076838C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3F0871282F50834880A591A8 /* Assets.xcassets */; };
@@ -104,6 +105,7 @@
 		A701F0C2F75FDF8FEA13549B /* MenuCommandModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */; };
 		A8470ACA95FAAF6F6965D979 /* ProgramOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACC7CFD223C108DE3CC1965C /* ProgramOutline.swift */; };
 		A84D9C63ACA6E0B650C89872 /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
+		A8EB42469CCB385BFB9A4CC0 /* StudioNativeTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */; };
 		A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */; };
 		A9C6CFD8E69D5E5DFC3ADA85 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AC284E6E044D7E8065A2092A /* ActiveUIMarkdown in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -206,6 +208,7 @@
 		011AFAC86C3D24E2C652443E /* ActiveUICode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICode; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICode; sourceTree = SOURCE_ROOT; };
 		06907C91BE30059002468268 /* RecentItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentItems.swift; sourceTree = "<group>"; };
 		07493ECB2C4F3DCE36970EE6 /* BASICCompiler */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCompiler; path = ../BASICCompiler; sourceTree = SOURCE_ROOT; };
+		1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioNativeTerminal.swift; sourceTree = "<group>"; };
 		1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioHostFlags.swift; sourceTree = "<group>"; };
 		1EB2534D1B03D7BFF565C132 /* SwiftTerm */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTerm; path = ../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm; sourceTree = SOURCE_ROOT; };
 		20D23305654DCC7C771397BA /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
@@ -432,6 +435,7 @@
 				A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */,
 				6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */,
 				338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */,
+				1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */,
 				5472221B9FB79FDAA9BB355A /* StudioSettings.swift */,
 				C5330F694E45075A8E70C411 /* StudioSound.swift */,
 				FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */,
@@ -673,6 +677,7 @@
 				CB4C8857336B27C3D4574089 /* StudioLaunchOptions.swift in Sources */,
 				3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */,
 				693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */,
+				A8EB42469CCB385BFB9A4CC0 /* StudioNativeTerminal.swift in Sources */,
 				CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */,
 				C1D294560A121336FE4AAF4D /* StudioShellModel.swift in Sources */,
 				093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */,
@@ -731,6 +736,7 @@
 				EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */,
 				2AC255094C828E26892B4697 /* StudioModel.swift in Sources */,
 				74E30F5278F0970FD4856435 /* StudioModelHostConformance.swift in Sources */,
+				364D15018A3456474CC0A498 /* StudioNativeTerminal.swift in Sources */,
 				FD6F88DDA2245FADC64D7A83 /* StudioSettings.swift in Sources */,
 				A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */,
 				4D62081D908243760D673386 /* StudioSound.swift in Sources */,
