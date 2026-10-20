@@ -78,6 +78,14 @@ final class StudioModel: ObservableObject {
     var jitProcess: Never?
     #endif
     var jitInput: Pipe?
+    #if os(macOS)
+    /// A compiled program on a pseudo-terminal, while it runs.
+    ///
+    /// A ⚡ LLVM run is given a terminal rather than a pipe, because the
+    /// compiled runtime asks its terminal whether it can draw and a pipe
+    /// never answers. See ``StudioNativeRun``.
+    var nativeRun: StudioNativeRun?
+    #endif
     @Published var isConsoleOverwriteMode = false
     @Published var areGraphicsLayersVisible = true
     /// Hide the graphics when a program stops on a break or an error, so the
@@ -285,6 +293,11 @@ final class StudioModel: ObservableObject {
 
     let graphics = GraphicsFramebuffer()
     var vtgDataSink: ((Data) -> Void)?
+    /// Raw terminal bytes for the console's terminal to parse — text, ANSI
+    /// and VTG alike, as they arrived. What a program on a pseudo-terminal
+    /// writes goes here rather than through the console's text buffer, so the
+    /// bytes reach the parser exactly as VGTerm's do.
+    var terminalByteSink: (([UInt8]) -> Void)?
     /// The program's VTG commands reach the console a frame at a time
     /// (`StudioVTGFrameQueue`).
     private lazy var vtgOutput: ClosureVTGOutput = {

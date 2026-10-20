@@ -102,47 +102,35 @@ extension StudioModel {
             BASICTUIApplications.stopAll()
         }
         #if os(macOS)
+        nativeRun?.stop()
         jitProcess?.terminate()
         #endif
     }
 
     private func start(binary: String) {
         #if os(macOS)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        let output = Pipe()
-        let input = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        process.standardInput = input
-
-        // Read as it comes rather than at the end, so a long program shows
-        // its work the way an interpreted one does.
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            let text = String(decoding: data, as: UTF8.self)
-            Task { @MainActor in self?.appendJITOutput(text) }
-        }
-
-        process.terminationHandler = { [weak self] finished in
-            output.fileHandleForReading.readabilityHandler = nil
-            let status = finished.terminationStatus
-            Task { @MainActor in
-                self?.finishJITRun(status: status, binary: binary)
+        // On a pseudo-terminal, not a pipe.
+        //
+        // The compiled runtime finds out whether it can draw by asking: it
+        // writes VTG's `capabilities?` and waits for the terminal to answer.
+        // A pipe answers nothing, so `RTHostCanvas.probe()` came back nil and
+        // the first `vtg.` call died with "VectorTerminal graphics are not
+        // supported by this host" — on a console that is a VectorTerminalView
+        // and could have answered all along. It is the same view, and the
+        // same SwiftTerm, that VGTerm gives BASICShell; only the terminal
+        // between the two was missing. See ``StudioNativeRun``.
+        let size = tuiScreenSize
+        let run = StudioNativeRun(
+            output: { [weak self] bytes in
+                self?.terminalByteSink?(bytes)
+            },
+            finished: { [weak self] status in
+                self?.finishJITRun(status: status ?? 0, binary: binary)
             }
-        }
-
-        do {
-            try process.run()
-        } catch {
-            appendJITOutput("JIT: \(error)\n")
-            appendJITOutput(prompt)
-            BASICJIT.discard(binary: binary)
-            return
-        }
-        jitProcess = process
-        jitInput = input
+        )
+        nativeRun = run
+        run.resized(columns: size.width, rows: size.height)
+        run.start(binary: binary)
         isJITRunning = true
         #else
         // Unreachable: `BASICJIT.compile` builds nothing on iOS.
@@ -154,6 +142,9 @@ extension StudioModel {
     private func finishJITRun(status: Int32, binary: String) {
         jitProcess = nil
         jitInput = nil
+        #if os(macOS)
+        nativeRun = nil
+        #endif
         isJITRunning = false
         if status != 0 {
             appendJITOutput("JIT: exited with status \(status)\n")
@@ -169,6 +160,15 @@ extension StudioModel {
             submitCompiledRunLine(line)
             return
         }
+        #if os(macOS)
+        // On a pseudo-terminal the program reads its own terminal, so a line
+        // goes in as typed — with a carriage return, which is what a terminal
+        // sends for Return.
+        if let run = nativeRun {
+            run.send(ArraySlice(Array((line + "\r").utf8)))
+            return
+        }
+        #endif
         guard let input = jitInput else { return }
         input.fileHandleForWriting.write(Data((line + "\n").utf8))
     }

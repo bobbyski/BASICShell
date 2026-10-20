@@ -587,6 +587,11 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         updateLiveVTGCellSize()
         terminalView.notifyVTGResizeIfNeeded()
         postResizeEventIfNeeded(width: canvas.width, height: canvas.height)
+        #if os(macOS)
+        // A program on a pseudo-terminal learns its size from the terminal,
+        // so the pty has to be told before its next TIOCGWINSZ.
+        model?.nativeRun?.resized(columns: newCols, rows: newRows)
+        #endif
     }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -596,6 +601,14 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
             Task { @MainActor [weak self] in
                 self?.feedVTG(data)
             }
+        }
+        // A program on a pseudo-terminal writes one stream, and the terminal
+        // is what separates text from graphics — the same parser VGTerm feeds.
+        model.terminalByteSink = { [weak self] bytes in
+            guard let self else { return }
+            self.terminalView.feed(byteArray: bytes[...])
+            self.updateLiveVTGCellSize()
+            self.invalidateVTGDisplay()
         }
     }
 
@@ -800,6 +813,18 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
     }
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        #if os(macOS)
+        // A compiled program on a pseudo-terminal gets the bytes whole and
+        // first: its keys, and the VTG and mouse reports it is waiting on.
+        // `droppingTerminalReports` below would throw those answers away,
+        // which for the interpreter is right — nothing is waiting for them —
+        // and for a program that asked a question is the question going
+        // unanswered.
+        if let run = model?.nativeRun {
+            run.send(data)
+            return
+        }
+        #endif
         if let driver = model?.activeTUIDriver {
             driver.incoming.yield(.bytes(Array(data)))
             return

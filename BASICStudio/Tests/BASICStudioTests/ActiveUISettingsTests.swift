@@ -42,14 +42,14 @@ struct ActiveUISettingsTests {
         #expect(SettingsAUI.snapped(262, step: 100, from: 200) == 300)
     }
 
-    @Test("S1 · Settings is the modern, resizable window: a sidebar of four pages, Editor among them")
+    @Test("S1 · Settings is the modern, resizable window: a sidebar of six pages, General first")
     func modernWindow() {
         let settings = SettingsAUI(model: StudioHarness().model, installedFamilies: [])
         let window = AUIPreferencesWindow.shared
         settings.install(in: window)
         #expect(window.style == .modern)
         #expect(window.allowsResizing == true)
-        #expect(window.pages.map(\.title) == ["Prompt", "Editor", "Font", "Console", "Storage"])
+        #expect(window.pages.map(\.title) == ["General", "Prompt", "Editor", "Font", "Console", "Storage"])
         // Wide enough that the prompt editor, which needs a page's full
         // width, opens unclipped beside the widest sidebar.
         #expect(window.contentSize.width >= SettingsAUI.pageWidth + 2 * 16 + 280)
