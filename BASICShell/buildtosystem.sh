@@ -481,6 +481,31 @@ if [ -n "$COMPILER_BIN" ]; then
     done
     $SUDO cp "$COMPILER_BIN/libBASICRTHost.a" "$PREFIX/lib/libBASICRTHost.a"
     $SUDO chmod 644 "$PREFIX/lib/libBASICRTHost.a"
+
+    # The dynamic libraries the archive does not contain, beside the archive.
+    #
+    # `RuntimeLibrary.dynamicLinkArguments` reads the directory the archive is
+    # in and builds `-L<dir> -l<each>` plus an rpath to the same place. In a
+    # build tree the archive sits beside the dylibs and that is free; installed,
+    # it only holds if they are put there. Without them the list comes back
+    # empty, nothing resolves TUIKit, RichSwift or VectorTerminalSDK, and every
+    # link fails on undefined symbols — whether or not the program mentions a
+    # TUI, because `libBASICRTHost.a` references them itself.
+    #
+    # These are the compiler's own copies, not the shell's. The two packages
+    # build their own, the files differ, and each consumer has to link the ones
+    # it was built against: the shell loads the set beside it in BIN_DIR, and a
+    # compiled program loads this set through the rpath basicc gives it.
+    for dylib in "$COMPILER_BIN"/*.dylib; do
+        [ -f "$dylib" ] || continue
+
+        name="$(basename "$dylib")"
+        grep -aq "$name" "$COMPILER_BIN/basicc" || continue
+
+        $SUDO cp "$dylib" "$PREFIX/lib/.$name.new"
+        $SUDO chmod 755 "$PREFIX/lib/.$name.new"
+        $SUDO mv -f "$PREFIX/lib/.$name.new" "$PREFIX/lib/$name"
+    done
     $SUDO rm -rf "$PREFIX/share/basicc/BASICRT" "$PREFIX/share/basicc/BASICRTHostStubs" "$PREFIX/share/basicc/BASICSound"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRT" "$PREFIX/share/basicc/BASICRT"
     $SUDO cp -R "$COMPILER_DIR/Sources/BASICRTHostStubs" "$PREFIX/share/basicc/BASICRTHostStubs"
