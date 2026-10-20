@@ -37,6 +37,7 @@ final class SettingsAUI {
     let editorPage: AUIView
     let fontPage: AUIView
     let consolePage: AUIView
+    let generalPage: AUIView
     let storagePage: AUIView
     let cloudSwitch: AUISwitch
     let cloudStatusLabel: AUILabel
@@ -126,7 +127,10 @@ final class SettingsAUI {
         compiledGroup.addRow(SettingsViewModel.compiledRunTargetTitle,
                              description: SettingsViewModel.compiledRunTargetNote,
                              accessory: compiledRunPicker)
-        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote), graphicsGroup, compiledGroup])
+        // Running programs is General's, not Console's: it decides what ▶ and
+        // ⚡ do, not how the console behaves.
+        generalPage = Self.page([compiledGroup])
+        consolePage = Self.page([scrollbackGroup, Self.note(SettingsViewModel.scrollbackNote), graphicsGroup])
 
         // Editor: what Studio takes from FreebirdStudio's Editing and Display
         // pages, which drive the same SwiftyCodeEditor. What it leaves out,
@@ -267,10 +271,11 @@ final class SettingsAUI {
         window.contentSize = Self.windowSize
         let tabs = SettingsViewModel.tabs
         let pages: [(title: String, symbol: String, page: AUIView)] = [
-            (tabs[0].title, tabs[0].symbol, promptEditor.root),
+            (tabs[0].title, tabs[0].symbol, generalPage),
+            (tabs[1].title, tabs[1].symbol, promptEditor.root),
             ("Editor", "square.and.pencil", editorPage),
-            (tabs[1].title, tabs[1].symbol, fontPage),
-            (tabs[2].title, tabs[2].symbol, consolePage),
+            (tabs[2].title, tabs[2].symbol, fontPage),
+            (tabs[3].title, tabs[3].symbol, consolePage),
             ("Storage", "icloud", storagePage),
         ]
         for entry in pages {

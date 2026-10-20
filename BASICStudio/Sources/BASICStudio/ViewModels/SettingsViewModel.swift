@@ -28,6 +28,10 @@ struct SettingsViewModel: Equatable {
     }
 
     static let tabs = [
+        // What a program runs on belongs here rather than under Console: it
+        // decides what ▶ and ⚡ do, which has nothing to do with the console
+        // they happen to print into (Bobby, 2026-10-19).
+        Tab(title: "General", symbol: "gearshape"),
         // Named for what it is: the prompt, and nothing else (Bobby, 2026-10-10).
         Tab(title: "Prompt", symbol: "chevron.right.square"),
         Tab(title: "Font", symbol: "textformat"),
