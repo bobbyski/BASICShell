@@ -340,6 +340,44 @@ enum RTKeys {
         return readKey()
     }
 
+    /// Whether the terminal has anything waiting, asked as cheaply as it can
+    /// be: one `select`, no mode changes.
+    ///
+    /// `withRawTerminal` costs a `tcgetattr`, two `tcsetattr`s and two
+    /// `fcntl`s every time it is entered. Between statements that is far too
+    /// much to pay for the usual answer, which is "nothing has arrived".
+    private static func hasInputWaiting() -> Bool {
+        let fd = STDIN_FILENO
+        guard isatty(fd) == 1 else { return false }
+        var readSet = fd_set()
+        fdSet(fd, &readSet)
+        var timeout = timeval(tv_sec: 0, tv_usec: 0)
+        return select(fd + 1, &readSet, nil, nil, &timeout) > 0
+    }
+
+    /// Reads whatever the terminal has waiting: events are posted, keys are
+    /// kept for `INKEY$`.
+    ///
+    /// A compiled program's only reader is `readKey`, which runs when the
+    /// program asks for a key. So a program that registers `ON MOUSE … CALL`
+    /// and then loops without reading one never touches stdin, and the mouse
+    /// reports sit in the buffer unread — the program runs perfectly and the
+    /// mouse does nothing. A hosted run does not have this problem because
+    /// its host fills `RTHosted.collectEvents`; a terminal run had nobody,
+    /// and this is that.
+    ///
+    /// Keys are not swallowed: they go to `kept`, which `inkey` empties
+    /// before it reads the terminal, so a keystroke that arrives while
+    /// draining for the mouse is still the next key the program gets.
+    static func collectTerminalEvents() {
+        guard RTEvents.wantsHostInput, hasInputWaiting() else { return }
+        while true {
+            let key = readKey()
+            guard !key.isEmpty else { return }
+            kept.append(key)
+        }
+    }
+
     /// Keys read past while looking for a trapped one (`ON KEY`), waiting
     /// for `INKEY$` and `INPUT$`, in order.
     nonisolated(unsafe) static var kept: [String] = []
@@ -757,4 +795,14 @@ public func basic_rt_line_input_field(_ prompt: UnsafeMutableRawPointer?, _ exit
 @_cdecl("basic_rt_line_input_exit_key")
 public func basic_rt_line_input_exit_key() -> UnsafeMutableRawPointer {
     rtOwned(RTKeys.lastExitKey)
+}
+
+
+/// The terminal drain, for the host to install as `RTHosted.collectEvents`.
+///
+/// `RTKeys` is internal to this module, so the host reaches it the way it
+/// reaches the rest of the runtime.
+@_cdecl("basic_rt_collect_terminal_events")
+public func basic_rt_collect_terminal_events() {
+    RTKeys.collectTerminalEvents()
 }

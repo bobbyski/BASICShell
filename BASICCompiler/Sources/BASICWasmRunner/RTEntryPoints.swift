@@ -20,7 +20,7 @@ public struct RTEntryPoint: Sendable {
 public typealias WasmEntryPoint = RTEntryPoint
 
 enum RTEntryPoints {
-    /// 323 entry points, by name.
+    /// 324 entry points, by name.
     static let table: [String: RTEntryPoint] = [
         "basic_rt_acs": RTEntryPoint(arity: 1) { a in basic_rt_acs(a[0]) },
         "basic_rt_array_assign": RTEntryPoint(arity: 3) { a in basic_rt_array_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1])), unsafeBitCast(UnsafePointer<CChar>(bitPattern: UInt(a[2])), to: UnsafePointer<CChar>.self)); return 0 },
@@ -68,6 +68,7 @@ enum RTEntryPoints {
         "basic_rt_closure_retain": RTEntryPoint(arity: 1) { a in basic_rt_closure_retain(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))); return 0 },
         "basic_rt_closure_text": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_closure_text(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_cls": RTEntryPoint(arity: 0) { a in basic_rt_cls(); return 0 },
+        "basic_rt_collect_terminal_events": RTEntryPoint(arity: 0) { a in basic_rt_collect_terminal_events(); return 0 },
         "basic_rt_composite_assign": RTEntryPoint(arity: 2) { a in basic_rt_composite_assign(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), UnsafeMutableRawPointer(bitPattern: UInt(a[1]))); return 0 },
         "basic_rt_composite_copy": RTEntryPoint(arity: 1) { a in Double(UInt(bitPattern: basic_rt_composite_copy(UnsafeMutableRawPointer(bitPattern: UInt(a[0]))))) },
         "basic_rt_composite_get_array": RTEntryPoint(arity: 2) { a in Double(UInt(bitPattern: basic_rt_composite_get_array(UnsafeMutableRawPointer(bitPattern: UInt(a[0])), Int(a[1])))) },

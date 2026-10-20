@@ -43,12 +43,18 @@ enum RTHostVTG {
             canvas.enableMouseReporting(mode: "all")
             FileHandle.standardOutput.write(Data("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h".utf8))
         }
+        // Who reads the terminal between statements. Without this the only
+        // reader is the key path, so a program that asks for mouse events and
+        // then loops without reading a key never sees one. A hosted run has
+        // its host here instead, and never reaches this line.
+        RTHosted.collectEvents = { basic_rt_collect_terminal_events() }
         pollingEnabled = true
     }
 
     static func stopPolling() {
         guard pollingEnabled else { return }
         pollingEnabled = false
+        RTHosted.collectEvents = nil
         // The Shell's stopVectorTerminalEventPolling: mouse reporting off
         // (VTG and ANSI), resize events off, then the terminal restored.
         RTHostCanvas.canvas?.disableMouseReporting()
@@ -371,6 +377,9 @@ public func basic_rt_host_gfx_finish() {
 /// Mouse reporting: what the Shell turns on when a program registers an
 /// `ON MOUSE … CALL` handler — the VTG stream and the ANSI modes together.
 @_silgen_name("basic_rt_events_wants_mouse") func basic_rt_events_wants_mouse() -> Bool
+
+/// The runtime's terminal drain — see `RTKeys.collectTerminalEvents`.
+@_silgen_name("basic_rt_collect_terminal_events") func basic_rt_collect_terminal_events()
 
 @_cdecl("basic_rt_host_mouse_reporting")
 public func basic_rt_host_mouse_reporting(_ enabled: Bool) {
