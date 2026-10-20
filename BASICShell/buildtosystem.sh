@@ -44,7 +44,7 @@
 #
 #   $PREFIX/bin/basicshell
 #   $PREFIX/bin/*.bundle                     -> symlinks into the directory below
-#   $PREFIX/lib/basicshell/BASICShell_BASICShell.bundle/Demos/*.bas
+#   $PREFIX/lib/basicshell/BASICShell_BASICShell.bundle/**/Demos/*.bas
 #
 # The compiler goes with it, in the layout its own buildAndInstall.sh uses:
 #
@@ -370,7 +370,13 @@ for bundle in "$BUILD_DIR"/*.bundle; do
 done
 [ "$bundle_count" -gt 0 ] || fail "no resource bundles in $BUILD_DIR"
 
-demo_count="$(find "$STAGE/${PRODUCT}_${PRODUCT}.bundle/Demos" -name '*.bas' 2>/dev/null | wc -l | tr -d ' ')"
+# Searched from the bundle root rather than at a path spelled out here. A
+# resource bundle is flat on one toolchain and structured on the next —
+# `Demos/` moved to `Contents/Resources/Demos/` under the newer SwiftPM — and
+# a staged bundle full of programs then counted zero of them, failing a build
+# whose output was perfectly good. The question this asks is "did any demos
+# come along", which does not depend on where they landed.
+demo_count="$(find "$STAGE/${PRODUCT}_${PRODUCT}.bundle" -name '*.bas' 2>/dev/null | wc -l | tr -d ' ')"
 [ "$demo_count" -gt 0 ] || fail "the staged demo bundle has no programs in it"
 note "$bundle_count bundle$([ "$bundle_count" -eq 1 ] || echo s), $demo_count demo programs"
 
