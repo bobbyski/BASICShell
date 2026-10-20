@@ -44,7 +44,9 @@
 #
 #   $PREFIX/bin/basicshell
 #   $PREFIX/bin/*.bundle                     -> symlinks into the directory below
+#   $PREFIX/bin/*.dylib                      -> ditto; @loader_path finds them here
 #   $PREFIX/lib/basicshell/BASICShell_BASICShell.bundle/**/Demos/*.bas
+#   $PREFIX/lib/basicshell/*.dylib           TUIKit, RichSwift, VectorTerminalSDK
 #
 # The compiler goes with it, in the layout its own buildAndInstall.sh uses:
 #
@@ -414,6 +416,42 @@ for bundle in "$STAGE"/*.bundle; do
     $SUDO rm -rf "$BIN_DIR/$name"
     $SUDO ln -s "../lib/basicshell/$name" "$BIN_DIR/$name"
 done
+
+# The shared libraries, and for the same reason the bundles went first: a
+# command that exists before the libraries it loads is a command that dies at
+# launch. SwiftPM builds TUIKit, RichSwift and VectorTerminalSDK as dynamic
+# libraries and links the shell against them with one rpath, `@loader_path` —
+# so the shell looks for them beside itself and nowhere else. Installing the
+# binary alone produced exactly that:
+#
+#   dyld: Library not loaded: @rpath/libRichSwift.dylib
+#     tried: '/usr/local/bin/libRichSwift.dylib' (no such file)
+#
+# Real files in LIB_DIR with the bundles, symlinks beside the binary for
+# `@loader_path` to resolve — and the symlinks serve every command in BIN_DIR,
+# so basicc and the rest are covered by the same ones.
+#
+# Only the libraries this binary asks for, on the same reasoning as the stale
+# bundles above: `.build` keeps the artifacts of dependencies that have since
+# been dropped, and a library nothing loads is a library nobody should ship.
+dylib_count=0
+for dylib in "$BUILD_DIR"/*.dylib; do
+    [ -f "$dylib" ] || continue
+
+    name="$(basename "$dylib")"
+    if ! grep -aq "$name" "$BINARY"; then
+        note "skipping $name — stale, this binary never loads it"
+        continue
+    fi
+
+    $SUDO cp "$dylib" "$LIB_DIR/.$name.new"
+    $SUDO chmod 755 "$LIB_DIR/.$name.new"
+    $SUDO mv -f "$LIB_DIR/.$name.new" "$LIB_DIR/$name"
+    $SUDO rm -f "$BIN_DIR/$name"
+    $SUDO ln -s "../lib/basicshell/$name" "$BIN_DIR/$name"
+    dylib_count=$((dylib_count + 1))
+done
+[ "$dylib_count" -eq 0 ] || note "$dylib_count shared librar$([ "$dylib_count" -eq 1 ] && echo y || echo ies) installed"
 
 # The manual `HELP` opens: Studio's markdown pages, installed rather than
 # copied into this package, so there stays exactly one of them. An install
