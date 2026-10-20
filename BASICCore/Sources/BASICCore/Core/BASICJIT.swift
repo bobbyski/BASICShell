@@ -60,8 +60,63 @@ public enum BASICJIT {
             let candidate = (directory as NSString).appendingPathComponent("basicc")
             if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
         }
-        return nil
+        return loginShellCompilerPath()
     }
+
+    /// `basicc` where the user's own login shell finds it.
+    ///
+    /// A windowed app does not inherit a terminal's PATH. Launched from
+    /// Finder, the Dock or Xcode it gets `/usr/bin:/bin:/usr/sbin:/sbin` and
+    /// nothing else — so the install `buildtosystem.sh` makes in
+    /// `/usr/local/bin` is invisible to it, and Studio reported the compiler
+    /// missing while the very same compiler ran fine in a terminal. That is
+    /// what "JIT works in the shell and fails in Studio" was.
+    ///
+    /// This is still PATH deciding, which is the rule above and worth
+    /// keeping: it is the user's own PATH, read by their own shell from
+    /// their own profile, rather than a prefix guessed here. A guessed prefix
+    /// is how a JIT ends up compiling with a compiler the user did not
+    /// install; asking their shell cannot do that.
+    ///
+    /// Asked once. A login shell costs a great deal more than a directory
+    /// check, and the compiler does not move while a host is running.
+    private static func loginShellCompilerPath() -> String? {
+        #if os(iOS)
+        return nil
+        #else
+        loginShellLock.lock()
+        defer { loginShellLock.unlock() }
+        if let asked = askedLoginShell { return asked }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-lc", "command -v basicc"]
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = Pipe()
+        var found: String?
+        do {
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let text = String(decoding: data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty, FileManager.default.isExecutableFile(atPath: text) {
+                found = text
+            }
+        } catch {
+            found = nil
+        }
+        askedLoginShell = .some(found)
+        return found
+        #endif
+    }
+
+    private static let loginShellLock = NSLock()
+
+    /// `nil` until a login shell has been asked; `.some(nil)` once it has been
+    /// asked and had no answer, so it is asked exactly once either way.
+    nonisolated(unsafe) private static var askedLoginShell: String??
 
     /// Compiles a program.
     ///

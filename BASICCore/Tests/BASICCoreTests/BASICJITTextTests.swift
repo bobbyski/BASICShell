@@ -14,6 +14,45 @@ import Testing
 
 @Suite("The text a program is compiled from")
 struct BASICJITTextTests {
+    /// A windowed app's PATH is not a terminal's.
+    ///
+    /// Launched from Finder, the Dock or Xcode, an app gets
+    /// `/usr/bin:/bin:/usr/sbin:/sbin` — no `/usr/local/bin`, which is where
+    /// `buildtosystem.sh` installs the compiler. Studio then reported basicc
+    /// missing and fell back to interpreting while the same compiler ran
+    /// perfectly in a terminal, which is what "JIT fails with LLVM in Studio"
+    /// was. Asking a login shell is what closes that gap.
+    ///
+    /// Skipped where basicc is not installed, because then there is nothing
+    /// for either path to find and the test would be asserting the machine.
+    @Test("A windowed app's PATH still finds an installed compiler")
+    func compilerFoundWithoutATerminalPath() throws {
+        let login = Process()
+        login.executableURL = URL(fileURLWithPath: "/bin/sh")
+        login.arguments = ["-lc", "command -v basicc"]
+        let out = Pipe()
+        login.standardOutput = out
+        login.standardError = Pipe()
+        try login.run()
+        let installed = String(
+            decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        login.waitUntilExit()
+        try #require(!installed.isEmpty, "basicc is not installed on this machine")
+
+        // Exactly what `ps eww` reports for a Studio launched from Xcode.
+        let windowed = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+        #expect(BASICJIT.compilerPath(environment: windowed) == installed)
+    }
+
+    /// BASICC still wins, and still has to be an executable that exists —
+    /// the login shell must not quietly override a host's explicit choice.
+    @Test("BASICC in the environment outranks the login shell")
+    func overrideWins() {
+        let override = ["BASICC": "/bin/echo", "PATH": "/usr/bin:/bin"]
+        #expect(BASICJIT.compilerPath(environment: override) == "/bin/echo")
+    }
+
     @Test("Blank lines come back, so every line is where the editor has it")
     func blankLines() {
         let program = BASICProgram()
