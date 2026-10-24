@@ -2,14 +2,19 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen)
 
-A program that grows past one file becomes a project: a folder of `.bas` files that `IMPORT` each other, with one of them the file the program starts in.
+A program that grows past one file becomes a project: `.bas` files that `IMPORT` each other, with one of them the file the program starts in, kept together under one name.
 
 ## What a project is
 
-A project is a folder whose name ends in `.basproj`:
+A project's name ends in `.basproj`, and it comes in two forms:
+
+- **A zip:** one file, to mail, copy, keep in iCloud or keep on an iPad. New projects are zips.
+- **A folder** of the same name: the same files unpacked, so git can see each one.
+
+Every BASIC tool opens either form, and the files in it are the same:
 
 ```text
-  Asteroids.basproj/
+  Asteroids.basproj
     project.json      the program's name, and the file it starts in
     src/main.bas      where the program starts
     src/Ship.bas      a module main.bas IMPORTs
@@ -42,7 +47,7 @@ Choose **File ▸ New Project…** (⇧⌘N). On iPad, it is in the **···** m
    - On the Mac, it goes beside the project that is open, or in the working directory. **Choose…** puts it somewhere else.
    - On iPad, it goes in the Documents folder Studio works in.
 3. **Options.** Only a recipe that asks for something has this page.
-4. **Create.** Studio makes the project, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
+4. **Create.** Studio makes the project, a zip, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
 
 Create stays off while the name is not a name, or a project of that name is already there. The line under the name says which.
 
@@ -58,7 +63,7 @@ Create stays off while the name is not a name, or a project of that name is alre
 
 ## Opening a project
 
-- **File ▸ Open Project…** opens a `.basproj` folder, or any folder of `.bas` files. It opens where the last project or file came from; the first time, in Studio's iCloud Drive folder, or Documents.
+- **File ▸ Open Project…** opens a `.basproj`, a zip or a folder, or any folder of `.bas` files. On iPad, it asks first whether to pick a zip or a folder. It opens where the last project or file came from; the first time, in Studio's iCloud Drive folder, or Documents.
 - **File ▸ Open Recent** lists the projects and the files opened lately, newest first, ten of each, and opens one again. A file picked in the project sidebar is not added: the project already is. **Clear Menu** empties it.
 - **Examples** that are projects open as projects. Studio opens a copy, so the example itself is never changed:
   - On the Mac, the copy is in `Documents/BASICStudio Examples`.
@@ -67,11 +72,29 @@ Create stays off while the name is not a name, or a project of that name is alre
 
   Opening the example again opens your copy as you left it. Delete the copy to start over.
 
+## Files in a project
+
+The sidebar lists every file and folder in the project. Click a file to open it in the editor; click a folder to choose where new files go.
+
+The **Project** menu (on iPad, in the **···** menu) changes what is in it:
+
+| Command | What it does |
+| --- | --- |
+| **New File…** (⌥⌘N) | Asks for a name, makes an empty file in the chosen folder, and opens it. The button at the top of the sidebar does the same. |
+| **New Folder…** | Asks for a name and makes a folder in the chosen folder. |
+| **Rename…** | Renames the chosen file or folder. A file open in the editor stays open under its new name. |
+| **Move…** | Moves the chosen file or folder into another folder, typed from the project's top (`src/games`; empty for the top). |
+| **Delete…** | Deletes the chosen file or folder, after asking. |
+
+**Saving a zip.** Studio works on a copy of the zip's files and writes the zip back. **Save** writes it at once, so Save is all it takes. What a program writes into its project, such as a scores file, is written into the zip shortly after the program writes it, and when the project closes.
+
+**Open in another app.** A zip another app has open opens read-only, and Studio says so. Nothing in it can be changed until the other app closes it.
+
 ## Deleting a project
 
-**File ▸ Delete Project…**, or the trash button at the top of the project sidebar, deletes the project that is open: its folder and everything in it. It asks first, naming the project and how many files go, with Cancel as the default answer.
+**File ▸ Delete Project…**, or the trash button at the top of the project sidebar, deletes the project that is open: its zip, or its folder and everything in it. It asks first, naming the project and how many files go, with Cancel as the default answer.
 
-- On the Mac the folder goes to the Trash, where it can be put back.
+- On the Mac it goes to the Trash, where it can be put back.
 - On iPad it is deleted for good.
 
 The project closes, and comes off File ▸ Open Recent with its files.
@@ -81,9 +104,16 @@ The project closes, and comes off File ▸ Open Recent with its files.
 BASICStudio, `basicc new`, OmniClide and Freebird Studio make projects from the same recipes. A project made in one opens in the others:
 
 ```sh
-basicc new Asteroids --kind game     # makes Asteroids.basproj
+basicc new Asteroids --kind game     # makes Asteroids.basproj, a zip
 basicc build Asteroids.basproj       # builds the program it names
-cd Asteroids.basproj && make run     # or build and run with its Makefile
+basicshell Asteroids.basproj         # runs it in the interpreter
+```
+
+For git, make the folder form instead, and its Makefile builds it too:
+
+```sh
+basicc new Asteroids --kind game --folder
+cd Asteroids.basproj && make run
 ```
 
 ## Adding your own recipe

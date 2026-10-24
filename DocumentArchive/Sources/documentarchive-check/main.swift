@@ -11,7 +11,7 @@ import Foundation
 
 // documentarchive-check <archive.zip> [extension]
 //
-//   UserDocs.zip: 122 documents, 266016 bytes of text, digest 1fec33ef1c964d02
+//   UserDocs.zip: 122 documents, 267813 bytes of text, digest 690343559abd230f
 //   first ALIAS, last YIELD
 //
 // The digest is FNV-1a over each document's path and text, in the library's
