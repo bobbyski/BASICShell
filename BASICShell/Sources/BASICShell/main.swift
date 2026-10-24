@@ -1713,7 +1713,28 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
         }
     }
 
+    /// The project the shell has open, if a project was run or loaded (BASIC-72).
+    let projects = ShellProjects()
+
+    /// `LOAD`/`RUN "path"` at the prompt, and `basicshell path`: a project runs its
+    /// entry, in its own folder; anything else is the file as it is.
+    func loadProgram(path: String) throws -> BASICProgramFile {
+        let resolved = expandedPath(path)
+        guard ShellProjects.isProject(resolved) else {
+            return BASICProgramFile(text: try loadTextFile(path: path), fileName: path)
+        }
+        let file = try projects.open(resolved)
+        if projects.isReadOnly {
+            printLine("\(path) is open in another app: it runs read-only, and what it writes is not kept.")
+        }
+        return file
+    }
+
     func loadTextFile(path: String) throws -> String {
+        // A program's own `LOAD "Game.basproj"` comes here: the project's entry.
+        if ShellProjects.isProject(expandedPath(path)) {
+            return try loadProgram(path: path).text
+        }
         do {
             return try String(contentsOfFile: expandedPath(path), encoding: .utf8)
         } catch {
@@ -1725,6 +1746,7 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
     func saveTextFile(path: String, text: String) throws {
         try ensureParentDirectory(for: path)
         try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+        projects.noteWrite(at: expandedPath(path))
     }
 
     func loadFileData(path: String) throws -> Data {
@@ -1739,6 +1761,7 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
     func saveFileData(path: String, data: Data) throws {
         try ensureParentDirectory(for: path)
         try data.write(to: URL(fileURLWithPath: expandedPath(path)), options: .atomic)
+        projects.noteWrite(at: expandedPath(path))
     }
 
     func fileExists(path: String) throws -> Bool {
@@ -1824,6 +1847,7 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
             at: URL(fileURLWithPath: expandedPath(path), isDirectory: true),
             withIntermediateDirectories: true
         )
+        projects.noteWrite(at: expandedPath(path))
     }
 
     func removePath(path: String) throws {
@@ -1838,11 +1862,14 @@ final class ConsoleHost: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASIC
             }
         }
         try FileManager.default.removeItem(atPath: resolvedPath)
+        projects.noteWrite(at: resolvedPath)
     }
 
     func renamePath(from source: String, to destination: String) throws {
         try ensureParentDirectory(for: destination)
         try FileManager.default.moveItem(atPath: expandedPath(source), toPath: expandedPath(destination))
+        projects.noteWrite(at: expandedPath(source))
+        projects.noteWrite(at: expandedPath(destination))
     }
 
     func resolveExecutable(_ command: String, environment: BASICEnvironmentPatch) throws -> String? {
@@ -3654,6 +3681,13 @@ shellInterruptBridge.start(executionControl: shellExecutionControl)
 @MainActor
 func finish(_ code: Int32) -> Never {
     host.clearVectorTerminalOnExit()
+    // A project the shell ran or loaded is saved before it goes (BASIC-72).
+    do {
+        try host.projects.closeCurrent()
+    } catch {
+        host.printLine("The project could not be saved: \(error)")
+        exit(code == 0 ? 1 : code)
+    }
     exit(code)
 }
 
@@ -4474,7 +4508,9 @@ if let commandText {
 
 if let scriptPath = arguments.first {
     do {
-        session.program.loadSource(try host.loadTextFile(path: scriptPath), fileName: scriptPath)
+        // A project (`basicshell Game.basproj`) runs its entry, in its folder.
+        let script = try host.loadProgram(path: scriptPath)
+        session.program.loadSource(script.text, fileName: script.fileName)
         session.setScriptContext(path: scriptPath, arguments: Array(arguments.dropFirst()))
         if printDiagnosticsIfNeeded() {
             finish(1)

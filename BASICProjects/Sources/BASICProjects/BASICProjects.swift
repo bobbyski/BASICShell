@@ -7,7 +7,7 @@
 
 import Foundation
 @_exported import ProjectKit
-import BASICRecipes
+@_exported import BASICRecipes
 
 extension ProjectType {
     /// A BASIC project: `Game.basproj`, a folder or a zip, marked by `project.json`. New

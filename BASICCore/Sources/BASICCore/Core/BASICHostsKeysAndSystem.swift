@@ -125,10 +125,28 @@ public protocol BASICConfiguredLineInputHost: BASICLineInputHost {
     func readLine(prompt: String, exitOnSpecialKey: Bool, options: BASICLineInputOptions) -> BASICLineInputResult?
 }
 
+/// A program `LOAD` or `RUN "path"` brings in: its text, and the file name it
+/// goes by, which `IMPORT` resolves against.
+public struct BASICProgramFile: Sendable, Equatable {
+    /// The program's source.
+    public let text: String
+    /// The program's file: the path asked for, or, for a project, its entry point.
+    public let fileName: String
+
+    public init(text: String, fileName: String) {
+        self.text = text
+        self.fileName = fileName
+    }
+}
+
 /// Host interface for BASIC file-system operations.
 public protocol BASICFileHost: BASICHost {
     /// Loads a UTF-8 text file.
     func loadTextFile(path: String) throws -> String
+    /// The program `LOAD path` or `RUN "path"` loads at the prompt. A host that knows
+    /// projects answers one with its entry point (BASIC-72); by default, the file's
+    /// own text under its own path.
+    func loadProgram(path: String) throws -> BASICProgramFile
     /// Saves a UTF-8 text file.
     func saveTextFile(path: String, text: String) throws
     /// Loads a file without text decoding.
@@ -873,6 +891,11 @@ public struct BASICKeyNormalizer {
 }
 
 public extension BASICFileHost {
+    /// Default implementation: the file at `path`, under its own name.
+    func loadProgram(path: String) throws -> BASICProgramFile {
+        BASICProgramFile(text: try loadTextFile(path: path), fileName: path)
+    }
+
     /// Default implementation for hosts that do not support saving.
     func saveTextFile(path: String, text: String) throws {
         throw BASICError.runtime("SAVE is not supported by this host")

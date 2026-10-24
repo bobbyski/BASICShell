@@ -295,8 +295,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                     throw BASICError.runtime("LOAD is not supported by this host")
                 }
                 do {
-                    program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
-                    fileState.lastFilePath = path
+                    let file = try fileHost.loadProgram(path: path)
+                    program.loadSource(file.text, fileName: file.fileName)
+                    fileState.lastFilePath = file.fileName
                     setScriptContext(path: path, arguments: [])
                 } catch {
                     throw BASICError.runtime("Could not load \(path): \(error.localizedDescription)")
@@ -414,8 +415,9 @@ public final class BASICSession: BASICTimerHost, @unchecked Sendable {
                     throw BASICError.runtime("RUN from file is not supported by this host")
                 }
                 do {
-                    program.loadSource(try fileHost.loadTextFile(path: path), fileName: path)
-                    fileState.lastFilePath = path
+                    let file = try fileHost.loadProgram(path: path)
+                    program.loadSource(file.text, fileName: file.fileName)
+                    fileState.lastFilePath = file.fileName
                     setScriptContext(path: path, arguments: [])
                     let diagnostics = self.diagnostics()
                     if diagnostics.isEmpty {

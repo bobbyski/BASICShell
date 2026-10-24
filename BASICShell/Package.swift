@@ -17,6 +17,8 @@ let package = Package(
     dependencies: [
         .package(path: "../BASICCore"),
         .package(path: "../DocumentArchive"),
+        // `basicshell Game.basproj`, a folder or a zip, through ProjectKit (BASIC-72).
+        .package(path: "../BASICProjects"),
         .package(path: "../../../frameworks/UILess/Code/TUIKit"),
         .package(path: vectorTerminalSDKPath)
     ],
@@ -32,6 +34,7 @@ let package = Package(
                 // string this shell recognizes.
                 .product(name: "BASICMongo", package: "BASICCore"),
                 "DocumentArchive",
+                "BASICProjects",
                 "TUIKit",
                 "VectorTerminalSDK"
             ],
