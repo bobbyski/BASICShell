@@ -17,10 +17,15 @@ import Foundation
 ///     src/main.bas    the program; its modules beside it
 /// ```
 ///
-/// `entry` is the one thing that says which file starts the program, read
-/// the same way here as by `basicc`. Without it, a project runs
-/// `src/main.bas`, then `Sources/main.bas`, then `main.bas`, whichever is
-/// there first.
+/// `entry` is the one thing that says which file starts the program.
+/// ``entryPoint(manifest:exists:)`` is the rule, and every tool uses it:
+/// `basicc`, BASICStudio, BASICShell and these recipes (BASIC-72). Without an
+/// `entry`, a project runs `src/main.bas`, then `Sources/main.bas`, then
+/// `main.bas`, whichever is there first.
+///
+/// This type knows folders on disk only, so the IDEs that take this package
+/// need nothing else. Zipped projects, and recognizing either form, are
+/// `BASICProjects` (over ProjectKit).
 public enum BASICProjectFolder {
     /// The project folder's extension.
     public static let fileExtension = "basproj"
@@ -35,6 +40,14 @@ public enum BASICProjectFolder {
         public var kind: String?
         public var name: String?
         public var entry: String?
+
+        /// A manifest with these fields; each left out is absent.
+        public init(schemaVersion: Int? = nil, kind: String? = nil, name: String? = nil, entry: String? = nil) {
+            self.schemaVersion = schemaVersion
+            self.kind = kind
+            self.name = name
+            self.entry = entry
+        }
     }
 
     /// Whether `url` is a project: a folder named `.basproj`, or any folder
@@ -70,19 +83,38 @@ public enum BASICProjectFolder {
         return try? JSONDecoder().decode(Manifest.self, from: data)
     }
 
-    /// The file the project starts with: its manifest's `entry`, else the
-    /// first of ``entryCandidates`` that is there. Nil when none is.
-    public static func entry(of project: URL) -> URL? {
-        let fileManager = FileManager.default
-        if let entry = manifest(of: project)?.entry, !entry.isEmpty {
-            let url = project.appendingPathComponent(entry)
-            if fileManager.fileExists(atPath: url.path) {
-                return url
-            }
+    /// Where a project starts, as ``entryPoint(manifest:exists:)`` finds it.
+    public enum EntryPoint: Equatable, Sendable {
+        /// The file to run, by its path in the project (`src/main.bas`).
+        case file(String)
+        /// The manifest names this file, and it isn't there.
+        case missing(String)
+        /// The manifest names no file, and none of ``entryCandidates`` is there.
+        case none
+    }
+
+    /// The rule for which file a project runs, the same in every tool: the
+    /// manifest's `entry` when it names one, whether or not it is there (a
+    /// missing one is reported, never swapped for another); else the first of
+    /// ``entryCandidates`` that `exists` says is there.
+    ///
+    /// `exists` answers for a path in the project, so the rule works on a
+    /// folder, a zip read in place, or a zip's working copy alike.
+    public static func entryPoint(manifest: Manifest?, exists: (String) -> Bool) -> EntryPoint {
+        if let entry = manifest?.entry, !entry.isEmpty {
+            return exists(entry) ? .file(entry) : .missing(entry)
         }
-        return entryCandidates
-            .map { project.appendingPathComponent($0) }
-            .first { fileManager.fileExists(atPath: $0.path) }
+        return entryCandidates.first(where: exists).map(EntryPoint.file) ?? .none
+    }
+
+    /// The file the project folder starts with, by ``entryPoint(manifest:exists:)``;
+    /// nil when its manifest names a missing file, or it has none to run.
+    public static func entry(of project: URL) -> URL? {
+        let point = entryPoint(manifest: manifest(of: project)) { path in
+            FileManager.default.fileExists(atPath: project.appendingPathComponent(path).path)
+        }
+        guard case .file(let path) = point else { return nil }
+        return project.appendingPathComponent(path)
     }
 
     /// The manifest a new project gets: its name, and the file it starts with.

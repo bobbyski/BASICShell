@@ -151,6 +151,18 @@ struct ProjectFolderTests {
         #expect(BASICProjectFolder.displayName(ofFolder: "contacts.basproj") == "contacts")
     }
 
+    @Test("One entry rule: the manifest's entry as given, missing or not; else the first candidate there")
+    func entryRule() {
+        let named = BASICProjectFolder.Manifest(entry: "app/start.bas")
+        #expect(BASICProjectFolder.entryPoint(manifest: named) { _ in true } == .file("app/start.bas"))
+        #expect(BASICProjectFolder.entryPoint(manifest: named) { $0 == "main.bas" } == .missing("app/start.bas"))
+        #expect(BASICProjectFolder.entryPoint(manifest: nil) { $0 == "Sources/main.bas" || $0 == "main.bas" }
+                == .file("Sources/main.bas"))
+        #expect(BASICProjectFolder.entryPoint(manifest: BASICProjectFolder.Manifest(entry: "")) { $0 == "main.bas" }
+                == .file("main.bas"))
+        #expect(BASICProjectFolder.entryPoint(manifest: nil) { _ in false } == .none)
+    }
+
     @Test("A user's recipe folder is read like the built-in ones, without taking a built-in's place")
     func userRecipes() throws {
         let folder = try scratchFolder()
