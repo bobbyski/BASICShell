@@ -1,4 +1,5 @@
 import Foundation
+import BASICRecipes
 
 /// A `.basproj` project in its directory form: a folder holding
 /// `project.json` (BASPROJ_AND_BASLIB.md §4).
@@ -13,8 +14,10 @@ import Foundation
 ///
 /// Inside a project, IMPORT paths resolve against the project root (the
 /// document's rule), and `options.stringSub` replaces the shell's default.
-/// The zip form arrives when the interpreter grows it, so both open the
-/// same way.
+/// A zipped project is opened by `ProjectContainer` and read as the directory
+/// it unpacks to, so both forms load the same way. Which file runs is
+/// `BASICProjectFolder`'s one rule, shared with BASICStudio, BASICShell and the
+/// recipes (BASIC-72).
 public struct ProjectManifest: Decodable {
     public let schemaVersion: Int
     public let kind: String
@@ -50,9 +53,13 @@ public struct ProjectManifest: Decodable {
     /// The directory holding the manifest.
     public private(set) var root = ""
 
+    /// The entry point, by its path in the project, as `BASICProjectFolder`'s rule
+    /// found it when the manifest loaded.
+    public private(set) var entryRelativePath = ""
+
     /// The entry point's absolute path.
     public var entryPath: String {
-        (root as NSString).appendingPathComponent(entry ?? "Sources/main.bas")
+        (root as NSString).appendingPathComponent(entryRelativePath)
     }
 
     /// `OPTION STRING-SUB` as the project starts.
@@ -91,6 +98,24 @@ public struct ProjectManifest: Decodable {
             throw CompileError("\(manifestPath): kind '\(manifest.kind)' is not a project; basicc builds projects", at: nil)
         }
         manifest.root = (manifestPath as NSString).deletingLastPathComponent
+        manifest.entryRelativePath = try manifest.findEntry(manifestPath: manifestPath)
         return manifest
+    }
+
+    /// The file the project starts with, by the rule every tool shares: `entry` as
+    /// given, else the first of `src/main.bas`, `Sources/main.bas`, `main.bas` there.
+    private func findEntry(manifestPath: String) throws -> String {
+        let point = BASICProjectFolder.entryPoint(manifest: BASICProjectFolder.Manifest(entry: entry)) { path in
+            FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent(path))
+        }
+        switch point {
+        case .file(let path):
+            return path
+        case .missing(let path):
+            throw CompileError("\(manifestPath): the entry \(path) isn't in the project", at: nil)
+        case .none:
+            let candidates = BASICProjectFolder.entryCandidates.joined(separator: ", ")
+            throw CompileError("\(manifestPath): no entry is named, and none of \(candidates) is there", at: nil)
+        }
     }
 }
