@@ -23,6 +23,14 @@ extension ProjectType {
         identifier: "com.aibasic.baslib", name: "BASIC Library",
         extension: "baslib", defaultForm: .zip, marker: "library.json",
         neverZipped: ["Build/", ".build/"])
+
+    /// Any folder of BASIC programs, opened as a project with no manifest: what
+    /// BASICStudio's Open Project… has always allowed (BASPROJ_AND_BASLIB.md §8). It
+    /// has no marker, so it takes any folder; recognition tries it last.
+    public static let basicFolder = ProjectType(
+        identifier: "com.aibasic.folder", name: "Folder of BASIC programs",
+        extension: "basfolder", defaultForm: .folder,
+        neverZipped: ["Build/", ".build/", ".basstate/"])
 }
 
 /// BASIC's projects over ProjectKit: what a project is, which file it runs, and
@@ -40,6 +48,10 @@ extension ProjectType {
 public enum BASICProjects {
     /// BASIC's project types, in the order recognition tries them.
     public static let types: [ProjectType] = [.basicProject, .basicLibrary]
+
+    /// What an IDE opens: BASIC's projects and libraries, then any other folder of
+    /// programs (``ProjectType/basicFolder``).
+    public static let typesForOpening: [ProjectType] = types + [.basicFolder]
 
     /// What is at `url`: a BASIC project or library, and in which form.
     ///

@@ -576,7 +576,8 @@ struct StarterTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind)
+        // A folder, to build its src/main.bas as a file; the next test builds a zip.
+        let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind, form: .folder)
         #expect((project as NSString).lastPathComponent == "Starter.basproj")
         let source = (project as NSString).appendingPathComponent("src/main.bas")
         let output = (project as NSString).appendingPathComponent("Build/Starter")
@@ -603,12 +604,15 @@ struct StarterTests {
         }
     }
 
-    @Test func aProjectIsBuiltFromItsFolder() throws {
+    /// `basicc new` makes a zip by default (BASIC-72), and basicc builds the zip itself.
+    @Test func aNewProjectIsAZipThatBuilds() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let project = try ProjectScaffold.generate(named: "Folder", into: root.path, kind: "structured")
-        let output = (root.path as NSString).appendingPathComponent("folder-built")
+        var isDirectory: ObjCBool = true
+        #expect(FileManager.default.fileExists(atPath: project, isDirectory: &isDirectory) && !isDirectory.boolValue, "a zip")
+        let output = (root.path as NSString).appendingPathComponent("zip-built")
         try Compilation(dialect: TraditionalDialect()).build(sourcePath: project, output: output)
         #expect(try runWithInput(output, "").exitCode == 0)
         #expect(throws: ProjectScaffold.Failure.self) {

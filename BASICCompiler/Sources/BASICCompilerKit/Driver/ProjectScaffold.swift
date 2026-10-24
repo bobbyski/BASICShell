@@ -1,14 +1,15 @@
-import BASICRecipes
+import BASICProjects
 import Foundation
 
 /// `basicc new` — starter projects.
 ///
 /// The starters are the BASIC recipes every tool shares (BASICRecipes,
 /// BASIC-24), so a project born at the terminal and one born in a wizard
-/// are the same project:
+/// are the same project. Like every new BASIC project it is a zip
+/// (BASIC-72); `--folder` makes the folder instead, for git:
 ///
 /// ```text
-///   MyApp.basproj/
+///   MyApp.basproj/                      (the zip holds the same files)
 ///     project.json      names the program: "entry": "src/main.bas"
 ///     Makefile          build · run · clean (BASICC ?= basicc)
 ///     .gitignore        Build/
@@ -32,15 +33,17 @@ public enum ProjectScaffold {
         public let description: String
     }
 
-    /// Creates the project `name` from the starter `kind` in `destination`;
-    /// returns its root directory, `<destination>/<name>.basproj`.
+    /// Creates the project `name` from the starter `kind` in `destination`, in
+    /// `form`; returns it: `<destination>/<name>.basproj`, a zip or a folder.
     @discardableResult
-    public static func generate(named name: String, into destination: String, kind: String = "console") throws -> String {
+    public static func generate(named name: String, into destination: String, kind: String = "console",
+                                form: ProjectForm = .zip) throws -> String {
         guard let recipe = BASICRecipes.builtIn(named: kind) else {
             throw Failure(description: "unknown kind '\(kind)' — one of: \(kinds.joined(separator: ", "))")
         }
         do {
-            return try recipe.create(named: name, in: URL(fileURLWithPath: destination, isDirectory: true)).path
+            return try BASICProjects.create(from: recipe, named: name, in: URL(fileURLWithPath: destination, isDirectory: true),
+                                            form: form).path
         } catch let failure as BASICRecipe.Failure {
             throw Failure(description: failure.description)
         }

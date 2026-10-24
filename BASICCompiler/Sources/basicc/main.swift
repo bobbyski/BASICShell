@@ -22,7 +22,9 @@ func printUsage() {
     usage:
       basicc build <file.bas|project/> [options]   compile to an executable
       basicc run <file.bas|project/> [options]     compile, then run it
-      basicc new <Name> [--kind k] [-o dir]   create a starter project
+      basicc new <Name> [--kind k] [--folder] [-o dir]
+                                          create a starter project: a .basproj zip,
+                                          or with --folder a folder (for git)
       basicc swift-interface <file.bas>   print the Swift view of the program's
                                           classes, as a .swiftinterface
       basicc swift-class <file.bas> -o <dir>
@@ -69,6 +71,8 @@ struct Invocation {
     var optimizationLevel = 0
     var emitDebugInfo = true
     var kind: String?
+    /// For `new`: a folder project rather than a zip (BASIC-72).
+    var folder = false
     var bundle = false
     /// `llvm` (the default) or `wasm` (BASIC-45).
     var target = "llvm"
@@ -98,6 +102,7 @@ struct Invocation {
             case "-g": emitDebugInfo = true
             case "-g0": emitDebugInfo = false
             case "--json-diagnostics": jsonDiagnostics = true
+            case "--folder": folder = true
             case "--bundle": bundle = true
             case "--target":
                 index += 1
@@ -535,8 +540,10 @@ case "new":
         fail("unknown kind '\(kind)' — one of: \(ProjectScaffold.kinds.joined(separator: ", "))", code: 2)
     }
     do {
-        let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath, kind: kind)
-        print("created \(root) — build with: make")
+        let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath,
+                                                kind: kind, form: invocation.folder ? .folder : .zip)
+        print(invocation.folder ? "created \(root) — build with: make"
+                                : "created \(root), a zip — build with: basicc build \((root as NSString).lastPathComponent)")
     } catch {
         fail("\(error)")
     }
