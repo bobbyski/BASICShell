@@ -15,13 +15,17 @@ let package = Package(
     name: "DocumentArchive",
     platforms: [.macOS(.v15), .iOS(.v17)],
     products: [
-        .library(name: "DocumentArchive", targets: ["DocumentArchive"])
+        .library(name: "DocumentArchive", targets: ["DocumentArchive"]),
+        // Reads a zip of documents and prints a digest: the same on every platform
+        // when the zip reads the same (ProjectKit PLAN 10.6).
+        .executable(name: "documentarchive-check", targets: ["documentarchive-check"]),
     ],
     dependencies: [
         .package(path: "../../../../AIResearch/ZipIt-ZipItGood/Code/ZipItKit"),
     ],
     targets: [
         .target(name: "DocumentArchive", dependencies: [.product(name: "ZipItZIP", package: "ZipItKit")]),
+        .executableTarget(name: "documentarchive-check", dependencies: ["DocumentArchive"]),
         .testTarget(name: "DocumentArchiveTests", dependencies: ["DocumentArchive"])
     ]
 )
