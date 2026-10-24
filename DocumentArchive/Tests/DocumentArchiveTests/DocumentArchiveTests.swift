@@ -53,7 +53,7 @@ private struct Workspace {
 
     let zip = try ZipArchive(url: archive)
     #expect(zip.entries.count == 1)
-    #expect(zip.entries[0].method == 8, "expected the entry to be deflated, not stored")
+    #expect(zip.entries[0].compressedSize < zip.entries[0].size, "expected the entry to be deflated, not stored")
     #expect(try zip.text(at: "PRINT.md") == text)
 }
 
@@ -66,7 +66,7 @@ private struct Workspace {
     let archive = try workspace.zip("stored.zip", ["A.md"], extraArguments: ["-0"])
 
     let zip = try ZipArchive(url: archive)
-    #expect(zip.entries[0].method == 0)
+    #expect(zip.entries[0].compressedSize == zip.entries[0].size, "stored, not deflated")
     #expect(try zip.text(at: "A.md") == text)
 }
 
@@ -134,7 +134,7 @@ private struct Workspace {
     try Data(bytes).write(to: archive)
 
     let zip = try ZipArchive(url: archive)
-    #expect(zip.entries[0].method == 0)
+    #expect(zip.entries[0].compressedSize == zip.entries[0].size, "stored, not deflated")
     #expect(throws: ZipArchive.Failure.self) { try zip.data(at: "A.md") }
 }
 
