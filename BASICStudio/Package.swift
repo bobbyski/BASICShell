@@ -9,6 +9,7 @@ let package = Package(
         .package(path: "../BASICCore"),
         // New-project recipes, shared with basicc and the IDEs (BASIC-24).
         .package(path: "../BASICRecipes"),
+        .package(path: "../BASICProjects"),
         // The compiler core, in process: on an iPad a program is compiled to
         // WebAssembly and run in JavaScriptCore (BASIC-42).
         .package(path: "../BASICCompiler"),
@@ -38,6 +39,7 @@ let package = Package(
             dependencies: [
                 "BASICCore",
                 "BASICRecipes",
+                "BASICProjects",
                 .product(name: "BASICCompilerKit", package: "BASICCompiler"),
                 .product(name: "BASICDialectTraditional", package: "BASICCompiler"),
                 .product(name: "BASICDialectSwift", package: "BASICCompiler"),

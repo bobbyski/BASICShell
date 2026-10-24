@@ -9,19 +9,20 @@
 /* Begin PBXBuildFile section */
 		00313CDE213272C3CF69652A /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
 		00924436B19B72D30F51108C /* SwiftTermGraphicsConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */; };
-		01FA6E3FA7FDA58495D32DED /* BASICWasmRunner in Frameworks */ = {isa = PBXBuildFile; productRef = 5707B052FF4FA7E59AB68BB7 /* BASICWasmRunner */; };
+		01FA6E3FA7FDA58495D32DED /* BASICWasm in Frameworks */ = {isa = PBXBuildFile; productRef = 59174C5A21F8631AF07B1273 /* BASICWasm */; };
 		0209F8681EFC161C124A81A1 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = 9C9B2EE479C7AD1539AEB20B /* Assets */; };
 		02730A16BBF74C260858CABD /* StudioAppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */; };
-		063B309AF05262967DF8B5E6 /* BASICWasm in Frameworks */ = {isa = PBXBuildFile; productRef = 59174C5A21F8631AF07B1273 /* BASICWasm */; };
+		03A896D1EEEFB02D91BF459E /* ActiveUICoreEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; };
+		063B309AF05262967DF8B5E6 /* BASICFrameworkMap in Frameworks */ = {isa = PBXBuildFile; productRef = 924395148B6F3B268B948305 /* BASICFrameworkMap */; };
 		0685068EFD572489674DCC4A /* GraphicsFramebuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C96E9F50B74F255489C86A6 /* GraphicsFramebuffer.swift */; };
-		091E1770B6363E5775960262 /* BASICDialectSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DC3D06BE1374A7ACF07A38F4 /* BASICDialectSwift */; };
+		091E1770B6363E5775960262 /* BASICDialectTraditional in Frameworks */ = {isa = PBXBuildFile; productRef = F33E92BC0CB6439371011C06 /* BASICDialectTraditional */; };
 		093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
 		0B5521E79B9FA05A08A81339 /* StudioInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */; };
 		0EDCB465925D41E190F9B928 /* ConsoleTerminalView+iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 930F78E43D7F9EB5D43A5589 /* ConsoleTerminalView+iOS.swift */; };
 		0F1F3E09500DA103690EB456 /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
-		11F34446FB037BBC10B313CF /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4FCF7AE734FDC4B7B917BBD7 /* SwiftTerm */; };
+		11F34446FB037BBC10B313CF /* BASICWasmRunner in Frameworks */ = {isa = PBXBuildFile; productRef = 5707B052FF4FA7E59AB68BB7 /* BASICWasmRunner */; };
 		196B696B2A6B42F526ECD7AC /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
-		1AEDBCF61A189708EB2AF9A6 /* BASICFrameworkMap in Frameworks */ = {isa = PBXBuildFile; productRef = D2401D60C4AFA7EA962F6C38 /* BASICFrameworkMap */; };
+		1AEDBCF61A189708EB2AF9A6 /* BASICDialectSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DC3D06BE1374A7ACF07A38F4 /* BASICDialectSwift */; };
 		1F6398E9170B3A403AE8EEB9 /* NewProjectWizardAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D399DBC0E9401FA67A1A5471 /* NewProjectWizardAUI.swift */; };
 		2119DDFCA1CE58512F67C90A /* StudioTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4374AC2CA731F78F135C262B /* StudioTypes.swift */; };
 		26AFE5ECDC44878B0F8A5621 /* DebugPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB11C8419064B3C77C66BF2 /* DebugPaneAUI.swift */; };
@@ -31,24 +32,25 @@
 		2A5E43D6901CA4826F9048B7 /* SettingsAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */; };
 		2AC255094C828E26892B4697 /* StudioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */; };
 		2B746A8A02A8FCDD51DD67ED /* EditorRibbonAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B779D2B1D2CD556F8EE2670F /* EditorRibbonAUI.swift */; };
-		2E2BDCDE4620794C967CDF8E /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; };
+		2E2BDCDE4620794C967CDF8E /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 50B80D301CFFA94A39A1AF20 /* DocumentArchive */; };
 		2E4B96735A9006DE615F1E99 /* Demos in Resources */ = {isa = PBXBuildFile; fileRef = 96CA444014E259C30BE4F365 /* Demos */; };
 		2F5264978E8C6E2913DD8B8D /* StudioActiveUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978A628E72FF4EC7A86D81B0 /* StudioActiveUIShell.swift */; };
 		2F93BA890A43754B6FAD1033 /* StudioHostFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */; };
-		2F95A6FE16BD16C9A9F52D18 /* BASICDialectSwift in Frameworks */ = {isa = PBXBuildFile; productRef = C7A5AA02073F5A9A05DABF68 /* BASICDialectSwift */; };
-		3603E7F7922B3EDD3F53A883 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 50B80D301CFFA94A39A1AF20 /* DocumentArchive */; };
+		2F95A6FE16BD16C9A9F52D18 /* BASICDialectTraditional in Frameworks */ = {isa = PBXBuildFile; productRef = 36700BB0906CF5C9334D1EB7 /* BASICDialectTraditional */; };
+		3603E7F7922B3EDD3F53A883 /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; };
 		364D15018A3456474CC0A498 /* StudioNativeTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */; };
-		38BC0F614387753C63AE3A59 /* BASICWasm in Frameworks */ = {isa = PBXBuildFile; productRef = 5684BD2596BD155DEDDD9A70 /* BASICWasm */; };
+		38BC0F614387753C63AE3A59 /* BASICFrameworkMap in Frameworks */ = {isa = PBXBuildFile; productRef = D2401D60C4AFA7EA962F6C38 /* BASICFrameworkMap */; };
 		3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */; };
 		3B6F98A8E6619180E076838C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3F0871282F50834880A591A8 /* Assets.xcassets */; };
 		41C898B7C97E7A21495E396D /* BASICCore in Frameworks */ = {isa = PBXBuildFile; productRef = F996DC30A96A7927F54B377C /* BASICCore */; };
 		44FE9EE08A4BB2C50D554C20 /* RenderInputs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9028AD794558129FE62B1489 /* RenderInputs.swift */; };
-		47044532FD916CF337D08BFE /* BASICDialectTraditional in Frameworks */ = {isa = PBXBuildFile; productRef = 36700BB0906CF5C9334D1EB7 /* BASICDialectTraditional */; };
+		46B9933773319F3D1B6C31AC /* StudioNativeRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3BB16BA835069C1F7758145 /* StudioNativeRun.swift */; };
+		47044532FD916CF337D08BFE /* BASICCompilerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8F8BF0BB0B649156FE57CBBA /* BASICCompilerKit */; };
 		47A9857814619923594CCAC8 /* BASICStudioiOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEA0F4A6FF62DCB06D74711 /* BASICStudioiOS.swift */; };
 		47CB7A71FCD18CCE69F2E443 /* NewProjectWizardAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = D399DBC0E9401FA67A1A5471 /* NewProjectWizardAUI.swift */; };
 		48D9ACA2F311AA58216CF400 /* PromptEditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48FFDD9C956077CA2BBAB7D6 /* PromptEditorModel.swift */; };
 		493D57A7AEA8DBDABD1BF6D5 /* ActiveUICoreEditor in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		4CBBD8BC51F84C68ED4FEE64 /* ActiveUICharts in Frameworks */ = {isa = PBXBuildFile; productRef = D6971D0C11535BE659395766 /* ActiveUICharts */; };
+		4CBBD8BC51F84C68ED4FEE64 /* ActiveUIMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = D9A4F83464CADD0769EA55F8 /* ActiveUIMarkdown */; };
 		4CF59ACF7247097CD885E6CC /* StudioInterpretedFrameworks.swift in Sources */ = {isa = PBXBuildFile; fileRef = F481C62700E063EA11180FC3 /* StudioInterpretedFrameworks.swift */; };
 		4D39721266645D3B20EF7B08 /* StudioCloudStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */; };
 		4D62081D908243760D673386 /* StudioSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5330F694E45075A8E70C411 /* StudioSound.swift */; };
@@ -60,10 +62,10 @@
 		51E1C10EE3CCEC9CA04F32D7 /* StudioCloudStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBC22C756AEFBC53FDE31ED /* StudioCloudStorage.swift */; };
 		53D885485384A3F6FC377D4D /* StudioCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3112233823F585FD634D2380 /* StudioCompiler.swift */; };
 		542CEC2112B196DDB36AD540 /* StudioHostFlags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E15A9808D4C85BB5884161A /* StudioHostFlags.swift */; };
-		543916F96C24C380A7DEF63E /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		543916F96C24C380A7DEF63E /* BASICWasmRunner in Frameworks */ = {isa = PBXBuildFile; productRef = 48F47A38CE029FADE5022F30 /* BASICWasmRunner */; };
 		54B1B557BF391D0C0593720C /* NerdPromptSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD856E6A67B449DF70D14B01 /* NerdPromptSegments.swift */; };
 		55AA22B456CC0B14F3F85659 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3F0871282F50834880A591A8 /* Assets.xcassets */; };
-		55CBAA081AA56C0A1E128A50 /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; };
+		55CBAA081AA56C0A1E128A50 /* ActiveUICharts in Frameworks */ = {isa = PBXBuildFile; productRef = 002C40C5C7897FAFF84C3AA9 /* ActiveUICharts */; };
 		578C66FE551DE3ED18E72260 /* StudioVTGFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBDF6EE9174DC4D54BE6B720 /* StudioVTGFrameQueue.swift */; };
 		58976B826AE6E3E9FA6967AA /* NerdPromptSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD856E6A67B449DF70D14B01 /* NerdPromptSegments.swift */; };
 		59F09F7AB9E4050D8FE43FC8 /* DebugPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3E736836021C24D244390D /* DebugPaneModel.swift */; };
@@ -72,26 +74,29 @@
 		60D95AA8F1629825AF634CB3 /* StudioWasmRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5F0AAF2DA6C7A99C13B28D /* StudioWasmRun.swift */; };
 		61DE84050C4B38D3C1D1A9EB /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
 		62C6EF49F258F42796EE77C4 /* RenderInputs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9028AD794558129FE62B1489 /* RenderInputs.swift */; };
-		657C1976432A8B029552822E /* SwiftyCodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 955277B154524A585B8D179D /* SwiftyCodeEditor */; };
+		657C1976432A8B029552822E /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; };
 		666665C03E6AB52D0CD9EA5E /* StudioInterpretedFrameworks.swift in Sources */ = {isa = PBXBuildFile; fileRef = F481C62700E063EA11180FC3 /* StudioInterpretedFrameworks.swift */; };
 		693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
 		6994D287C86117622D27544E /* ActiveUICharts in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 002C40C5C7897FAFF84C3AA9 /* ActiveUICharts */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		6BABADE2659A798EF66D0DF8 /* BASICWasmRunner in Frameworks */ = {isa = PBXBuildFile; productRef = 48F47A38CE029FADE5022F30 /* BASICWasmRunner */; };
+		6BABADE2659A798EF66D0DF8 /* BASICWasm in Frameworks */ = {isa = PBXBuildFile; productRef = 5684BD2596BD155DEDDD9A70 /* BASICWasm */; };
 		6D2FB1742917B29C49D194C4 /* SourceEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D0EF453B77151D2563402A /* SourceEditorAUI.swift */; };
 		7091141BEB6366B0BF388EC6 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = B28A38404D59414EADD295C5 /* Fonts */; };
-		74D0835107EBA56BF18A331D /* BASICCompilerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5D815CD9FA2ED2B6652A98B4 /* BASICCompilerKit */; };
+		74D0835107EBA56BF18A331D /* BASICProjects in Frameworks */ = {isa = PBXBuildFile; productRef = 3A37B7258FE5DC4BD517C47F /* BASICProjects */; };
 		74E30F5278F0970FD4856435 /* StudioModelHostConformance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */; };
 		75807C1C239BCC9BECB786B7 /* ActiveUICharts in Embed Frameworks */ = {isa = PBXBuildFile; productRef = D6971D0C11535BE659395766 /* ActiveUICharts */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		78DBDBE491AB6EC5D212DEA1 /* RecentItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06907C91BE30059002468268 /* RecentItems.swift */; };
 		797CEBCC3F1A3E1385DF48F0 /* DocsPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786414E68D08A63E6898020E /* DocsPaneModel.swift */; };
-		7DBAA76766D2100EF5629E5A /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; };
+		7DBAA76766D2100EF5629E5A /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4FCF7AE734FDC4B7B917BBD7 /* SwiftTerm */; };
 		7F3E8495CA797348BDC1A3B5 /* StudioVTGFrameQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBDF6EE9174DC4D54BE6B720 /* StudioVTGFrameQueue.swift */; };
 		8274C17D24F7C4BE5D62A5B3 /* ProjectModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A01D222A22E3CB0848365480 /* ProjectModel.swift */; };
 		8491C77AAFE0684FB7E5BD47 /* SourceEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D0EF453B77151D2563402A /* SourceEditorAUI.swift */; };
 		878DB6E7730BBCFAC631A5E0 /* ActiveUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		8C055549A7AF2738C8B83C02 /* ActiveUIMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = D9A4F83464CADD0769EA55F8 /* ActiveUIMarkdown */; };
+		8BAD60AA2E7B015F939EB7C0 /* StudioNativeRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3BB16BA835069C1F7758145 /* StudioNativeRun.swift */; };
+		8C055549A7AF2738C8B83C02 /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 631B95E6F76EB92AAB7792ED /* ActiveUI */; };
 		8C359121E3B75112A7C94E33 /* NewProjectWizardModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E7120C2A16D6B188200258 /* NewProjectWizardModel.swift */; };
 		8F6D4F30E74FAE0FCC16919C /* StudioWasmRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B5F0AAF2DA6C7A99C13B28D /* StudioWasmRun.swift */; };
+		92E7661B575D354C5F6780A7 /* ProjectNameSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3A5C7F31F612F0D10D47188 /* ProjectNameSheet.swift */; };
+		944E46C0B2554AD13D56B359 /* SwiftyCodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 955277B154524A585B8D179D /* SwiftyCodeEditor */; };
 		9606D359B9EB6DF218563A37 /* DocsPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */; };
 		96B5F236DFAC2FF64AE2BE1C /* StudioTouchControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */; };
 		9965B7A9DBA91E2EF9F92322 /* BASICStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D345D0E032E06BB808DA86 /* BASICStudio.swift */; };
@@ -102,6 +107,7 @@
 		A2B52125DD80C4AB8C550CAF /* StudioFonts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38AB3D82C7A880B72971A1D /* StudioFonts.swift */; };
 		A5649F7AFD7F4B2280225D03 /* SwiftTermGraphicsConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B61BB4FEA96B70879A4BE26 /* SwiftTermGraphicsConsole.swift */; };
 		A576E8E7BAF6B568AA015D37 /* StudioTouchControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */; };
+		A5A7F271E02DB9758D3A50F5 /* StudioModel+Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF0783F5F612C4932B0A832 /* StudioModel+Project.swift */; };
 		A701F0C2F75FDF8FEA13549B /* MenuCommandModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC78BBDAF3FC3C17C20E6B87 /* MenuCommandModel.swift */; };
 		A8470ACA95FAAF6F6965D979 /* ProgramOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACC7CFD223C108DE3CC1965C /* ProgramOutline.swift */; };
 		A84D9C63ACA6E0B650C89872 /* InspectorLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */; };
@@ -118,17 +124,19 @@
 		B0B26D83A69449507033F56B /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = 9C9B2EE479C7AD1539AEB20B /* Assets */; };
 		B0D5C46F25D36C3FBEE5C1C6 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = B28A38404D59414EADD295C5 /* Fonts */; };
 		B1D4EE89EC954CE224038E7F /* Themes in Resources */ = {isa = PBXBuildFile; fileRef = 6338F8D64F595F8A442DCB46 /* Themes */; };
-		B21C5BC2F9500DD0992EB8C0 /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */; };
+		B21C5BC2F9500DD0992EB8C0 /* ActiveUICharts in Frameworks */ = {isa = PBXBuildFile; productRef = D6971D0C11535BE659395766 /* ActiveUICharts */; };
 		B31D6534C7BFC7CE8C4D4364 /* UserDocs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 882ECDFD28FEE412F9A97488 /* UserDocs.swift */; };
+		B34DE804596A43460556801C /* StudioModel+Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFF0783F5F612C4932B0A832 /* StudioModel+Project.swift */; };
 		B5D8E5F67FE6BFC73DEF3F6C /* UserDocs.zip in Resources */ = {isa = PBXBuildFile; fileRef = 345DA55E34BEF73307F59C60 /* UserDocs.zip */; };
 		B5FF04765A7317D31E6841C6 /* LogPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 274E10BC1DC8322BB117728E /* LogPaneAUI.swift */; };
 		B621B0BD8B331CA053F4D096 /* StudioTUIDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */; };
 		B728AC62D8694DFDF483881F /* ActiveUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 717CF46DC0F9232475AACCEA /* ActiveUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B7922A21D2E5A7B60E0CDF0D /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20D23305654DCC7C771397BA /* SettingsViewModel.swift */; };
 		B8DAF256B206B91A26B38239 /* StudioTUIDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADB21C095AEA96F4CCF48F3 /* StudioTUIDriver.swift */; };
-		BB8FC8BF8F3CFA53398F7367 /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 717CF46DC0F9232475AACCEA /* ActiveUI */; };
-		BB9FC2D183F2A86E2FF34FED /* ActiveUICoreEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 2BE869386D81B9149D57D58B /* ActiveUICoreEditor */; };
-		BF42A79B77B89643F0C31695 /* BASICDialectTraditional in Frameworks */ = {isa = PBXBuildFile; productRef = F33E92BC0CB6439371011C06 /* BASICDialectTraditional */; };
+		B95D62FDD1671782EA3CF35F /* StudioOpenProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 057053182CE57DC11616C836 /* StudioOpenProject.swift */; };
+		BB8FC8BF8F3CFA53398F7367 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 5AAB125FD1626D4E8281F069 /* DocumentArchive */; };
+		BB9FC2D183F2A86E2FF34FED /* ActiveUICode in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5BE94B977EEA0FFF0433E8 /* ActiveUICode */; };
+		BF42A79B77B89643F0C31695 /* BASICCompilerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5D815CD9FA2ED2B6652A98B4 /* BASICCompilerKit */; };
 		BFE2A211DF479CB39770D73E /* StudioAppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */; };
 		C0F2B5F6ACF01A638C602BE2 /* StudioFrameworkMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D67606EF83903B94C2CD58D /* StudioFrameworkMap.swift */; };
 		C1D294560A121336FE4AAF4D /* StudioShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A05717AC3D906F60E4FA227 /* StudioShellModel.swift */; };
@@ -146,23 +154,25 @@
 		D7849CCBF8FA1B0D03E4C493 /* ActiveUICode in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 08C7821063F11AADE9C1548C /* ActiveUICode */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D89B3A1B19327DD802493E7D /* DebugPaneAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FB11C8419064B3C77C66BF2 /* DebugPaneAUI.swift */; };
 		DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */ = {isa = PBXBuildFile; productRef = A5E611364F88C87B9EAAD4AF /* BASICCore */; };
-		DA24FE48EB39CA4F8AF4538A /* ActiveUICharts in Frameworks */ = {isa = PBXBuildFile; productRef = 002C40C5C7897FAFF84C3AA9 /* ActiveUICharts */; };
+		DA24FE48EB39CA4F8AF4538A /* ActiveUIMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = 810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */; };
 		DA93E2AA79828870737D4009 /* LogPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 689A82CD724959C8AA8FE537 /* LogPaneModel.swift */; };
+		DB65EC6EC79BBDEF39F86BAA /* ProjectNameSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3A5C7F31F612F0D10D47188 /* ProjectNameSheet.swift */; };
 		DF215486A6205E5F919022F0 /* VectorTerminalSDK in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 8964F8C16B54EDC134459B2E /* VectorTerminalSDK */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E0B7DE9AA99281653B58BED4 /* StudioJITRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADBF639C0AF1EFB97031FC3 /* StudioJITRun.swift */; };
 		E2BB610C9A6139F7AE4A8034 /* DebugPaneModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3E736836021C24D244390D /* DebugPaneModel.swift */; };
-		E2C4535883F1148398483C8B /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; };
-		E43478C0AF62ABACD164D7D2 /* ActiveUIMarkdown in Frameworks */ = {isa = PBXBuildFile; productRef = 810D5F6D49EC115C4CFACF04 /* ActiveUIMarkdown */; };
+		E2C4535883F1148398483C8B /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 130A03B0A453DD5074363E15 /* SwiftTerm */; };
+		E2FCAD2A8AD814EF22BC51A0 /* StudioOpenProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 057053182CE57DC11616C836 /* StudioOpenProject.swift */; };
+		E43478C0AF62ABACD164D7D2 /* ActiveUI in Frameworks */ = {isa = PBXBuildFile; productRef = 717CF46DC0F9232475AACCEA /* ActiveUI */; };
 		EB6C68A6EA4C84DDBCAFCDE4 /* StudioTouchControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */; };
 		EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */; };
 		EC7D9974C89CE5B4BCCA7EEA /* StudioCompiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3112233823F585FD634D2380 /* StudioCompiler.swift */; };
-		ECF7D8CEC70DC840D841CFC7 /* DocumentArchive in Frameworks */ = {isa = PBXBuildFile; productRef = 5AAB125FD1626D4E8281F069 /* DocumentArchive */; };
+		ECF7D8CEC70DC840D841CFC7 /* VectorTerminalSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 21507555AB51C2FBB797BF22 /* VectorTerminalSDK */; };
 		EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */; };
 		F0E7956231640CDEC7C34663 /* ConsoleKeyPress.swift in Sources */ = {isa = PBXBuildFile; fileRef = C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */; };
 		F528E93C26ADEDD5A8D50EED /* WasmSpike.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E48E5947FE92F192A3E861E /* WasmSpike.swift */; };
 		F89F17A00C157C46EBB0552D /* UserDocs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 882ECDFD28FEE412F9A97488 /* UserDocs.swift */; };
-		FBC538EBADE880382929DBAA /* BASICFrameworkMap in Frameworks */ = {isa = PBXBuildFile; productRef = 924395148B6F3B268B948305 /* BASICFrameworkMap */; };
-		FC80337FBB3440DB92ED692B /* BASICCompilerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8F8BF0BB0B649156FE57CBBA /* BASICCompilerKit */; };
+		FBC538EBADE880382929DBAA /* BASICDialectSwift in Frameworks */ = {isa = PBXBuildFile; productRef = C7A5AA02073F5A9A05DABF68 /* BASICDialectSwift */; };
+		FC80337FBB3440DB92ED692B /* BASICProjects in Frameworks */ = {isa = PBXBuildFile; productRef = 57DB4331E39385E04524406C /* BASICProjects */; };
 		FD6F88DDA2245FADC64D7A83 /* StudioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5472221B9FB79FDAA9BB355A /* StudioSettings.swift */; };
 		FDA5882F3E2AC819D4E29C7C /* Themes in Resources */ = {isa = PBXBuildFile; fileRef = 6338F8D64F595F8A442DCB46 /* Themes */; };
 		FE00D98260767ACB0A867F60 /* StudioFrameworkMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D67606EF83903B94C2CD58D /* StudioFrameworkMap.swift */; };
@@ -206,6 +216,7 @@
 /* Begin PBXFileReference section */
 		01076CFFB99EF0CDC95B7827 /* ActiveUICoreEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICoreEditor; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICoreEditor; sourceTree = SOURCE_ROOT; };
 		011AFAC86C3D24E2C652443E /* ActiveUICode */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICode; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICode; sourceTree = SOURCE_ROOT; };
+		057053182CE57DC11616C836 /* StudioOpenProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioOpenProject.swift; sourceTree = "<group>"; };
 		06907C91BE30059002468268 /* RecentItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentItems.swift; sourceTree = "<group>"; };
 		07493ECB2C4F3DCE36970EE6 /* BASICCompiler */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICCompiler; path = ../BASICCompiler; sourceTree = SOURCE_ROOT; };
 		1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioNativeTerminal.swift; sourceTree = "<group>"; };
@@ -259,10 +270,13 @@
 		AC8C8C7D843AC2B834A2D4E7 /* DocsPaneAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsPaneAUI.swift; sourceTree = "<group>"; };
 		ACC7CFD223C108DE3CC1965C /* ProgramOutline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramOutline.swift; sourceTree = "<group>"; };
 		AF1AA5671B54AAC04C197A6E /* BASICStudio-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "BASICStudio-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF4D442A6D31C9FF7F72153E /* BASICProjects */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BASICProjects; path = ../BASICProjects; sourceTree = SOURCE_ROOT; };
+		AFF0783F5F612C4932B0A832 /* StudioModel+Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StudioModel+Project.swift"; sourceTree = "<group>"; };
 		B28A38404D59414EADD295C5 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Sources/BASICStudio/Resources/Fonts; sourceTree = SOURCE_ROOT; };
 		B6C037FA8E08CCDF1FDA12F0 /* ActiveUICharts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUICharts; path = ../../../../AIResearch/ActiveUI/Code/ActiveUICharts; sourceTree = SOURCE_ROOT; };
 		B779D2B1D2CD556F8EE2670F /* EditorRibbonAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorRibbonAUI.swift; sourceTree = "<group>"; };
 		C134A255D3DE5FD5204B9E7A /* ConsoleKeyPress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleKeyPress.swift; sourceTree = "<group>"; };
+		C3BB16BA835069C1F7758145 /* StudioNativeRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioNativeRun.swift; sourceTree = "<group>"; };
 		C5330F694E45075A8E70C411 /* StudioSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioSound.swift; sourceTree = "<group>"; };
 		C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptEditorAUI.swift; sourceTree = "<group>"; };
 		C8E4CEA6BE44158D1A14A993 /* StudioInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioInputCoordinator.swift; sourceTree = "<group>"; };
@@ -272,6 +286,7 @@
 		D399DBC0E9401FA67A1A5471 /* NewProjectWizardAUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewProjectWizardAUI.swift; sourceTree = "<group>"; };
 		DDB439DD382F2FA8A9F72E19 /* StudioTouchControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioTouchControlsView.swift; sourceTree = "<group>"; };
 		E01D1E66A75BA2495AEA6493 /* ActiveUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ActiveUI; path = ../../../../AIResearch/ActiveUI/Code/ActiveUI; sourceTree = SOURCE_ROOT; };
+		E3A5C7F31F612F0D10D47188 /* ProjectNameSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectNameSheet.swift; sourceTree = "<group>"; };
 		ED3E736836021C24D244390D /* DebugPaneModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugPaneModel.swift; sourceTree = "<group>"; };
 		EEAD19BDF4AE663EFC800A55 /* StudioAppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAppTheme.swift; sourceTree = "<group>"; };
 		F481C62700E063EA11180FC3 /* StudioInterpretedFrameworks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioInterpretedFrameworks.swift; sourceTree = "<group>"; };
@@ -287,20 +302,21 @@
 			files = (
 				DA07E45DC52C19B2820ECD8E /* BASICCore in Frameworks */,
 				4F380BBEF0DDB5FAEC79AF58 /* BASICRecipes in Frameworks */,
-				74D0835107EBA56BF18A331D /* BASICCompilerKit in Frameworks */,
-				BF42A79B77B89643F0C31695 /* BASICDialectTraditional in Frameworks */,
-				091E1770B6363E5775960262 /* BASICDialectSwift in Frameworks */,
-				1AEDBCF61A189708EB2AF9A6 /* BASICFrameworkMap in Frameworks */,
-				38BC0F614387753C63AE3A59 /* BASICWasm in Frameworks */,
-				6BABADE2659A798EF66D0DF8 /* BASICWasmRunner in Frameworks */,
-				543916F96C24C380A7DEF63E /* SwiftTerm in Frameworks */,
-				E2C4535883F1148398483C8B /* VectorTerminalSDK in Frameworks */,
-				ECF7D8CEC70DC840D841CFC7 /* DocumentArchive in Frameworks */,
-				BB8FC8BF8F3CFA53398F7367 /* ActiveUI in Frameworks */,
-				E43478C0AF62ABACD164D7D2 /* ActiveUIMarkdown in Frameworks */,
-				DA24FE48EB39CA4F8AF4538A /* ActiveUICharts in Frameworks */,
-				55CBAA081AA56C0A1E128A50 /* ActiveUICode in Frameworks */,
-				657C1976432A8B029552822E /* SwiftyCodeEditor in Frameworks */,
+				74D0835107EBA56BF18A331D /* BASICProjects in Frameworks */,
+				BF42A79B77B89643F0C31695 /* BASICCompilerKit in Frameworks */,
+				091E1770B6363E5775960262 /* BASICDialectTraditional in Frameworks */,
+				1AEDBCF61A189708EB2AF9A6 /* BASICDialectSwift in Frameworks */,
+				38BC0F614387753C63AE3A59 /* BASICFrameworkMap in Frameworks */,
+				6BABADE2659A798EF66D0DF8 /* BASICWasm in Frameworks */,
+				543916F96C24C380A7DEF63E /* BASICWasmRunner in Frameworks */,
+				E2C4535883F1148398483C8B /* SwiftTerm in Frameworks */,
+				ECF7D8CEC70DC840D841CFC7 /* VectorTerminalSDK in Frameworks */,
+				BB8FC8BF8F3CFA53398F7367 /* DocumentArchive in Frameworks */,
+				E43478C0AF62ABACD164D7D2 /* ActiveUI in Frameworks */,
+				DA24FE48EB39CA4F8AF4538A /* ActiveUIMarkdown in Frameworks */,
+				55CBAA081AA56C0A1E128A50 /* ActiveUICharts in Frameworks */,
+				657C1976432A8B029552822E /* ActiveUICode in Frameworks */,
+				944E46C0B2554AD13D56B359 /* SwiftyCodeEditor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -310,20 +326,21 @@
 			files = (
 				41C898B7C97E7A21495E396D /* BASICCore in Frameworks */,
 				C60D27DD81B28FC93816AD02 /* BASICRecipes in Frameworks */,
-				FC80337FBB3440DB92ED692B /* BASICCompilerKit in Frameworks */,
-				47044532FD916CF337D08BFE /* BASICDialectTraditional in Frameworks */,
-				2F95A6FE16BD16C9A9F52D18 /* BASICDialectSwift in Frameworks */,
-				FBC538EBADE880382929DBAA /* BASICFrameworkMap in Frameworks */,
-				063B309AF05262967DF8B5E6 /* BASICWasm in Frameworks */,
-				01FA6E3FA7FDA58495D32DED /* BASICWasmRunner in Frameworks */,
-				11F34446FB037BBC10B313CF /* SwiftTerm in Frameworks */,
-				7DBAA76766D2100EF5629E5A /* VectorTerminalSDK in Frameworks */,
-				3603E7F7922B3EDD3F53A883 /* DocumentArchive in Frameworks */,
-				2E2BDCDE4620794C967CDF8E /* ActiveUI in Frameworks */,
-				8C055549A7AF2738C8B83C02 /* ActiveUIMarkdown in Frameworks */,
-				4CBBD8BC51F84C68ED4FEE64 /* ActiveUICharts in Frameworks */,
-				B21C5BC2F9500DD0992EB8C0 /* ActiveUICode in Frameworks */,
-				BB9FC2D183F2A86E2FF34FED /* ActiveUICoreEditor in Frameworks */,
+				FC80337FBB3440DB92ED692B /* BASICProjects in Frameworks */,
+				47044532FD916CF337D08BFE /* BASICCompilerKit in Frameworks */,
+				2F95A6FE16BD16C9A9F52D18 /* BASICDialectTraditional in Frameworks */,
+				FBC538EBADE880382929DBAA /* BASICDialectSwift in Frameworks */,
+				063B309AF05262967DF8B5E6 /* BASICFrameworkMap in Frameworks */,
+				01FA6E3FA7FDA58495D32DED /* BASICWasm in Frameworks */,
+				11F34446FB037BBC10B313CF /* BASICWasmRunner in Frameworks */,
+				7DBAA76766D2100EF5629E5A /* SwiftTerm in Frameworks */,
+				3603E7F7922B3EDD3F53A883 /* VectorTerminalSDK in Frameworks */,
+				2E2BDCDE4620794C967CDF8E /* DocumentArchive in Frameworks */,
+				8C055549A7AF2738C8B83C02 /* ActiveUI in Frameworks */,
+				4CBBD8BC51F84C68ED4FEE64 /* ActiveUIMarkdown in Frameworks */,
+				B21C5BC2F9500DD0992EB8C0 /* ActiveUICharts in Frameworks */,
+				BB9FC2D183F2A86E2FF34FED /* ActiveUICode in Frameworks */,
+				03A896D1EEEFB02D91BF459E /* ActiveUICoreEditor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,6 +386,7 @@
 				AAB2A5E9E8BD2995467EB4B1 /* InspectorLayout.swift */,
 				274E10BC1DC8322BB117728E /* LogPaneAUI.swift */,
 				D399DBC0E9401FA67A1A5471 /* NewProjectWizardAUI.swift */,
+				E3A5C7F31F612F0D10D47188 /* ProjectNameSheet.swift */,
 				C65E29E9A21893B7B0910040 /* PromptEditorAUI.swift */,
 				474DC38E677600E2DD5C5C3A /* SettingsAUI.swift */,
 				72D0EF453B77151D2563402A /* SourceEditorAUI.swift */,
@@ -390,6 +408,7 @@
 				07493ECB2C4F3DCE36970EE6 /* BASICCompiler */,
 				2F75838E7973F9367D5B0837 /* BASICCore */,
 				5DEB08E669ABF66E8D16E023 /* BASICFrameworkMap */,
+				AF4D442A6D31C9FF7F72153E /* BASICProjects */,
 				91E3E6F1DD91ABF107449D51 /* BASICRecipes */,
 				9B36187CAF5A2F8FF3127D1A /* DocumentArchive */,
 				1EB2534D1B03D7BFF565C132 /* SwiftTerm */,
@@ -434,8 +453,11 @@
 				AADBF639C0AF1EFB97031FC3 /* StudioJITRun.swift */,
 				A3B2F0DC13D2CE57F3CDB486 /* StudioLaunchOptions.swift */,
 				6AB855670D7A6C23AA4BC7AC /* StudioModel.swift */,
+				AFF0783F5F612C4932B0A832 /* StudioModel+Project.swift */,
 				338C8D7C152FF259259BC8FA /* StudioModelHostConformance.swift */,
+				C3BB16BA835069C1F7758145 /* StudioNativeRun.swift */,
 				1D2B47A3B21AA0F17D0A1B7C /* StudioNativeTerminal.swift */,
+				057053182CE57DC11616C836 /* StudioOpenProject.swift */,
 				5472221B9FB79FDAA9BB355A /* StudioSettings.swift */,
 				C5330F694E45075A8E70C411 /* StudioSound.swift */,
 				FEED971CF6D66151E58467A5 /* StudioTouchControls.swift */,
@@ -494,6 +516,7 @@
 			packageProductDependencies = (
 				A5E611364F88C87B9EAAD4AF /* BASICCore */,
 				F08EAB68ADD7452590FF12A1 /* BASICRecipes */,
+				3A37B7258FE5DC4BD517C47F /* BASICProjects */,
 				5D815CD9FA2ED2B6652A98B4 /* BASICCompilerKit */,
 				F33E92BC0CB6439371011C06 /* BASICDialectTraditional */,
 				DC3D06BE1374A7ACF07A38F4 /* BASICDialectSwift */,
@@ -530,6 +553,7 @@
 			packageProductDependencies = (
 				F996DC30A96A7927F54B377C /* BASICCore */,
 				DDAB5E84E91AE79CFA60B441 /* BASICRecipes */,
+				57DB4331E39385E04524406C /* BASICProjects */,
 				8F8BF0BB0B649156FE57CBBA /* BASICCompilerKit */,
 				36700BB0906CF5C9334D1EB7 /* BASICDialectTraditional */,
 				C7A5AA02073F5A9A05DABF68 /* BASICDialectSwift */,
@@ -587,6 +611,7 @@
 				924802E55ABBA75BD5778C47 /* XCLocalSwiftPackageReference "../BASICCompiler" */,
 				51196CCCA29E213E68ADF750 /* XCLocalSwiftPackageReference "../BASICCore" */,
 				AA56CB307E5CE5F97DBF3A47 /* XCLocalSwiftPackageReference "../BASICFrameworkMap" */,
+				64EA00B6564950686DF3D492 /* XCLocalSwiftPackageReference "../BASICProjects" */,
 				237027AD40987BA6D3FCEBF2 /* XCLocalSwiftPackageReference "../BASICRecipes" */,
 				530285D0FF39F32DD8A80DC9 /* XCLocalSwiftPackageReference "../DocumentArchive" */,
 				D3BAD6ABFA4C7A521086FE97 /* XCLocalSwiftPackageReference "../../../../AIResearch/GraphicalTerminal/Code/SwiftTerm" */,
@@ -655,6 +680,7 @@
 				8C359121E3B75112A7C94E33 /* NewProjectWizardModel.swift in Sources */,
 				A8470ACA95FAAF6F6965D979 /* ProgramOutline.swift in Sources */,
 				C2F4002E9B0C824E4C39C745 /* ProjectModel.swift in Sources */,
+				DB65EC6EC79BBDEF39F86BAA /* ProjectNameSheet.swift in Sources */,
 				EE0BD2A9EB37867810043CF1 /* PromptEditorAUI.swift in Sources */,
 				48D9ACA2F311AA58216CF400 /* PromptEditorModel.swift in Sources */,
 				CAB6F3116F4CD607217FF15C /* RecentItems.swift in Sources */,
@@ -675,9 +701,12 @@
 				666665C03E6AB52D0CD9EA5E /* StudioInterpretedFrameworks.swift in Sources */,
 				C5221EF5D5E176F1B1990362 /* StudioJITRun.swift in Sources */,
 				CB4C8857336B27C3D4574089 /* StudioLaunchOptions.swift in Sources */,
+				B34DE804596A43460556801C /* StudioModel+Project.swift in Sources */,
 				3B2F5ADAD0C26B6619742F8A /* StudioModel.swift in Sources */,
 				693D21E373FDDEE4439DCFF6 /* StudioModelHostConformance.swift in Sources */,
+				8BAD60AA2E7B015F939EB7C0 /* StudioNativeRun.swift in Sources */,
 				A8EB42469CCB385BFB9A4CC0 /* StudioNativeTerminal.swift in Sources */,
+				B95D62FDD1671782EA3CF35F /* StudioOpenProject.swift in Sources */,
 				CE457D4D17903D667C245493 /* StudioSettings.swift in Sources */,
 				C1D294560A121336FE4AAF4D /* StudioShellModel.swift in Sources */,
 				093567BDF2F436525E5F2ECC /* StudioSound.swift in Sources */,
@@ -715,6 +744,7 @@
 				AF3E4C7D6CEE481265FA6388 /* NewProjectWizardModel.swift in Sources */,
 				51A226C7F10C454988F30227 /* ProgramOutline.swift in Sources */,
 				8274C17D24F7C4BE5D62A5B3 /* ProjectModel.swift in Sources */,
+				92E7661B575D354C5F6780A7 /* ProjectNameSheet.swift in Sources */,
 				196B696B2A6B42F526ECD7AC /* PromptEditorAUI.swift in Sources */,
 				C5182AF195339C8C5C164CCF /* PromptEditorModel.swift in Sources */,
 				78DBDBE491AB6EC5D212DEA1 /* RecentItems.swift in Sources */,
@@ -734,9 +764,12 @@
 				4CF59ACF7247097CD885E6CC /* StudioInterpretedFrameworks.swift in Sources */,
 				E0B7DE9AA99281653B58BED4 /* StudioJITRun.swift in Sources */,
 				EB787163C62D04223B50C411 /* StudioLaunchOptions.swift in Sources */,
+				A5A7F271E02DB9758D3A50F5 /* StudioModel+Project.swift in Sources */,
 				2AC255094C828E26892B4697 /* StudioModel.swift in Sources */,
 				74E30F5278F0970FD4856435 /* StudioModelHostConformance.swift in Sources */,
+				46B9933773319F3D1B6C31AC /* StudioNativeRun.swift in Sources */,
 				364D15018A3456474CC0A498 /* StudioNativeTerminal.swift in Sources */,
+				E2FCAD2A8AD814EF22BC51A0 /* StudioOpenProject.swift in Sources */,
 				FD6F88DDA2245FADC64D7A83 /* StudioSettings.swift in Sources */,
 				A920F5FEAE1652A798D98BF0 /* StudioShellModel.swift in Sources */,
 				4D62081D908243760D673386 /* StudioSound.swift in Sources */,
@@ -1027,6 +1060,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../DocumentArchive;
 		};
+		64EA00B6564950686DF3D492 /* XCLocalSwiftPackageReference "../BASICProjects" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../BASICProjects;
+		};
 		924802E55ABBA75BD5778C47 /* XCLocalSwiftPackageReference "../BASICCompiler" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../BASICCompiler;
@@ -1086,6 +1123,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = BASICDialectTraditional;
 		};
+		3A37B7258FE5DC4BD517C47F /* BASICProjects */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BASICProjects;
+		};
 		48F47A38CE029FADE5022F30 /* BASICWasmRunner */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BASICWasmRunner;
@@ -1105,6 +1146,10 @@
 		5707B052FF4FA7E59AB68BB7 /* BASICWasmRunner */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BASICWasmRunner;
+		};
+		57DB4331E39385E04524406C /* BASICProjects */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BASICProjects;
 		};
 		59174C5A21F8631AF07B1273 /* BASICWasm */ = {
 			isa = XCSwiftPackageProductDependency;

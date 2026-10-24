@@ -8,6 +8,7 @@
 //
 
 import BASICRecipes
+import BASICProjects
 import Foundation
 
 /// The New Project wizard's state: which page is showing, the recipe, the
@@ -123,7 +124,7 @@ struct NewProjectWizardModel {
         return nil
     }
 
-    /// The folder creating it makes: `<location>/<Name>.basproj`.
+    /// What creating it makes: the zip `<location>/<Name>.basproj`.
     var projectURL: URL {
         location.appendingPathComponent(recipe?.folderName(for: name) ?? name, isDirectory: true)
     }
@@ -133,9 +134,10 @@ struct NewProjectWizardModel {
         recipe?.files.map { BASICRecipe.substitute($0.path, name: name, values: recipe?.optionValues(optionValues) ?? [:]) } ?? []
     }
 
-    /// Makes the project; returns its folder.
+    /// Makes the project, as a zip, which is what a new BASIC project is (BASIC-72;
+    /// ProjectKit PLAN D7); returns it.
     func create() throws -> URL {
         guard let recipe else { throw BASICRecipe.Failure("Choose a recipe.") }
-        return try recipe.create(named: name, in: location, options: optionValues)
+        return try BASICProjects.create(from: recipe, named: name, in: location, options: optionValues)
     }
 }

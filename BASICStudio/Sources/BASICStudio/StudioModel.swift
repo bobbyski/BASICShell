@@ -1,5 +1,6 @@
 import Combine
 import BASICRecipes
+import BASICProjects
 import BASICCore
 import TUIKit
 #if canImport(AppKit)
@@ -198,6 +199,15 @@ final class StudioModel: ObservableObject {
     /// How many times a project has been opened on purpose, rather than
     /// restored at launch: the shell shows the sidebar when it goes up.
     @Published private(set) var projectOpenCount = 0
+    /// The project open through ProjectKit (BASIC-72): a folder or a zip, whose files
+    /// are at ``projectDirectoryURL`` (a zip's working copy). Set only by
+    /// ``adoptProject(_:countsAsOpened:)``; the rest is in `StudioModel+Project.swift`.
+    private(set) var openedProject: StudioOpenProject?
+    /// The sidebar's selection, as a path in the project; a folder's ends in `/`.
+    @Published var projectSelection: String?
+    /// Asks for a name, for New File…, New Folder…, Rename… and Move…: the shell
+    /// shows a sheet, and a test answers. Nil is Cancel.
+    var projectNamePrompter: (@MainActor (_ title: String, _ initial: String) async -> String?)?
     @Published var promptTemplate = BASICSession.defaultPromptTemplate {
         didSet {
             guard !isLoadingSettings else { return }
@@ -396,10 +406,9 @@ final class StudioModel: ObservableObject {
         areBreakpointsActive = settings.breakpointsActive
         showsGraphicsHiddenNotice = settings.showsGraphicsHiddenNotice
         recentItems = settings.recentItems
-        if let path = settings.projectDirectoryPath, FileManager.default.fileExists(atPath: path) {
-            let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-            projectDirectoryURL = directory
-            projectFiles = ProjectModel.scan(directory)
+        if let path = settings.projectDirectoryPath {
+            // A folder or a zip (BASIC-72): reopened through ProjectKit.
+            restoreStudioProject(at: URL(fileURLWithPath: path).standardizedFileURL)
         }
         isLoadingSettings = false
         if persistsSettings {
@@ -836,6 +845,8 @@ final class StudioModel: ObservableObject {
     /// choosing a file add it to Open Recent; the sidebar does not.
     func loadProgram(from url: URL) throws {
         let source = try String(contentsOf: url, encoding: .utf8)
+        // The sidebar highlights the editor's file again, unless the caller selects one.
+        projectSelection = nil
         programText = source
         currentProgramURL = url
         currentProgramFileName = url.path
@@ -951,6 +962,11 @@ final class StudioModel: ObservableObject {
             let name = url.lastPathComponent
             try "' main.bas — \(name)\n\nPRINT \"Hello from \(name)\"\n".write(to: main, atomically: true, encoding: .utf8)
         }
+        let manifest = url.appendingPathComponent(BASICProjectFolder.manifestName)
+        if !FileManager.default.fileExists(atPath: manifest.path) {
+            let name = BASICProjectFolder.displayName(ofFolder: url.lastPathComponent)
+            try BASICProjectFolder.manifestText(name: name, entry: "main.bas").write(to: manifest, atomically: true, encoding: .utf8)
+        }
         openProject(at: url)
         openProjectFile("main.bas")
         noteRecent(url, as: .project)
@@ -997,21 +1013,58 @@ final class StudioModel: ObservableObject {
 
     // MARK: - The project (ACTIVEUI_TRANSITION.md P3.7)
 
-    /// Makes `url` the open project: its BASIC programs list in the sidebar,
-    /// and it becomes the working directory.
+    /// Makes `url` the open project, a folder or a zip (BASIC-72): its files list in
+    /// the sidebar, and its folder becomes the working directory.
     func openProject(at url: URL) {
-        let directory = url.standardizedFileURL
-        projectDirectoryURL = directory
-        projectFiles = ProjectModel.scan(directory)
-        workingDirectoryURL = directory
-        projectOpenCount += 1
+        openStudioProject(at: url, countsAsOpened: true)
     }
 
-    /// File ▸ Open Project…: choose a folder, a `.basproj` or any other;
-    /// it opens with the file it starts with in the editor.
+    /// Makes `project` the open project, or none: its files list in the sidebar, and
+    /// its folder (a zip's working copy) is the working directory. Only
+    /// `StudioModel+Project.swift` calls this; it closes the project it replaces.
+    func adoptProject(_ project: StudioOpenProject?, countsAsOpened: Bool) {
+        openedProject = project
+        projectSelection = nil
+        guard let project else {
+            projectDirectoryURL = nil
+            projectFiles = []
+            return
+        }
+        projectDirectoryURL = project.root
+        projectFiles = ProjectModel.scan(project.root)
+        workingDirectoryURL = project.root
+        if countsAsOpened { projectOpenCount += 1 }
+    }
+
+    /// The editor's file moved (a rename or move in the sidebar): it keeps its text
+    /// and follows the file.
+    func programFileMoved(from old: URL, to new: URL) {
+        let oldPath = old.standardizedFileURL.path
+        guard let current = currentProgramURL?.standardizedFileURL.path,
+              current == oldPath || current.hasPrefix(oldPath + "/") else { return }
+        let moved = new.standardizedFileURL.appendingPathComponent(String(current.dropFirst(oldPath.count)))
+        currentProgramURL = moved
+        currentProgramFileName = moved.path
+        updateWindowTitle()
+    }
+
+    /// The editor's file was deleted in the sidebar: the editor clears.
+    func programFileDeleted(at url: URL) {
+        let gone = url.standardizedFileURL.path
+        guard let current = currentProgramURL?.standardizedFileURL.path,
+              current == gone || current.hasPrefix(gone + "/") else { return }
+        programText = ""
+        currentProgramURL = nil
+        currentProgramFileName = nil
+        updateWindowTitle()
+        rebuildProgramFromEditor()
+    }
+
+    /// File ▸ Open Project…: a project zip, a `.basproj` folder, or any folder of
+    /// programs; it opens with the file it starts with in the editor.
     func openProjectFromMenu() {
         chooseFile(FileRequest(
-            kind: .openFolder,
+            kind: .openProject,
             title: ProjectModel.openProjectTitle,
             directory: openPanelStartURL
         )) { [weak self] url in
@@ -1025,12 +1078,7 @@ final class StudioModel: ObservableObject {
     /// `main.bas` (BASICProjectFolder).
     func openProjectAndEntry(at url: URL) {
         openProject(at: url)
-        guard let entry = BASICProjectFolder.entry(of: url.standardizedFileURL) else { return }
-        do {
-            try loadProgram(from: entry)
-        } catch {
-            presentFileError("Unable to load \(entry.lastPathComponent).", error: error)
-        }
+        loadProjectEntry()
     }
 
     // MARK: - Open Recent
@@ -1071,7 +1119,7 @@ final class StudioModel: ObservableObject {
     /// alert that says what goes and whether it can come back. Cancel is the
     /// safe answer and the default one; Delete Project is red.
     func deleteProjectFromMenu() {
-        guard canDeleteProject, let project = projectDirectoryURL else { return }
+        guard canDeleteProject, let project = openedProject?.url ?? projectDirectoryURL else { return }
         let (title, message) = Self.deleteWarning(for: project)
         if let deleteConfirmationAnswer {
             if deleteConfirmationAnswer(title, message) { deleteProjectReportingErrors(project) }
@@ -1117,11 +1165,17 @@ final class StudioModel: ObservableObject {
         #else
         let fate = "will be deleted. This cannot be undone."
         #endif
+        var isDirectory: ObjCBool = false
+        let isFolder = FileManager.default.fileExists(atPath: project.path, isDirectory: &isDirectory) && isDirectory.boolValue
         return ("Delete \u{201C}\(name)\u{201D}?",
-                "The project folder \(project.lastPathComponent) and everything in it (\(files)) \(fate)")
+                "The project \(isFolder ? "folder" : "file") \(project.lastPathComponent) and everything in it (\(files)) \(fate)")
     }
 
     private static func fileCount(in folder: URL) -> Int {
+        // A zipped project (BASIC-72): its files, read in place.
+        if let reader = try? ProjectReader.open(at: folder, as: BASICProjects.typesForOpening), reader.form == .zip {
+            return ((try? reader.items(recursive: true)) ?? []).filter { $0.kind == .file }.count
+        }
         guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return 0 }
         var count = 0
         for case let url as URL in walker where (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
@@ -1135,6 +1189,10 @@ final class StudioModel: ObservableObject {
     /// project and its files come off Open Recent.
     func deleteProject(at url: URL) throws {
         let project = url.standardizedFileURL
+        // The open project is saved and let go first; a zip's working copy goes with it.
+        let isOpen = openedProject?.url.standardizedFileURL.path == project.path
+        let openFiles = isOpen ? openedProject?.root : nil
+        if isOpen { closeStudioProject() }
         #if os(macOS)
         try FileManager.default.trashItem(at: project, resultingItemURL: nil)
         #else
@@ -1142,7 +1200,7 @@ final class StudioModel: ObservableObject {
         #endif
         func isInside(_ other: URL?) -> Bool {
             guard let path = other?.standardizedFileURL.path else { return false }
-            return path == project.path || path.hasPrefix(project.path + "/")
+            return [project, openFiles].compactMap { $0?.path }.contains { path == $0 || path.hasPrefix($0 + "/") }
         }
         if isInside(projectDirectoryURL) {
             projectDirectoryURL = nil
@@ -1297,6 +1355,7 @@ final class StudioModel: ObservableObject {
         let url = projectDirectoryURL.appendingPathComponent(path)
         do {
             try loadProgram(from: url)
+            projectSelection = path
         } catch {
             presentFileError("Unable to load \(url.lastPathComponent).", error: error)
         }
@@ -1364,6 +1423,8 @@ final class StudioModel: ObservableObject {
             case openProgram
             /// A folder to open.
             case openFolder
+            /// A project to open: a `.basproj` zip, or a folder (BASIC-72).
+            case openProject
             /// Where to save a BASIC program, starting from `name`.
             case saveProgram(name: String)
             /// Where to create a folder, starting from `name`.
@@ -1399,6 +1460,13 @@ final class StudioModel: ObservableObject {
             open.allowsMultipleSelection = false
             if !wantsFolder { open.allowedContentTypes = Self.basicProgramContentTypes }
             panel = open
+        case .openProject:
+            // A zip or a folder, in one panel.
+            let open = NSOpenPanel()
+            open.canChooseDirectories = true
+            open.canChooseFiles = true
+            open.allowsMultipleSelection = false
+            panel = open
         case .saveProgram(let name):
             panel = NSSavePanel()
             panel.nameFieldStringValue = name
@@ -1418,6 +1486,7 @@ final class StudioModel: ObservableObject {
             let url: URL? = switch request.kind {
             case .openProgram: await AUIOpenPanel.show(fileTypes: ["bas"], directory: request.directory).first
             case .openFolder: await AUIOpenPanel.show(directories: true, directory: request.directory).first
+            case .openProject: await Self.chooseProjectOnIOS(directory: request.directory)
             case .saveProgram(let name): await AUISavePanel.show(suggestedName: name, fileTypes: ["bas"], directory: request.directory)
             case .newFolder(let name): await AUISavePanel.show(suggestedName: name, directory: request.directory)
             }
@@ -1425,6 +1494,20 @@ final class StudioModel: ObservableObject {
         }
         #endif
     }
+
+    #if os(iOS)
+    /// The document picker shows files or folders, not both: a zip project, or a
+    /// project folder, as the person says.
+    private static func chooseProjectOnIOS(directory: URL?) async -> URL? {
+        let pressed = await AUIAlert.show(title: "Open a Project", message: "A project is a .basproj zip, or a folder.",
+                                          buttons: [.normal("A Zip"), .normal("A Folder"), .cancel()])
+        switch pressed {
+        case 0: return await AUIOpenPanel.show(fileTypes: [BASICProjectFolder.fileExtension], directory: directory).first
+        case 1: return await AUIOpenPanel.show(directories: true, directory: directory).first
+        default: return nil
+        }
+    }
+    #endif
 
     /// A warning with one OK: the Mac's modal alert, or ActiveUI's.
     /// Takes warnings in place of an alert, so a test can read them. Unset,
@@ -1806,6 +1889,7 @@ final class StudioModel: ObservableObject {
     private func saveProgram(to url: URL) {
         do {
             try StudioCloudStorage.write(programText, to: url)
+            projectDidSave(url)
             currentProgramURL = url
             currentProgramFileName = url.path
             workingDirectoryURL = workingDirectory(for: url)
@@ -2181,6 +2265,8 @@ final class StudioModel: ObservableObject {
         }
         isProgramRunning = false
         inputCoordinator.setProgramRunning(false)
+        // What the program wrote into a zip project is saved shortly (BASIC-72).
+        noteProjectChanges()
         // A program's windows go with it: nothing is left to answer them.
         auiBridge.closeAll()
         // So do its on-screen controls, unless it is only paused.
@@ -2428,7 +2514,8 @@ final class StudioModel: ObservableObject {
                 fontFamily: fontFamily,
                 fontSize: fontSize,
                 consoleScrollbackLines: consoleScrollbackLines,
-                projectDirectoryPath: projectDirectoryURL?.path,
+                // The project itself (a zip, not its working copy), for the next launch.
+                projectDirectoryPath: openedProject?.url.path ?? projectDirectoryURL?.path,
                 keepsProgramsInICloud: keepsProgramsInICloud,
                 hidesGraphicsOnStop: hidesGraphicsOnStop,
                 showsGraphicsHiddenNotice: showsGraphicsHiddenNotice,
@@ -2892,6 +2979,13 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
     nonisolated func saveTextFile(path: String, text: String) throws {
         try ensureParentDirectory(for: path)
         try text.write(toFile: expandedPath(path), atomically: true, encoding: .utf8)
+        noteProjectWriteFromHost()
+    }
+
+    /// A write through the file host, from the program's lane: a zip project saves it
+    /// shortly (BASIC-72).
+    nonisolated private func noteProjectWriteFromHost() {
+        Task { @MainActor [weak self] in self?.noteProjectChanges() }
     }
 
     nonisolated func loadFileData(path: String) throws -> Data {
@@ -2906,6 +3000,7 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
     nonisolated func saveFileData(path: String, data: Data) throws {
         try ensureParentDirectory(for: path)
         try data.write(to: URL(fileURLWithPath: expandedPath(path)), options: .atomic)
+        noteProjectWriteFromHost()
     }
 
     nonisolated func fileExists(path: String) throws -> Bool {
@@ -2975,6 +3070,7 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
             at: URL(fileURLWithPath: expandedPath(path), isDirectory: true),
             withIntermediateDirectories: true
         )
+        noteProjectWriteFromHost()
     }
 
     nonisolated func removePath(path: String) throws {
@@ -2989,11 +3085,13 @@ extension StudioModel: BASICFileHost, BASICNetworkHost, BASICSystemHost, BASICPr
             }
         }
         try FileManager.default.removeItem(atPath: resolvedPath)
+        noteProjectWriteFromHost()
     }
 
     nonisolated func renamePath(from source: String, to destination: String) throws {
         try ensureParentDirectory(for: destination)
         try FileManager.default.moveItem(atPath: expandedPath(source), toPath: expandedPath(destination))
+        noteProjectWriteFromHost()
     }
 
     nonisolated func http(_ request: BASICHTTPRequest) async throws -> BASICHTTPResponse {

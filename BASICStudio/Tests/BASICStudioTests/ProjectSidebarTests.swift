@@ -2,7 +2,8 @@
 //  ProjectSidebarTests.swift
 //  BASICStudioTests
 //
-//  P3.7: the project sidebar. Open a folder; pick its programs from a list.
+//  P3.7: the project sidebar. Open a project; pick its files from a list
+//  of every file and folder (BASIC-72).
 //
 
 import ActiveUI
@@ -33,11 +34,11 @@ struct ProjectSidebarTests {
         return root
     }
 
-    @Test("The scan lists .bas files, top level first, in Finder order, skipping hidden files and build output")
+    @Test("The scan lists every file and folder, each folder before what is in it, skipping hidden files and build output")
     func scan() throws {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
-        #expect(ProjectModel.scan(root) == ["hello.bas", "Zeta.bas", "games/pong.BAS", "games/roids.bas"])
+        #expect(ProjectModel.scan(root) == ["games/", "games/pong.BAS", "games/roids.bas", "hello.bas", "notes.txt", "Zeta.bas"])
     }
 
     @Test("Rows show the file's name, and its folder when nested; the open program is selected")
@@ -62,11 +63,11 @@ struct ProjectSidebarTests {
         let model = StudioHarness().model
         model.openProject(at: root)
         #expect(model.projectDirectoryURL == root.standardizedFileURL)
-        #expect(model.projectFiles.count == 4)
+        #expect(model.projectFiles.count == 6)
         model.openProjectFile("games/roids.bas")
         #expect(model.programText == "PRINT \"ROIDS\"")
         #expect(model.selectedPane == .editor)
-        #expect(ProjectModel(model).selectedIndex == 3)
+        #expect(ProjectModel(model).selectedIndex == 2)
 
         try "PRINT 1".write(to: root.appendingPathComponent("new.bas"), atomically: true, encoding: .utf8)
         model.rescanProject()
@@ -84,16 +85,23 @@ struct ProjectSidebarTests {
         studio.model.openProject(at: root)
         studio.refresh()
         #expect(studio.sidebar.headerTitle == root.lastPathComponent)
-        #expect(studio.sidebar.items.map(\.title) == ["hello.bas", "Zeta.bas", "pong.BAS", "roids.bas"])
-        #expect(studio.sidebar.items.map(\.subtitle) == [nil, nil, "games", "games"])
+        #expect(studio.sidebar.items.map(\.title) == ["games", "pong.BAS", "roids.bas", "hello.bas", "notes.txt", "Zeta.bas"])
+        #expect(studio.sidebar.items.map(\.subtitle) == [nil, "games", "games", nil, nil, nil])
 
+        // A folder is selected, not loaded: it is where New File… puts things.
         studio.sidebar.onSelect?(0)
+        studio.refresh()
+        #expect(studio.model.projectSelection == "games/")
+        #expect(studio.model.projectTargetFolder.description == "games")
+
+        studio.sidebar.onSelect?(3)
         studio.refresh()
         #expect(studio.model.programText == "PRINT \"HELLO\"")
         // The native list holds a selection only in a window; what the
         // shell asked it to select is the projection's.
-        #expect(studio.drawnProject?.selectedIndex == 0)
-        #expect(studio.sidebar.headerActions.map(\.tooltip) == [ProjectModel.openProjectTitle, "Rescan the project", "Delete Project\u{2026}"])
+        #expect(studio.drawnProject?.selectedIndex == 3)
+        #expect(studio.sidebar.headerActions.map(\.tooltip)
+                == [ProjectModel.openProjectTitle, "New File\u{2026}", "Rescan the project", "Delete Project\u{2026}"])
     }
 
     @Test("M10 · New makes a program in the current directory and opens it; an existing file is opened, not overwritten")
@@ -115,7 +123,7 @@ struct ProjectSidebarTests {
         #expect(model.programText == "PRINT \"HELLO\"")
     }
 
-    @Test("M10 · New Project makes a folder with main.bas, opens it as the project, and main.bas in the editor")
+    @Test("M10 · New Project makes a folder with main.bas and a project.json, opens it as the project, and main.bas in the editor")
     func newProject() throws {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent("studio-new-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -125,7 +133,7 @@ struct ProjectSidebarTests {
         let project = parent.appendingPathComponent("Rockets")
         try model.createProject(at: project)
         #expect(model.projectDirectoryURL == project.standardizedFileURL)
-        #expect(model.projectFiles == ["main.bas"])
+        #expect(model.projectFiles == ["main.bas", "project.json"])
         #expect(model.currentProgramURL?.lastPathComponent == "main.bas")
         #expect(model.programText.contains("PRINT \"Hello from Rockets\""))
         #expect(model.selectedPane == .editor)
