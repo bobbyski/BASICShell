@@ -975,16 +975,17 @@ final class StudioModel: ObservableObject {
     // MARK: - The New Project wizard (BASIC-24)
 
     /// A wizard ready to start: every recipe, and the folder a project goes
-    /// in. On the Mac that is beside the open project, else the working
-    /// directory, and can be changed; on iPhone and iPad it is the Documents
-    /// folder Studio works in.
+    /// in. That is Documents (Bobby, 2026-10-25): on the Mac, `~/Documents`,
+    /// and Choose… changes it; on iPhone and iPad, the Documents folder Studio
+    /// works in. Never the open project's folder, which for a zip is a working
+    /// copy nobody can find again.
     func makeNewProjectWizard() -> NewProjectWizardModel {
         let recipes = BASICRecipes.all(userFolders: userRecipeFolders)
         #if os(iOS)
         return NewProjectWizardModel(recipes: recipes, location: tildeURL(), canChooseLocation: false)
         #else
-        let location = projectDirectoryURL?.deletingLastPathComponent() ?? workingDirectoryURL
-        return NewProjectWizardModel(recipes: recipes, location: location.standardizedFileURL, canChooseLocation: true)
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? StudioHome.url
+        return NewProjectWizardModel(recipes: recipes, location: documents.standardizedFileURL, canChooseLocation: true)
         #endif
     }
 

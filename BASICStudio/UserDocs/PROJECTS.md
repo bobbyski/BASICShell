@@ -8,7 +8,7 @@ A program that grows past one file becomes a project: `.bas` files that `IMPORT`
 
 A project's name ends in `.basproj`, and it comes in two forms:
 
-- **A zip:** one file, to mail, copy, keep in iCloud or keep on an iPad. New projects are zips.
+- **A zip:** one file, to mail, copy, keep in iCloud or keep on an iPad. New projects are zips unless you choose Package.
 - **A folder** of the same name: the same files unpacked, so git can see each one.
 
 Every BASIC tool opens either form, and the files in it are the same:
@@ -44,10 +44,11 @@ Choose **File ▸ New Project…** (⇧⌘N). On iPad, it is in the **···** m
 
 1. **Choose a recipe.** Each one is a working program to start from. The summary under the list says what it makes, and the line under that lists its files.
 2. **Name the project.** The name is letters, digits, `-` and `_`. The project is `Name.basproj`.
-   - On the Mac, it goes beside the project that is open, or in the working directory. **Choose…** puts it somewhere else.
+   - It goes in Documents. On the Mac, **Choose…** puts it somewhere else.
    - On iPad, it goes in the Documents folder Studio works in.
+   - **Form:** **Zip** (the default) makes one file; **Package** makes a folder of the same name, for git.
 3. **Options.** Only a recipe that asks for something has this page.
-4. **Create.** Studio makes the project, a zip, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
+4. **Create.** Studio makes the project in the form chosen, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
 
 Create stays off while the name is not a name, or a project of that name is already there. The line under the name says which.
 

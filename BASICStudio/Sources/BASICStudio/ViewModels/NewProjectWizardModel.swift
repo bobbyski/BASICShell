@@ -2,8 +2,9 @@
 //  NewProjectWizardModel.swift
 //  BASICStudio
 //
-//  File ▸ New Project…: choose a recipe, name the project and say where it
-//  goes, fill in the recipe's options, and create it (BASIC-24). No UI
+//  File ▸ New Project…: choose a recipe, name the project, say where it goes
+//  and whether it is a zip or a package, fill in the recipe's options, and
+//  create it (BASIC-24, BASIC-72). No UI
 //  framework here; the ActiveUI shell draws it (NewProjectWizardAUI).
 //
 
@@ -38,6 +39,9 @@ struct NewProjectWizardModel {
     /// Whether the location can be changed: on the Mac, yes; on iPhone and
     /// iPad, projects go in the Documents folder Studio works in.
     let canChooseLocation: Bool
+    /// How the project is stored: a zip, one file to share or keep on an iPad (the
+    /// default, BASIC-72), or a package, a folder of the same name that git can see into.
+    var form: ProjectForm = .zip
     /// The recipe's options as entered, by key.
     var optionValues: [String: String] = [:]
     /// Once the name has been typed, picking another recipe leaves it be.
@@ -124,9 +128,9 @@ struct NewProjectWizardModel {
         return nil
     }
 
-    /// What creating it makes: the zip `<location>/<Name>.basproj`.
+    /// What creating it makes: `<location>/<Name>.basproj`, a zip or a folder.
     var projectURL: URL {
-        location.appendingPathComponent(recipe?.folderName(for: name) ?? name, isDirectory: true)
+        location.appendingPathComponent(recipe?.folderName(for: name) ?? name, isDirectory: form == .folder)
     }
 
     /// The files the recipe makes, for the recipe page to list.
@@ -134,10 +138,10 @@ struct NewProjectWizardModel {
         recipe?.files.map { BASICRecipe.substitute($0.path, name: name, values: recipe?.optionValues(optionValues) ?? [:]) } ?? []
     }
 
-    /// Makes the project, as a zip, which is what a new BASIC project is (BASIC-72;
-    /// ProjectKit PLAN D7); returns it.
+    /// Makes the project in the form chosen, a zip unless a package was asked for
+    /// (BASIC-72; ProjectKit PLAN D7); returns it.
     func create() throws -> URL {
         guard let recipe else { throw BASICRecipe.Failure("Choose a recipe.") }
-        return try BASICProjects.create(from: recipe, named: name, in: location, options: optionValues)
+        return try BASICProjects.create(from: recipe, named: name, in: location, form: form, options: optionValues)
     }
 }

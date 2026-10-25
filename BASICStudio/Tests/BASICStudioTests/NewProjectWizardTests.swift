@@ -190,7 +190,13 @@ struct NewProjectWizardTests {
         #expect(!sheet.nameProblem.text.isEmpty)
         sheet.nameField.onChange?("Rocks")
         #expect(sheet.nextButton.isEnabled)
-        #expect(sheet.createsLabel.text == "Creates Rocks.basproj")
+        #expect(sheet.createsLabel.text == "Creates Rocks.basproj, a zip")
+        #expect(sheet.formControl.selectedIndex == 0, "a zip unless a package is asked for")
+        sheet.formControl.onSelectionChange?(1)
+        #expect(sheet.wizard.form == .folder)
+        #expect(sheet.createsLabel.text == "Creates Rocks.basproj, a package (a folder)")
+        sheet.formControl.onSelectionChange?(0)
+        #expect(sheet.wizard.form == .zip)
 
         sheet.nextButton.onClick?()
         sheet.nextButton.onClick?()
@@ -198,6 +204,45 @@ struct NewProjectWizardTests {
         #expect(finished.first??.name == "Rocks")
         #expect(finished.first??.recipe?.id == "basic.game")
     }
+
+    @Test("Package makes the folder Name.basproj, which opens as the project with its files in place")
+    func packageForm() throws {
+        let location = try scratch()
+        defer { try? FileManager.default.removeItem(at: location) }
+        let model = StudioHarness().model
+        var wizard = NewProjectWizardModel(recipes: BASICRecipes.builtIn, location: location, canChooseLocation: true)
+        wizard.next()
+        wizard.name = "Rocks"
+        wizard.form = .folder
+        let project = try model.createProject(from: wizard)
+        defer { model.closeStudioProject() }
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: project.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+        #expect(model.openedProject?.isZip == false)
+        #expect(model.projectDirectoryURL?.standardizedFileURL.path == project.standardizedFileURL.path, "a folder is worked on in place")
+        #expect(model.currentProgramURL?.standardizedFileURL.path == project.appendingPathComponent("src/main.bas").standardizedFileURL.path)
+    }
+
+    #if os(macOS)
+    @Test("A new project goes in Documents, even with a zip project open, never in its working copy")
+    func startsInDocuments() throws {
+        let folder = try scratch()
+        StudioOpenProject.workingCopies = folder.appendingPathComponent("WorkingCopies", isDirectory: true)
+        let model = StudioHarness().model
+        defer {
+            model.closeStudioProject()
+            StudioOpenProject.workingCopies = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first).standardizedFileURL
+        #expect(model.makeNewProjectWizard().location == documents)
+        let recipe = try #require(BASICRecipes.builtIn(named: "console"))
+        model.openProjectAndEntry(at: try BASICProjects.create(from: recipe, named: "Open", in: folder))
+        #expect(model.openedProject?.isZip == true)
+        #expect(model.makeNewProjectWizard().location == documents)
+        #expect(model.makeNewProjectWizard().canChooseLocation)
+    }
+    #endif
 
     @Test("Cancel ends it with nothing made")
     func sheetCancels() throws {
