@@ -85,6 +85,15 @@ extension StudioModel {
         }
     }
 
+    /// A program loaded on its own (File ▸ Load…, Open Recent, an example that is one
+    /// file) closes the open project unless it is one of the project's files, so the
+    /// sidebar never lists a project the editor's program isn't in.
+    func leaveProject(unlessItHolds url: URL?) {
+        guard let project = openedProject else { return }
+        if let url, project.contains(url) { return }
+        closeStudioProject()
+    }
+
     // MARK: - Saving
 
     /// After Studio saved `url`: in a zip project, the zip is written now, so Save is

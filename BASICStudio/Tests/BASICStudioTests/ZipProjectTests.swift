@@ -90,6 +90,46 @@ struct ZipProjectTests {
         model.closeStudioProject()
     }
 
+    @Test("A one-file example closes the open project; the program runs where the project was, not in its working copy")
+    func oneFileExampleClosesProject() throws {
+        let (folder, zip) = try makeZip()
+        defer {
+            StudioOpenProject.workingCopies = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let model = StudioHarness().model
+        model.openProjectAndEntry(at: zip)
+        #expect(model.openedProject != nil && !model.projectFiles.isEmpty)
+        let example = try #require(model.bundledExamples.first { $0.path == "games/brick-breaker" })
+        model.loadBundledExample(example)
+        #expect(model.openedProject == nil, "the sidebar lists no project")
+        #expect(model.projectDirectoryURL == nil && model.projectFiles.isEmpty)
+        #expect(!model.programText.isEmpty && model.currentProgramURL == nil)
+        // With no project open, this is the working directory: the zip's folder.
+        #expect(model.currentDirectoryURL.standardizedFileURL.path == folder.standardizedFileURL.path)
+    }
+
+    @Test("Open Recent of a file outside the project closes it; one of the project's own files keeps it")
+    func loneFileClosesProject() throws {
+        let (folder, zip) = try makeZip()
+        defer {
+            StudioOpenProject.workingCopies = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let model = StudioHarness().model
+        model.openProjectAndEntry(at: zip)
+        let inside = try #require(model.projectDirectoryURL).appendingPathComponent("src/main.bas")
+        model.openRecent(inside, as: .file)
+        #expect(model.openedProject != nil, "its own file keeps the project open")
+
+        let outside = folder.appendingPathComponent("loose.bas")
+        try "PRINT 1\n".write(to: outside, atomically: true, encoding: .utf8)
+        model.openRecent(outside, as: .file)
+        #expect(model.openedProject == nil)
+        #expect(model.projectFiles.isEmpty)
+        #expect(model.currentProgramURL == outside)
+    }
+
     @Test("What a program writes into a zip project is saved with it")
     func programWritesAreSaved() throws {
         let (folder, zip) = try makeZip()

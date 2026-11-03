@@ -833,6 +833,7 @@ final class StudioModel: ObservableObject {
             guard let self else { return }
             do {
                 try loadProgram(from: url)
+                leaveProject(unlessItHolds: url)
                 noteRecent(url, as: .file)
             } catch {
                 presentFileError("Unable to load \(url.lastPathComponent).", error: error)
@@ -1024,11 +1025,17 @@ final class StudioModel: ObservableObject {
     /// its folder (a zip's working copy) is the working directory. Only
     /// `StudioModel+Project.swift` calls this; it closes the project it replaces.
     func adoptProject(_ project: StudioOpenProject?, countsAsOpened: Bool) {
+        let previous = openedProject
         openedProject = project
         projectSelection = nil
         guard let project else {
             projectDirectoryURL = nil
             projectFiles = []
+            // A program runs where the project was, never in a zip's working copy,
+            // which closing lets go of.
+            if let previous, previous.relativePath(of: workingDirectoryURL) != nil {
+                workingDirectoryURL = previous.url.standardizedFileURL.deletingLastPathComponent()
+            }
             return
         }
         projectDirectoryURL = project.root
@@ -1253,6 +1260,7 @@ final class StudioModel: ObservableObject {
         case .file:
             do {
                 try loadProgram(from: url)
+                leaveProject(unlessItHolds: url)
             } catch {
                 presentFileError("Unable to load \(url.lastPathComponent).", error: error)
                 return
@@ -1372,6 +1380,8 @@ final class StudioModel: ObservableObject {
             return
         }
 
+        // A one-file example is no project's: the open one closes (2026-11-02).
+        leaveProject(unlessItHolds: nil)
         programText = source
         currentProgramURL = nil
         currentProgramFileName = Self.demoFileName(for: example.path)
