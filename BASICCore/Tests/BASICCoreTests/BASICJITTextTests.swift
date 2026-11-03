@@ -53,6 +53,20 @@ struct BASICJITTextTests {
         #expect(BASICJIT.compilerPath(environment: override) == "/bin/echo")
     }
 
+    /// A host Xcode launched has DYLD_ paths to its own build products; basicc
+    /// given them loads the host's TUIKit, not its own, and dies in dyld
+    /// (2026-11-02). Everything else the host has still reaches the compiler.
+    @Test("basicc runs without the host's DYLD_ variables")
+    func compilerEnvironmentDropsDyld() {
+        let host = [
+            "DYLD_LIBRARY_PATH": "/Users/me/Build/Products/Debug",
+            "DYLD_FRAMEWORK_PATH": "/Users/me/Build/Products/Debug",
+            "PATH": "/usr/bin:/bin",
+            "BASICC_RT_LIB": "/tmp/libBASICRTHost.a",
+        ]
+        #expect(BASICJIT.compilerEnvironment(host) == ["PATH": "/usr/bin:/bin", "BASICC_RT_LIB": "/tmp/libBASICRTHost.a"])
+    }
+
     @Test("Blank lines come back, so every line is where the editor has it")
     func blankLines() {
         let program = BASICProgram()
