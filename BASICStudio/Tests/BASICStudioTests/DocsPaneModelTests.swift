@@ -96,4 +96,40 @@ struct DocsPaneModelTests {
         #expect(!tutorials.contains("BASICrc Tutorial"))
         #expect(tutorials.count == 6, "\(tutorials)")
     }
+
+    @Test("Topics group the Reference pages, in topic order, and unlisted pages go under More Reference")
+    func topics() {
+        let docs = Self.docs + [UserDoc(id: "PRINT.md", title: "PRINT", category: .reference, content: "# PRINT")]
+        let topics = [
+            UserDocTopic(title: "Input and Output", pages: ["PRINT.md", "SOUND.md", "GONE.md"]),
+            UserDocTopic(title: "Empty", pages: ["NOTHING.md"]),
+        ]
+        let pane = DocsPaneModel(docs: docs, selectedID: "PRINT.md", topics: topics)
+        let reference = pane.sections.first { $0.title == "Reference" }
+        #expect(reference?.items.isEmpty == true)
+        #expect(reference?.groups.map(\.title) == ["Input and Output", "More Reference"])
+        #expect(reference?.groups.first?.items.map(\.id) == ["PRINT.md", "SOUND.md"])
+        #expect(reference?.groups.first?.items.first?.isChecked == true)
+        #expect(reference?.groups.last?.items.map(\.id) == ["LANGUAGE.md"])
+        // Tutorials are not grouped.
+        #expect(pane.sections.first?.groups.isEmpty == true)
+    }
+
+    @Test("With no topics, Reference stays one flat list")
+    func noTopics() {
+        let pane = DocsPaneModel(docs: Self.docs, selectedID: nil, topics: [])
+        #expect(pane.sections.last?.groups.isEmpty == true)
+        #expect(pane.sections.last?.items.map(\.id) == ["LANGUAGE.md", "SOUND.md"])
+    }
+
+    @Test("The real TOPICS.json lists every Reference page exactly once")
+    func realTopicsCoverTheReference() {
+        let topics = UserDoc.loadTopics()
+        let listed = topics.flatMap(\.pages)
+        let reference = UserDoc.loadAll(hasShell: true).filter { $0.category == .reference }.map(\.id)
+        #expect(!topics.isEmpty)
+        #expect(Set(listed).count == listed.count, "a page is in two topics")
+        #expect(Set(reference).subtracting(listed).isEmpty, "pages in no topic: \(Set(reference).subtracting(listed).sorted())")
+        #expect(Set(listed).subtracting(reference).isEmpty, "topics name pages that do not exist: \(Set(listed).subtracting(reference).sorted())")
+    }
 }

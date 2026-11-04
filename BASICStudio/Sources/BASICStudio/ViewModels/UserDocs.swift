@@ -139,6 +139,18 @@ struct UserDoc: Identifiable, Hashable {
         return sources
     }
 
+    /// The Reference topics, from `TOPICS.json` beside the pages, searched for
+    /// where the pages are. Empty when there is none, which leaves the
+    /// Reference menu one flat list, as it was before topics.
+    static func loadTopics() -> [UserDocTopic] {
+        guard let library = try? DocumentLibrary(searching: sources(), extension: "json"),
+              let file = library.document(named: "TOPICS"),
+              let parsed = try? JSONDecoder().decode(UserDocTopic.File.self, from: Data(file.text.utf8)) else {
+            return []
+        }
+        return parsed.reference
+    }
+
     private static func category(from fileName: String) -> UserDocCategory {
         if fileName.uppercased().hasPrefix("TUTORIAL_") {
             return .tutorials
@@ -153,5 +165,21 @@ struct UserDoc: Identifiable, Hashable {
             }
         }
         return fallback.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+/// One Reference topic: a heading and its pages, in order.
+///
+/// Read from `TOPICS.json` in the UserDocs folder. Freebird Studio's BASIC book
+/// reads the same file for its Reference part, so a page moved to another
+/// topic moves in both.
+struct UserDocTopic: Codable, Equatable {
+    let title: String
+    /// Page file names, `PRINT.md`.
+    let pages: [String]
+
+    /// The file's shape.
+    struct File: Codable {
+        let reference: [UserDocTopic]
     }
 }
