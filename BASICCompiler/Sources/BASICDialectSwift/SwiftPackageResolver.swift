@@ -122,8 +122,38 @@ public struct SwiftPackageResolver {
             throw Failure(importName: importName,
                           problem: "swift build produced no objects for \(importName) under \(scratch)/release")
         }
+        // The in-package targets the module depends on link too (ActiveUI's ActiveUITextStorage,
+        // an Objective-C target, 2026-11): the module's own objects reference theirs. What the
+        // module exports is still read from its own objects alone.
+        let dependencyObjects = Self.localDependencies(of: importName, packagePath: path)
+            .flatMap { Self.targetObjects($0, scratch: scratch) }
         return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph,
-                               objects: objects, exported: Self.exportedSymbols(of: objects))
+                               objects: objects + dependencyObjects, exported: Self.exportedSymbols(of: objects))
+    }
+
+    /// The targets in the same package that `target` depends on, directly or not, from
+    /// `swift package describe`. Empty when the description cannot be read.
+    static func localDependencies(of target: String, packagePath: String) -> [String] {
+        guard let described = try? ProcessRunner.run("/usr/bin/xcrun", ["swift", "package", "describe", "--type", "json"],
+                                                     workingDirectory: packagePath),
+              described.exitCode == 0,
+              let data = described.stdout.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let targets = json["targets"] as? [[String: Any]] else { return [] }
+        var dependencies: [String: [String]] = [:]
+        for entry in targets {
+            guard let name = entry["name"] as? String else { continue }
+            dependencies[name] = entry["target_dependencies"] as? [String] ?? []
+        }
+        var found: [String] = []
+        var pending = dependencies[target] ?? []
+        while let next = pending.first {
+            pending.removeFirst()
+            guard !found.contains(next), next != target else { continue }
+            found.append(next)
+            pending += dependencies[next] ?? []
+        }
+        return found
     }
 
     /// A resolved module's symbol graph as built for iOS (BASIC-45). A
@@ -680,10 +710,12 @@ public struct SwiftPackageResolver {
         #else
         let architecture = "x86_64"
         #endif
-        let root = "\(scratch)/out/Intermediates.noindex/\(target).build/Release"
+        // Under the *package's* folder (`ActiveUI.build/Release/ActiveUITextStorage-t.build/…`): it
+        // matched `<target>.build` only while the target was named after its package.
+        let root = "\(scratch)/out/Intermediates.noindex"
         guard let walker = FileManager.default.enumerator(atPath: root) else { return [] }
         for case let entry as String in walker
-        where entry.hasSuffix("/Objects-normal/\(architecture)/\(target).LinkFileList") {
+        where entry.contains("/Release/") && entry.hasSuffix("/Objects-normal/\(architecture)/\(target).LinkFileList") {
             let list = (root as NSString).appendingPathComponent(entry)
             guard let text = try? String(contentsOfFile: list, encoding: .utf8) else { return [] }
             return text.split(separator: "\n").map(String.init)
