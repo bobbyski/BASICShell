@@ -43,6 +43,12 @@ public struct SwiftPackageResolver {
         /// exactly this check ("validate every generated symbol against nm,
         /// or bindings rot silently").
         public var exported: Set<String> = []
+        /// The import cache entry all of this was gathered into (`SwiftImportCache`).
+        public var cacheEntry: String? = nil
+        /// The entry's `.swiftmodule`s, for `swiftc -I`.
+        public var modulesDirectory: String? = nil
+        /// The entry's generated C module maps, for `-fmodule-map-file`.
+        public var moduleMaps: [String] = []
     }
 
     /// The failure, with the command that produced it.
@@ -70,19 +76,64 @@ public struct SwiftPackageResolver {
     }
 
     /// Resolves, builds and reads one import.
-    public func resolve(_ importName: String) throws -> ResolvedPackage {
+    ///
+    /// Build, gather, remove (Bobby, 2026-11-08): the package is built in
+    /// `.build-basicc` as before, what the compile needs is copied into the import
+    /// cache, and the folder is removed at once, however the build ended. The cache
+    /// entry is reused while the compiler and the package's files are unchanged, so
+    /// the build runs only when something changed.
+    public func resolve(_ importName: String, cache: SwiftImportCache = SwiftImportCache()) throws -> ResolvedPackage {
         let dependencies = try dependencies()
         guard let path = dependencies[importName] else {
             throw Failure(importName: importName, problem: "the program's Package.swift names no dependency called \(importName) (it has: \(dependencies.keys.sorted().joined(separator: ", ")))")
         }
+        let stamp = SwiftImportCache.stamp(module: importName, package: path)
+        if let entry = cache.entry(for: importName, stamp: stamp) {
+            return Self.resolved(importName, path: path, entry: entry)
+        }
+        return try cache.withLock(importName, waiting: {
+            FileHandle.standardError.write(Data("basicc: waiting for another basicc building \(importName)\n".utf8))
+        }) {
+            // Another basicc may have made it while this one waited.
+            if let entry = cache.entry(for: importName, stamp: stamp) {
+                return Self.resolved(importName, path: path, entry: entry)
+            }
+            let scratch = (path as NSString).appendingPathComponent(".build-basicc")
+            SwiftBuildFolders.begin(scratch)
+            defer {
+                try? FileManager.default.removeItem(atPath: scratch)
+                SwiftBuildFolders.end(scratch)
+            }
+            let entry = try build(importName, path: path, scratch: scratch, stamp: stamp, cache: cache)
+            FileHandle.standardError.write(Data(
+                "basicc: \(importName): built once; kept \(SwiftImportCache.describe(entry.sizes.total)) in \(entry.directory); build folder (\(SwiftImportCache.describe(entry.sizes.buildFolder))) removed\n".utf8))
+            if let warning = SwiftImportCache.budgetWarning(module: importName, sizes: entry.sizes) {
+                FileHandle.standardError.write(Data((warning + "\n").utf8))
+            }
+            return Self.resolved(importName, path: path, entry: entry)
+        }
+    }
+
+    /// What an entry resolves to.
+    static func resolved(_ name: String, path: String, entry: SwiftImportCache.Entry) -> ResolvedPackage {
+        var package = ResolvedPackage(name: name, path: path, symbolGraph: entry.symbolGraph,
+                                      objects: entry.objects, exported: entry.exported())
+        package.cacheEntry = entry.directory
+        package.modulesDirectory = entry.modulesDirectory
+        package.moduleMaps = entry.moduleMaps
+        return package
+    }
+
+    /// Builds the import in `scratch` and gathers what the compile needs into `cache`.
+    private func build(_ importName: String, path: String, scratch: String, stamp: String,
+                       cache: SwiftImportCache) throws -> SwiftImportCache.Entry {
         // **Its own build directory, not the package's `.build`.** SwiftPM
         // takes an exclusive lock on a build directory, so building a
         // dependency in the place its author (or their editor, or another
         // tool) is already building it makes `basicc` wait on a lock it
         // cannot see — and the failure looks like a broken import rather than
-        // a busy directory. Stable rather than temporary, so a second compile
-        // of the same program costs nothing.
-        let scratch = (path as NSString).appendingPathComponent(".build-basicc")
+        // a busy directory. It is removed as soon as what the compile needs is
+        // gathered; the import cache, not the folder, makes a second compile free.
         // **`--target`, the module being imported — not `--product`.** An
         // import names a module, and a module is a target. `--product` quietly
         // falls back to building *every* target when the product is an
@@ -126,13 +177,18 @@ public struct SwiftPackageResolver {
         // an Objective-C target, 2026-11): the module's own objects reference theirs. What the
         // module exports is still read from its own objects alone.
         let dependencyObjects = Self.localDependencies(of: importName, packagePath: path)
-            .flatMap { Self.targetObjects($0, scratch: scratch) }
-        return ResolvedPackage(name: importName, path: path, symbolGraph: symbolGraph,
-                               objects: objects + dependencyObjects, exported: Self.exportedSymbols(of: objects))
+            .map { (target: $0, files: Self.targetObjects($0, scratch: scratch)) }
+        return try cache.store(module: importName, package: path, stamp: stamp, symbolGraph: symbolGraph,
+                               objects: [(target: importName, files: objects)] + dependencyObjects,
+                               exported: Self.exportedSymbols(of: objects), scratch: scratch)
     }
 
     /// The targets in the same package that `target` depends on, directly or not, from
     /// `swift package describe`. Empty when the description cannot be read.
+    ///
+    /// **Not macros or plugins.** They run inside the compiler while the package
+    /// builds, and are never part of what a program links: TUIKit's `TUIKitMacros`,
+    /// linked into a program, left SwiftSyntax's symbols undefined (2026-11-08).
     static func localDependencies(of target: String, packagePath: String) -> [String] {
         guard let described = try? ProcessRunner.run("/usr/bin/xcrun", ["swift", "package", "describe", "--type", "json"],
                                                      workingDirectory: packagePath),
@@ -141,15 +197,17 @@ public struct SwiftPackageResolver {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let targets = json["targets"] as? [[String: Any]] else { return [] }
         var dependencies: [String: [String]] = [:]
+        var buildTime: Set<String> = []
         for entry in targets {
             guard let name = entry["name"] as? String else { continue }
             dependencies[name] = entry["target_dependencies"] as? [String] ?? []
+            if ["macro", "plugin"].contains(entry["type"] as? String) { buildTime.insert(name) }
         }
         var found: [String] = []
         var pending = dependencies[target] ?? []
         while let next = pending.first {
             pending.removeFirst()
-            guard !found.contains(next), next != target else { continue }
+            guard !found.contains(next), next != target, !buildTime.contains(next) else { continue }
             found.append(next)
             pending += dependencies[next] ?? []
         }
@@ -161,8 +219,23 @@ public struct SwiftPackageResolver {
     /// Studio runs the same program on either: ActiveUI's AppKit-only members
     /// are in the Mac's graph and not in this one. Built in the import's own
     /// scratch directory, for the iOS device triple.
-    public static func iOSSymbolGraph(of package: ResolvedPackage) throws -> String {
-        let scratch = (package.path as NSString).appendingPathComponent(".build-basicc")
+    public static func iOSSymbolGraph(of package: ResolvedPackage, cache: SwiftImportCache = SwiftImportCache()) throws -> String {
+        // Build, take the graph, remove, as `resolve` does; under the module's lock, so
+        // no other basicc is using the folder this removes.
+        try cache.withLock(package.name, waiting: {
+            FileHandle.standardError.write(Data("basicc: waiting for another basicc building \(package.name)\n".utf8))
+        }) {
+            let scratch = (package.path as NSString).appendingPathComponent(".build-basicc")
+            SwiftBuildFolders.begin(scratch)
+            defer {
+                try? FileManager.default.removeItem(atPath: scratch)
+                SwiftBuildFolders.end(scratch)
+            }
+            return try iOSSymbolGraph(of: package, scratch: scratch)
+        }
+    }
+
+    private static func iOSSymbolGraph(of package: ResolvedPackage, scratch: String) throws -> String {
         let sdk = try ProcessRunner.run("/usr/bin/xcrun", ["--sdk", "iphoneos", "--show-sdk-path"])
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let sdkVersion = try ProcessRunner.run("/usr/bin/xcrun", ["--sdk", "iphoneos", "--show-sdk-version"])
@@ -201,11 +274,19 @@ public struct SwiftPackageResolver {
     public func buildAsyncShim(for api: SwiftAPI, package: ResolvedPackage) throws -> String? {
         guard let source = Self.shimModel(for: api).source() else { return nil }
 
-        let directory = (package.path as NSString).appendingPathComponent(".build-basicc/shims")
+        // In the import's cache entry, never inside the package; a temporary folder for
+        // a package resolved without one.
+        let directory = package.cacheEntry.map { ($0 as NSString).appendingPathComponent("shims") }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("basicc-shims-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let file = (directory as NSString).appendingPathComponent("\(api.module)Await.swift")
-        try source.write(toFile: file, atomically: true, encoding: .utf8)
         let object = (directory as NSString).appendingPathComponent("\(api.module)Await.o")
+        // The same shim as last time is already compiled.
+        if FileManager.default.fileExists(atPath: object),
+           (try? String(contentsOfFile: file, encoding: .utf8)) == source {
+            return object
+        }
+        try source.write(toFile: file, atomically: true, encoding: .utf8)
 
         // Built against the framework's own module, and against BASICRTSwift
         // for the error raiser a failing await hands its error to.
@@ -214,8 +295,10 @@ public struct SwiftPackageResolver {
         for map in Self.moduleMapFiles(package: package) { arguments += ["-Xcc", "-fmodule-map-file=\(map)"] }
         let result = try ProcessRunner.run("/usr/bin/xcrun", arguments)
         guard result.exitCode == 0 else {
+            try? FileManager.default.removeItem(atPath: file)
             throw Failure(importName: api.module, problem: "the await shim did not compile: \(result.stderr)")
         }
+        if let entry = package.cacheEntry { SwiftImportCache.recordSize(ofEntryAt: entry) }
         return object
     }
 
@@ -625,14 +708,14 @@ public struct SwiftPackageResolver {
     /// Where `swiftc` should look for the framework's module and for
     /// BASICRTSwift.
     static func moduleSearchPaths(package: ResolvedPackage) -> [String] {
-        var paths: [String] = []
-        for build in [".build-basicc", ".build"] {
-            for configuration in ["release", "debug"] {
-                let modules = "\(package.path)/\(build)/\(configuration)/Modules"
-                if FileManager.default.fileExists(atPath: modules) { paths.append(modules) }
-                let flat = "\(package.path)/\(build)/\(configuration)"
-                if FileManager.default.fileExists(atPath: flat) { paths.append(flat) }
-            }
+        // The import cache entry's modules first: what `.build-basicc` held, gathered
+        // before the folder was removed.
+        var paths: [String] = package.modulesDirectory.map { [$0] } ?? []
+        for configuration in ["release", "debug"] {
+            let modules = "\(package.path)/.build/\(configuration)/Modules"
+            if FileManager.default.fileExists(atPath: modules) { paths.append(modules) }
+            let flat = "\(package.path)/.build/\(configuration)"
+            if FileManager.default.fileExists(atPath: flat) { paths.append(flat) }
         }
         if let extra = ProcessInfo.processInfo.environment["BASICC_SWIFT_MODULES"] {
             paths += extra.split(separator: ":").map(String.init)
@@ -645,13 +728,11 @@ public struct SwiftPackageResolver {
     /// define it twice). Without them a framework with a C target — ActiveUI
     /// and `ActiveUITextStorage` — cannot be imported by generated Swift.
     static func moduleMapFiles(package: ResolvedPackage) -> [String] {
-        for build in [".build-basicc", ".build"] {
-            let directory = "\(package.path)/\(build)/out/Intermediates.noindex/GeneratedModuleMaps"
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
-            let maps = names.filter { $0.hasSuffix(".modulemap") }.sorted().map { "\(directory)/\($0)" }
-            if !maps.isEmpty { return maps }
-        }
-        return []
+        // The entry's maps, gathered from `.build-basicc` before it was removed.
+        if !package.moduleMaps.isEmpty { return package.moduleMaps }
+        let directory = "\(package.path)/.build/out/Intermediates.noindex/GeneratedModuleMaps"
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return [] }
+        return names.filter { $0.hasSuffix(".modulemap") }.sorted().map { "\(directory)/\($0)" }
     }
 
     /// The tail of a tool's output. A failing SwiftPM run prints its whole

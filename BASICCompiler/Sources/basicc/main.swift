@@ -34,6 +34,8 @@ func printUsage() {
                                           gave the program, and what it did not
       basicc import-probe <file.bas>      the same, and prove it: compile every
                                           generated shim and type-check the units
+      basicc import-cache [--clear]       what basicc keeps of the Swift packages
+                                          programs import, and how big it is
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -331,6 +333,35 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
 /// exported symbols (for the compiler Studio carries), R4's shims for every
 /// member, and the entries that call them by name. Read before the ordinary
 /// arguments, which take one source file and nothing else.
+/// `basicc import-cache [--clear]`: each module's import cache entry and its size,
+/// and the total; `--clear` empties the cache. The entries replace the build folders
+/// imports used to leave behind (`Documents/BASICC_IMPORTS_WITHOUT_BUILDS.md`).
+func importCache() -> Never {
+    let cache = SwiftImportCache()
+    if CommandLine.arguments.dropFirst(2).contains("--clear") {
+        do {
+            if FileManager.default.fileExists(atPath: cache.root) { try FileManager.default.removeItem(atPath: cache.root) }
+            print("cleared \(cache.root)")
+            exit(0)
+        } catch {
+            fail("could not clear \(cache.root): \(error)")
+        }
+    }
+    let entries = cache.entries()
+    print(cache.root)
+    if entries.isEmpty { print("  (empty)") }
+    for entry in entries {
+        let sizes = entry.sizes
+        // The total as it is on disk now; the parts as recorded when the entry was made.
+        let now = SwiftImportCache.size(of: (cache.root as NSString).appendingPathComponent(entry.module))
+        print("  \(entry.module): \(SwiftImportCache.describe(now)) (objects \(SwiftImportCache.describe(sizes.objects)), "
+              + "modules \(SwiftImportCache.describe(sizes.modules)), graph \(SwiftImportCache.describe(sizes.graph)), "
+              + "other \(SwiftImportCache.describe(sizes.other))); build folder was \(SwiftImportCache.describe(sizes.buildFolder)); made \(entry.made)")
+    }
+    print("  total \(SwiftImportCache.describe(SwiftImportCache.size(of: cache.root)))")
+    exit(0)
+}
+
 func frameworkMap() -> Never {
     // basicc framework-map <out> <Module>=<package folder> ... (BASIC-45)
     //
@@ -354,6 +385,8 @@ func frameworkMap() -> Never {
             // What the Mac and the iPad both have: the Mac's graph, less every
             // symbol iOS's does not declare, and every relationship naming one.
             let iOSGraph = try SwiftPackageResolver.iOSSymbolGraph(of: resolved)
+            // Read once, then gone: nothing of the iOS build is kept.
+            defer { try? FileManager.default.removeItem(atPath: (iOSGraph as NSString).deletingLastPathComponent) }
             guard var graph = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resolved.symbolGraph))) as? [String: Any],
                   var symbols = graph["symbols"] as? [[String: Any]],
                   let relationships = graph["relationships"] as? [[String: Any]],
@@ -411,7 +444,12 @@ func frameworkMap() -> Never {
     exit(0)
 }
 
+// Interrupted (Control-C, `timeout`), basicc stops the SwiftPM run it started and
+// removes the import build folder it was using, rather than leaving both behind.
+SwiftBuildFolders.removeOnInterrupt()
+
 if CommandLine.arguments.dropFirst().first == "framework-map" { frameworkMap() }
+if CommandLine.arguments.dropFirst().first == "import-cache" { importCache() }
 
 let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
