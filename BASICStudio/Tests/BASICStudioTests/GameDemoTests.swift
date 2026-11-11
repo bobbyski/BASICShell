@@ -727,6 +727,44 @@ struct GameDemoTests {
         #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
     }
 
+    /// On an iPhone a finger lands between pixels (`x=333.33`). Compiled to
+    /// WebAssembly, the runtime refused that fraction for the INTEGER
+    /// `BASICMouseEvent.X`, left X at 0, and the paddle snapped to the left wall on
+    /// every such move, between moves that happened to land on a whole pixel
+    /// (2026-11-11, Bobby's iPhone).
+    @Test("Brick Breaker compiled to WebAssembly follows a finger that lands between pixels")
+    func brickBreakerFractionalDragCompiled() async throws {
+        let studio = StudioHarness()
+        let example = try #require(studio.model.bundledExamples.first { $0.path == "games/brick-breaker" })
+        studio.model.loadBundledExample(example)
+        var sent = ""
+        studio.model.vtgDataSink = { sent += String(decoding: $0, as: UTF8.self) }
+        studio.model.compiledRunTarget = .webAssembly
+        studio.model.jitEditorProgram()
+        try await studio.waitUntil("the paddle", timeout: .seconds(90)) { sent.contains("id=paddle,") }
+        let start = try #require(Self.lastX(of: "paddle", in: sent))
+        let drawn = sent.count
+
+        studio.model.postVTGMouseEvent(subtype: "DOWN", x: Double(start) + 56.33, y: 600.66, button: 0, buttons: 1, duration: 0.05)
+        for step in 1...12 {
+            try await Task.sleep(for: .milliseconds(40))
+            studio.model.postVTGMouseEvent(subtype: "MOVE", x: Double(start) + 56.33 - Double(step) * 10.33, y: 600.66,
+                                           button: 0, buttons: 1, duration: 0.04)
+        }
+        try await studio.waitUntil("the paddle to follow") { (Self.lastX(of: "paddle", in: sent) ?? start) < start - 90 }
+        // Every paddle drawn since the finger went down was near it, never at the wall.
+        let paddles = String(sent.dropFirst(drawn)).components(separatedBy: "id=paddle,").dropFirst()
+            .compactMap { piece -> Int? in
+                guard let x = piece.range(of: "x=") else { return nil }
+                return Int(piece[x.upperBound...].prefix { $0.isNumber || $0 == "-" })
+            }
+        #expect(!paddles.isEmpty && paddles.allSatisfy { $0 > start - 200 }, "the paddle went to the wall: \(paddles)")
+
+        studio.model.handleTerminalInput([.append("q")])
+        try await studio.waitUntilStopped(timeout: .seconds(20))
+        #expect(!studio.model.consoleText.contains("rror"), "\(studio.model.consoleText.suffix(300))")
+    }
+
     @Test("Incoming by touch: the stick moves the crosshair and a silo button fires from that silo")
     func incomingByTouch() async throws {
         let studio = StudioHarness()

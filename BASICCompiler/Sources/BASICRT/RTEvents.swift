@@ -170,7 +170,14 @@ package enum RTEvents {
             // `BASICAUIEvent.Text$` carries its sigil, where the payload's
             // key is the interpreter's `text`.
             let bare = event.type == "AUI" && field.name.hasSuffix("$") ? String(field.name.dropLast()) : field.name
-            guard let value = byName[field.name] ?? byName[bare] else { continue }
+            guard var value = byName[field.name] ?? byName[bare] else { continue }
+            // A host's number for an INTEGER field is rounded, not refused: a touch
+            // lands between pixels (`x=333.33` on an iPhone), and refusing it left
+            // `X` at 0, so Brick Breaker's paddle snapped to the left wall on every
+            // fractional move (2026-11-11).
+            if case .integer = field.type, let number = value.number, number.rounded() != number {
+                value = .number(number.rounded())
+            }
             guard let coerced = try? RTCoerce.coerce(value, to: field.type, name: field.displayName) else { continue }
             composite.fields[slot] = coerced
         }

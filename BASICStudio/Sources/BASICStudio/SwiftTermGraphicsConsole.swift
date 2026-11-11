@@ -694,8 +694,11 @@ final class AIBasicTerminalContainerView: ConsoleBaseView, @preconcurrency Termi
         let canvas = terminalView.currentVTGCanvas()
         let canvasWidth = max(1, canvas.width)
         let canvasHeight = max(1, canvas.height)
-        let x = min(max(Double(point.x / width) * Double(canvasWidth), 0), Double(canvasWidth))
-        let y = min(max(Double(point.y / height) * Double(canvasHeight), 0), Double(canvasHeight))
+        // Whole canvas pixels, as `BASICMouseEvent.X` and `.Y` are INTEGER: a touch
+        // lands between them (an iPhone's 333.33), and a compiled program given that
+        // fraction read X as 0 (2026-11-11).
+        let x = min(max(Double(point.x / width) * Double(canvasWidth), 0), Double(canvasWidth)).rounded()
+        let y = min(max(Double(point.y / height) * Double(canvasHeight), 0), Double(canvasHeight)).rounded()
         let previousTimestamp = lastMouseEventTimestamp ?? timestamp
         lastMouseEventTimestamp = timestamp
         let hit = model?.hitRegion(atX: x, y: y)
