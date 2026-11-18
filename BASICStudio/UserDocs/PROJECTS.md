@@ -59,6 +59,8 @@ Create stays off while the name is not a name, or a project of that name is alre
 | Game | Someone to move around, four targets (a point each) and a guard walking the edge (ten points, and another two seconds later) to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes (Walker, Player, Guard, Shots, Targets, View, Controls) in four files. |
 | TUI App | A full-screen TUIKit window with a menu bar, a field, a list and buttons. |
 | ActiveUI App | A to-do list in a window of its own: buttons, a field, a list and a status line. Runs in BASICStudio. |
+| ActiveUI Click Counter | ActiveUI's smallest complete app: a label that counts and a Click me button, in a window of its own. Runs in BASICStudio. |
+| ActiveUI Master/Detail | A list of items beside the chosen one's title, summary and body, in a window of its own. Runs in BASICStudio. |
 | Contact Book | A TUIKit contact book in six files: a model, JSON save and load, a toolbar and menus, and an unsaved-changes dialog. |
 | TUIKit Gallery | Every TUIKit control in one application, one file per group of them. |
 

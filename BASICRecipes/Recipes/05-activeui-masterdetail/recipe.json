@@ -1,0 +1,10 @@
+{
+  "identifier": "basic.activeui.masterdetail",
+  "name": "ActiveUI Master/Detail",
+  "language": "BASIC",
+  "summary": "A window of its own, made with ActiveUI: a list of items, and the chosen one's title, summary and body beside it. The shape of most document and record apps.",
+  "icon": "sidebar.left",
+  "folderExtension": "basproj",
+  "openFile": "src/main.bas",
+  "postNote": "created — run it in BASICStudio, which opens its window"
+}
