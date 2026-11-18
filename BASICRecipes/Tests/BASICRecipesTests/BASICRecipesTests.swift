@@ -63,6 +63,16 @@ struct BuiltInRecipeTests {
         #expect(BASICRecipes.builtIn(named: "nothing") == nil)
         #expect(BASICRecipes.builtIn.map(BASICRecipes.shortName).prefix(2) == ["console", "structured"])
     }
+
+    @Test("The ActiveUI Click Counter and Master/Detail follow the to-do list, and are found by short name")
+    func activeUIStarters() {
+        let ids = BASICRecipes.builtIn.map(\.id)
+        #expect(Array(ids.dropFirst(4).prefix(3)) == ["basic.activeui", "basic.activeui.counter", "basic.activeui.masterdetail"])
+        #expect(BASICRecipes.builtIn(named: "activeui.counter")?.definition.name == "ActiveUI Click Counter")
+        #expect(BASICRecipes.builtIn(named: "activeui.masterdetail")?.definition.name == "ActiveUI Master/Detail")
+        let shortNames = BASICRecipes.builtIn.map(BASICRecipes.shortName)
+        #expect(shortNames.contains("activeui.counter") && shortNames.contains("activeui.masterdetail"))
+    }
 }
 
 @Suite("Making a project")
@@ -82,6 +92,42 @@ struct ProjectCreationTests {
         #expect(makefile.contains("NAME := Rocks\n"))
         #expect(BASICProjectFolder.entry(of: project)?.lastPathComponent == "main.bas")
         #expect(game.fileToOpen(in: project, name: "Rocks") == project.appendingPathComponent("src/main.bas"))
+    }
+
+    @Test("The Click Counter is Swift's: \"Count: 0\", a Click me button that counts, at 320 by 200")
+    func clickCounter() throws {
+        let parent = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let counter = try #require(BASICRecipes.builtIn(named: "activeui.counter"))
+        let project = try counter.create(named: "Clicks", in: parent)
+        #expect(project.lastPathComponent == "Clicks.basproj")
+        #expect(BASICProjectFolder.entry(of: project)?.lastPathComponent == "main.bas")
+        let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
+        #expect(main.hasPrefix("' Clicks — the click counter"))
+        #expect(!main.contains("{{"))
+        for line in ["GLOBAL win = AUIWindow(\"Clicks\")", "GLOBAL countLabel = AUILabel(\"Count: 0\")",
+                     "LET clickButton = AUIButton(\"Click me\")", "clickButton.onclick(\"Clicked\")",
+                     "win.size(320, 200)", "win.run()", "countLabel.text(\"Count:\" + STR$(clicks))"] {
+            #expect(main.contains(line), "\(line)")
+        }
+    }
+
+    @Test("The Master/Detail is Swift's: three items, \"Items\" over the list, and the pick's title, summary and body")
+    func masterDetail() throws {
+        let parent = try scratchFolder()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let recipe = try #require(BASICRecipes.builtIn(named: "activeui.masterdetail"))
+        let project = try recipe.create(named: "Notes", in: parent)
+        #expect(project.lastPathComponent == "Notes.basproj")
+        let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
+        #expect(main.hasPrefix("' Notes — a master/detail app"))
+        #expect(!main.contains("{{"))
+        for line in ["GLOBAL win = AUIWindow(\"Notes\")", "master.add(AUILabel(\"Items\"))",
+                     "itemTitle$(0) = \"Getting started\"", "itemTitle$(1) = \"The model\"", "itemTitle$(2) = \"The views\"",
+                     "itemSummary$(0) = \"What this app is\"", "itemList.onselect(\"Picked\")", "ShowItem(event.Index)",
+                     "win.size(760, 460)", "win.run()"] {
+            #expect(main.contains(line), "\(line)")
+        }
     }
 
     @Test("Nothing that is there is written over")
