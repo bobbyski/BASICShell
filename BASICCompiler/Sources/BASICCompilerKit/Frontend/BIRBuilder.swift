@@ -173,7 +173,9 @@ public struct BIRBuilder {
         // time, from a known set -- never discovered by convention at run time,
         // which would work interpreted and silently do nothing compiled.
         // An ActiveUI control does the same (`button.onclick("Saved")`).
-        if Self.usesTUI(lines) || Self.usesNamedCallback(lines) || (hostedActiveUI && Self.usesActiveUI(lines)) {
+        let usesAUIClasses = Self.usesActiveUIClasses(lines, model: model)
+        module.opensActiveUIWindows = usesAUIClasses
+        if Self.usesTUI(lines) || Self.usesNamedCallback(lines) || usesAUIClasses {
             // Not an imported framework's members: they have no BASIC body,
             // and no string in a program can name one (BASIC-45).
             for index in module.functions.indices where module.functions[index].parameters.count <= 1
@@ -225,6 +227,18 @@ public struct BIRBuilder {
             }
         }
         return false
+    }
+
+    /// Whether a program makes BASIC's own ActiveUI controls, the pseudo
+    /// classes, and so registers its handlers and drains its events between
+    /// statements. Natively, not when the program imported ActiveUI's Swift
+    /// classes of those names (`IMPORT "ActiveUI"`): those are the
+    /// framework's, and the program runs them itself (BASIC-31). For a
+    /// program its host gives windows, exactly ``usesActiveUI(_:)``, as it
+    /// always was (BASIC-45).
+    static func usesActiveUIClasses(_ lines: [ParsedLine], model: SemanticModel) -> Bool {
+        guard usesActiveUI(lines) else { return false }
+        return model.hostedActiveUI || !SemanticModel.activeUIClassNames.contains { model.types[$0] != nil }
     }
 
     /// Whether a program makes an ActiveUI control: `AUIButton("OK")` or
@@ -467,7 +481,7 @@ final class FunctionBuilder {
         case .onEventCall, .onTimerEvent: return true
         default: return false
         }
-    } || (model.hostedActiveUI && BIRBuilder.usesActiveUI(lines))
+    } || BIRBuilder.usesActiveUIClasses(lines, model: model)
 
     /// The statements being built: the program's, or a closure body's.
     private var sourceLines: [ParsedLine] { closureLines ?? lines }

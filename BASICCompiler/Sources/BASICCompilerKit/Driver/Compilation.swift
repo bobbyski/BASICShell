@@ -153,7 +153,22 @@ public struct Compilation: Sendable {
         // from source with the host half stubbed.
         let runtimeObject: String
         var linkArguments = runtime.linkArguments
-        if let archive = try runtime.archive() {
+        if module.opensActiveUIWindows && !compilation.options.hostedActiveUI {
+            // A program with ActiveUI windows of its own links the windowed
+            // runtime in place of the plain one (BASIC-31): the same archive
+            // and more, so nothing is linked twice. There is no fallback to
+            // build it from: without ActiveUI, it could open no window.
+            guard let archive = try runtime.windowedArchive() else {
+                throw CompileError([Diagnostic(
+                    severity: .error,
+                    file: sourcePath,
+                    message: "this program opens ActiveUI windows and needs the windowed runtime (libBASICRTActiveUI.a), and none was found. "
+                        + "Set BASICC_RT_AUI_LIB to one, or install basicc so it sits beside its lib/ (see INSTALLATION.md)"
+                )])
+            }
+            runtimeObject = archive
+            linkArguments += RuntimeLibrary.dynamicLinkArguments(besideArchive: archive, opensWindows: true)
+        } else if let archive = try runtime.archive() {
             runtimeObject = archive
             linkArguments += RuntimeLibrary.dynamicLinkArguments(besideArchive: archive)
         } else if let reason = runtime.requiresArchiveBecause {

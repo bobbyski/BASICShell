@@ -642,17 +642,13 @@ struct SemanticAnalyzer {
                 note(reference.base, reference.indexes.isEmpty ? .scalar : .array(reference.indexes.count), at: line, in: function, changed: &changed)
             }
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
-        case .newObject(let className, let arguments):
-            try refuseActiveUI(className, at: line)
+        case .newObject(_, let arguments):
             for argument in arguments { try noteReferences(in: argument, at: line, in: function, changed: &changed) }
         case .interpolatedString(let template), .string(let template):
             for inner in Self.interpolatedExpressions(in: template) {
                 try noteReferences(in: inner, at: line, in: function, changed: &changed)
             }
         case .callOrArray(let name, let arguments):
-            if model.info(name.normalized, in: function) == nil, model.functions[name.normalized] == nil {
-                try refuseActiveUI(name.name, at: line)
-            }
             let known = model.info(name.normalized, in: function)?.type
             if model.functions[name.normalized] == nil, BIRIntrinsic.lookup(name.normalized, argumentCount: arguments.count) == nil,
                !BASICKeywords.intrinsicFunctionNames.contains(name.normalized), !arguments.isEmpty, known?.isClosure != true,
@@ -896,26 +892,6 @@ struct SemanticAnalyzer {
         }
     }
 
-    /// Refuses a program's ActiveUI windows by name (ACTIVEUI_TRANSITION.md
-    /// P6). They are real Mac windows that BASICStudio's interpreter makes
-    /// through its host, and a compiled program has no such host. Without
-    /// this, `AUIWindow("x")` reports an array subscript and `AS AUIWindow` an
-    /// unknown type, neither of which says what is wrong.
-    ///
-    /// Not when the name is a type the program imported: `IMPORT "ActiveUI"`
-    /// brings ActiveUI's own Swift classes, which basicc compiles. Not when
-    /// the host running the program provides the windows (BASIC-45):
-    /// BASICStudio, running it as WebAssembly.
-    func refuseActiveUI(_ name: String, at line: ParsedLine) throws {
-        guard model.types[name.uppercased()] == nil, !model.hostedActiveUI else { return }
-        let refused = BASICKeywords.activeUIClasses + ["BASICAUIEvent"]
-        guard let canonical = refused.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else { return }
-        throw CompileError(
-            "\(canonical) is not supported by basicc: a program's own ActiveUI windows run in BASICStudio's interpreter",
-            at: Self.location(of: line)
-        )
-    }
-
     static func location(of line: ParsedLine) -> BIRLocation {
         BIRLocation(file: line.fileName, line: line.sourceLineNumber, statement: line.statementNumber, lineNumber: line.number)
     }
@@ -953,8 +929,8 @@ struct SemanticAnalyzer {
             ("Route", .scalar(.string)), ("Query", .scalar(.string)), ("Body", .scalar(.string)),
             ("Status", .scalar(.integer)),
         ]),
-        // Only a program whose host provides ActiveUI can name it; for any
-        // other, `refuseActiveUI` says why first.
+        // What an ActiveUI control reports: from the host's windows
+        // (BASIC-45) or, built natively, the program's own (BASIC-31).
         "BASICAUIEVENT": ("BASICAUIEvent", [
             ("Source", .scalar(.integer)), ("Text$", .scalar(.string)), ("Index", .scalar(.integer)),
             ("Column", .scalar(.integer)),
@@ -990,8 +966,6 @@ struct SemanticAnalyzer {
     /// time a program names one. A program that names none pays nothing.
     mutating func declareBuiltInEventType(_ normalized: String) {
         guard model.types[normalized] == nil, let shape = Self.builtInEventFields[normalized] else { return }
-        // Left undeclared, so `refuseActiveUI` still refuses it by name.
-        if normalized == "BASICAUIEVENT", !model.hostedActiveUI { return }
         if normalized != "BASICEVENT" { declareBuiltInEventType("BASICEVENT") }
         let index = (model.types.values.map(\.index).max() ?? -1) + 1
         let own = normalized == "BASICEVENT" ? Self.builtInEventBaseFields : shape.fields
@@ -1038,7 +1012,6 @@ struct SemanticAnalyzer {
                 return enumeration.isPayload ? .composite(typeName.uppercased()) : .number
             }
             if model.signatures[typeName.uppercased()] != nil { return .closure(typeName.uppercased()) }
-            try refuseActiveUI(typeName, at: line)
             if model.isSystemClassHere(typeName.uppercased()), model.types[typeName.uppercased()] == nil { return .system(SemanticModel.systemTypeName(typeName.uppercased())) }
             guard model.types[typeName.uppercased()] != nil else {
                 throw CompileError("\(name) AS \(typeName): unknown TYPE, CLASS, or INTERFACE", at: Self.location(of: line))

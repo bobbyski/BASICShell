@@ -20,9 +20,11 @@ public struct CompileOptions: Sendable {
     public var omitsEntryPoint: Bool = false
 
     /// Whether the host running the program provides its ActiveUI windows
-    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly. A
-    /// native build never does — it has no windows to give — so there the
-    /// AUI classes are refused at compile time, as they always were.
+    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly, and
+    /// `basicc --target wasm`. Off, as for a native build, a program that
+    /// uses the AUI classes opens windows of its own: it is built as an
+    /// application, its statements on a thread of their own, and links the
+    /// windowed runtime, `libBASICRTActiveUI.a` (BASIC-31).
     public var hostedActiveUI: Bool = false
 
     /// Whether this build is of a program another `CHAIN`s to (BBC_ADINS.md

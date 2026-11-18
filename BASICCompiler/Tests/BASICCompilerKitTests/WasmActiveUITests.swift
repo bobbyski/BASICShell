@@ -1,7 +1,7 @@
 #if canImport(JavaScriptCore)
 import BASICCompilerKit
 import BASICCore
-import BASICDialectTraditional
+@testable import BASICDialectTraditional
 import BASICWasm
 @testable import BASICWasmRunner
 import Foundation
@@ -284,14 +284,71 @@ struct WasmActiveUITests {
         #expect(noneOutput.contains("BASICStudio"), "\(noneOutput)")
     }
 
-    @Test("Without a host's windows, basicc refuses ActiveUI as it always has")
-    func refusedNatively() throws {
-        let compilation = Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false))
-        for source in ["let w = AUIWindow(\"x\")", "dim w as AUIWindow", "sub h(e as BASICAUIEvent)\nend sub"] {
-            #expect(throws: CompileError.self) {
-                _ = try WasmTranslatorTests.onLargeStack { try compilation.bir(source: source, name: "test") }
-            }
+    /// The LLVM IR for `source`, with debug information off.
+    static func llvmIR(_ source: String, hosted: Bool) throws -> String {
+        try WasmTranslatorTests.onLargeStack {
+            var options = CompileOptions(emitDebugInfo: false)
+            options.hostedActiveUI = hosted
+            let compilation = Compilation(dialect: TraditionalDialect(), options: options)
+            return try compilation.dialect.lower(try compilation.bir(source: source, name: "test"), options: options).llvmIR
         }
+    }
+
+    /// BASIC-31 builds these programs natively as applications; a host that
+    /// gives the program its windows must see exactly the module it saw
+    /// before: `main` is the program, it imports no windowed entry, and its
+    /// AUI classes reach the host through `basic_rt_system_new` and
+    /// `basic_rt_system_call`, which the runtime hands to
+    /// `basic_rt_host_aui_new` and `basic_rt_host_aui_call`.
+    @Test("With a host's windows the program keeps its own main, as before BASIC-31")
+    func hostedKeepsItsEntry() throws {
+        let source = """
+        let w = AUIWindow("x")
+        let b = AUIButton("Go")
+        w.add(b)
+        b.onclick("Went")
+        w.run()
+        function Went(e as BASICAUIEvent)
+            print e.Text$
+        end function
+        """
+        let hosted = try Self.llvmIR(source, hosted: true)
+        #expect(hosted.contains("define i32 @main(i32 %argc, ptr %argv) {"))
+        #expect(!hosted.contains("basic_rt_aui_main"))
+        #expect(!hosted.contains("basic.program"))
+        #expect(hosted.contains("@basic_rt_system_new("))
+        #expect(hosted.contains("@basic_rt_system_call("))
+        let module = try WasmTranslator.translate(llvmIR: hosted)
+        #expect(!module.imports.contains { $0.name == "basic_rt_aui_main" })
+
+        // Natively, the same module but for where the program starts.
+        let native = try Self.llvmIR(source, hosted: false)
+        #expect(native.contains("define i32 @\"basic.program\"(i32 %argc, ptr %argv) {"))
+        #expect(native.contains("call i32 @basic_rt_aui_main(i32 %argc, ptr %argv, ptr @\"basic.program\")"))
+        let entryless = native
+            .replacingOccurrences(of: "declare i32 @basic_rt_aui_main(i32, ptr, ptr)\n", with: "")
+            .replacingOccurrences(of: "\n\n" + LLVMLowering.windowedMain, with: "")
+            .replacingOccurrences(of: "define i32 @\"basic.program\"(", with: "define i32 @main(")
+        #expect(entryless == hosted)
+    }
+
+    /// `basicc --target wasm` is such a host's build (BASIC-45): its module
+    /// imports no windowed entry, whatever the program's windows.
+    @Test("basicc --target wasm builds the hosted module")
+    func basiccWasmIsHosted() throws {
+        let compiler = SwiftImportEndToEndTests.compiler
+        guard FileManager.default.isExecutableFile(atPath: compiler) else { return }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-wasm-aui-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("win.bas")
+        try "let w = AUIWindow(\"x\")\nw.run()\n".write(to: source, atomically: true, encoding: .utf8)
+        let built = try ProcessRunner.run(compiler, ["build", source.path, "--target", "wasm", "-o", folder.appendingPathComponent("win").path])
+        #expect(built.exitCode == 0, "\(built.stderr)")
+        // An import's name is in the module as text.
+        let module = try Data(contentsOf: folder.appendingPathComponent("win.wasm"))
+        #expect(module.range(of: Data("basic_rt_system_new".utf8)) != nil)
+        #expect(module.range(of: Data("basic_rt_aui_main".utf8)) == nil, "no windowed entry")
     }
 }
 #endif

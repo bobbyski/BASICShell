@@ -441,14 +441,18 @@ different steps.
 
 ## Where it runs
 
-A program's own window needs an app that can open windows: **BASICStudio**,
-on the Mac and on iPad.
+A program's own window needs something that can open windows:
 
+- **BASICStudio**, on the Mac and on iPad, runs it with its window beside
+  Studio's.
+- **basicc**, the compiler, builds it into a Mac application of its own:
+  `basicc build todo.bas`, or `make run` in a project from File ▸ New
+  Project…. The program opens its own window, with the menu bar every Mac
+  app has (Quit is ⌘Q), and ends when its window closes, as it does in
+  Studio.
 - **BASICShell** runs in a terminal, which has no windows. It stops at the
   first line with `AUIWindow needs a host that can open windows; run the
   program in BASICStudio`.
-- **basicc**, the compiler, refuses these programs by name today, for the same
-  reason.
 
 For windows in a terminal, see the [TUIKit Tutorial](TUTORIAL_TUIKIT.md).
 

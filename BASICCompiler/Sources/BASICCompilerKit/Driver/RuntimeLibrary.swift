@@ -101,7 +101,25 @@ public struct RuntimeLibrary: Sendable {
     ///    with `swift build` when it is missing or older than the runtime
     ///    sources or the manifest.
     public func archive(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String? {
-        if let override = environment["BASICC_RT_LIB"] {
+        try archive(product: "\(name)Host", override: "BASICC_RT_LIB", opensWindows: false, environment: environment)
+    }
+
+    /// The runtime archive for a program that opens ActiveUI windows of its
+    /// own (BASIC-31): `lib<name>ActiveUI.a`, everything the plain archive
+    /// has plus the native host for BASIC's AUI classes. Found the same way,
+    /// with `BASICC_RT_AUI_LIB` as its override, and built in-tree only when
+    /// such a program is compiled, so no other program waits for ActiveUI.
+    public func windowedArchive(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String? {
+        try archive(product: "\(name)ActiveUI", override: "BASICC_RT_AUI_LIB", opensWindows: true, environment: environment)
+    }
+
+    /// The archive of SwiftPM product `product`: `override` in the
+    /// environment, else beside an installed basicc, else built in-tree.
+    /// `opensWindows` says whether the product is the windowed one, which
+    /// alone is stale when ActiveUI changes.
+    private func archive(product: String, override: String, opensWindows: Bool,
+                         environment: [String: String]) throws -> String? {
+        if let override = environment[override] {
             return FileManager.default.fileExists(atPath: override) ? override : nil
         }
         if let executableDir = (Bundle.main.executablePath as NSString?)?.deletingLastPathComponent {
@@ -109,18 +127,22 @@ public struct RuntimeLibrary: Sendable {
             // reached by walking up from wherever this `basicc` was started,
             // never from a path written down here.
             let installed = ((executableDir as NSString).appendingPathComponent("../lib") as NSString)
-                .appendingPathComponent("lib\(name)Host.a")
+                .appendingPathComponent("lib\(product).a")
             if FileManager.default.fileExists(atPath: installed) { return installed }
         }
         let root = Self.inTreeSourcesDirectory.deletingLastPathComponent()
         let manifest = root.appendingPathComponent("Package.swift").path
         guard FileManager.default.fileExists(atPath: manifest) else { return nil }
-        let archive = root.appendingPathComponent(".build/release/lib\(name)Host.a").path
+        let archive = root.appendingPathComponent(".build/release/lib\(product).a").path
         // The archive is also built from the packages the manifest names by
         // path — the runtime's host half links the interpreter's TUI binding
-        // — so a change to one of those makes it stale too.
-        let inputs = [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]
-            + Self.siblingSourceDirectories(manifest: manifest, root: root)
+        // — so a change to one of those makes it stale too. ActiveUI's
+        // packages are the windowed archive's alone: a change there is no
+        // reason to rebuild the archive every other program links.
+        var inputs = [manifest, root.appendingPathComponent("Sources/\(name)").path, root.appendingPathComponent("Sources/\(name)Host").path]
+        if opensWindows { inputs.append(root.appendingPathComponent("Sources/\(product)").path) }
+        inputs += Self.siblingSourceDirectories(manifest: manifest, root: root)
+            .filter { opensWindows || !Self.isWindowPackage($0) }
         if Self.isStale(archive, against: inputs) {
             // Several compilers can run at once (a test sweep, a parallel
             // build). They would each start their own release build and then
@@ -128,7 +150,12 @@ public struct RuntimeLibrary: Sendable {
             // gate does the build and the rest wait and re-check.
             try Self.whileHoldingLock(at: root.appendingPathComponent(".build/basicc-runtime.lock").path) {
                 guard Self.isStale(archive, against: inputs) else { return }
-                let result = try ProcessRunner.xcrun("swift", ["build", "-c", "release", "--product", "\(name)Host", "--package-path", root.path])
+                if opensWindows {
+                    // ActiveUI builds once, and takes minutes; say why the
+                    // first windowed program is slow.
+                    FileHandle.standardError.write(Data("basicc: building the windowed runtime (\(product), with ActiveUI)\n".utf8))
+                }
+                let result = try ProcessRunner.xcrun("swift", ["build", "-c", "release", "--product", product, "--package-path", root.path])
                 guard result.exitCode == 0 else {
                     throw ToolchainError(stage: "swift build (runtime)", exitCode: result.exitCode, stderr: result.stderr)
                 }
@@ -163,15 +190,33 @@ public struct RuntimeLibrary: Sendable {
     /// no other. A `-Wl,-static`, a `-Bstatic`, a vendored copy or a `.a` path
     /// that reaches `libodbc` changes the obligation — and this function is the
     /// one place on the link line where such a flag would plausibly be added.
-    public static func dynamicLinkArguments(besideArchive archive: String) -> [String] {
+    ///
+    /// ActiveUI's libraries (`libActiveUI…`) sit there too once a windowed
+    /// program has been built, and only such a program links them
+    /// (`opensWindows`, BASIC-31): linked into every program, they would load
+    /// AppKit into a program that never opens a window.
+    public static func dynamicLinkArguments(besideArchive archive: String, opensWindows: Bool = false) -> [String] {
         let directory = (archive as NSString).deletingLastPathComponent
         let libraries = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
             .filter { $0.hasPrefix("lib") && $0.hasSuffix(".dylib") }
             .map { String($0.dropFirst(3).dropLast(6)) }
+            .filter { opensWindows || !isWindowLibrary($0) }
             .sorted()
         guard !libraries.isEmpty else { return [] }
         return ["-L\(directory)"] + libraries.map { "-l\($0)" }
             + ["-Xlinker", "-rpath", "-Xlinker", directory]
+    }
+
+    /// Whether a dynamic library is one of ActiveUI's, which only a program
+    /// that opens windows links: `ActiveUI`, `ActiveUICharts`.
+    static func isWindowLibrary(_ name: String) -> Bool {
+        name.hasPrefix("ActiveUI")
+    }
+
+    /// Whether a sibling package's `Sources` belongs to one of ActiveUI's
+    /// packages, which only the windowed archive is built from.
+    static func isWindowPackage(_ sources: String) -> Bool {
+        isWindowLibrary(((sources as NSString).deletingLastPathComponent as NSString).lastPathComponent)
     }
 
     /// Runs `body` holding an exclusive lock on `path`, so concurrent

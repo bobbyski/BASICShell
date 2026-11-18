@@ -63,6 +63,12 @@ let package = Package(
         // The stand-in for the host half: a program built without the host
         // SDKs (a SwiftPM package using the plugin) links this instead.
         .library(name: "BASICRTHostStubs", type: .static, targets: ["BASICRTHostStubs"]),
+        // The runtime for a program that opens ActiveUI windows of its own
+        // (BASIC-31): everything libBASICRTHost.a has, plus the native host
+        // that makes BASIC's AUI classes real windows. A program that uses
+        // them links this archive in place of the plain one, so no other
+        // program carries ActiveUI.
+        .library(name: "BASICRTActiveUI", type: .static, targets: ["BASICRTActiveUI"]),
         // Compile .bas sources inside any package's C-family target
         // (see Plugins/BASICBuildPlugin for the how and why).
         .plugin(name: "BASICBuildPlugin", targets: ["BASICBuildPlugin"]),
@@ -75,6 +81,11 @@ let package = Package(
         // Projects in either form, a folder or a zip, through ProjectKit (BASIC-72).
         .package(path: "../BASICProjects"),
         .package(path: vectorTerminalSDKPath),
+        // ActiveUI and its charts, for BASICRTActiveUI alone (BASIC-31): the
+        // same checkouts BASICStudio and BASICFrameworkMap name, by the same
+        // relative path, so a package that has both sees one of each.
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUI"),
+        .package(path: "../../../../AIResearch/ActiveUI/Code/ActiveUICharts"),
     ],
     targets: [
         .target(
@@ -117,6 +128,14 @@ let package = Package(
             .product(name: "BASICMongo", package: "BASICCore", condition: .when(platforms: [.macOS, .linux])),
         ]),
         .target(name: "BASICRTHostStubs", dependencies: ["BASICRT"]),
+        // BASIC's AUI classes as real ActiveUI windows in a compiled program
+        // (BASIC-31): the app on the main thread, the program on its own.
+        .target(name: "BASICRTActiveUI", dependencies: [
+            "BASICRTHost", "BASICRT",
+            .product(name: "BASICCore", package: "BASICCore"),
+            .product(name: "ActiveUI", package: "ActiveUI"),
+            .product(name: "ActiveUICharts", package: "ActiveUICharts"),
+        ]),
         .executableTarget(
             name: "basicc",
             dependencies: [

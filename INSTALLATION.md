@@ -28,6 +28,9 @@ they have to be the same age — see [Why together](#why-together).
 <prefix>/lib/basicshell/BASICShell_BASICShell.bundle/Demos/*.bas
 <prefix>/lib/basicshell/UserDocs.zip            the manual HELP opens
 <prefix>/lib/libBASICRTHost.a                   the runtime basicc links
+<prefix>/lib/libBASICRTActiveUI.a               the runtime for a program with its own
+                                                ActiveUI windows (BASIC-31)
+<prefix>/lib/libActiveUI*.dylib                 ActiveUI, linked by those programs only
 <prefix>/share/basicc/BASICRT/                  runtime sources (fallback)
 <prefix>/share/basicc/BASICRTHostStubs/
 ```
@@ -46,6 +49,7 @@ time, from the prefix the binary is actually in or from the environment.
 | --- | --- | --- |
 | `basicc`, from the shell's `JIT` | `PATH` | `BASICC` |
 | The runtime archive, from `basicc` | `../lib/` relative to the running `basicc` | `BASICC_RT_LIB` |
+| The windowed runtime archive, for a program with its own ActiveUI windows | `../lib/` relative to the running `basicc` | `BASICC_RT_AUI_LIB` |
 | Runtime sources, when there is no archive | `../share/basicc/` relative to `basicc` | `BASICC_RT_DIR` |
 | The manual, from `HELP` | the shell's resource bundle, then `../lib/basicshell/UserDocs.zip` | `BASIC_USERDOCS` |
 | Demo programs | the shell's resource bundle beside the executable | — |

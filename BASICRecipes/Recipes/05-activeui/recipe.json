@@ -6,5 +6,5 @@
   "icon": "macwindow",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",
-  "postNote": "created — run it in BASICStudio, which opens its window"
+  "postNote": "created — make run builds it with basicc and opens its window"
 }

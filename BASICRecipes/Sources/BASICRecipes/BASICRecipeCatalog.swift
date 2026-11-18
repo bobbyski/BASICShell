@@ -1353,7 +1353,7 @@ enum BASICRecipeCatalog {
               "icon": "macwindow",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
-              "postNote": "created — run it in BASICStudio, which opens its window"
+              "postNote": "created — make run builds it with basicc and opens its window"
             }
 
             """#,
@@ -1432,9 +1432,11 @@ enum BASICRecipeCatalog {
                 ("src/main.bas", #"""
                 ' {{NAME}} — a window of its own, made with ActiveUI.
                 '
-                ' Run it in BASICStudio: the window is the program's, opening beside
-                ' Studio's, and the program runs until it closes. (BASICShell and basicc
-                ' have no windows, and say so.)
+                ' Build it with basicc: make run builds it and runs it (make build only
+                ' builds it, into Build/). The program is a Mac application with a window
+                ' of its own and the menu bar every Mac app has (Quit is in the app menu and
+                ' in File, as ⌘Q), and it runs until the window closes. (BASICShell runs in
+                ' a terminal, which has no windows, and says so.)
                 '
                 ' A to-do list. Type a task and press Add, or Return; pick one and press
                 ' Done to take it off. The line at the bottom says what happened.
