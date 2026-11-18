@@ -568,9 +568,8 @@ struct StarterTests {
     /// The starters that run to the end with nothing but stdin.
     static let runsToTheEnd: Set<String> = ["console", "structured"]
     /// The starters basicc refuses: a program's own ActiveUI windows run in
-    /// BASICStudio's interpreter, and basicc says so. The to-do list, the
-    /// click counter and the master/detail app.
-    static let studioOnly: Set<String> = ["activeui", "activeui.counter", "activeui.masterdetail"]
+    /// BASICStudio's interpreter, and basicc says so.
+    static let studioOnly: Set<String> = ["activeui"]
 
     @Test(arguments: ProjectScaffold.kinds)
     func starterBuildsAndMatchesTheInterpreter(kind: String) throws {
