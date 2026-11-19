@@ -1991,12 +1991,6 @@ enum BASICRecipeCatalog {
                 END FUNCTION
 
                 """#),
-                ("src/s5.txt", #"""
-
-                """#),
-                ("src/s6.txt", #"""
-
-                """#),
                 ("src/views/GreetingView.bas", #"""
                 ' GreetingView.bas — the window's content: the banner, the name field and
                 ' the list of languages.
