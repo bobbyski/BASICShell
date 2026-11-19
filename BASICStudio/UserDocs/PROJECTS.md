@@ -55,13 +55,13 @@ Create stays off while the name is not a name, or a project of that name is alre
 | Recipe | What it makes |
 | --- | --- |
 | Console Program | One file that prints, loops and reads what is typed. |
-| Structured Program | FUNCTIONs with their own LOCALs, arrays and DATA. |
-| Game | Someone to move around, four targets (a point each) and a guard walking the edge (ten points, and another two seconds later) to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes (Walker, Player, Guard, Shots, Targets, View, Controls) in four files. |
-| TUI App | A full-screen TUIKit window with a menu bar, a field, a list and buttons. |
-| ActiveUI App | A to-do list in a window of its own: buttons, a field, a list and a status line. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
-| ActiveUI Click Counter | ActiveUI's smallest complete app: a label that counts and a Click me button, in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
-| ActiveUI Master/Detail | A list of items beside the chosen one's title, summary and body, in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
-| Contact Book | A TUIKit contact book in six files: a model, JSON save and load, a toolbar and menus, and an unsaved-changes dialog. |
+| Structured Program | Documented FUNCTIONs with their own LOCALs, an array and DATA, in one file. |
+| Game | Someone to move around, four targets (a point each) and a guard walking the edge (ten points, and another two seconds later) to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes (Walker, Player, Guard, Shots, Targets, View, Controls) in models, views and controllers. |
+| TUI App | A full-screen TUIKit app: a menu bar, a window with a toolbar, a field, a list and a status line, in models, views, a controller and the app's menus. |
+| ActiveUI App | A to-do list in a window of its own: New Task, Done, Delete and Clear Done across the top, a field, a list and a status line, kept in Application Support, in models, views and a controller. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| ActiveUI Click Counter | ActiveUI's smallest complete app: a count, a Click me button and Reset (grayed out at zero), in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| ActiveUI Master/Detail | A searchable list of items, Favorites first, beside the chosen one's title and notes, with New Item, Favorite and Delete, kept in Application Support, in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| Contact Book | A TUIKit contact book in seven files, in models, views and app: a model, JSON save and load in Application Support, a toolbar and menus, and an unsaved-changes dialog. |
 | TUIKit Gallery | Every TUIKit control in one application, one file per group of them. |
 
 ## Opening a project
