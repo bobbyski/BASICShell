@@ -1,0 +1,23 @@
+// BASICStudio.fbsettings — BASIC Studio's executable, built by fbbuild (Bobby, 2026-11-18:
+// "Fbbuild is how everything is to be built").
+//
+//   fbbuild build BASICStudio/BASICStudio.fbsettings
+//
+// Built from Package.swift by its `BASICStudio` scheme in Release, as Scripts/CIBuild-BASICStudio.sh
+// builds it, into fbbuild's own derived data (.build/fbbuild/xcode/mac-arm64). With the committed
+// BASICStudio.xcodeproj beside it, xcodebuild would read the project instead, so the CodeBuilder
+// BASICStudio job moves it aside first, then assembles the app from the products as that script
+// does, and signs, notarizes and stages it. The executable finds its frameworks in the bundle.
+schemaVersion: 1
+
+platforms: (mac: true)
+build: .xcode
+xcode: (
+    project: "Package.swift"
+    scheme: "BASICStudio"
+    arguments: ["-skipMacroValidation", "-skipPackagePluginValidation", "CLANG_COVERAGE_MAPPING=NO",
+                "SWIFT_SUPPRESS_WARNINGS=NO", "LD_RUNPATH_SEARCH_PATHS=@executable_path/../Frameworks"]
+)
+configurations: (default: "Release", build: "Release")
+products: ["BASICStudio"]
+mac: (architectures: .arm64)
