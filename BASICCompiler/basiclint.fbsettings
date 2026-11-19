@@ -1,0 +1,21 @@
+// basiclint.fbsettings — basiclint, the BASIC linter, built by fbbuild (Bobby, 2026-11-18: "Fbbuild is how everything is to be
+// built").
+//
+//   fbbuild build BASICCompiler/basiclint.fbsettings
+//
+// Built from Package.swift by its `basiclint` scheme in Release, into fbbuild's own derived data
+// (.build/fbbuild/xcode/mac-arm64) beside the package's other schemes, which the CodeBuilder
+// BASICShell job stages from: the tools, the bundles they ask for, the libraries they load, and
+// the runtime basicc links. It then checks that the staged tools run, signs and notarizes them.
+schemaVersion: 1
+
+platforms: (mac: true)
+build: .xcode
+xcode: (
+    project: "Package.swift"
+    scheme: "basiclint"
+    arguments: ["-skipMacroValidation", "-skipPackagePluginValidation"]
+)
+configurations: (default: "Release", build: "Release")
+products: ["basiclint"]
+mac: (architectures: .arm64)
