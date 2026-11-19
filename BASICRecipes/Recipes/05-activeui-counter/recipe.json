@@ -2,7 +2,7 @@
   "identifier": "basic.activeui.counter",
   "name": "ActiveUI Click Counter",
   "language": "BASIC",
-  "summary": "ActiveUI's smallest complete app, in a window of its own: a label, a button and a count.",
+  "summary": "ActiveUI's smallest complete app, in a window of its own: a count, a Click me button, and Reset, grayed out at zero. Split into a model, a view and a controller.",
   "icon": "cursorarrow.click.2",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",

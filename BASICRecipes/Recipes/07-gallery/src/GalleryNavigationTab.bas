@@ -3,6 +3,9 @@
 ' The Navigation folder tab: the Phase 16 structural pieces - pages,
 ' accordion sections, a layout that degrades, and (16.1) the navigator.
 
+/// Builds the Navigation tab: view-that-fits, page view, navigator and accordion.
+///
+/// - Returns: The tab's root view.
 function MakeNavigationTab() as variant
     let root = TUIStack("v")
 
@@ -78,14 +81,24 @@ function MakeNavigationTab() as variant
     return root
 end function
 
-' func saveChoices() -> ViewThatFits - a nested function in the Swift,
-' called twice so each group gets its own copy.
+/// Builds one view-that-fits of three Save buttons, widest first.
+///
+/// func saveChoices() -> ViewThatFits - a nested function in the Swift,
+/// called twice so each group gets its own copy.
+///
+/// - Returns: A new view-that-fits.
 function SaveChoices() as variant
     ' Candidates widest-first, at construction, as ViewThatFits takes them.
     return TUIViewThatFits("h", TUIButton("Save the document to disk"), TUIButton("Save document"), TUIButton("Save"))
 end function
 
-' func options(_ prefix: String, count: Int) -> TUIView
+/// Builds a column of numbered check boxes for an accordion section.
+///
+/// func options(_ prefix: String, count: Int) -> TUIView
+///
+/// - Parameter prefix: The text each check box's title starts with.
+/// - Parameter count: How many check boxes to make.
+/// - Returns: The column of check boxes.
 function NavigationOptions(prefix as string, count as integer) as variant
     let list = TUIStack("v")
     for index = 1 to count
@@ -94,26 +107,45 @@ function NavigationOptions(prefix as string, count as integer) as variant
     return list
 end function
 
+/// Shows which page the page view has turned to.
+///
+/// - Returns: Always 0; the value is unused.
 function NavigationPageChanged() as variant
     pageLabel.text("page " + STR$(pages.selected() + 1) + " of 3 - left/right turn, or click the dots")
     return 0
 end function
 
+/// Shows how deep the navigator is.
+///
+/// - Parameter depth: The navigator's level, 1 at the top.
+/// - Returns: Always 0; the value is unused.
 function NavigationDepthChanged(depth as integer) as variant
     depthLabel.text("level " + STR$(depth) + " - Esc, Backspace or Back returns")
     return 0
 end function
 
+/// Drills the navigator into the Appearance page.
+///
+/// - Returns: Always 0; the value is unused.
 function NavigationPushAppearance() as variant
     navigator.push(NavigationPage("Appearance", "theme, colours, fonts", "NavigationPushAdvancedAppearance"), "Appearance")
     return 0
 end function
 
+/// Drills the navigator into the Network page.
+///
+/// - Returns: Always 0; the value is unused.
 function NavigationPushNetwork() as variant
     navigator.push(NavigationPage("Network", "proxies and timeouts", "NavigationPushAdvancedNetwork"), "Network")
     return 0
 end function
 
+/// Builds a second-level navigator page: a line of text and an Advanced button.
+///
+/// - Parameter title: The page's name, used in the Advanced button's title.
+/// - Parameter body: The line of text the page shows.
+/// - Parameter advancedHandler: The name of the function the Advanced button calls.
+/// - Returns: The page's view.
 function NavigationPage(title as string, body as string, advancedHandler as string) as variant
     let page = TUIStack("v")
     page.add(PinnedHeight(TUILabel(body), 1))
@@ -123,11 +155,17 @@ function NavigationPage(title as string, body as string, advancedHandler as stri
     return page
 end function
 
+/// Drills the navigator into the Advanced Appearance page.
+///
+/// - Returns: Always 0; the value is unused.
 function NavigationPushAdvancedAppearance() as variant
     navigator.push(TUILabel("the deep end of Appearance"), "Advanced Appearance")
     return 0
 end function
 
+/// Drills the navigator into the Advanced Network page.
+///
+/// - Returns: Always 0; the value is unused.
 function NavigationPushAdvancedNetwork() as variant
     navigator.push(TUILabel("the deep end of Network"), "Advanced Network")
     return 0

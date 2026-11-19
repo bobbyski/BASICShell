@@ -19,12 +19,16 @@
 ' call ApplyGalleryThemeNamed and SetHintsVisible in GalleryApp.bas by name.
 ' The seam is the same one, named rather than assigned.
 
-' var storedTheme: Theme?
-'
-' Returns the *name*, not a Theme: BASIC has no theme values, and the name is
-' what every consumer of this ends up passing on. "" would be the Swift's
-' nil, so the fallback to Modern Turbo lives here rather than at the call
-' site, where `?? .modernTurbo` is in the Swift.
+/// The remembered theme's name, or Modern Turbo when none is stored or it no longer names a built-in theme.
+///
+/// var storedTheme: Theme?
+///
+/// Returns the *name*, not a Theme: BASIC has no theme values, and the name is
+/// what every consumer of this ends up passing on. "" would be the Swift's
+/// nil, so the fallback to Modern Turbo lives here rather than at the call
+/// site, where `?? .modernTurbo` is in the Swift.
+///
+/// - Returns: The name of a built-in theme.
 function StoredThemeName() as string
     ' `let name = store.string(forKey: "theme")` - renamed: NAME is a
     ' reserved word, so a variable called `name` reads back empty.
@@ -45,38 +49,56 @@ function StoredThemeName() as string
     return "Modern Turbo"
 end function
 
-' var controlsPanelOpen: Bool { get { ... ?? false } set { ... } }
-'
-' A BASIC function cannot be a property, so the getter and setter are two.
+/// Whether the Controls slide-out starts open.
+///
+/// var controlsPanelOpen: Bool { get { ... ?? false } set { ... } }
+///
+/// A BASIC function cannot be a property, so the getter and setter are two.
+///
+/// - Returns: 1 when it starts open, 0 (the default) when it does not.
 function ControlsPanelOpen() as integer
     return prefsStore.flag("controlsPanelOpen", 0)
 end function
 
+/// Remembers whether the Controls slide-out starts open.
+///
+/// - Parameter value: 1 to start it open, 0 to start it shut.
+/// - Returns: Always 0; the value is unused.
 function SetControlsPanelOpen(value as integer) as variant
     prefsStore.setflag("controlsPanelOpen", value)
     return 0
 end function
 
-' var showsHints: Bool { get { ... ?? true } set { ... } }
+/// Whether the status strip shows its hint.
+///
+/// var showsHints: Bool { get { ... ?? true } set { ... } }
+///
+/// - Returns: 1 (the default) when it does, 0 when it does not.
 function ShowsHints() as integer
     return prefsStore.flag("showsHints", 1)
 end function
 
+/// Remembers whether the status strip shows its hint.
+///
+/// - Parameter value: 1 to show the hint, 0 to hide it.
+/// - Returns: Always 0; the value is unused.
 function SetShowsHints(value as integer) as variant
     prefsStore.setflag("showsHints", value)
     return 0
 end function
 
-' Presents the preferences dialog - the same pages in either selector
-' style (the toolbar strip is the default; the split list is the
-' legacy look).
-'
-' No `style` parameter: the binding builds the toolbar strip, which is the
-' Swift's default and the only style the gallery asks for.
+/// Presents the preferences dialog - the same pages in either selector
+/// style (the toolbar strip is the default; the split list is the
+/// legacy look).
+///
+/// No `style` parameter: the binding builds the toolbar strip, which is the
+/// Swift's default and the only style the gallery asks for.
+///
+/// - Returns: Always 0; the value is unused.
 function PresentPreferences() as variant
     let dialog = TUIPrefsDialog("Preferences")
 
-    ' General: the two behaviours the gallery itself reads.
+    ' General: the two behaviors the gallery itself reads.
     panelCheck = TUICheck("Open the Controls panel at launch")
     panelCheck.checked(ControlsPanelOpen())
     panelCheck.onchange("PreferencesPanelChanged")
@@ -119,11 +141,17 @@ end function
 ' reads its control rather than being handed the new value, because a BASIC
 ' handler takes no argument from a control.
 
+/// Remembers the General page's Controls panel check box.
+///
+/// - Returns: Always 0; the value is unused.
 function PreferencesPanelChanged() as variant
     SetControlsPanelOpen(panelCheck.checked())
     return 0
 end function
 
+/// Remembers the General page's hint check box and applies it at once.
+///
+/// - Returns: Always 0; the value is unused.
 function PreferencesHintsChanged() as variant
     let visible = hintsCheck.checked()
     SetShowsHints(visible)
@@ -131,6 +159,9 @@ function PreferencesHintsChanged() as variant
     return 0
 end function
 
+/// Remembers the Appearance page's theme and applies it at once.
+///
+/// - Returns: Always 0; the value is unused.
 function PreferencesThemeChanged() as variant
     let index = themePopUp.selected()
     if index < 0 then

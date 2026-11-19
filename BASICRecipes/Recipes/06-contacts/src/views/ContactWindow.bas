@@ -11,9 +11,14 @@
 ' Handlers are named FUNCTIONs: every "onclick" below names a function
 ' further down this file.
 
-' Builds the one window and answers it, for the caller to present.
+/// Builds the one window and answers it, for the caller to present.
+///
+/// - Returns: The window, with its toolbar, list and form in place.
 FUNCTION BuildContactWindow() AS VARIANT
     mainWindow = TUIFloatWindow("Contacts")
+
+    ' Where it opens, the smallest it may be made, and the inset it keeps
+    ' from the edges of the shell when maximized.
     mainWindow.frame(2, 1, 76, 22)
     mainWindow.minsize(54, 14)
     mainWindow.maximizeinsets(1, 1)
@@ -33,14 +38,18 @@ FUNCTION BuildContactWindow() AS VARIANT
 END FUNCTION
 
 ' ------------------------------------------------------------- the toolbar
-'
-' Open, Save and New Contact - the three things this program does often -
-' with the file name beside them in a field that stretches to the window.
-'
-' The field is not decoration. This binding's dialogs hold a message and
-' buttons but no text entry, so the toolbar is where a file name is typed:
-' the same arrangement as a browser's address bar, which is where the
-' pattern comes from.
+
+/// Builds the toolbar and puts it on the window.
+///
+/// Open, Save and New Contact - the three things this program does often -
+/// with the file name beside them in a field that stretches to the window.
+///
+/// The field is not decoration. This binding's dialogs hold a message and
+/// buttons but no text entry, so the toolbar is where a file name is typed:
+/// the same arrangement as a browser's address bar, which is where the
+/// pattern comes from.
+///
+/// - Returns: Always 0.
 FUNCTION InstallContactToolbar() AS VARIANT
     LOCAL bar = TUIToolbar()
 
@@ -48,9 +57,11 @@ FUNCTION InstallContactToolbar() AS VARIANT
     ' guessing game for anyone who did not write it.
     bar.displaymode("both")
 
+    ' The file field starts out showing the file the book belongs to.
     pathField = TUIField()
     pathField.text(CurrentPath$)
 
+    ' The three buttons, then the field, which takes the rest of the width.
     bar.additem("Open", "^", "ToolbarOpen")
     bar.additem("Save", "*", "ToolbarSave")
     bar.additem("New Contact", "+", "ToolbarNewContact")
@@ -63,7 +74,11 @@ END FUNCTION
 
 ' --------------------------------------------------------------- the list
 
+/// Builds the list of contacts, in a panel of its own.
+///
+/// - Returns: The panel, for the left side of the window.
 FUNCTION BuildContactList() AS VARIANT
+    ' The list is kept in a GLOBAL, so the handlers can refill and read it.
     LOCAL panel = TUIPanel("Contacts")
     contactList = TUIList()
     contactList.onselect("ContactSelected")
@@ -71,12 +86,14 @@ FUNCTION BuildContactList() AS VARIANT
     RETURN panel
 END FUNCTION
 
-' Replaces every row from the model.
-'
-' items() with no arguments empties the list; additem appends. Called after
-' anything that changes what contacts exist - adding, deleting, opening a
-' file - and never for a change that only affects one contact's text, which
-' is what UpdateRow is for.
+/// Replaces every row from the model.
+///
+/// items() with no arguments empties the list; additem appends. Called after
+/// anything that changes what contacts exist - adding, deleting, opening a
+/// file - and never for a change that only affects one contact's text, which
+/// is what UpdateRow is for.
+///
+/// - Returns: How many rows the list now has.
 FUNCTION RefreshList() AS INTEGER
     contactList.items()
 
@@ -97,7 +114,11 @@ END FUNCTION
 ' what a form is; doing it by hand with stacks and labels is four times the
 ' code and comes out crooked when the window is resized.
 
+/// Builds the edit form and its Apply, Revert and Delete buttons.
+///
+/// - Returns: The panel, for the right side of the window.
 FUNCTION BuildEditForm() AS VARIANT
+    ' The four fields, each with a hint of what goes in it.
     fullNameField = TUIField()
     fullNameField.placeholder("full name")
     emailField = TUIField()
@@ -107,6 +128,7 @@ FUNCTION BuildEditForm() AS VARIANT
     notesField = TUIField()
     notesField.placeholder("anything worth remembering")
 
+    ' One labeled row per field, under a section title.
     LOCAL entry = TUIForm()
     entry.section("Contact")
     entry.field("Name", fullNameField)
@@ -124,6 +146,7 @@ FUNCTION BuildEditForm() AS VARIANT
     LOCAL deleteButton = TUIButton("&Delete")
     deleteButton.onclick("DeleteContactAction")
 
+    ' The buttons sit in one row, one line high, under the form.
     LOCAL buttons = TUIStack("h")
     buttons.add(applyButton)
     buttons.add(revertButton)
@@ -139,13 +162,16 @@ FUNCTION BuildEditForm() AS VARIANT
     RETURN panel
 END FUNCTION
 
-' Moves the list highlight and the form to one row, together.
-'
-' Two things have to agree about which contact is current: the highlighted
-' row and the fields beside it. Every place that changes the current
-' contact calls this, so they cannot drift apart - and selecting in code
-' does not fire the list's own handler, which would re-enter this function
-' halfway through.
+/// Moves the list highlight and the form to one row, together.
+///
+/// Two things have to agree about which contact is current: the highlighted
+/// row and the fields beside it. Every place that changes the current
+/// contact calls this, so they cannot drift apart - and selecting in code
+/// does not fire the list's own handler, which would re-enter this function
+/// halfway through.
+///
+/// - Parameter row: The row to make current, or -1 for none.
+/// - Returns: Always 0.
 FUNCTION SelectRow(row AS INTEGER) AS INTEGER
     IF ContactExists(row) THEN
         contactList.select(row)
@@ -154,8 +180,12 @@ FUNCTION SelectRow(row AS INTEGER) AS INTEGER
     RETURN 0
 END FUNCTION
 
-' Fills the form from one contact, or empties it when there is none.
+/// Fills the form from one contact, or empties it when there is none.
+///
+/// - Parameter row: The contact to show, or -1 for none.
+/// - Returns: 1 when it showed a contact, 0 when it emptied the form.
 FUNCTION ShowContact(row AS INTEGER) AS INTEGER
+    ' No contact: nothing is being edited, and every field is cleared.
     IF NOT ContactExists(row) THEN
         EditingRow = -1
         fullNameField.text("")
@@ -165,6 +195,7 @@ FUNCTION ShowContact(row AS INTEGER) AS INTEGER
         RETURN 0
     END IF
 
+    ' A contact: it becomes the one being edited, and fills the fields.
     EditingRow = row
     fullNameField.text(Contacts(row).FullName)
     emailField.text(Contacts(row).Email)
@@ -175,21 +206,25 @@ END FUNCTION
 
 ' ------------------------------------------------------------- the chrome
 
-' Rewrites the window title and the status line from the model.
-'
-' One function, called after every change, rather than each handler
-' remembering to update the title itself. The asterisk in the title is the
-' whole of the unsaved-changes display, and it comes from IsDirty, so it
-' can never disagree with the dialog that asks about it.
+/// Rewrites the window title and the status line from the model.
+///
+/// One function, called after every change, rather than each handler
+/// remembering to update the title itself. The asterisk in the title is the
+/// whole of the unsaved-changes display, and it comes from IsDirty, so it
+/// can never disagree with the dialog that asks about it.
+///
+/// - Returns: Always 0.
 FUNCTION RefreshChrome() AS INTEGER
     LOCAL marker$ = ""
     IF IsDirty THEN
         marker$ = " *"
     END IF
 
+    ' The title names the file, with the asterisk when it is unsaved.
     mainWindow.title("Contacts - " + CurrentPath$ + marker$)
     statusTitle.text(" " + Number$(ContactCount) + " contacts")
 
+    ' The last message, or the keys to know when nothing has happened yet.
     IF LastMessage$ = "" THEN
         statusHint.text("Tab moves focus - Apply commits an edit - Esc quits")
     ELSE
@@ -198,8 +233,11 @@ FUNCTION RefreshChrome() AS INTEGER
     RETURN 0
 END FUNCTION
 
-' Everything the screen shows, from the model. Used after opening a file.
+/// Everything the screen shows, from the model. Used after opening a file.
+///
+/// - Returns: Always 0.
 FUNCTION RefreshEverything() AS INTEGER
+    ' The rows and the file field first, then the current contact and title.
     RefreshList()
     pathField.text(CurrentPath$)
 
@@ -220,18 +258,28 @@ END FUNCTION
 ' Below here, one FUNCTION per thing a person can do. They are short on
 ' purpose: each one changes the model, then asks the screen to catch up.
 
+/// Shows the contact the list has just selected.
+///
+/// The list's own handler: it runs when the person moves the highlight.
+///
+/// - Returns: Always 0.
 FUNCTION ContactSelected() AS VARIANT
     ShowContact(contactList.selected())
     RETURN 0
 END FUNCTION
 
+/// Writes the form's fields back into the contact being edited.
+///
+/// - Returns: Always 0.
 FUNCTION ApplyEdits() AS VARIANT
+    ' With no contact current there is nothing to write into.
     IF NOT ContactExists(EditingRow) THEN
         LastMessage$ = "nothing selected - pick a contact or press New Contact"
         RefreshChrome()
         RETURN 0
     END IF
 
+    ' Write the fields into the model.
     UpdateContact(EditingRow, fullNameField.value$(), emailField.value$(), phoneField.value$(), notesField.value$())
 
     ' Only one contact changed, but the list holds strings rather than
@@ -244,14 +292,22 @@ FUNCTION ApplyEdits() AS VARIANT
     RETURN 0
 END FUNCTION
 
+/// Puts the form back to the contact as it was last applied.
+///
+/// - Returns: Always 0.
 FUNCTION RevertEdits() AS VARIANT
+    ' The model still holds the applied values, so showing it again reverts.
     ShowContact(EditingRow)
     LastMessage$ = "reverted the form to the saved contact"
     RefreshChrome()
     RETURN 0
 END FUNCTION
 
+/// Adds a new contact and puts it in the form, ready to be named.
+///
+/// - Returns: Always 0.
 FUNCTION NewContactAction() AS VARIANT
+    ' AddContact answers -1 when the book is full.
     LOCAL row = AddContact("New Contact", "", "", "")
     IF row < 0 THEN
         LastMessage$ = "the book is full - " + Number$(MaxContacts + 1) + " contacts is the limit"
@@ -259,6 +315,7 @@ FUNCTION NewContactAction() AS VARIANT
         RETURN 0
     END IF
 
+    ' Show the new row and make it the one being edited.
     RefreshList()
     SelectRow(row)
     LastMessage$ = "added a contact - type a name and press Apply"
@@ -266,13 +323,18 @@ FUNCTION NewContactAction() AS VARIANT
     RETURN 0
 END FUNCTION
 
+/// Deletes the contact being edited.
+///
+/// - Returns: Always 0.
 FUNCTION DeleteContactAction() AS VARIANT
+    ' With no contact current there is nothing to delete.
     IF NOT ContactExists(EditingRow) THEN
         LastMessage$ = "nothing selected - pick a contact first"
         RefreshChrome()
         RETURN 0
     END IF
 
+    ' Keep its description for the status line before it is gone.
     LOCAL gone$ = ContactRow$(EditingRow)
     LOCAL removed = EditingRow
     RemoveContact(removed)
@@ -297,21 +359,33 @@ END FUNCTION
 ' menu items call. Two ways in, one thing done - so a fix to Save is a fix
 ' to both.
 
+/// The toolbar's Open button: the same as File > Open.
+///
+/// - Returns: Always 0.
 FUNCTION ToolbarOpen() AS VARIANT
     FileOpen()
     RETURN 0
 END FUNCTION
 
+/// The toolbar's Save button: the same as File > Save.
+///
+/// - Returns: Always 0.
 FUNCTION ToolbarSave() AS VARIANT
     FileSave()
     RETURN 0
 END FUNCTION
 
+/// The toolbar's New Contact button: the same as File > New Contact.
+///
+/// - Returns: Always 0.
 FUNCTION ToolbarNewContact() AS VARIANT
     NewContactAction()
     RETURN 0
 END FUNCTION
 
+/// The window's close box: asks about unsaved edits, then quits.
+///
+/// - Returns: Always 0.
 FUNCTION WindowCloseRequested() AS VARIANT
     ' The close box is a quit: one window, and closing it leaves nothing.
     RequestQuit()

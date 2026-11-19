@@ -6,13 +6,19 @@
 ' terminal the two columns are identical by design; the caption says so.
 ' Taller than the window on purpose: the whole tab lives in a ScrollView.
 
-' One chart beside its cells-pinned twin, each in a titled panel.
-'
-' `sideBySide(_:height:make:)` takes a closure and calls it twice. BASIC
-' cannot pass a builder, so the two copies are built by the caller and
-' handed in; everything the helper actually does - the two panels, their
-' VTG/ANSI titles, the nochrome on the right copy, the pinned height - is
-' here, once, as in the Swift.
+/// One chart beside its cells-pinned twin, each in a titled panel.
+///
+/// `sideBySide(_:height:make:)` takes a closure and calls it twice. BASIC
+/// cannot pass a builder, so the two copies are built by the caller and
+/// handed in; everything the helper actually does - the two panels, their
+/// VTG/ANSI titles, the nochrome on the right copy, the pinned height - is
+/// here, once, as in the Swift.
+///
+/// - Parameter title: The chart's name, used in both panels' titles.
+/// - Parameter height: The pinned height of the pair, in rows.
+/// - Parameter vector: The copy that may render vector graphics.
+/// - Parameter cells: The copy that is pinned to ANSI cells.
+/// - Returns: A row holding the two titled panels, pinned to `height`.
 function SideBySide(title as string, height as integer, vector as variant, cells as variant) as variant
     cells.nochrome(1)
 
@@ -41,6 +47,9 @@ end function
 ' document (pinned rows carry no intrinsic of their own). A BASIC vertical
 ' TUIStack is that class already - `contentheight` is its declared height.
 
+/// Builds the Charts tab: every chart as a VTG and ANSI pair, in a scrolling column.
+///
+/// - Returns: The tab's root view, a scroll view.
 function MakeChartsTab() as variant
     let column = TUIStack("v")
     let totalHeight = 0
@@ -83,10 +92,16 @@ end function
 ' function, so a second `let chart = TUILineChart()` is rejected as an
 ' assignment of the wrong object. Each builder names its own.
 
+/// Builds the sample sparkline.
+///
+/// - Returns: A new sparkline.
 function MakeSparkline() as variant
     return TUISparkline(2, 3, 3, 4, 5, 7, 8, 8, 9, 11, 14, 13, 15, 18, 17, 19, 22, 21, 24, 26)
 end function
 
+/// Builds the sample bar chart: builds and deploys per weekday.
+///
+/// - Returns: A new bar chart.
 function MakeBarChart() as variant
     let barChart = TUIBarChart()
     barChart.categories("Mon", "Tue", "Wed", "Thu", "Fri")
@@ -96,12 +111,15 @@ function MakeBarChart() as variant
     return barChart
 end function
 
+/// Builds the sample timeline: four page resources loading, with waits and a failure.
+///
+/// - Returns: A new timeline chart.
 function MakeTimelineChart() as variant
     let timelineChart = TUITimeline()
     ' TimelineRow(label:, segments: [.init(start:duration:kind:)])
     '
     ' A track opens a row; its segments follow, each carrying its own kind -
-    ' which is what colours style.css's wait and track.js's failure
+    ' which is what colors style.css's wait and track.js's failure
     ' differently from the rest.
     timelineChart.track("index.html")
     timelineChart.segment(0, 210, "active")
@@ -120,6 +138,9 @@ function MakeTimelineChart() as variant
     return timelineChart
 end function
 
+/// Builds the sample scatter chart: cache hits and misses.
+///
+/// - Returns: A new scatter chart.
 function MakeScatterChart() as variant
     let scatterChart = TUIScatter()
     scatterChart.series("cache hit", 2, 11, 5, 14, 7, 13, 11, 17, 14, 16, 17, 21, 21, 20, 24, 24)
@@ -128,6 +149,9 @@ function MakeScatterChart() as variant
     return scatterChart
 end function
 
+/// Builds the sample line chart: resident and heap memory, with the heap's area filled.
+///
+/// - Returns: A new line chart.
 function MakeLineChart() as variant
     let lineChart = TUILineChart()
     lineChart.series("resident", 8, 9, 9, 10, 12, 12, 14, 17, 16, 18, 21, 22, 22, 25, 28)
@@ -142,6 +166,9 @@ function MakeLineChart() as variant
     return lineChart
 end function
 
+/// Builds the sample pie chart, drawn as a donut.
+///
+/// - Returns: A new pie chart.
 function MakePieChart() as variant
     let pieChart = TUIPieChart()
     pieChart.slice("rent", 42)

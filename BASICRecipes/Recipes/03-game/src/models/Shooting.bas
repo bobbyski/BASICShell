@@ -4,21 +4,37 @@
 ' looks after itself. CheckHits, at the bottom, is where they meet: it
 ' asks the guard and the targets whether each shot hit them, and keeps the
 ' score.
+'
+' This file only declares. The GLOBALs these use (theShots, theGuard,
+' theTargets, score, MAXSHOTS and the rest) are in main.bas, because an
+' imported file's top-level statements never run.
 
 ' MARK: - Shots
 
+/// Every shot in the air: where each one is, and how it flies.
 CLASS Shots
     ' One place for each shot that can be in the air at once (MAXSHOTS).
     ' Flying is 1 for a shot in flight and 0 for a free place; X and Y are
     ' where it is, and VX and VY how far it goes each frame.
+    /// For each place, 1 for a shot in flight and 0 for a free place.
     PUBLIC Flying(8) AS INTEGER
+    /// Where each shot is, across the world.
     PUBLIC X(8) AS DOUBLE
+    /// Where each shot is, down the world.
     PUBLIC Y(8) AS DOUBLE
+    /// How far each shot goes across, each frame.
     PUBLIC VX(8) AS DOUBLE
+    /// How far each shot goes down, each frame.
     PUBLIC VY(8) AS DOUBLE
 
-    ' A shot from (fromX, fromY) flying `way` at SHOTSPEED, in the first free
-    ' place. With every place in flight, it does nothing.
+    /// Fires a shot from (fromX, fromY).
+    ///
+    /// A shot from (fromX, fromY) flying `way` at SHOTSPEED, in the first free
+    /// place. With every place in flight, it does nothing.
+    ///
+    /// - Parameter fromX: Where the shot starts, across the world.
+    /// - Parameter fromY: Where the shot starts, down the world.
+    /// - Parameter way: The direction it flies, in radians, measured the way Facing is.
     FUNCTION Fire(fromX AS DOUBLE, fromY AS DOUBLE, way AS DOUBLE) AS VOID
         LOCAL s = 0
         FOR s = 0 TO MAXSHOTS - 1
@@ -33,7 +49,7 @@ CLASS Shots
         NEXT s
     END FUNCTION
 
-    ' Every shot in the air moves on; one that leaves the floor lands.
+    /// Every shot in the air moves on; one that leaves the floor lands.
     FUNCTION Fly() AS VOID
         LOCAL s = 0
         FOR s = 0 TO MAXSHOTS - 1
@@ -45,12 +61,15 @@ CLASS Shots
         NEXT s
     END FUNCTION
 
-    ' Shot `s` is done: its place is free again, and its shape is gone.
+    /// Shot `s` is done: its place is free again, and its shape is gone.
+    ///
+    /// - Parameter s: The shot's place, from 0 to MAXSHOTS - 1.
     FUNCTION Land(s AS INTEGER) AS VOID
         ME.Flying(s) = 0
         vtg.delete("shot" + Num$(s))
     END FUNCTION
 
+    /// Draws every shot in the air.
     FUNCTION Render() AS VOID
         LOCAL s = 0
         FOR s = 0 TO MAXSHOTS - 1
@@ -61,15 +80,21 @@ END CLASS
 
 ' MARK: - Targets
 
+/// The four targets: where each one stands, and how it flashes when hit.
 CLASS Targets
     ' Where each target stands (TARGETCOUNT of them), and how many more
     ' frames it flashes after a hit.
+    /// Where each target stands, across the world.
     PUBLIC X(4) AS DOUBLE
+    /// Where each target stands, down the world.
     PUBLIC Y(4) AS DOUBLE
+    /// How many more frames each target flashes after a hit.
     PUBLIC Flash(4) AS INTEGER
 
-    ' One in each quarter of the floor, well away from where the player
-    ' starts.
+    /// Puts the four targets on the floor.
+    ///
+    /// One in each quarter of the floor, well away from where the player
+    /// starts.
     FUNCTION PlaceFour() AS VOID
         ME.X(0) = 120
         ME.Y(0) = 110
@@ -81,11 +106,18 @@ CLASS Targets
         ME.Y(3) = 370
     END FUNCTION
 
-    ' Whether a shot at (shotX, shotY) hits a target. The one hit flashes.
+    /// Whether a shot at (shotX, shotY) hits a target.
+    ///
+    /// The one hit flashes.
+    ///
+    /// - Parameter shotX: Where the shot is, across the world.
+    /// - Parameter shotY: Where the shot is, down the world.
+    /// - Returns: 1 for a hit, 0 for a miss.
     FUNCTION HitAt(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
         LOCAL t = 0
         FOR t = 0 TO TARGETCOUNT - 1
             IF Distance(shotX, shotY, ME.X(t), ME.Y(t)) < TARGETSIZE THEN
+                ' Flash for the next 8 frames.
                 ME.Flash(t) = 8
                 RETURN 1
             END IF
@@ -93,7 +125,7 @@ CLASS Targets
         RETURN 0
     END FUNCTION
 
-    ' A frame less of flashing.
+    /// A frame less of flashing.
     FUNCTION Fade() AS VOID
         LOCAL t = 0
         FOR t = 0 TO TARGETCOUNT - 1
@@ -101,7 +133,7 @@ CLASS Targets
         NEXT t
     END FUNCTION
 
-    ' A target is two rings and a middle, bright while it flashes.
+    /// A target is two rings and a middle, bright while it flashes.
     FUNCTION Render() AS VOID
         LOCAL t = 0
         FOR t = 0 TO TARGETCOUNT - 1
@@ -118,10 +150,12 @@ END CLASS
 
 ' MARK: - When they meet
 
-' Each shot in the air is asked about: the guard first, then the targets.
-' A shot that hits something lands, and the score goes up by what it hit.
-' This is a plain function rather than a method of either: it is about how
-' they meet, which belongs to neither.
+/// Settles every shot that hit something this frame.
+///
+/// Each shot in the air is asked about: the guard first, then the targets.
+/// A shot that hits something lands, and the score goes up by what it hit.
+/// This is a plain function rather than a method of either: it is about how
+/// they meet, which belongs to neither.
 FUNCTION CheckHits() AS VOID
     LOCAL s = 0
     FOR s = 0 TO MAXSHOTS - 1

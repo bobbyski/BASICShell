@@ -2,51 +2,50 @@
 '
 ' Build it with basicc: make run builds it and runs it (make build only
 ' builds it, into Build/). The program is a Mac application with a window
-' of its own, and it runs until the window closes. (BASICShell runs in a
-' terminal, which has no windows, and says so.)
+' of its own, and it runs until the window closes.
 '
 ' ActiveUI's smallest complete app: a label that counts, and a button.
-' Press Click me and the count goes up.
+' Press Click me and the count goes up; Reset takes it back to zero, and is
+' grayed out while there is nothing to reset.
 '
-' The button names the FUNCTION that handles it: clickButton.onclick("Clicked").
-' A handler is always a named FUNCTION, not a closure, because a closure's
-' changes would not get out of it. win.run() shows the window and waits,
-' running handlers as you work, until the window closes.
+' THE FILES, in the order worth reading them:
 '
-' The same app as Swift's ActiveUI Click Counter, and where it differs:
-' - Swift's label pulls its text from a closure, and the button asks it to
-'   pull again. Here the handler sets the label's text: the same result,
-'   pushed rather than pulled.
-' - Swift's label is in the headline font. BASIC's AUILabel sets text only.
-' - Swift's stack holds the label and button at their own widths. A BASIC
-'   window's column fills its width, so the button is as wide as the window.
-' - The menu bar is the same: built with basicc, the program has the app
-'   menu, File (Close, and Quit as ⌘Q), Edit and Window, as Swift's does.
-'   BASIC cannot add items to it yet. Closing the window ends the program.
+'   main.bas                                 you are here: the parts, wired together
+'   models/Counter.bas                       the count
+'   views/CounterView.bas                    the label and the Click me button
+'   controllers/CounterWindowController.bas  the window, Reset, and each count
+'
+' The model knows nothing of windows, the view never changes the count, and
+' the controller is the one part that knows both. README.md says how the
+' comments are written.
 
-' How many times the button has been pressed.
-GLOBAL clicks AS INTEGER
+' ---------------------------------------------------------------- the files
+'
+' IMPORT reads another file's CLASSes and FUNCTIONs into this program, from
+' a path relative to this file. Only this file's own statements run; an
+' imported file's are declarations.
+IMPORT "models/Counter.bas"
+IMPORT "views/CounterView.bas"
+IMPORT "controllers/CounterWindowController.bas"
 
-GLOBAL win = AUIWindow("{{NAME}}")
-GLOBAL countLabel = AUILabel("Count: 0")
+' ---------------------------------------------------------------- the parts
+'
+' Each part is a GLOBAL, declared here and made below, and the others reach
+' it by name. Three things in this BASIC make that the way: an imported
+' file's statements do not run (GLOBALs included), an object handed to a
+' FUNCTION is a copy (BASIC-35), and the interpreter BASICStudio runs cannot
+' yet call a method on an object kept in another object's field.
 
-' The window, top to bottom: the count, then the button.
-LET clickButton = AUIButton("Click me")
-win.add(countLabel)
-win.add(clickButton)
+/// The count.
+GLOBAL theCounter AS Counter
+/// The count's label and the Click me button.
+GLOBAL theCounterView AS CounterView
+/// The window's controller, which every button's handler hands its command to.
+GLOBAL theWindow AS CounterWindowController
 
-' Who handles what.
-clickButton.onclick("Clicked")
-
-' Swift's window is 320 by 200 points.
-win.size(320, 200)
-win.run()
-
-' ================================================================= handlers
-
-' Click me: one more, and the label says so. STR$ puts a space in front of
-' a number, which is the one after "Count:".
-FUNCTION Clicked()
-    clicks = clicks + 1
-    countLabel.text("Count:" + STR$(clicks))
-END FUNCTION
+' ------------------------------------------------------------------- start
+theCounter = NEW Counter()
+theCounterView = NEW CounterView()
+theWindow = NEW CounterWindowController()
+theWindow.Start("{{NAME}}")
+theWindow.Run()

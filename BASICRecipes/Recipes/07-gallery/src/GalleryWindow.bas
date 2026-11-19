@@ -11,14 +11,17 @@
 ' View menu's "Toggle Controls Panel" and the [>] title button reach the same
 ' toggleslideout. ^L itself is the one thing this file loses.
 
-' Builds one gallery window - a resizable, maximizable *content* window
-' (Turbo dresses it blue with a white double frame) whose content is a
-' folder-tab view over every control in the kit, with a Controls panel
-' that slides out of the left edge to jump between the tabs.
-'
-' No `app`/`settings` parameters: both are globals. No `live` parameter
-' either - it exists in the Swift to keep the Terminal tab from starting a
-' real shell during snapshots, and the Terminal tab is deliberately absent.
+/// Builds one gallery window - a resizable, maximizable *content* window
+/// (Turbo dresses it blue with a white double frame) whose content is a
+/// folder-tab view over every control in the kit, with a Controls panel
+/// that slides out of the left edge to jump between the tabs.
+///
+/// No `app`/`settings` parameters: both are globals. No `live` parameter
+/// either - it exists in the Swift to keep the Terminal tab from starting a
+/// real shell during snapshots, and the Terminal tab is deliberately absent.
+///
+/// - Parameter index: 0 for the first window; each later window is offset and numbered by it.
+/// - Returns: The new window, not yet presented.
 function MakeGalleryWindow(index as integer) as variant
     if index = 0 then
         win = TUIFloatWindow("TUIKit Gallery")
@@ -91,21 +94,32 @@ function MakeGalleryWindow(index as integer) as variant
     return win
 end function
 
-' One page: a tab, and the row that indexes it in the Controls panel. The
-' Swift builds an array of triples and then walks it twice; BASIC has no
-' tuple array, so the two walks become one call per page.
+/// One page: a tab, and the row that indexes it in the Controls panel. The
+/// Swift builds an array of triples and then walks it twice; BASIC has no
+/// tuple array, so the two walks become one call per page.
+///
+/// - Parameter title: The tab's title, also the index row's title.
+/// - Parameter summary: The index row's subtitle.
+/// - Parameter content: The tab's view.
+/// - Returns: Always 0; the value is unused.
 function AddGalleryPage(title as string, summary as string, content as variant) as variant
     tabs.addtab(title, content)
     controlsIndex.additem(">", title, summary)
     return 0
 end function
 
+/// Logs the page the folder tabs switched to.
+///
+/// - Returns: Always 0; the value is unused.
 function GalleryPageSelected() as variant
     ' TUILogger.shared.info("page: \(titles[selected])")
     galleryLog.write("info", "page: " + tabs.selectedtitle())
     return 0
 end function
 
+/// Shows the tab picked in the Controls panel, and logs it.
+///
+/// - Returns: Always 0; the value is unused.
 function GalleryControlsIndexSelected() as variant
     let selected = controlsIndex.selected()
     if selected < 0 then
@@ -117,15 +131,20 @@ function GalleryControlsIndexSelected() as variant
     return 0
 end function
 
+/// Dismisses the gallery window when its close box is clicked.
+///
+/// - Returns: Always 0; the value is unused.
 function GalleryWindowCloseRequested() as variant
     ' window.onCloseRequest = { app.dismiss(window) }
     app.dismiss()
     return 0
 end function
 
-' The window toolbar: icon buttons, a flexible address field (R6), and the
-' long-press example - hold Back for its history menu, exactly the browser
-' gesture the feature was built for.
+/// The window toolbar: icon buttons, a flexible address field (R6), and the
+/// long-press example - hold Back for its history menu, exactly the browser
+/// gesture the feature was built for.
+///
+/// - Returns: Always 0; the value is unused.
 function InstallToolbar() as variant
     let bar = TUIToolbar()
     bar.displaymode("both")
@@ -148,11 +167,17 @@ function InstallToolbar() as variant
     return 0
 end function
 
+/// Reports a quick click on the toolbar's Back button.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarBack() as variant
     address.text("tuikit://gallery/back - quick click")
     return 0
 end function
 
+/// Opens the held Back button's history menu below the toolbar.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarBackHistory() as variant
     let history = TUIMenu()
     history.menu("")
@@ -164,37 +189,56 @@ function ToolbarBackHistory() as variant
     return 0
 end function
 
-' for entry in [...] { history.addItem(...) { address.setText(...) } }
-'
-' Three handlers rather than a loop: the Swift closure captures its entry,
-' and a menu item's carried argument is a string, so the loop could be kept -
-' but the three URLs are literals in the Swift too, and one handler each
-' reads the same as the array does.
+/// Goes to the charts address from the Back history menu.
+///
+/// for entry in [...] { history.addItem(...) { address.setText(...) } }
+///
+/// Three handlers rather than a loop: the Swift closure captures its entry,
+/// and a menu item's carried argument is a string, so the loop could be kept -
+/// but the three URLs are literals in the Swift too, and one handler each
+/// reads the same as the array does.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarHistoryCharts() as variant
     address.text("tuikit://gallery/charts - from held Back")
     return 0
 end function
 
+/// Goes to the text address from the Back history menu.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarHistoryText() as variant
     address.text("tuikit://gallery/text - from held Back")
     return 0
 end function
 
+/// Goes to the buttons address from the Back history menu.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarHistoryButtons() as variant
     address.text("tuikit://gallery/buttons - from held Back")
     return 0
 end function
 
+/// Reports the toolbar's Forward button.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarForward() as variant
     address.text("tuikit://gallery/forward")
     return 0
 end function
 
+/// Reports the toolbar's Reload button.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarReload() as variant
     address.text("tuikit://gallery - reloaded")
     return 0
 end function
 
+/// Presents the preferences dialog from the toolbar's Settings button.
+///
+/// - Returns: Always 0; the value is unused.
 function ToolbarSettings() as variant
     ' the real preferences dialog
     PresentPreferences()
@@ -205,22 +249,31 @@ end function
 '
 ' Used by every tab file, as in the Swift.
 
-' A group box: a titled panel whose content is a padded vertical stack.
-'
-' `group(_:spacing:_:)` takes an array of children; BASIC has no array
-' literal of handles, so a group is opened, added to, and used - TUIPanel
-' stacks what it is given, which is what the Swift's helper does by hand.
+/// A group box: a titled panel whose content is a padded vertical stack.
+///
+/// `group(_:spacing:_:)` takes an array of children; BASIC has no array
+/// literal of handles, so a group is opened, added to, and used - TUIPanel
+/// stacks what it is given, which is what the Swift's helper does by hand.
+///
+/// - Parameter title: The group's title.
+/// - Returns: A new titled panel.
 function Group(title as string) as variant
     return TUIPanel(title)
 end function
 
-' Pins a stack row to an exact height, so flexible rows don't absorb it.
+/// Pins a stack row to an exact height, so flexible rows don't absorb it.
+///
+/// - Parameter view: The view to pin.
+/// - Parameter height: Its height, in rows.
+/// - Returns: The same view, now pinned.
 function PinnedHeight(view as variant, height as integer) as variant
     view.height(height)
     return view
 end function
 
-' A row of side-by-side flexible children.
+/// A row of side-by-side flexible children.
+///
+/// - Returns: A new horizontal stack.
 function Row() as variant
     return TUIStack("h")
 end function

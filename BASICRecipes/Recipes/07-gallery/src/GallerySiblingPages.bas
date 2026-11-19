@@ -4,6 +4,9 @@
 
 ' ---------------------------------------------------------------- Boards
 
+/// Builds the Boards tab: a four-column kanban board.
+///
+/// - Returns: The tab's root view.
 function MakeBoardsTab() as variant
     let root = TUIStack("v")
 
@@ -36,6 +39,9 @@ function MakeBoardsTab() as variant
     return root
 end function
 
+/// Reports that a card moved.
+///
+/// - Returns: Always 0; the value is unused.
 function BoardCardMoved() as variant
     ' board.onCardMoved = { card, _, to, _ in moved.text = "moved ... to column \(to + 1)" }
     '
@@ -47,6 +53,9 @@ end function
 
 ' --------------------------------------------------------------- Diagram
 
+/// Builds the Diagram tab: a build pipeline laid out as a layered diagram.
+///
+/// - Returns: The tab's root view.
 function MakeDiagramTab() as variant
     let root = TUIStack("v")
 
@@ -82,6 +91,9 @@ function MakeDiagramTab() as variant
     return root
 end function
 
+/// Reports that the diagram's selection moved.
+///
+/// - Returns: Always 0; the value is unused.
 function DiagramSelectionChanged() as variant
     ' The selected node's id is not handed over, so the label reports that
     ' the selection moved rather than which node it landed on.

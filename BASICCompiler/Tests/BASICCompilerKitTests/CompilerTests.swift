@@ -571,13 +571,24 @@ struct StarterTests {
     /// The starters that open ActiveUI windows of their own (BASIC-31): each
     /// builds into an application, which a scripted user works and then
     /// closes, and what it printed and showed is checked. Each entry is the
-    /// script, then what the run must have said.
+    /// script, then what the run must have said. `#n` in the clicks picks
+    /// row n, and a grayed-out button is not pressed, as a person could not
+    /// press it.
     static let windowed: [String: (script: [String: String], expected: [String])] = [
-        // Clear All asks first; the script answers Clear.
-        "activeui": (["BASIC_AUI_CLICK": "Clear All", "BASIC_AUI_DIALOG": "0"],
-                     ["dialog", "says \"Cleared.\"", "Window closed.", "Starter closed:", "still to do."]),
-        "activeui.counter": (["BASIC_AUI_CLICK": "Click me,Click me"], ["says \"Count: 1\"", "says \"Count: 2\""]),
-        "activeui.masterdetail": (["BASIC_AUI_SELECT": "1"], ["says \"Getting started\"", "says \"The model\""]),
+        // Done and Delete open grayed out; Done on a picked task ticks it,
+        // and Clear Done asks first (the script answers Clear).
+        "activeui": (["BASIC_AUI_CLICK": "Done,#0,Done,Clear Done", "BASIC_AUI_DIALOG": "0"],
+                     ["\"Done\" grayed out", "\"Delete\" grayed out", "\"Done\" is grayed out, so not pressed",
+                      "says \"2 to do · 1 done\"", "says \"1 to do · 2 done\"", "dialog", "says \"1 to do · 0 done\""]),
+        // Reset opens grayed out at zero, and goes back to zero.
+        "activeui.counter": (["BASIC_AUI_CLICK": "Reset,Click me,Click me,Reset"],
+                             ["\"Reset\" grayed out", "\"Reset\" is grayed out, so not pressed",
+                              "says \"Count: 1\"", "says \"Count: 2\"", "says \"Count: 0\""]),
+        // A heading chooses nothing, which grays Favorite out; an item is
+        // chosen and made a favorite.
+        "activeui.masterdetail": (["BASIC_AUI_CLICK": "#2,Favorite,#3,Favorite"],
+                                  ["says \"Getting started\"", "says \"No Item Selected\"",
+                                   "\"Favorite\" is grayed out, so not pressed", "says \"The model\"", "says \"Favorite\""]),
     ]
 
     @Test(arguments: ProjectScaffold.kinds)
@@ -595,8 +606,11 @@ struct StarterTests {
         if let windowed = Self.windowed[kind] {
             // Its own windows: up without taking the keyboard, worked by the
             // script, then closed as their close boxes would.
+            // APP_DATA_DIR keeps the starter's data in the scratch folder,
+            // never in the real Application Support.
             let script = windowed.script.merging([
-                "AUI_BACKGROUND": "1", "BASIC_AUI_TRACE": "1", "BASIC_AUI_CLOSE_AFTER": "1",
+                "AUI_BACKGROUND": "1", "BASIC_AUI_TRACE": "1", "BASIC_AUI_CLOSE_AFTER": "2",
+                "APP_DATA_DIR": root.appendingPathComponent("data").path,
             ]) { mine, _ in mine }
             let run = try runWithInput(output, "", environment: script)
             #expect(run.exitCode == 0, "starter \(kind): \(run.stdout)")

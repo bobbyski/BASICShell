@@ -94,7 +94,7 @@ struct ProjectCreationTests {
         #expect(game.fileToOpen(in: project, name: "Rocks") == project.appendingPathComponent("src/main.bas"))
     }
 
-    @Test("The Click Counter is Swift's: \"Count: 0\", a Click me button that counts, at 320 by 200")
+    @Test("The Click Counter: \"Count: 0\", a Click me button that counts, and Reset, at 320 by 200, in its own files")
     func clickCounter() throws {
         let parent = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -104,15 +104,19 @@ struct ProjectCreationTests {
         #expect(BASICProjectFolder.entry(of: project)?.lastPathComponent == "main.bas")
         let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
         #expect(main.hasPrefix("' Clicks — the click counter"))
+        #expect(main.contains("theWindow.Start(\"Clicks\")"))
         #expect(!main.contains("{{"))
-        for line in ["GLOBAL win = AUIWindow(\"Clicks\")", "GLOBAL countLabel = AUILabel(\"Count: 0\")",
-                     "LET clickButton = AUIButton(\"Click me\")", "clickButton.onclick(\"Clicked\")",
-                     "win.size(320, 200)", "win.run()", "countLabel.text(\"Count:\" + STR$(clicks))"] {
-            #expect(main.contains(line), "\(line)")
+        let view = try String(contentsOf: project.appendingPathComponent("src/views/CounterView.bas"), encoding: .utf8)
+        let controller = try String(contentsOf: project.appendingPathComponent("src/controllers/CounterWindowController.bas"), encoding: .utf8)
+        for (text, line) in [(view, "ME.CountLabel = AUILabel(\"Count: 0\")"), (view, "ME.ClickButton = AUIButton(\"Click me\")"),
+                             (view, "RETURN \"Count:\" + STR$(counter.Value)"), (controller, "ME.Window = AUIWindow(title)"),
+                             (controller, "ME.ResetButton = AUIButton(\"Reset\")"), (controller, "ME.Window.size(320, 200)"),
+                             (controller, "theCounterView.ClickButton.onclick(\"Clicked\")"), (controller, "ME.Window.run()")] {
+            #expect(text.contains(line), "\(line)")
         }
     }
 
-    @Test("The Master/Detail is Swift's: three items, \"Items\" over the list, and the pick's title, summary and body")
+    @Test("The Master/Detail: three items, Favorites first, the chosen one's title and notes, at 760 by 460, in its own files")
     func masterDetail() throws {
         let parent = try scratchFolder()
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -121,12 +125,15 @@ struct ProjectCreationTests {
         #expect(project.lastPathComponent == "Notes.basproj")
         let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
         #expect(main.hasPrefix("' Notes — a master/detail app"))
+        #expect(main.contains("DataFolder$(\"Notes\") + \"/items.txt\""))
         #expect(!main.contains("{{"))
-        for line in ["GLOBAL win = AUIWindow(\"Notes\")", "master.add(AUILabel(\"Items\"))",
-                     "itemTitle$(0) = \"Getting started\"", "itemTitle$(1) = \"The model\"", "itemTitle$(2) = \"The views\"",
-                     "itemSummary$(0) = \"What this app is\"", "itemList.onselect(\"Picked\")", "ShowItem(event.Index)",
-                     "win.size(760, 460)", "win.run()"] {
-            #expect(main.contains(line), "\(line)")
+        let store = try String(contentsOf: project.appendingPathComponent("src/models/ItemStore.bas"), encoding: .utf8)
+        for title in ["\"Getting started\"", "\"The model\"", "\"The views\""] {
+            #expect(store.contains("items.Add(\(title)"), "\(title)")
+        }
+        let controller = try String(contentsOf: project.appendingPathComponent("src/controllers/ItemsWindowController.bas"), encoding: .utf8)
+        for line in ["theSidebar.Rows.onselect(\"ItemPicked\")", "theWindow.ChooseRow(event.Index)", "ME.Window.size(760, 460)", "ME.Window.run()"] {
+            #expect(controller.contains(line), "\(line)")
         }
     }
 

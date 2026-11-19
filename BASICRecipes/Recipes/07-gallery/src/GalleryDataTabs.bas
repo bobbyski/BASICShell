@@ -4,6 +4,9 @@
 
 ' -------------------------------------------------------- Lists & trees
 
+/// Builds the Lists tab: list, tree and table views, the real disk twice, and the navigation strips.
+///
+/// - Returns: The tab's root view.
 function MakeListsTab() as variant
     let root = TUIStack("v")
 
@@ -76,6 +79,9 @@ end function
 
 ' ------------------------------------------------------------------ Text
 
+/// Builds the Text tab: the syntax editor, text, Markdown and rich text views, and links.
+///
+/// - Returns: The tab's root view.
 function MakeTextTab() as variant
     ' The R8 lexers, all three at once: markup, a style island, a script
     ' island with a regex literal.
@@ -149,6 +155,9 @@ function MakeTextTab() as variant
     return root
 end function
 
+/// Flips the Markdown view between rendered text and its source, and retitles the button to match.
+///
+/// - Returns: Always 0; the value is unused.
 function TextToggleEditing() as variant
     markdown.toggleedit()
     ' editToggle.title = markdown.isEditing ? "&Render" : "&Edit source"
@@ -163,11 +172,19 @@ function TextToggleEditing() as variant
     return 0
 end function
 
+/// Reports the URL the link would open.
+///
+/// - Parameter url: The link's URL.
+/// - Returns: Always 0; the value is unused.
 function TextLinkOpened(url as string) as variant
     linkResult.text("would open: " + url)
     return 0
 end function
 
+/// Reports the help link's anchor.
+///
+/// - Parameter url: The help link's URL.
+/// - Returns: Always 0; the value is unused.
 function TextHelpOpened(url as string) as variant
     linkResult.text("help anchor: " + url)
     return 0
@@ -175,6 +192,9 @@ end function
 
 ' ---------------------------------------------------------------- Layout
 
+/// Builds the Layout tab: ribbon, toolbox, flow stack, form, status bar, split view, scroller and disclosure.
+///
+/// - Returns: The tab's root view.
 function MakeLayoutTab() as variant
     let root = TUIStack("v")
 
@@ -311,6 +331,9 @@ function MakeLayoutTab() as variant
     return root
 end function
 
+/// Flips the split view between horizontal and vertical.
+///
+/// - Returns: Always 0; the value is unused.
 function LayoutFlipAxis() as variant
     if splitAxisIsHorizontal = 1 then
         splitter.axis("v")
@@ -322,11 +345,17 @@ function LayoutFlipAxis() as variant
     return 0
 end function
 
+/// Flashes a timed message on the Layout tab's status bar.
+///
+/// - Returns: Always 0; the value is unused.
 function LayoutFlash() as variant
     layoutStatus.flash("Saved 3 files - back in 3 seconds")
     return 0
 end function
 
+/// Names the toolbox's newly selected tool.
+///
+/// - Returns: Always 0; the value is unused.
 function LayoutToolChanged() as variant
     ' toolLabel.text = "tool: \(toolbox.tools[$0].caption)"
     toolLabel.text("tool: " + toolbox.selectedtitle())

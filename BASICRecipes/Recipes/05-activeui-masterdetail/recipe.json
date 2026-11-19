@@ -2,7 +2,7 @@
   "identifier": "basic.activeui.masterdetail",
   "name": "ActiveUI Master/Detail",
   "language": "BASIC",
-  "summary": "A window of its own, made with ActiveUI: a list of items, and the chosen one's title, summary and body beside it. The shape of most document and record apps.",
+  "summary": "A window of its own, made with ActiveUI: a searchable list of items, Favorites first, beside the chosen one's title and notes, with New Item, Favorite and Delete, kept in Application Support. The shape of most document and record apps, split into models, views and a controller.",
   "icon": "sidebar.left",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",
