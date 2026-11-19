@@ -15,8 +15,8 @@ import Foundation
 ///
 /// | Variable | Effect |
 /// |---|---|
-/// | `BASIC_AUI_TRACE=1` | Each window opening and closing, each label's new text and each dialog, on stderr |
-/// | `BASIC_AUI_CLICK=Add,Done` | Once the first window is up, presses the buttons with those titles, in order |
+/// | `BASIC_AUI_TRACE=1` | Each window opening and closing, each label's new text, each button grayed out or enabled again, and each dialog, on stderr |
+/// | `BASIC_AUI_CLICK=Add,Done` | Once the first window is up, presses the buttons with those titles, in order. A grayed-out button is not pressed, as a person could not press it. `#2` in the list picks row 2 of the first list or table at that point, so `#0,Done` picks a row and then presses Done |
 /// | `BASIC_AUI_SELECT=1` | Then picks that row of the first list or table, as the user would |
 /// | `BASIC_AUI_DIALOG=0` | Answers every dialog with that button at once, instead of showing it |
 /// | `BASIC_AUI_CLOSE_AFTER=2` | Then, that many seconds after the first window opened, closes every window as its close box would |
@@ -33,7 +33,8 @@ import Foundation
 struct NativeAUIAutomation: Sendable {
     /// Whether to describe what the program's windows do, on stderr.
     var traces = false
-    /// Buttons to press, by title, in order.
+    /// Buttons to press, by title, in order; `#n` picks row n of the first
+    /// list or table instead.
     var clicks: [String] = []
     /// The row of the first list or table to pick, if any.
     var selectRow: Int?
@@ -59,6 +60,19 @@ struct NativeAUIAutomation: Sendable {
         quitAfter = environment["BASIC_AUI_QUIT_AFTER"].flatMap { Double($0) }.map { max(0, $0) }
     }
 
+    /// Picks `row` of the program's first list or table, as a click on it
+    /// would, so its handler runs.
+    @MainActor
+    private func pick(_ row: Int, on bridge: NativeAUIBridge) {
+        guard let list = bridge.firstList() else {
+            trace("no list to pick row \(row) in")
+            return
+        }
+        trace("picking row \(row) of list \(list.id)")
+        list.table.selectedRows = [row]
+        list.table.onSelectionChange?([row])
+    }
+
     /// Writes `line` on stderr when tracing.
     func trace(_ line: String) {
         guard traces else { return }
@@ -74,9 +88,20 @@ struct NativeAUIAutomation: Sendable {
         for title in clicks {
             AUIApplication.after(delay) { [weak bridge] in
                 guard let bridge else { return }
+                // `#n` is a pick, at this point in the script.
+                if title.hasPrefix("#"), let row = Int(title.dropFirst()) {
+                    pick(row, on: bridge)
+                    return
+                }
                 let found = bridge.buttons(titled: title)
                 if found.isEmpty { trace("no button \"\(title)\" to press") }
                 for button in found {
+                    // A person cannot press a grayed-out button, so neither
+                    // does the script; the trace says it tried.
+                    guard button.isEnabled else {
+                        trace("\"\(title)\" is grayed out, so not pressed")
+                        continue
+                    }
                     trace("pressing \"\(title)\"")
                     button.onClick?()
                 }
@@ -85,13 +110,8 @@ struct NativeAUIAutomation: Sendable {
         }
         if let row = selectRow {
             AUIApplication.after(delay) { [weak bridge] in
-                guard let list = bridge?.firstList() else {
-                    trace("no list to pick row \(row) in")
-                    return
-                }
-                trace("picking row \(row) of list \(list.id)")
-                list.table.selectedRows = [row]
-                list.table.onSelectionChange?([row])
+                guard let bridge else { return }
+                pick(row, on: bridge)
             }
             delay += 0.2
         }

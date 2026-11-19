@@ -212,6 +212,11 @@ final class NativeAUIBridge {
             }
         case .setEnabled(let id, let enabled):
             guard let view = views[id] else { throw missing(id) }
+            // Traced only when it changes, and for buttons, which are the
+            // commands a script checks are grayed out until they apply.
+            if let button = view as? AUIButton, button.isEnabled != enabled {
+                automation.trace("button \(id) \"\(button.title)\" \(enabled ? "enabled" : "grayed out")")
+            }
             view.isEnabled = enabled
         case .addButton(let id, let title):
             guard dialogs[id] != nil else { throw missing(id) }
