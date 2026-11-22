@@ -8,6 +8,9 @@ The clock. Both take no arguments and answer a string.
 | --- | --- |
 | `DATE$()` | Today, as `MM-DD-YYYY`. |
 | `TIME$()` | Now, as `HH:MM:SS` on a 24-hour clock. |
+| `CDATE(s$)` | Text as a `DATE`: `CDATE("2026-11-04")`. The same date can be written as a literal, `#2026-11-04#`. |
+| `CTIME(s$)` | Text as a `TIME`: `CTIME("13:45:00")`, or `#13:45:00#`. |
+| `CDATETIME(s$)` | Text as a `DATETIME`: `CDATETIME("2026-11-04 13:45:00")`, or `#2026-11-04 13:45:00#`. |
 
 ```basic
 print date$(); " "; time$()

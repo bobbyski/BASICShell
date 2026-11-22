@@ -31,11 +31,14 @@ final class DocsPaneAUI {
     let viewer: AUIMarkdownEditor
     let emptyLabel: AUILabel
     private let docs: [UserDoc]
+    /// The Reference topics the menu groups pages under.
+    private let topics: [UserDocTopic]
     private(set) var selectedID: UserDoc.ID?
     private(set) var drawn: DocsPaneModel?
 
-    init(docs: [UserDoc] = UserDoc.loadAll()) {
+    init(docs: [UserDoc] = UserDoc.loadAll(), topics: [UserDocTopic] = UserDoc.loadTopics()) {
         self.docs = docs
+        self.topics = topics
         selectedID = docs.first?.id
 
         let heading = AUILabel(DocsPaneModel.heading)
@@ -98,7 +101,7 @@ final class DocsPaneAUI {
 
     /// Brings the pane up to its state; nothing happens if nothing changed.
     func refresh() {
-        let pane = DocsPaneModel(docs: docs, selectedID: selectedID)
+        let pane = DocsPaneModel(docs: docs, selectedID: selectedID, topics: topics)
         guard pane != drawn else { return }
         // Built whole, not with `dynamicItems`. A pull-down spends item 0 on
         // its title, and AUIMenuButton's placeholder for it does not survive
@@ -125,12 +128,16 @@ final class DocsPaneAUI {
     }
 
     private func menuItems(_ pane: DocsPaneModel) -> [AUIMenuItem] {
-        pane.sections.map { section in
-            let items = section.items.map { item in
-                AUIMenuItem(item.title, action: { [weak self] in self?.select(item.id) })
-                    .checked { item.isChecked }
-            }
-            return AUIMenuItem(section.title, submenu: AUIMenu(section.title, items: items))
+        pane.sections.map(menuItem)
+    }
+
+    /// A section's submenu: its pages, then a submenu per group (the
+    /// Reference topics).
+    private func menuItem(_ section: DocsPaneModel.Section) -> AUIMenuItem {
+        let items = section.items.map { item in
+            AUIMenuItem(item.title, action: { [weak self] in self?.select(item.id) })
+                .checked { item.isChecked }
         }
+        return AUIMenuItem(section.title, submenu: AUIMenu(section.title, items: items + section.groups.map(menuItem)))
     }
 }

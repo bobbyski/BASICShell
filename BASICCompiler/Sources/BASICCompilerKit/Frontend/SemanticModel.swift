@@ -358,8 +358,9 @@ public final class SemanticModel {
 
     /// ActiveUI's pseudo classes, normalized. Like the TUI classes, every
     /// one shares the static type `AUI` and answers a VARIANT: the
-    /// interpreter's binding decides what each method gives back. Only a
-    /// program whose host provides windows may name them (`hostedActiveUI`).
+    /// interpreter's binding decides what each method gives back. A host may
+    /// provide the windows (`hostedActiveUI`), or the program's own process
+    /// opens them.
     public static let activeUIClassNames: Set<String> = Set(BASICKeywords.activeUIClasses.map { $0.uppercased() })
 
     /// Whether a name constructs a system object.
@@ -443,9 +444,9 @@ public final class SemanticModel {
     public internal(set) var enumMembers: [String: [String: EnumMemberRef]] = [:]
 
     /// Whether the program's ActiveUI windows come from the host running it
-    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly. Off, a
-    /// program that names an AUI class is refused, as it always was; on,
-    /// the AUI classes are system classes like the TUI ones.
+    /// (BASIC-45): BASICStudio, for a program it runs as WebAssembly. Off,
+    /// they are the windows of the program's own process (BASIC-31). Either
+    /// way the AUI classes are system classes like the TUI ones.
     public internal(set) var hostedActiveUI = false
 
     /// Whether the program takes part in `CHAIN` (BBC_ADINS.md A7.5): it
@@ -463,9 +464,13 @@ public final class SemanticModel {
     }
 
     /// Whether a name constructs a system object in this program: the
-    /// shared classes, and ActiveUI's when the host provides it.
+    /// shared classes, and BASIC's ActiveUI classes. Those are the windows
+    /// the host gives the program (BASIC-45) or, built natively, the windows
+    /// of its own process (BASIC-31), unless the program imported a Swift
+    /// class of the same name (`IMPORT "ActiveUI"`), which is then that class.
     func isSystemClassHere(_ name: String) -> Bool {
-        Self.isSystemClass(name) || (hostedActiveUI && Self.activeUIClassNames.contains(name))
+        Self.isSystemClass(name)
+            || (Self.activeUIClassNames.contains(name) && (hostedActiveUI || types[name] == nil))
     }
 
     /// `B.inner`, `B.blended(x)` or `Tint.favorite` as the call to the free

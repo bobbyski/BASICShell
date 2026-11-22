@@ -2,7 +2,7 @@
   "identifier": "basic.tui",
   "name": "TUI App",
   "language": "BASIC",
-  "summary": "A full-screen terminal application made with TUIKit: a window, a menu bar, a field, a list and buttons, each with its handler.",
+  "summary": "A full-screen terminal application made with TUIKit: a menu bar, a window with a toolbar, a field, a list and a status line, split into models, views, a controller and the app's menus.",
   "icon": "rectangle.split.3x1",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",

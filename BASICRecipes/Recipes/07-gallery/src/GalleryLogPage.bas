@@ -11,15 +11,17 @@
 ' category as a plain string and passes "gallery" for every line the gallery
 ' writes, which is what the constant stood for.
 
-' Points TUILogger at the shared store, once - called by the app's run and
-' by the page, whichever gets there first (snapshots never run the app).
-'
-' In BASIC this is what TUILog() does when it is constructed: it adds
-' LogStore.shared to TUILogger and sets the level to debug. Constructing one
-' is therefore the only way to wire the logger - so `galleryLoggingWired`
-' guards it exactly as the Swift's private var does, and the handle is kept
-' in a global because BASIC writes log lines through it rather than through
-' a shared logger.
+/// Points TUILogger at the shared store, once - called by the app's run and
+/// by the page, whichever gets there first (snapshots never run the app).
+///
+/// In BASIC this is what TUILog() does when it is constructed: it adds
+/// LogStore.shared to TUILogger and sets the level to debug. Constructing one
+/// is therefore the only way to wire the logger - so `galleryLoggingWired`
+/// guards it exactly as the Swift's private var does, and the handle is kept
+/// in a global because BASIC writes log lines through it rather than through
+/// a shared logger.
+///
+/// - Returns: The gallery's log handle, made on the first call and the same one after.
 function WireGalleryLogging() as variant
     if galleryLoggingWired = 1 then
         return galleryLog
@@ -30,6 +32,9 @@ function WireGalleryLogging() as variant
     return galleryLog
 end function
 
+/// Builds the Log tab: a log view of the gallery's own diagnostics, seeded with one sample line per level.
+///
+/// - Returns: The tab's root view, a log view.
 function MakeLogTab() as variant
     WireGalleryLogging()
 

@@ -86,6 +86,16 @@ enum BASICRecipeCatalog {
                 that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
                 point the Makefile at a build.
 
+                ## How the comments are written
+
+                Every `FUNCTION`, `TYPE`, `CLASS`, field and `GLOBAL` (and `DIM`med array
+                the whole program shares) has a documentation comment: `///` lines on the
+                line just above it, read by Swift's rules (BASIC's own, from
+                `BASICDocumentation.swift`; `basiclint` checks them): a one-line summary,
+                then, after a `///` line of its own, any discussion, then
+                `- Parameter name:` for each parameter and `- Returns:` for what it gives
+                back. Other comments start with `'` and say what each step does.
+
                 """#),
                 ("project.json", #"""
                 {
@@ -99,14 +109,23 @@ enum BASICRecipeCatalog {
                 ("src/main.bas", #"""
                 ' {{NAME}} — a console program.
                 '
-                ' Everything here runs the same way under BASICShell and basicc:
-                ' the interpreter is the reference, the compiler matches it.
+                ' The smallest program, on purpose: one file of statements, run from the
+                ' top, for trying the language. Everything here runs the same way under
+                ' BASICShell and basicc: the interpreter is the reference, the compiler
+                ' matches it. When a program grows routines of its own, the Structured
+                ' Program shows the next step, and the Game, the TUI App and the ActiveUI
+                ' starters show a program split into files.
 
+                ' Say hello, then ask who is there. INPUT prints its prompt and waits for a
+                ' line; Name$ is a string because of its $.
                 PRINT "Hello from {{NAME}}!"
                 INPUT "What is your name? "; Name$
+
+                ' Nothing typed is still someone.
                 IF Name$ = "" THEN Name$ = "stranger"
                 PRINT "Nice to meet you, "; Name$; "."
 
+                ' A loop: I counts from 1 to 5, and each pass prints one line.
                 FOR I = 1 TO 5
                   PRINT I; " squared is "; I * I
                 NEXT I
@@ -120,7 +139,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.structured",
               "name": "Structured Program",
               "language": "BASIC",
-              "summary": "Functions, arrays and DATA in one program: the shape a real program grows into.",
+              "summary": "Documented functions, an array and DATA in one file: the shape a real program grows into, small enough to read at once.",
               "icon": "function",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -190,6 +209,16 @@ enum BASICRecipeCatalog {
                 that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
                 point the Makefile at a build.
 
+                ## How the comments are written
+
+                Every `FUNCTION`, `TYPE`, `CLASS`, field and `GLOBAL` (and `DIM`med array
+                the whole program shares) has a documentation comment: `///` lines on the
+                line just above it, read by Swift's rules (BASIC's own, from
+                `BASICDocumentation.swift`; `basiclint` checks them): a one-line summary,
+                then, after a `///` line of its own, any discussion, then
+                `- Parameter name:` for each parameter and `- Returns:` for what it gives
+                back. Other comments start with `'` and say what each step does.
+
                 """#),
                 ("project.json", #"""
                 {
@@ -203,18 +232,37 @@ enum BASICRecipeCatalog {
                 ("src/main.bas", #"""
                 ' {{NAME}} — functions, arrays, and DATA.
                 '
-                ' A FUNCTION's parameters and LOCAL variables are its own; every
-                ' other name is shared with the whole program.
+                ' One file, on purpose: the shape a real program grows into, small enough
+                ' to read at once. The data is in DATA, read into an array; the work is in
+                ' FUNCTIONs, each documented with a /// comment (summary, then
+                ' - Parameter and - Returns:, as Swift writes them); the statements at the
+                ' bottom run it. A FUNCTION's parameters and LOCAL variables are its own;
+                ' every other name is shared with the whole program.
 
+                /// The scores read from DATA, one place for each student, from 1.
+                DIM Scores(3)
+
+                /// The average of the first scores.
+                ///
+                /// - Parameter Count: How many scores to average, from Scores(1).
+                /// - Returns: Their mean.
                 FUNCTION Average(Count AS INTEGER) AS DOUBLE
+                  ' LOCAL keeps the total and the counter this function's own: an
+                  ' undeclared K would be the whole program's K.
                   LOCAL Total = 0
+                  LOCAL K = 0
                   FOR K = 1 TO Count
                     Total = Total + Scores(K)
                   NEXT K
                   RETURN Total / Count
                 END FUNCTION
 
+                /// The letter grade for a score.
+                ///
+                /// - Parameter Score: A score out of 100.
+                /// - Returns: "A", "B", "C" or "F".
                 FUNCTION Grade$(Score AS DOUBLE) AS STRING
+                  ' The first CASE that is true wins, so the highest bar comes first.
                   SELECT CASE Score
                     CASE IS >= 90: RETURN "A"
                     CASE IS >= 80: RETURN "B"
@@ -223,8 +271,11 @@ enum BASICRecipeCatalog {
                   END SELECT
                 END FUNCTION
 
+                ' The class: each student's name, then their score. READ takes them in
+                ' this order.
                 DATA "Ada", 96, "Grace", 88, "Linus", 72
-                DIM Scores(3)
+
+                ' One line a student: the name, the score and the grade, in columns.
                 FOR I = 1 TO 3
                   READ Student$, Scores(I)
                   PRINT Student$; TAB(12); Scores(I); TAB(20); Grade$(Scores(I))
@@ -240,7 +291,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.game",
               "name": "Game",
               "language": "BASIC",
-              "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes in four files, ready to grow into your own game.",
+              "summary": "Someone to move around, four targets and a guard on patrol to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes in models, views and controllers, ready to grow into your own game.",
               "icon": "gamecontroller",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -288,27 +339,86 @@ enum BASICRecipeCatalog {
                 ("README.md", #"""
                 # {{NAME}}
 
-                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
-                build it with `basicc`:
+                A game to build on, written in BASIC with VTG graphics: someone to move
+                around, four targets to shoot, and a guard walking the edge of the floor.
+                Point the way and they turn to face it and walk; point harder and they run.
+                Fire shoots the way they face. A target is a point, the guard is ten, and a
+                new guard sets out two seconds after one is hit. Let the guard shoot back,
+                and it is a game.
 
-                ```sh
-                make        # build and run
-                make build  # just build, into Build/{{NAME}}
+                | | |
+                |---|---|
+                | Touch | The joystick, bottom right: a little lean walks, all the way runs. Fire, bottom left. |
+                | Keys | Arrows or W A S D walk, hold Shift to run, Space fires, P pauses, Q quits. |
+                | Gamepad | D-pad or left stick walks, hold B to run, A fires, Menu pauses. |
+
+                ## Running it
+
+                It draws with VTG (lines, circles and vector text), so it needs somewhere
+                that shows VTG graphics:
+
+                - **BASICStudio:** open `{{NAME}}.basproj` and press Run.
+                - **`make`:** builds it with `basicc` and runs it, in a terminal that draws
+                  VTG graphics. `make build` only builds it, into `Build/{{NAME}}`. Set
+                  `BASICC=/path/to/basicc` to point the Makefile at a build of `basicc`.
+                - **A terminal that draws VTG graphics:** the same source runs unchanged in
+                  the interpreter, `BASICShell src/main.bas`.
+
+                ## The files
+
+                Each thing in the game is an object (a `CLASS`) that keeps its own numbers
+                and knows how to move and how to draw itself. The files are in three
+                folders: models for the things in the game, views for what is on the
+                screen, and controllers for the controls and the loop that runs it all.
+
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The numbers to play with, the things in the game (every `GLOBAL`), and the start. |
+                | `src/models/Characters.bas` | `Walker`, anyone who walks, and the two kinds of walker: `Player` and `Guard`. |
+                | `src/models/Shooting.bas` | `Shots` and `Targets`, and `CheckHits`, where they meet. |
+                | `src/views/GameView.bas` | `View`: fits the world to the window, draws the floor and the words, and paces the frames. |
+                | `src/controllers/Controls.bas` | `Controls`, which turn keys, gamepad and touch into which way and how fast; the `Inbox`, where events wait for the next frame. |
+                | `src/controllers/GameLoop.bas` | `RunGame`, the loop that runs the game, and the event handlers. |
+
+                Every `GLOBAL` is in `main.bas`, because an imported file's top-level
+                statements never run, `GLOBAL`s included. The other files only declare
+                `CLASS`es, `TYPE`s and `FUNCTION`s.
+
+                An object changes only itself. When two things meet (a shot and the guard),
+                a plain function decides what happens to each: `CheckHits`. Events (a
+                button pressed, the window resized) can arrive at any moment, so they only
+                write down what happened in `theInbox`, and the loop acts on it at the
+                start of the next frame.
+
+                ## How the comments are written
+
+                Every `CLASS`, `TYPE`, field, `FUNCTION` and `GLOBAL` has a documentation
+                comment, in BASIC's own form, which is Swift's (`basiclint` checks it):
+
+                ```basic
+                /// How far apart two points are.
+                ///
+                /// Any discussion goes here, after a `///` line of its own.
+                ///
+                /// - Parameter x1: The first point, across.
+                /// - Parameter y1: The first point, down.
+                /// - Parameter x2: The second point, across.
+                /// - Parameter y2: The second point, down.
+                /// - Returns: The straight-line distance between them, in world units.
+                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
                 ```
 
-                The same source runs unchanged in the interpreter:
+                - `///` lines sit on the lines just above the declaration, with no blank
+                  line between, or they document nothing.
+                - The first line is a one-line summary. After a bare `///` line comes any
+                  discussion, in Markdown.
+                - `- Parameter name:` for every parameter, spelled as it is written
+                  (`name$` included), and `- Returns:` for a `FUNCTION` that gives back a
+                  value. One that is `AS VOID` has no `- Returns:`.
 
-                ```sh
-                BASICShell src/main.bas
-                ```
-
-                `project.json` names the file the program starts with (`entry`); its
-                modules sit beside it in `src/`.
-
-                `basicc` builds from the BASICCompiler package in the BASICShell repo
-                (`swift build --package-path Code/BASICCompiler`), or installs with
-                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
-                point the Makefile at a build.
+                Each file starts with a `'` comment saying what is in it. `' MARK:` lines
+                divide a file into parts, and comments inside a routine start with `'` and
+                say what a step does.
 
                 """#),
                 ("project.json", #"""
@@ -320,440 +430,88 @@ enum BASICRecipeCatalog {
                 }
 
                 """#),
-                ("src/Characters.bas", #"""
-                ' Characters.bas — the people in the game.
+                ("src/controllers/Controls.bas", #"""
+                ' Controls.bas — the controls, and the Inbox where events wait.
                 '
-                ' A Walker is anyone who walks: where they are, which way they face, how
-                ' fast they go, and how to draw them. The Player and the Guard are both
-                ' walkers (INHERITS Walker), so they get all of that, and each adds only
-                ' what is its own: the Player goes where the controls say, the Guard walks
-                ' its patrol.
-
-                ' MARK: - Walker
-
-                CLASS Walker
-                    ' Where they are in the world.
-                    PUBLIC X AS DOUBLE
-                    PUBLIC Y AS DOUBLE
-                    ' Which way they face, in radians: 0 is right, PI/2 is down (screen y
-                    ' runs down), PI is left and -PI/2 is up.
-                    PUBLIC Facing AS DOUBLE
-                    ' How fast they are going, in world units a frame. 0 is standing still.
-                    PUBLIC Speed AS DOUBLE
-                    ' Where the feet are in their stride: once round is a step with each foot.
-                    PUBLIC Stride AS DOUBLE
-                    ' The start of each of their shapes' names, so two walkers' shapes are
-                    ' their own ("playerBody", "guardBody"), and their colors.
-                    PUBLIC Who$ AS STRING
-                    PUBLIC Rim$ AS STRING
-                    PUBLIC Fill$ AS STRING
-
-                    ' NEW Player("player", 320, 240, "#bfdbfe", "#2563eb") calls this.
-                    FUNCTION New(name$ AS STRING, startX AS DOUBLE, startY AS DOUBLE, rimColor$ AS STRING, fillColor$ AS STRING) AS VOID
-                        ME.Who$ = name$
-                        ME.X = startX
-                        ME.Y = startY
-                        ME.Rim$ = rimColor$
-                        ME.Fill$ = fillColor$
-                        ME.Facing = -PI / 2
-                    END FUNCTION
-
-                    ' Turn toward `way`, the short way round, and no more than TURNSPEED in
-                    ' one frame, so a change of direction is quick and still seen.
-                    FUNCTION TurnToward(way AS DOUBLE) AS VOID
-                        LOCAL turn = Unwind(way - ME.Facing)
-                        IF turn > TURNSPEED THEN turn = TURNSPEED
-                        IF turn < -TURNSPEED THEN turn = -TURNSPEED
-                        ME.Facing = Unwind(ME.Facing + turn)
-                    END FUNCTION
-
-                    ' One step: stepX across and stepY down. The step's length is the speed,
-                    ' and faster means quicker steps as well as longer ones.
-                    FUNCTION Walk(stepX AS DOUBLE, stepY AS DOUBLE) AS VOID
-                        ME.X = ME.X + stepX
-                        ME.Y = ME.Y + stepY
-                        ME.Speed = SQR(stepX * stepX + stepY * stepY)
-                        ME.Stride = ME.Stride + 0.17 * SQR(ME.Speed)
-                    END FUNCTION
-
-                    ' Where the nose is: a shot leaves from there.
-                    FUNCTION NoseX() AS DOUBLE
-                        RETURN ME.X + COS(ME.Facing) * WALKERSIZE
-                    END FUNCTION
-
-                    FUNCTION NoseY() AS DOUBLE
-                        RETURN ME.Y + SIN(ME.Facing) * WALKERSIZE
-                    END FUNCTION
-
-                    ' Seen from above: two feet that swing as they go, a round body over
-                    ' them, and a nose on the side they face.
-                    FUNCTION Render() AS VOID
-                        ' Out to each side: a quarter turn from the way they face.
-                        LOCAL sideX = COS(ME.Facing + PI / 2) * 9
-                        LOCAL sideY = SIN(ME.Facing + PI / 2) * 9
-                        ' How far a foot is ahead (or, for the other foot, behind): it
-                        ' swings with the stride, and further at a run.
-                        LOCAL swing = SIN(ME.Stride) * (1 + ME.Speed * 1.5)
-                        LOCAL aheadX = COS(ME.Facing) * swing
-                        LOCAL aheadY = SIN(ME.Facing) * swing
-                        LOCAL foot = theView.Pixels(5)
-                        vtg.circle(ME.Who$ + "FootLeft", theView.PixelX(ME.X + sideX + aheadX), theView.PixelY(ME.Y + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
-                        vtg.circle(ME.Who$ + "FootRight", theView.PixelX(ME.X - sideX - aheadX), theView.PixelY(ME.Y - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
-
-                        vtg.circle(ME.Who$ + "Body", theView.PixelX(ME.X), theView.PixelY(ME.Y), theView.Pixels(WALKERSIZE), ME.Rim$, ME.Fill$, theView.Pixels(2), 3)
-                        vtg.circle(ME.Who$ + "Nose", theView.PixelX(ME.NoseX()), theView.PixelY(ME.NoseY()), theView.Pixels(4), "none", "#facc15", 0, 4)
-                    END FUNCTION
-
-                    ' Off the screen: the terminal forgets their shapes.
-                    FUNCTION Remove() AS VOID
-                        vtg.delete(ME.Who$ + "Body")
-                        vtg.delete(ME.Who$ + "Nose")
-                        vtg.delete(ME.Who$ + "FootLeft")
-                        vtg.delete(ME.Who$ + "FootRight")
-                    END FUNCTION
-                END CLASS
-
-                ' MARK: - Player
-
-                CLASS Player
-                    INHERITS Walker
-
-                    ' Go the way the controls ask, at the speed they ask, and turn to face
-                    ' it. No stick and no keys is a speed of 0: they stop where they are.
-                    ' The edges of the world are walls.
-                    FUNCTION MoveAsAsked(wantX AS DOUBLE, wantY AS DOUBLE, wantSpeed AS DOUBLE) AS VOID
-                        IF wantSpeed = 0 THEN
-                            ME.Speed = 0
-                            ME.Stride = 0
-                        ELSE
-                            ' A direction and a speed make a step: COS gives the part
-                            ' across, SIN the part down.
-                            LOCAL way = DirectionOf(wantX, wantY)
-                            ME.TurnToward(way)
-                            ME.Walk(COS(way) * wantSpeed, SIN(way) * wantSpeed)
-                        END IF
-                        ME.X = Clamp(ME.X, WALKERSIZE, WORLDWIDTH - WALKERSIZE)
-                        ME.Y = Clamp(ME.Y, WALKERSIZE, WORLDHEIGHT - WALKERSIZE)
-                    END FUNCTION
-                END CLASS
-
-                ' MARK: - Guard
-
-                CLASS Guard
-                    INHERITS Walker
-                    ' The way it is walking: right (1, 0), down (0, 1), left (-1, 0) or up
-                    ' (0, -1).
-                    PUBLIC DX AS DOUBLE
-                    PUBLIC DY AS DOUBLE
-                    ' 1 on patrol; 0 from a hit until it comes back, Wait frames later.
-                    PUBLIC Alive AS INTEGER
-                    PUBLIC Wait AS INTEGER
-
-                    ' A new guard at the top of the floor, in the middle, setting out to
-                    ' the right: clockwise.
-                    FUNCTION Spawn() AS VOID
-                        ME.X = WORLDWIDTH / 2
-                        ME.Y = GUARDMARGIN
-                        ME.DX = 1
-                        ME.DY = 0
-                        ME.Facing = 0
-                        ME.Speed = GUARDSPEED
-                        ME.Stride = 0
-                        ME.Alive = 1
-                    END FUNCTION
-
-                    ' Walk on; at a corner, turn a quarter turn to the right, which on this
-                    ' path is always clockwise. A guard that has been hit counts down its
-                    ' wait instead, and comes back when it runs out.
-                    FUNCTION Patrol() AS VOID
-                        IF ME.Alive = 0 THEN
-                            ME.Wait = ME.Wait - 1
-                            IF ME.Wait <= 0 THEN ME.Spawn()
-                            RETURN
-                        END IF
-                        ME.Walk(ME.DX * GUARDSPEED, ME.DY * GUARDSPEED)
-                        LOCAL rightSide = WORLDWIDTH - GUARDMARGIN
-                        LOCAL bottomSide = WORLDHEIGHT - GUARDMARGIN
-                        IF ME.X > rightSide OR ME.X < GUARDMARGIN OR ME.Y > bottomSide OR ME.Y < GUARDMARGIN THEN
-                            ' Past a corner: back onto it, and turn.
-                            ME.X = Clamp(ME.X, GUARDMARGIN, rightSide)
-                            ME.Y = Clamp(ME.Y, GUARDMARGIN, bottomSide)
-                            ME.TurnRight()
-                        END IF
-                        ME.Facing = DirectionOf(ME.DX, ME.DY)
-                    END FUNCTION
-
-                    ' A quarter turn to the right, on the screen, where y runs down: right
-                    ' becomes down, down becomes left, left becomes up, up becomes right.
-                    FUNCTION TurnRight() AS VOID
-                        LOCAL wasDX = ME.DX
-                        ME.DX = -ME.DY
-                        ME.DY = wasDX
-                    END FUNCTION
-
-                    ' Whether a shot at (shotX, shotY) hits it. A hit takes it off the
-                    ' floor, and a new guard comes back RESPAWNSECONDS later.
-                    FUNCTION IsHitBy(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
-                        IF ME.Alive = 0 THEN RETURN 0
-                        IF Distance(shotX, shotY, ME.X, ME.Y) >= WALKERSIZE THEN RETURN 0
-                        ME.Alive = 0
-                        ME.Wait = RESPAWNSECONDS * FPS
-                        ME.Remove()
-                        RETURN 1
-                    END FUNCTION
-                END CLASS
-
-                ' MARK: - Directions and distances
-
-                ' The direction from the middle to (x, y), in radians, measured the way
-                ' Facing is. ATN alone gives only the right half of the circle, from -PI/2
-                ' to PI/2; a point to the left is half a turn round from that.
-                FUNCTION DirectionOf(x AS DOUBLE, y AS DOUBLE) AS DOUBLE
-                    IF x > 0 THEN RETURN ATN(y / x)
-                    IF x < 0 THEN RETURN Unwind(ATN(y / x) + PI)
-                    IF y < 0 THEN RETURN -PI / 2
-                    RETURN PI / 2
-                END FUNCTION
-
-                ' The same direction, written between -PI and PI. A turn from just above
-                ' -PI to just below PI is a small one, and this is what makes it come out
-                ' that way rather than nearly a full circle.
-                FUNCTION Unwind(angle AS DOUBLE) AS DOUBLE
-                    LOCAL a = angle
-                    WHILE a > PI
-                        a = a - 2 * PI
-                    WEND
-                    WHILE a < -PI
-                        a = a + 2 * PI
-                    WEND
-                    RETURN a
-                END FUNCTION
-
-                FUNCTION Clamp(amount AS DOUBLE, lowest AS DOUBLE, highest AS DOUBLE) AS DOUBLE
-                    IF amount < lowest THEN RETURN lowest
-                    IF amount > highest THEN RETURN highest
-                    RETURN amount
-                END FUNCTION
-
-                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
-                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
-                END FUNCTION
-
-                """#),
-                ("src/Screen.bas", #"""
-                ' Screen.bas — what is on the screen, and the controls.
+                ' The Controls turn the keys, a gamepad, and the on-screen joystick and
+                ' buttons into the few things the game asks: which way, how fast, and was
+                ' Fire pressed. The Inbox is where events write down what happened until
+                ' the next frame. NotePadControl writes a gamepad's news into it, and
+                ' SpeedForLean turns how far the touch joystick leans into a speed.
                 '
-                ' The View fits the game's fixed world to the window, draws the floor and
-                ' the words, and keeps the frames coming at an even pace. The Controls
-                ' turn the keys, a gamepad, and the on-screen joystick and buttons into
-                ' the few things the game asks: which way, how fast, and was Fire pressed.
-                ' The Inbox is where events write down what happened until the next frame.
+                ' This file only declares. The GLOBALs these use (theInbox, touch, the
+                ' speeds and DEADZONE) are in main.bas, because an imported file's
+                ' top-level statements never run.
 
                 ' MARK: - Inbox
 
+                /// What the events have said since the last frame.
+                ///
+                /// Events can arrive at any moment, even halfway through a frame, so they
+                /// write down what happened here, and the loop acts on it at the start of
+                /// the next frame. A TYPE, not a CLASS: a record of values with names and
+                /// no methods.
                 TYPE Inbox
                     ' Presses waiting for the next frame. Presses arrive as events, so even
                     ' a tap too quick for a frame to see is kept, and holding a button down
                     ' is one press. The loop sets each back to 0 once it has used it.
+                    /// 1 when Fire has been pressed.
                     FirePressed AS INTEGER
+                    /// 1 when pause has been pressed.
                     PausePressed AS INTEGER
+                    /// 1 when Q has been pressed.
                     QuitPressed AS INTEGER
                     ' The gamepad, as its events last said: 1 while a direction is held.
+                    /// 1 while left is held.
                     PadLeft AS INTEGER
+                    /// 1 while right is held.
                     PadRight AS INTEGER
+                    /// 1 while up is held.
                     PadUp AS INTEGER
+                    /// 1 while down is held.
                     PadDown AS INTEGER
+                    /// 1 while B, which runs, is held.
                     PadRun AS INTEGER
                     ' The window's new size, when it has changed.
+                    /// 1 when the window has changed size since the last frame.
                     Resized AS INTEGER
+                    /// The window's new width, in pixels.
                     NewWidth AS INTEGER
+                    /// The window's new height, in pixels.
                     NewHeight AS INTEGER
                 END TYPE
 
-                ' MARK: - View
-
-                CLASS View
-                    ' The window's size in pixels, and how the world fits in it: Scale
-                    ' pixels to a world unit, and the world's top left at (OffsetX, OffsetY).
-                    PUBLIC CanvasWidth AS INTEGER
-                    PUBLIC CanvasHeight AS INTEGER
-                    PUBLIC Scale AS DOUBLE
-                    PUBLIC OffsetX AS DOUBLE
-                    PUBLIC OffsetY AS DOUBLE
-                    ' Set when the floor needs drawing.
-                    PUBLIC NeedsFloor AS INTEGER
-                    ' The words as last drawn, so they are drawn again only when they change:
-                    ' vector text takes longer to draw than a circle.
-                    PUBLIC Hud$ AS STRING
-                    PUBLIC Message$ AS STRING
-                    PUBLIC MessageChanged AS INTEGER
-                    ' Pacing: how long to sleep after each frame, steered once a second.
-                    PUBLIC SleepMs AS DOUBLE
-                    PUBLIC FramesThisSecond AS INTEGER
-                    PUBLIC LastSecond$ AS STRING
-                    PUBLIC SecondsSeen AS INTEGER
-
-                    ' The window's size, asked once at the start; theInbox hears after that.
-                    FUNCTION Measure() AS VOID
-                        ME.SleepMs = 30
-                        LOCAL measured AS VARIANT = vtg.queryCurrentCanvas(250)
-                        IF measured <> EMPTY THEN
-                            ME.CanvasWidth = measured("width")
-                            ME.CanvasHeight = measured("height")
-                        END IF
-                        ME.Fit()
-                    END FUNCTION
-
-                    ' The world, as large as fits, in the middle of the window.
-                    FUNCTION Fit() AS VOID
-                        IF ME.CanvasWidth < 320 OR ME.CanvasHeight < 240 THEN
-                            ME.CanvasWidth = WORLDWIDTH
-                            ME.CanvasHeight = WORLDHEIGHT
-                        END IF
-                        ME.Scale = ME.CanvasWidth / WORLDWIDTH
-                        IF ME.CanvasHeight / WORLDHEIGHT < ME.Scale THEN ME.Scale = ME.CanvasHeight / WORLDHEIGHT
-                        ME.OffsetX = (ME.CanvasWidth - WORLDWIDTH * ME.Scale) / 2
-                        ME.OffsetY = (ME.CanvasHeight - WORLDHEIGHT * ME.Scale) / 2
-                        ME.NeedsFloor = 1
-                    END FUNCTION
-
-                    ' World positions and lengths to window pixels. VTG wants whole
-                    ' numbers, so these round.
-                    FUNCTION PixelX(x AS DOUBLE) AS INTEGER
-                        RETURN INT(ME.OffsetX + x * ME.Scale)
-                    END FUNCTION
-
-                    FUNCTION PixelY(y AS DOUBLE) AS INTEGER
-                        RETURN INT(ME.OffsetY + y * ME.Scale)
-                    END FUNCTION
-
-                    FUNCTION Pixels(amount AS DOUBLE) AS INTEGER
-                        LOCAL scaled = INT(amount * ME.Scale + 0.5)
-                        IF scaled < 1 THEN scaled = 1
-                        RETURN scaled
-                    END FUNCTION
-
-                    ' A frame is drawn off screen and shown all at once, so nothing
-                    ' flickers. It starts here: fitting the world again if the window has
-                    ' changed size, and drawing the floor when it needs it.
-                    FUNCTION StartFrame() AS VOID
-                        IF theInbox.Resized = 1 THEN
-                            theInbox.Resized = 0
-                            ME.CanvasWidth = theInbox.NewWidth
-                            ME.CanvasHeight = theInbox.NewHeight
-                            ME.Fit()
-                        END IF
-                        vtg.startFrame("game")
-                        IF ME.NeedsFloor = 1 THEN ME.LayFloor()
-                    END FUNCTION
-
-                    ' The floor, ruled in squares, its edge, and a hint for the controls.
-                    ' Shapes are kept by the terminal under a name: drawing a name again
-                    ' moves it, and vtg.delete takes it away. Layer 1 is the floor, 2 the
-                    ' targets and the feet, 3 the bodies and the shots, 4 the noses and the
-                    ' words.
-                    FUNCTION LayFloor() AS VOID
-                        ME.NeedsFloor = 0
-                        vtg.clear()
-                        vtg.rect("floor", 0, 0, ME.CanvasWidth, ME.CanvasHeight, "none", "#000000", 0, 0, "", "", 1)
-                        LOCAL x = 0
-                        FOR x = GRIDSIZE TO WORLDWIDTH - GRIDSIZE STEP GRIDSIZE
-                            vtg.line("across" + Num$(x), ME.PixelX(x), ME.PixelY(0), ME.PixelX(x), ME.PixelY(WORLDHEIGHT), "#1e293b", 1, "", 1)
-                        NEXT x
-                        LOCAL y = 0
-                        FOR y = GRIDSIZE TO WORLDHEIGHT - GRIDSIZE STEP GRIDSIZE
-                            vtg.line("down" + Num$(y), ME.PixelX(0), ME.PixelY(y), ME.PixelX(WORLDWIDTH), ME.PixelY(y), "#1e293b", 1, "", 1)
-                        NEXT y
-                        vtg.rect("edge", ME.PixelX(0), ME.PixelY(0), ME.Pixels(WORLDWIDTH), ME.Pixels(WORLDHEIGHT), "#475569", "none", ME.Pixels(2), 0, "", "", 1)
-
-                        LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - SPACE FIRES"
-                        IF touch.Available THEN hint$ = "A LITTLE LEAN WALKS - ALL THE WAY RUNS"
-                        vtg.vectorPrint("hint", ME.PixelX(16), ME.PixelY(WORLDHEIGHT - 24), ME.Pixels(10), hint$, "#64748b", ME.Pixels(1), 4)
-                        ' Everything on the floor was cleared with it: draw the words again.
-                        ME.Hud$ = ""
-                        ME.MessageChanged = 1
-                    END FUNCTION
-
-                    ' The score, the speed in world units a second, and what that is called.
-                    ' From twice a walk up, it counts as a run.
-                    FUNCTION ShowScore(points AS INTEGER, speed AS DOUBLE) AS VOID
-                        LOCAL gait$ = "STANDING"
-                        IF speed > 0 THEN gait$ = "WALKING"
-                        IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
-                        LOCAL words$ = "SCORE " + Num$(points) + "   SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
-                        IF words$ <> ME.Hud$ THEN
-                            ME.Hud$ = words$
-                            vtg.vectorPrint("hud", ME.PixelX(16), ME.PixelY(12), ME.Pixels(14), words$, "#f8fafc", ME.Pixels(1), 4)
-                        END IF
-                        IF ME.MessageChanged = 1 THEN ME.DrawMessage()
-                    END FUNCTION
-
-                    ' Words in the middle of the floor, such as PAUSED; "" for none.
-                    FUNCTION ShowMessage(words$ AS STRING) AS VOID
-                        ME.Message$ = words$
-                        ME.MessageChanged = 1
-                    END FUNCTION
-
-                    ' Vector text is erased by printing nothing over it.
-                    FUNCTION DrawMessage() AS VOID
-                        ME.MessageChanged = 0
-                        IF ME.Message$ = "" THEN
-                            vtg.vectorPrint("message", 0, 0, 10, "", "#000000", 1, 4)
-                            RETURN
-                        END IF
-                        LOCAL height = ME.Pixels(20)
-                        vtg.vectorPrint("message", ME.PixelX(WORLDWIDTH / 2) - LEN(ME.Message$) * height / 2, ME.PixelY(WORLDHEIGHT / 2 - 10), height, ME.Message$, "#facc15", ME.Pixels(2), 4)
-                    END FUNCTION
-
-                    ' Shows the frame, and answers how long to sleep before the next one.
-                    '
-                    ' A frame is its work plus a sleep. The work takes longer interpreted
-                    ' than compiled, so the sleep is steered: each second, the frames counted
-                    ' in the second before say how long a frame really took, and the sleep
-                    ' moves most of the way toward making it 1/FPS of a second.
-                    FUNCTION EndFrame() AS INTEGER
-                        vtg.endFrame("game")
-                        vtg.present()
-                        ME.FramesThisSecond = ME.FramesThisSecond + 1
-                        LOCAL now$ = TIME$()
-                        IF now$ <> ME.LastSecond$ THEN
-                            IF ME.SecondsSeen >= 2 THEN
-                                LOCAL took = 1000 / ME.FramesThisSecond
-                                ME.SleepMs = ME.SleepMs + (1000 / FPS - took) * 0.7
-                                IF ME.SleepMs < 1 THEN ME.SleepMs = 1
-                                IF ME.SleepMs > 60 THEN ME.SleepMs = 60
-                            END IF
-                            ME.SecondsSeen = ME.SecondsSeen + 1
-                            ME.LastSecond$ = now$
-                            ME.FramesThisSecond = 0
-                        END IF
-                        RETURN INT(ME.SleepMs)
-                    END FUNCTION
-                END CLASS
-
                 ' MARK: - Controls
 
+                /// The keys, a gamepad and the touch controls, turned into which way to go and how fast.
                 CLASS Controls
                     ' What the controls ask for this frame: a way to go (WantX, WantY) and
                     ' how fast. A speed of 0 means stand still.
+                    /// How much of the way to go is across: below 0 is left, above 0 is right.
                     PUBLIC WantX AS DOUBLE
+                    /// How much of the way to go is down: below 0 is up, above 0 is down.
                     PUBLIC WantY AS DOUBLE
+                    /// How fast to go, in world units a frame; 0 means stand still.
                     PUBLIC WantSpeed AS DOUBLE
 
-                    ' On an iPad or iPhone: the joystick under the right thumb, Fire under
-                    ' the left, and a pause button. Fire and pause report as a gamepad's A
-                    ' and Menu buttons, so NotePadControl hears them. Elsewhere these calls
-                    ' do nothing.
+                    /// Puts the touch controls on the screen.
+                    ///
+                    /// On an iPad or iPhone: the joystick under the right thumb, Fire under
+                    /// the left, and a pause button. Fire and pause report as a gamepad's A
+                    /// and Menu buttons, so NotePadControl hears them. Elsewhere these calls
+                    /// do nothing.
                     FUNCTION PlaceOnScreen() AS VOID
                         touch.Joystick("stick", "BOTTOMRIGHT", 40, 40, 170)
                         touch.Button("fire", "BOTTOMLEFT", 50, 50, 100, "FIRE", "#ff3b30")
                         touch.Button("pause", "TOPRIGHT", 16, 16, 56, "II", "#64748b", "MENU")
                     END FUNCTION
 
-                    ' Every control comes down to the same two answers: which way, and how
-                    ' fast. The touch joystick says how far it leans, so it can ask for any
-                    ' speed from a walk to a run. Keys and gamepad buttons are only on or
-                    ' off, so they walk, and run while Shift or B is held.
+                    /// Reads the controls for this frame.
+                    ///
+                    /// Every control comes down to the same two answers: which way, and how
+                    /// fast. The touch joystick says how far it leans, so it can ask for any
+                    /// speed from a walk to a run. Keys and gamepad buttons are only on or
+                    /// off, so they walk, and run while Shift or B is held.
                     FUNCTION ReadKeys() AS VOID
                         ME.WantX = 0
                         ME.WantY = 0
@@ -794,16 +552,26 @@ enum BASICRecipeCatalog {
                     END FUNCTION
                 END CLASS
 
-                ' A game controller: every button and stick direction comes as its own
-                ' control, with a value from 0 (let go) to 1 (pressed), and is written down
-                ' in theInbox. The touch joystick reports here as well, as controller -1,
-                ' but only as on or off; ReadKeys asks it how far it leans instead.
+                ' MARK: - Gamepad and joystick
+
+                /// Writes down a game controller's change in theInbox.
+                ///
+                /// A game controller: every button and stick direction comes as its own
+                /// control, with a value from 0 (let go) to 1 (pressed), and is written down
+                /// in theInbox. The touch joystick reports here as well, as controller -1,
+                /// but only as on or off; ReadKeys asks it how far it leans instead.
+                ///
+                /// - Parameter controller: Which controller it is; -1 for the touch controls.
+                /// - Parameter control$: The button or stick direction, such as "A" or "DPAD_LEFT".
+                /// - Parameter value: From 0 (let go) to 1 (pressed).
                 FUNCTION NotePadControl(controller AS INTEGER, control$ AS STRING, value AS DOUBLE) AS VOID
                     LOCAL pressed = 0
                     IF value > 0.5 THEN pressed = 1
                     IF control$ = "MENU" AND pressed = 1 THEN theInbox.PausePressed = 1
                     ' A, or the touch Fire button, which reports as A: a press fires.
                     IF (control$ = "A" OR control$ = "RIGHT_TRIGGER") AND pressed = 1 THEN theInbox.FirePressed = 1
+                    ' Directions held, from a real controller only: the touch joystick's are
+                    ' read in ReadKeys.
                     IF controller <> -1 THEN
                         IF control$ = "DPAD_LEFT" OR control$ = "LEFT_STICK_LEFT" THEN theInbox.PadLeft = pressed
                         IF control$ = "DPAD_RIGHT" OR control$ = "LEFT_STICK_RIGHT" THEN theInbox.PadRight = pressed
@@ -813,170 +581,138 @@ enum BASICRecipeCatalog {
                     END IF
                 END FUNCTION
 
-                ' How far the stick leans picks a speed between a walk and a run, on a
-                ' scale that is even in the logarithm of the speed rather than in the speed
-                ' itself: every step of lean multiplies the speed by the same amount. With
-                ' a run four times a walk:
-                '
-                '     lean    0.15 (just past the dead zone)   0.575 (halfway)    1 (all the way)
-                '     speed   1.5, a walk                      3, twice a walk    6, a run
-                '
-                ' In a straight line, halfway would already be 3.75, most of a run. Spread
-                ' this way, more of the stick is spent at the slow end, where small changes
-                ' show and fine control matters.
+                /// The speed for how far the touch joystick leans.
+                ///
+                /// How far the stick leans picks a speed between a walk and a run, on a
+                /// scale that is even in the logarithm of the speed rather than in the speed
+                /// itself: every step of lean multiplies the speed by the same amount. With
+                /// a run four times a walk:
+                ///
+                ///     lean    0.15 (just past the dead zone)   0.575 (halfway)    1 (all the way)
+                ///     speed   1.5, a walk                      3, twice a walk    6, a run
+                ///
+                /// In a straight line, halfway would already be 3.75, most of a run. Spread
+                /// this way, more of the stick is spent at the slow end, where small changes
+                /// show and fine control matters.
+                ///
+                /// - Parameter lean: How far the stick leans, from 0 (the middle) to 1 (all the way).
+                /// - Returns: The speed, in world units a frame; 0 inside the dead zone.
                 FUNCTION SpeedForLean(lean AS DOUBLE) AS DOUBLE
                     IF lean <= DEADZONE THEN RETURN 0
+                    ' How far past the dead zone, from 0 to 1.
                     LOCAL t = (lean - DEADZONE) / (1 - DEADZONE)
                     IF t > 1 THEN t = 1
                     RETURN EXP(LN(WALKSPEED) + t * (LN(RUNSPEED) - LN(WALKSPEED)))
                 END FUNCTION
 
-                ' A whole number with no space in front, where STR$ leaves one.
-                FUNCTION Num$(value AS INTEGER) AS STRING
-                    LOCAL digits$ = STR$(value)
-                    IF LEFT$(digits$, 1) = " " THEN RETURN MID$(digits$, 2)
-                    RETURN digits$
+                """#),
+                ("src/controllers/GameLoop.bas", #"""
+                ' GameLoop.bas — the loop that runs the game, and the event handlers.
+                '
+                ' RunGame makes everything, then once a frame reads the controls, moves
+                ' everything, settles the hits and draws. TogglePause pauses it and carries
+                ' it on. GamepadChanged and WindowResized are the event handlers: main.bas
+                ' hands them to ON GAMEPAD and ON RESIZE, and each writes its news down in
+                ' theInbox for the next frame.
+                '
+                ' This file only declares. The GLOBALs these use (theView, thePlayer,
+                ' theInbox and the rest) are in main.bas, because an imported file's
+                ' top-level statements never run.
+
+                ' MARK: - The game
+
+                /// Runs the game until Q is pressed.
+                ///
+                /// Make everything, then once a frame until Q: read the controls, move
+                /// everything, settle the hits, draw, and wait for the next frame.
+                FUNCTION RunGame() AS VOID
+                    CLS
+                    vtg.clear()
+                    vtg.setDefaultLayer(2)
+
+                    ' Make one of each thing in the game.
+                    theView = NEW View
+                    theView.Measure()
+                    theControls = NEW Controls
+                    theControls.PlaceOnScreen()
+                    thePlayer = NEW Player("player", WORLDWIDTH / 2, WORLDHEIGHT / 2, "#bfdbfe", "#2563eb")
+                    theGuard = NEW Guard("guard", WORLDWIDTH / 2, GUARDMARGIN, "#fed7aa", "#ea580c")
+                    theGuard.Spawn()
+                    theShots = NEW Shots
+                    theTargets = NEW Targets
+                    theTargets.PlaceFour()
+                    playing = 1
+
+                    WHILE playing = 1
+                        ' Read the controls, and act on what the events left in theInbox.
+                        theControls.ReadKeys()
+                        IF theInbox.QuitPressed = 1 THEN playing = 0
+                        IF theInbox.PausePressed = 1 THEN
+                            theInbox.PausePressed = 0
+                            TogglePause()
+                        END IF
+
+                        ' Move everything, unless paused.
+                        theView.StartFrame()
+                        IF paused = 0 THEN
+                            thePlayer.MoveAsAsked(theControls.WantX, theControls.WantY, theControls.WantSpeed)
+                            theGuard.Patrol()
+                            IF theInbox.FirePressed = 1 THEN theShots.Fire(thePlayer.NoseX(), thePlayer.NoseY(), thePlayer.Facing)
+                            theShots.Fly()
+                            CheckHits()
+                            theTargets.Fade()
+                        END IF
+                        ' A press is used once: in this frame, or not at all while paused.
+                        theInbox.FirePressed = 0
+
+                        ' Draw, show the frame, and sleep until the next one.
+                        theTargets.Render()
+                        thePlayer.Render()
+                        IF theGuard.Alive = 1 THEN theGuard.Render()
+                        theShots.Render()
+                        theView.ShowScore(score, thePlayer.Speed)
+                        LOCAL slept = AWAIT SLEEP(theView.EndFrame())
+                    WEND
+
+                    ' Q was pressed: take everything off the screen and say the score.
+                    touch.Clear()
+                    vtg.clear()
+                    vtg.present()
+                    CLS
+                    PRINT "Final score: "; score
                 END FUNCTION
 
-                """#),
-                ("src/Shooting.bas", #"""
-                ' Shooting.bas — shots, targets, and what happens when they meet.
-                '
-                ' Shots keeps every shot in the air; Targets keeps the four targets. Each
-                ' looks after itself. CheckHits, at the bottom, is where they meet: it
-                ' asks the guard and the targets whether each shot hit them, and keeps the
-                ' score.
+                /// Pauses the game, or carries it on when it is paused.
+                FUNCTION TogglePause() AS VOID
+                    IF paused = 1 THEN
+                        paused = 0
+                        theView.ShowMessage("")
+                    ELSE
+                        paused = 1
+                        theView.ShowMessage("PAUSED")
+                    END IF
+                END FUNCTION
 
-                ' MARK: - Shots
+                ' MARK: - Events
 
-                CLASS Shots
-                    ' One place for each shot that can be in the air at once (MAXSHOTS).
-                    ' Flying is 1 for a shot in flight and 0 for a free place; X and Y are
-                    ' where it is, and VX and VY how far it goes each frame.
-                    PUBLIC Flying(8) AS INTEGER
-                    PUBLIC X(8) AS DOUBLE
-                    PUBLIC Y(8) AS DOUBLE
-                    PUBLIC VX(8) AS DOUBLE
-                    PUBLIC VY(8) AS DOUBLE
+                ' BASICStudio calls these when something happens outside the program: a
+                ' gamepad button, or the window changing size. Each writes the news down in
+                ' theInbox, for the next frame.
 
-                    ' A shot from (fromX, fromY) flying `way` at SHOTSPEED, in the first free
-                    ' place. With every place in flight, it does nothing.
-                    FUNCTION Fire(fromX AS DOUBLE, fromY AS DOUBLE, way AS DOUBLE) AS VOID
-                        LOCAL s = 0
-                        FOR s = 0 TO MAXSHOTS - 1
-                            IF ME.Flying(s) = 0 THEN
-                                ME.Flying(s) = 1
-                                ME.X(s) = fromX
-                                ME.Y(s) = fromY
-                                ME.VX(s) = COS(way) * SHOTSPEED
-                                ME.VY(s) = SIN(way) * SHOTSPEED
-                                RETURN
-                            END IF
-                        NEXT s
-                    END FUNCTION
+                /// Hands a gamepad's change to NotePadControl, which writes it down in theInbox.
+                ///
+                /// - Parameter event: Which controller, which button or stick direction, and its value.
+                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
+                    NotePadControl(event.Controller, event.Control, event.Value)
+                END FUNCTION
 
-                    ' Every shot in the air moves on; one that leaves the floor lands.
-                    FUNCTION Fly() AS VOID
-                        LOCAL s = 0
-                        FOR s = 0 TO MAXSHOTS - 1
-                            IF ME.Flying(s) = 1 THEN
-                                ME.X(s) = ME.X(s) + ME.VX(s)
-                                ME.Y(s) = ME.Y(s) + ME.VY(s)
-                                IF ME.X(s) < 0 OR ME.X(s) > WORLDWIDTH OR ME.Y(s) < 0 OR ME.Y(s) > WORLDHEIGHT THEN ME.Land(s)
-                            END IF
-                        NEXT s
-                    END FUNCTION
-
-                    ' Shot `s` is done: its place is free again, and its shape is gone.
-                    FUNCTION Land(s AS INTEGER) AS VOID
-                        ME.Flying(s) = 0
-                        vtg.delete("shot" + Num$(s))
-                    END FUNCTION
-
-                    FUNCTION Render() AS VOID
-                        LOCAL s = 0
-                        FOR s = 0 TO MAXSHOTS - 1
-                            IF ME.Flying(s) = 1 THEN vtg.circle("shot" + Num$(s), theView.PixelX(ME.X(s)), theView.PixelY(ME.Y(s)), theView.Pixels(3), "none", "#fde047", 0, 3)
-                        NEXT s
-                    END FUNCTION
-                END CLASS
-
-                ' MARK: - Targets
-
-                CLASS Targets
-                    ' Where each target stands (TARGETCOUNT of them), and how many more
-                    ' frames it flashes after a hit.
-                    PUBLIC X(4) AS DOUBLE
-                    PUBLIC Y(4) AS DOUBLE
-                    PUBLIC Flash(4) AS INTEGER
-
-                    ' One in each quarter of the floor, well away from where the player
-                    ' starts.
-                    FUNCTION PlaceFour() AS VOID
-                        ME.X(0) = 120
-                        ME.Y(0) = 110
-                        ME.X(1) = 520
-                        ME.Y(1) = 110
-                        ME.X(2) = 120
-                        ME.Y(2) = 370
-                        ME.X(3) = 520
-                        ME.Y(3) = 370
-                    END FUNCTION
-
-                    ' Whether a shot at (shotX, shotY) hits a target. The one hit flashes.
-                    FUNCTION HitAt(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
-                        LOCAL t = 0
-                        FOR t = 0 TO TARGETCOUNT - 1
-                            IF Distance(shotX, shotY, ME.X(t), ME.Y(t)) < TARGETSIZE THEN
-                                ME.Flash(t) = 8
-                                RETURN 1
-                            END IF
-                        NEXT t
-                        RETURN 0
-                    END FUNCTION
-
-                    ' A frame less of flashing.
-                    FUNCTION Fade() AS VOID
-                        LOCAL t = 0
-                        FOR t = 0 TO TARGETCOUNT - 1
-                            IF ME.Flash(t) > 0 THEN ME.Flash(t) = ME.Flash(t) - 1
-                        NEXT t
-                    END FUNCTION
-
-                    ' A target is two rings and a middle, bright while it flashes.
-                    FUNCTION Render() AS VOID
-                        LOCAL t = 0
-                        FOR t = 0 TO TARGETCOUNT - 1
-                            LOCAL ring$ = "#ef4444"
-                            IF ME.Flash(t) > 0 THEN ring$ = "#fde047"
-                            LOCAL px = theView.PixelX(ME.X(t))
-                            LOCAL py = theView.PixelY(ME.Y(t))
-                            vtg.circle("target" + Num$(t), px, py, theView.Pixels(TARGETSIZE), ring$, "#000000", theView.Pixels(3), 2)
-                            vtg.circle("ring" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.6), ring$, "none", theView.Pixels(3), 2)
-                            vtg.circle("bull" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.2), "none", ring$, 0, 2)
-                        NEXT t
-                    END FUNCTION
-                END CLASS
-
-                ' MARK: - When they meet
-
-                ' Each shot in the air is asked about: the guard first, then the targets.
-                ' A shot that hits something lands, and the score goes up by what it hit.
-                ' This is a plain function rather than a method of either: it is about how
-                ' they meet, which belongs to neither.
-                FUNCTION CheckHits() AS VOID
-                    LOCAL s = 0
-                    FOR s = 0 TO MAXSHOTS - 1
-                        IF theShots.Flying(s) = 1 THEN
-                            IF theGuard.IsHitBy(theShots.X(s), theShots.Y(s)) = 1 THEN
-                                theShots.Land(s)
-                                score = score + GUARDPOINTS
-                            ELSEIF theTargets.HitAt(theShots.X(s), theShots.Y(s)) = 1 THEN
-                                theShots.Land(s)
-                                score = score + TARGETPOINTS
-                            END IF
-                        END IF
-                    NEXT s
+                /// Writes the window's new size down in theInbox.
+                ///
+                /// - Parameter event: The window's new width and height, in pixels.
+                FUNCTION WindowResized(event AS BASICResizeEvent)
+                    theInbox.NewWidth = event.Width
+                    theInbox.NewHeight = event.Height
+                    theInbox.Resized = 1
                 END FUNCTION
 
                 """#),
@@ -1001,21 +737,28 @@ enum BASICRecipeCatalog {
                 ' HOW IT IS PUT TOGETHER
                 '
                 ' Each thing in the game is an object: it keeps its own numbers, and it
-                ' knows how to move and how to show itself. This file makes them and runs
-                ' the game; the others say what each one is.
+                ' knows how to move and how to show itself. The files are in three
+                ' folders: models for the things in the game, views for what is on the
+                ' screen, and controllers for the controls and the loop that runs it all.
+                ' This file holds the numbers to play with and the things in the game,
+                ' and starts it.
                 '
-                '     main.bas         the numbers to play with, the things in the game,
-                '                      and the loop that runs it
-                '     Characters.bas   Walker, someone who walks, and the two kinds of
-                '                      walker: the Player and the Guard
-                '     Shooting.bas     Shots and Targets, and what happens when they meet
-                '     Screen.bas       the View, which fits the game to the window and
-                '                      draws the floor and the words; the Controls; and
-                '                      the Inbox, where events wait for the next frame
+                '     main.bas                   the numbers to play with, the things in
+                '                                the game, and the start
+                '     models/Characters.bas      Walker, someone who walks, and the two
+                '                                kinds of walker: the Player and the Guard
+                '     models/Shooting.bas        Shots and Targets, and what happens when
+                '                                they meet
+                '     views/GameView.bas         the View, which fits the game to the
+                '                                window and draws the floor and the words
+                '     controllers/Controls.bas   the Controls, and the Inbox, where events
+                '                                wait for the next frame
+                '     controllers/GameLoop.bas   RunGame, the loop that runs the game, and
+                '                                the event handlers
                 '
                 ' An object changes only itself. When two things meet (a shot and the
                 ' guard), it is a plain function that decides what happens to each:
-                ' CheckHits, in Shooting.bas.
+                ' CheckHits, in models/Shooting.bas.
                 '
                 ' Events (a button pressed, the window resized) can arrive at any moment,
                 ' even halfway through moving the player. So they do not change the
@@ -1024,168 +767,860 @@ enum BASICRecipeCatalog {
                 '
                 ' It draws with lines, circles and vector text only, so it runs
                 ' interpreted in BASICStudio and BASICShell, and compiled with basicc.
+                ' README.md says how the comments are written.
 
-                IMPORT "Characters.bas"
-                IMPORT "Shooting.bas"
-                IMPORT "Screen.bas"
+                ' MARK: - The files
+
+                ' IMPORT reads another file's CLASSes, TYPEs and FUNCTIONs into this
+                ' program, from a path relative to this file.
+                IMPORT "models/Characters.bas"
+                IMPORT "models/Shooting.bas"
+                IMPORT "views/GameView.bas"
+                IMPORT "controllers/Controls.bas"
+                IMPORT "controllers/GameLoop.bas"
+
+                ' Every GLOBAL in the game is below, in this file, and none is in the files
+                ' it imports: an imported file's top-level statements never run, GLOBALs
+                ' included, so a GLOBAL written in one of them would never be made. The
+                ' imported files only declare; the CLASSes and FUNCTIONs in them use these.
 
                 ' MARK: - The world
 
                 ' Everything is placed in a fixed world, 640 by 480, and the View scales it
                 ' to fit the window, so it looks the same at any size.
+                /// How wide the world is, in world units.
                 GLOBAL WORLDWIDTH AS INTEGER = 640
+                /// How tall the world is, in world units.
                 GLOBAL WORLDHEIGHT AS INTEGER = 480
-                ' The floor is ruled in squares this size, so you can see how fast you go.
+                /// The floor is ruled in squares this size, so you can see how fast you go.
                 GLOBAL GRIDSIZE AS INTEGER = 40
-                ' Frames a second to aim for (see View.EndFrame).
+                /// Frames a second to aim for (see View.EndFrame).
                 GLOBAL FPS AS INTEGER = 30
+                /// Half a turn, in radians.
                 GLOBAL PI AS DOUBLE = 3.1415927
 
                 ' MARK: - The numbers to play with
 
-                ' How big someone is, from the middle to the edge.
+                /// How big someone is, from the middle to the edge.
                 GLOBAL WALKERSIZE AS INTEGER = 12
                 ' A walk and a run, in world units a frame. At 30 frames a second a walk
                 ' crosses the world in about 14 seconds, and a run in under 4.
+                /// A walk, in world units a frame.
                 GLOBAL WALKSPEED AS DOUBLE = 1.5
+                /// A run, in world units a frame.
                 GLOBAL RUNSPEED AS DOUBLE = 6
-                ' The most anyone turns in one frame, in radians: a half turn takes about a
-                ' quarter of a second.
+                /// The most anyone turns in one frame, in radians.
+                ///
+                /// A half turn takes about a quarter of a second.
                 GLOBAL TURNSPEED AS DOUBLE = 0.4
-                ' How far the stick has to lean, out of 1, before it counts. A thumb
-                ' resting on the stick is never quite in the middle.
+                /// How far the stick has to lean, out of 1, before it counts.
+                ///
+                /// A thumb resting on the stick is never quite in the middle.
                 GLOBAL DEADZONE AS DOUBLE = 0.15
 
                 ' The guard walks this far in from the walls, at this speed, and comes back
                 ' this long after it is hit.
+                /// How far in from the walls the guard walks, in world units.
                 GLOBAL GUARDMARGIN AS INTEGER = 40
+                /// How fast the guard walks, in world units a frame.
                 GLOBAL GUARDSPEED AS DOUBLE = 2
+                /// How long after it is hit a new guard sets out, in seconds.
                 GLOBAL RESPAWNSECONDS AS INTEGER = 2
 
                 ' Shots in the air at once (Shots keeps this many places), and how fast
                 ' they fly.
+                /// The most shots in the air at once.
+                ///
+                /// Shots keeps a place for each, and its arrays are sized for 8: make them
+                /// bigger to raise this past that.
                 GLOBAL MAXSHOTS AS INTEGER = 8
+                /// How fast a shot flies, in world units a frame.
                 GLOBAL SHOTSPEED AS DOUBLE = 10
                 ' Targets on the floor (Targets keeps this many), and how big they are.
+                /// How many targets are on the floor.
+                ///
+                /// Targets keeps this many, its arrays are sized for 4, and PlaceFour
+                /// places four: change those as well to change this.
                 GLOBAL TARGETCOUNT AS INTEGER = 4
+                /// How big a target is, from the middle to the edge.
                 GLOBAL TARGETSIZE AS INTEGER = 18
 
                 ' What a hit is worth.
+                /// The points for hitting a target.
                 GLOBAL TARGETPOINTS AS INTEGER = 1
+                /// The points for hitting the guard.
                 GLOBAL GUARDPOINTS AS INTEGER = 10
 
                 ' MARK: - The things in the game
 
-                ' One of each, made in Main. A CLASS says what a kind of thing is, and the
-                ' name with "the" in front is the one in this game: Player is what a player
-                ' is, thePlayer is the one you move. (BASIC does not tell capitals from
-                ' small letters, so the two could not both be called player.) GLOBAL so
-                ' the event handlers at the bottom can reach them as well as Main.
+                ' One of each, made in RunGame. A CLASS says what a kind of thing is, and
+                ' the name with "the" in front is the one in this game: Player is what a
+                ' player is, thePlayer is the one you move. (BASIC does not tell capitals
+                ' from small letters, so the two could not both be called player.) GLOBAL
+                ' so the event handlers can reach them as well as RunGame (all of them in
+                ' controllers/GameLoop.bas).
+                /// What is on the screen: it fits the world to the window and draws the floor and the words.
                 GLOBAL theView AS View
+                /// The keys, the gamepad and the touch controls.
                 GLOBAL theControls AS Controls
+                /// The one you move.
                 GLOBAL thePlayer AS Player
+                /// The guard on patrol.
                 GLOBAL theGuard AS Guard
+                /// Every shot in the air.
                 GLOBAL theShots AS Shots
+                /// The four targets.
                 GLOBAL theTargets AS Targets
+                /// The points scored so far.
                 GLOBAL score AS INTEGER
+                /// 1 while the game runs; 0 once Q is pressed.
                 GLOBAL playing AS INTEGER
+                /// 1 while the game is paused.
                 GLOBAL paused AS INTEGER
 
-                ' What the events have said since the last frame (Inbox, in Screen.bas).
-                ' A TYPE, not a CLASS: a record of values with names and no methods.
+                /// What the events have said since the last frame (Inbox, in controllers/Controls.bas).
+                ///
+                /// A TYPE, not a CLASS: a record of values with names and no methods.
                 GLOBAL theInbox AS Inbox
 
                 ' The terminal's graphics, and the on-screen controls of an iPad or iPhone.
+                /// The terminal's graphics.
                 GLOBAL vtg = VectorTerminal()
+                /// The on-screen controls of an iPad or iPhone.
                 GLOBAL touch = TouchControls()
-
-                ' MARK: - The game
-
-                ' Make everything, then once a frame until Q: read the controls, move
-                ' everything, settle the hits, draw, and wait for the next frame.
-                FUNCTION Main() AS VOID
-                    CLS
-                    vtg.clear()
-                    vtg.setDefaultLayer(2)
-
-                    theView = NEW View
-                    theView.Measure()
-                    theControls = NEW Controls
-                    theControls.PlaceOnScreen()
-                    thePlayer = NEW Player("player", WORLDWIDTH / 2, WORLDHEIGHT / 2, "#bfdbfe", "#2563eb")
-                    theGuard = NEW Guard("guard", WORLDWIDTH / 2, GUARDMARGIN, "#fed7aa", "#ea580c")
-                    theGuard.Spawn()
-                    theShots = NEW Shots
-                    theTargets = NEW Targets
-                    theTargets.PlaceFour()
-                    playing = 1
-
-                    WHILE playing = 1
-                        theControls.ReadKeys()
-                        IF theInbox.QuitPressed = 1 THEN playing = 0
-                        IF theInbox.PausePressed = 1 THEN
-                            theInbox.PausePressed = 0
-                            TogglePause()
-                        END IF
-
-                        theView.StartFrame()
-                        IF paused = 0 THEN
-                            thePlayer.MoveAsAsked(theControls.WantX, theControls.WantY, theControls.WantSpeed)
-                            theGuard.Patrol()
-                            IF theInbox.FirePressed = 1 THEN theShots.Fire(thePlayer.NoseX(), thePlayer.NoseY(), thePlayer.Facing)
-                            theShots.Fly()
-                            CheckHits()
-                            theTargets.Fade()
-                        END IF
-                        ' A press is used once: in this frame, or not at all while paused.
-                        theInbox.FirePressed = 0
-
-                        theTargets.Render()
-                        thePlayer.Render()
-                        IF theGuard.Alive = 1 THEN theGuard.Render()
-                        theShots.Render()
-                        theView.ShowScore(score, thePlayer.Speed)
-                        LOCAL slept = AWAIT SLEEP(theView.EndFrame())
-                    WEND
-
-                    touch.Clear()
-                    vtg.clear()
-                    vtg.present()
-                    CLS
-                    PRINT "Final score: "; score
-                END FUNCTION
-
-                FUNCTION TogglePause() AS VOID
-                    IF paused = 1 THEN
-                        paused = 0
-                        theView.ShowMessage("")
-                    ELSE
-                        paused = 1
-                        theView.ShowMessage("PAUSED")
-                    END IF
-                END FUNCTION
-
-                ' MARK: - Events
-
-                ' BASICStudio calls these when something happens outside the program: a
-                ' gamepad button, or the window changing size. Each writes the news down in
-                ' theInbox, for the next frame.
-
-                FUNCTION GamepadChanged(event AS BASICGamepadEvent)
-                    NotePadControl(event.Controller, event.Control, event.Value)
-                END FUNCTION
-
-                FUNCTION WindowResized(event AS BASICResizeEvent)
-                    theInbox.NewWidth = event.Width
-                    theInbox.NewHeight = event.Height
-                    theInbox.Resized = 1
-                END FUNCTION
 
                 ' MARK: - Start
 
+                ' The event handlers, in controllers/GameLoop.bas, then the game itself.
                 ON GAMEPAD CALL GamepadChanged
                 ON RESIZE CALL WindowResized
-                Main()
+                RunGame()
+
+                """#),
+                ("src/models/Characters.bas", #"""
+                ' Characters.bas — the people in the game: Walker, Player and Guard.
+                '
+                ' A Walker is anyone who walks: where they are, which way they face, how
+                ' fast they go, and how to draw them. The Player and the Guard are both
+                ' walkers (INHERITS Walker), so they get all of that, and each adds only
+                ' what is its own: the Player goes where the controls say, the Guard walks
+                ' its patrol. At the bottom are the plain functions they share for
+                ' directions and distances.
+                '
+                ' This file only declares. The GLOBALs these use (theView, vtg, PI, the
+                ' speeds and sizes) are in main.bas, because an imported file's top-level
+                ' statements never run.
+
+                ' MARK: - Walker
+
+                /// Anyone who walks: where they are, which way they face, how fast they go, and how to draw them.
+                ///
+                /// The Player and the Guard are both walkers (INHERITS Walker), so they get
+                /// all of this, and each adds only what is its own.
+                CLASS Walker
+                    ' Where they are in the world.
+                    /// How far across the world they are, from the left edge.
+                    PUBLIC X AS DOUBLE
+                    /// How far down the world they are, from the top edge.
+                    PUBLIC Y AS DOUBLE
+                    /// Which way they face, in radians.
+                    ///
+                    /// 0 is right, PI/2 is down (screen y runs down), PI is left and -PI/2
+                    /// is up.
+                    PUBLIC Facing AS DOUBLE
+                    /// How fast they are going, in world units a frame.
+                    ///
+                    /// 0 is standing still.
+                    PUBLIC Speed AS DOUBLE
+                    /// Where the feet are in their stride.
+                    ///
+                    /// Once around is a step with each foot.
+                    PUBLIC Stride AS DOUBLE
+                    ' The start of each of their shapes' names, so two walkers' shapes are
+                    ' their own ("playerBody", "guardBody"), and their colors.
+                    /// The start of each of their shapes' names, such as "player".
+                    PUBLIC Who$ AS STRING
+                    /// The color of the rim around their body.
+                    PUBLIC Rim$ AS STRING
+                    /// The color their body is filled with.
+                    PUBLIC Fill$ AS STRING
+
+                    /// Makes a walker standing at (startX, startY), facing up.
+                    ///
+                    /// NEW Player("player", 320, 240, "#bfdbfe", "#2563eb") calls this.
+                    ///
+                    /// - Parameter name$: The start of each of their shapes' names, such as "player".
+                    /// - Parameter startX: Where they start, across the world.
+                    /// - Parameter startY: Where they start, down the world.
+                    /// - Parameter rimColor$: The color of the rim around their body.
+                    /// - Parameter fillColor$: The color their body is filled with.
+                    FUNCTION New(name$ AS STRING, startX AS DOUBLE, startY AS DOUBLE, rimColor$ AS STRING, fillColor$ AS STRING) AS VOID
+                        ME.Who$ = name$
+                        ME.X = startX
+                        ME.Y = startY
+                        ME.Rim$ = rimColor$
+                        ME.Fill$ = fillColor$
+                        ME.Facing = -PI / 2
+                    END FUNCTION
+
+                    /// Turns to face `way`, a little each frame.
+                    ///
+                    /// Turn toward `way`, the short way around, and no more than TURNSPEED
+                    /// in one frame, so a change of direction is quick and still seen.
+                    ///
+                    /// - Parameter way: The direction to face, in radians, measured the way Facing is.
+                    FUNCTION TurnToward(way AS DOUBLE) AS VOID
+                        ' Unwind keeps the turn between -PI and PI, so it goes the short way.
+                        LOCAL turn = Unwind(way - ME.Facing)
+                        IF turn > TURNSPEED THEN turn = TURNSPEED
+                        IF turn < -TURNSPEED THEN turn = -TURNSPEED
+                        ME.Facing = Unwind(ME.Facing + turn)
+                    END FUNCTION
+
+                    /// One step: stepX across and stepY down.
+                    ///
+                    /// The step's length is the speed, and faster means quicker steps as
+                    /// well as longer ones.
+                    ///
+                    /// - Parameter stepX: How far to step across, in world units.
+                    /// - Parameter stepY: How far to step down, in world units.
+                    FUNCTION Walk(stepX AS DOUBLE, stepY AS DOUBLE) AS VOID
+                        ME.X = ME.X + stepX
+                        ME.Y = ME.Y + stepY
+                        ME.Speed = SQR(stepX * stepX + stepY * stepY)
+                        ME.Stride = ME.Stride + 0.17 * SQR(ME.Speed)
+                    END FUNCTION
+
+                    /// Where the nose is: a shot leaves from there.
+                    ///
+                    /// - Returns: How far across the world the nose is.
+                    FUNCTION NoseX() AS DOUBLE
+                        RETURN ME.X + COS(ME.Facing) * WALKERSIZE
+                    END FUNCTION
+
+                    /// Where the nose is, down the world: the partner of NoseX.
+                    ///
+                    /// - Returns: How far down the world the nose is.
+                    FUNCTION NoseY() AS DOUBLE
+                        RETURN ME.Y + SIN(ME.Facing) * WALKERSIZE
+                    END FUNCTION
+
+                    /// Draws them where they are.
+                    ///
+                    /// Seen from above: two feet that swing as they go, a round body over
+                    /// them, and a nose on the side they face.
+                    FUNCTION Render() AS VOID
+                        ' Out to each side: a quarter turn from the way they face.
+                        LOCAL sideX = COS(ME.Facing + PI / 2) * 9
+                        LOCAL sideY = SIN(ME.Facing + PI / 2) * 9
+                        ' How far a foot is ahead (or, for the other foot, behind): it
+                        ' swings with the stride, and farther at a run.
+                        LOCAL swing = SIN(ME.Stride) * (1 + ME.Speed * 1.5)
+                        LOCAL aheadX = COS(ME.Facing) * swing
+                        LOCAL aheadY = SIN(ME.Facing) * swing
+                        LOCAL foot = theView.Pixels(5)
+                        vtg.circle(ME.Who$ + "FootLeft", theView.PixelX(ME.X + sideX + aheadX), theView.PixelY(ME.Y + sideY + aheadY), foot, "none", "#94a3b8", 0, 2)
+                        vtg.circle(ME.Who$ + "FootRight", theView.PixelX(ME.X - sideX - aheadX), theView.PixelY(ME.Y - sideY - aheadY), foot, "none", "#94a3b8", 0, 2)
+
+                        vtg.circle(ME.Who$ + "Body", theView.PixelX(ME.X), theView.PixelY(ME.Y), theView.Pixels(WALKERSIZE), ME.Rim$, ME.Fill$, theView.Pixels(2), 3)
+                        vtg.circle(ME.Who$ + "Nose", theView.PixelX(ME.NoseX()), theView.PixelY(ME.NoseY()), theView.Pixels(4), "none", "#facc15", 0, 4)
+                    END FUNCTION
+
+                    /// Off the screen: the terminal forgets their shapes.
+                    FUNCTION Remove() AS VOID
+                        vtg.delete(ME.Who$ + "Body")
+                        vtg.delete(ME.Who$ + "Nose")
+                        vtg.delete(ME.Who$ + "FootLeft")
+                        vtg.delete(ME.Who$ + "FootRight")
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Player
+
+                /// The one you move: a Walker that goes where the controls say.
+                CLASS Player
+                    INHERITS Walker
+
+                    /// Moves the player one frame's worth, the way the controls ask.
+                    ///
+                    /// Go the way the controls ask, at the speed they ask, and turn to face
+                    /// it. No stick and no keys is a speed of 0: they stop where they are.
+                    /// The edges of the world are walls.
+                    ///
+                    /// - Parameter wantX: How much of the way is across: below 0 is left, above 0 is right.
+                    /// - Parameter wantY: How much of the way is down: below 0 is up, above 0 is down.
+                    /// - Parameter wantSpeed: How fast, in world units a frame; 0 to stand still.
+                    FUNCTION MoveAsAsked(wantX AS DOUBLE, wantY AS DOUBLE, wantSpeed AS DOUBLE) AS VOID
+                        IF wantSpeed = 0 THEN
+                            ME.Speed = 0
+                            ME.Stride = 0
+                        ELSE
+                            ' A direction and a speed make a step: COS gives the part
+                            ' across, SIN the part down.
+                            LOCAL way = DirectionOf(wantX, wantY)
+                            ME.TurnToward(way)
+                            ME.Walk(COS(way) * wantSpeed, SIN(way) * wantSpeed)
+                        END IF
+                        ME.X = Clamp(ME.X, WALKERSIZE, WORLDWIDTH - WALKERSIZE)
+                        ME.Y = Clamp(ME.Y, WALKERSIZE, WORLDHEIGHT - WALKERSIZE)
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Guard
+
+                /// The guard: a Walker that walks the edge of the floor, clockwise.
+                ///
+                /// A guard that is hit leaves the floor, and a new one sets out from the
+                /// top RESPAWNSECONDS later.
+                CLASS Guard
+                    INHERITS Walker
+                    ' The way it is walking: right (1, 0), down (0, 1), left (-1, 0) or up
+                    ' (0, -1).
+                    /// The part of the way it is walking that is across: 1, 0 or -1.
+                    PUBLIC DX AS DOUBLE
+                    /// The part of the way it is walking that is down: 1, 0 or -1.
+                    PUBLIC DY AS DOUBLE
+                    /// 1 on patrol; 0 from a hit until it comes back, Wait frames later.
+                    PUBLIC Alive AS INTEGER
+                    /// How many more frames until a guard that was hit comes back.
+                    PUBLIC Wait AS INTEGER
+
+                    /// Starts a new guard on its patrol.
+                    ///
+                    /// A new guard at the top of the floor, in the middle, setting out to
+                    /// the right: clockwise.
+                    FUNCTION Spawn() AS VOID
+                        ME.X = WORLDWIDTH / 2
+                        ME.Y = GUARDMARGIN
+                        ME.DX = 1
+                        ME.DY = 0
+                        ME.Facing = 0
+                        ME.Speed = GUARDSPEED
+                        ME.Stride = 0
+                        ME.Alive = 1
+                    END FUNCTION
+
+                    /// Moves the guard one frame along its patrol.
+                    ///
+                    /// Walk on; at a corner, turn a quarter turn to the right, which on this
+                    /// path is always clockwise. A guard that has been hit counts down its
+                    /// wait instead, and comes back when it runs out.
+                    FUNCTION Patrol() AS VOID
+                        IF ME.Alive = 0 THEN
+                            ME.Wait = ME.Wait - 1
+                            IF ME.Wait <= 0 THEN ME.Spawn()
+                            RETURN
+                        END IF
+                        ME.Walk(ME.DX * GUARDSPEED, ME.DY * GUARDSPEED)
+                        LOCAL rightSide = WORLDWIDTH - GUARDMARGIN
+                        LOCAL bottomSide = WORLDHEIGHT - GUARDMARGIN
+                        IF ME.X > rightSide OR ME.X < GUARDMARGIN OR ME.Y > bottomSide OR ME.Y < GUARDMARGIN THEN
+                            ' Past a corner: back onto it, and turn.
+                            ME.X = Clamp(ME.X, GUARDMARGIN, rightSide)
+                            ME.Y = Clamp(ME.Y, GUARDMARGIN, bottomSide)
+                            ME.TurnRight()
+                        END IF
+                        ME.Facing = DirectionOf(ME.DX, ME.DY)
+                    END FUNCTION
+
+                    /// Turns a quarter turn to the right.
+                    ///
+                    /// A quarter turn to the right, on the screen, where y runs down: right
+                    /// becomes down, down becomes left, left becomes up, up becomes right.
+                    FUNCTION TurnRight() AS VOID
+                        LOCAL wasDX = ME.DX
+                        ME.DX = -ME.DY
+                        ME.DY = wasDX
+                    END FUNCTION
+
+                    /// Whether a shot at (shotX, shotY) hits it.
+                    ///
+                    /// A hit takes it off the floor, and a new guard comes back
+                    /// RESPAWNSECONDS later.
+                    ///
+                    /// - Parameter shotX: Where the shot is, across the world.
+                    /// - Parameter shotY: Where the shot is, down the world.
+                    /// - Returns: 1 for a hit, 0 for a miss (and always 0 while it is off the floor).
+                    FUNCTION IsHitBy(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
+                        IF ME.Alive = 0 THEN RETURN 0
+                        IF Distance(shotX, shotY, ME.X, ME.Y) >= WALKERSIZE THEN RETURN 0
+                        ME.Alive = 0
+                        ME.Wait = RESPAWNSECONDS * FPS
+                        ME.Remove()
+                        RETURN 1
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Directions and distances
+
+                /// Which way (x, y) points, in radians.
+                ///
+                /// The direction from the middle to (x, y), in radians, measured the way
+                /// Facing is. ATN alone gives only the right half of the circle, from -PI/2
+                /// to PI/2; a point to the left is half a turn around from that.
+                ///
+                /// - Parameter x: How far across the point is from the middle.
+                /// - Parameter y: How far down the point is from the middle.
+                /// - Returns: The direction, between -PI and PI.
+                FUNCTION DirectionOf(x AS DOUBLE, y AS DOUBLE) AS DOUBLE
+                    IF x > 0 THEN RETURN ATN(y / x)
+                    IF x < 0 THEN RETURN Unwind(ATN(y / x) + PI)
+                    ' Straight up or straight down, where y / x would divide by zero.
+                    IF y < 0 THEN RETURN -PI / 2
+                    RETURN PI / 2
+                END FUNCTION
+
+                /// Brings an angle into the range -PI to PI.
+                ///
+                /// The same direction, written between -PI and PI. A turn from just above
+                /// -PI to just below PI is a small one, and this is what makes it come out
+                /// that way rather than nearly a full circle.
+                ///
+                /// - Parameter angle: Any angle, in radians.
+                /// - Returns: The same direction, between -PI and PI.
+                FUNCTION Unwind(angle AS DOUBLE) AS DOUBLE
+                    LOCAL a = angle
+                    WHILE a > PI
+                        a = a - 2 * PI
+                    WEND
+                    WHILE a < -PI
+                        a = a + 2 * PI
+                    WEND
+                    RETURN a
+                END FUNCTION
+
+                /// Keeps `amount` between `lowest` and `highest`.
+                ///
+                /// - Parameter amount: The number to keep in range.
+                /// - Parameter lowest: The smallest it may be.
+                /// - Parameter highest: The largest it may be.
+                /// - Returns: `amount`, or the nearer limit when it is outside them.
+                FUNCTION Clamp(amount AS DOUBLE, lowest AS DOUBLE, highest AS DOUBLE) AS DOUBLE
+                    IF amount < lowest THEN RETURN lowest
+                    IF amount > highest THEN RETURN highest
+                    RETURN amount
+                END FUNCTION
+
+                /// How far apart two points are.
+                ///
+                /// - Parameter x1: The first point, across.
+                /// - Parameter y1: The first point, down.
+                /// - Parameter x2: The second point, across.
+                /// - Parameter y2: The second point, down.
+                /// - Returns: The straight-line distance between them, in world units.
+                FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
+                    RETURN SQR((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
+                END FUNCTION
+
+                """#),
+                ("src/models/Shooting.bas", #"""
+                ' Shooting.bas — shots, targets, and what happens when they meet.
+                '
+                ' Shots keeps every shot in the air; Targets keeps the four targets. Each
+                ' looks after itself. CheckHits, at the bottom, is where they meet: it
+                ' asks the guard and the targets whether each shot hit them, and keeps the
+                ' score.
+                '
+                ' This file only declares. The GLOBALs these use (theShots, theGuard,
+                ' theTargets, score, MAXSHOTS and the rest) are in main.bas, because an
+                ' imported file's top-level statements never run.
+
+                ' MARK: - Shots
+
+                /// Every shot in the air: where each one is, and how it flies.
+                CLASS Shots
+                    ' One place for each shot that can be in the air at once (MAXSHOTS).
+                    ' Flying is 1 for a shot in flight and 0 for a free place; X and Y are
+                    ' where it is, and VX and VY how far it goes each frame.
+                    /// For each place, 1 for a shot in flight and 0 for a free place.
+                    PUBLIC Flying(8) AS INTEGER
+                    /// Where each shot is, across the world.
+                    PUBLIC X(8) AS DOUBLE
+                    /// Where each shot is, down the world.
+                    PUBLIC Y(8) AS DOUBLE
+                    /// How far each shot goes across, each frame.
+                    PUBLIC VX(8) AS DOUBLE
+                    /// How far each shot goes down, each frame.
+                    PUBLIC VY(8) AS DOUBLE
+
+                    /// Fires a shot from (fromX, fromY).
+                    ///
+                    /// A shot from (fromX, fromY) flying `way` at SHOTSPEED, in the first free
+                    /// place. With every place in flight, it does nothing.
+                    ///
+                    /// - Parameter fromX: Where the shot starts, across the world.
+                    /// - Parameter fromY: Where the shot starts, down the world.
+                    /// - Parameter way: The direction it flies, in radians, measured the way Facing is.
+                    FUNCTION Fire(fromX AS DOUBLE, fromY AS DOUBLE, way AS DOUBLE) AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 0 THEN
+                                ME.Flying(s) = 1
+                                ME.X(s) = fromX
+                                ME.Y(s) = fromY
+                                ME.VX(s) = COS(way) * SHOTSPEED
+                                ME.VY(s) = SIN(way) * SHOTSPEED
+                                RETURN
+                            END IF
+                        NEXT s
+                    END FUNCTION
+
+                    /// Every shot in the air moves on; one that leaves the floor lands.
+                    FUNCTION Fly() AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 1 THEN
+                                ME.X(s) = ME.X(s) + ME.VX(s)
+                                ME.Y(s) = ME.Y(s) + ME.VY(s)
+                                IF ME.X(s) < 0 OR ME.X(s) > WORLDWIDTH OR ME.Y(s) < 0 OR ME.Y(s) > WORLDHEIGHT THEN ME.Land(s)
+                            END IF
+                        NEXT s
+                    END FUNCTION
+
+                    /// Shot `s` is done: its place is free again, and its shape is gone.
+                    ///
+                    /// - Parameter s: The shot's place, from 0 to MAXSHOTS - 1.
+                    FUNCTION Land(s AS INTEGER) AS VOID
+                        ME.Flying(s) = 0
+                        vtg.delete("shot" + Num$(s))
+                    END FUNCTION
+
+                    /// Draws every shot in the air.
+                    FUNCTION Render() AS VOID
+                        LOCAL s = 0
+                        FOR s = 0 TO MAXSHOTS - 1
+                            IF ME.Flying(s) = 1 THEN vtg.circle("shot" + Num$(s), theView.PixelX(ME.X(s)), theView.PixelY(ME.Y(s)), theView.Pixels(3), "none", "#fde047", 0, 3)
+                        NEXT s
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Targets
+
+                /// The four targets: where each one stands, and how it flashes when hit.
+                CLASS Targets
+                    ' Where each target stands (TARGETCOUNT of them), and how many more
+                    ' frames it flashes after a hit.
+                    /// Where each target stands, across the world.
+                    PUBLIC X(4) AS DOUBLE
+                    /// Where each target stands, down the world.
+                    PUBLIC Y(4) AS DOUBLE
+                    /// How many more frames each target flashes after a hit.
+                    PUBLIC Flash(4) AS INTEGER
+
+                    /// Puts the four targets on the floor.
+                    ///
+                    /// One in each quarter of the floor, well away from where the player
+                    /// starts.
+                    FUNCTION PlaceFour() AS VOID
+                        ME.X(0) = 120
+                        ME.Y(0) = 110
+                        ME.X(1) = 520
+                        ME.Y(1) = 110
+                        ME.X(2) = 120
+                        ME.Y(2) = 370
+                        ME.X(3) = 520
+                        ME.Y(3) = 370
+                    END FUNCTION
+
+                    /// Whether a shot at (shotX, shotY) hits a target.
+                    ///
+                    /// The one hit flashes.
+                    ///
+                    /// - Parameter shotX: Where the shot is, across the world.
+                    /// - Parameter shotY: Where the shot is, down the world.
+                    /// - Returns: 1 for a hit, 0 for a miss.
+                    FUNCTION HitAt(shotX AS DOUBLE, shotY AS DOUBLE) AS INTEGER
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            IF Distance(shotX, shotY, ME.X(t), ME.Y(t)) < TARGETSIZE THEN
+                                ' Flash for the next 8 frames.
+                                ME.Flash(t) = 8
+                                RETURN 1
+                            END IF
+                        NEXT t
+                        RETURN 0
+                    END FUNCTION
+
+                    /// A frame less of flashing.
+                    FUNCTION Fade() AS VOID
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            IF ME.Flash(t) > 0 THEN ME.Flash(t) = ME.Flash(t) - 1
+                        NEXT t
+                    END FUNCTION
+
+                    /// A target is two rings and a middle, bright while it flashes.
+                    FUNCTION Render() AS VOID
+                        LOCAL t = 0
+                        FOR t = 0 TO TARGETCOUNT - 1
+                            LOCAL ring$ = "#ef4444"
+                            IF ME.Flash(t) > 0 THEN ring$ = "#fde047"
+                            LOCAL px = theView.PixelX(ME.X(t))
+                            LOCAL py = theView.PixelY(ME.Y(t))
+                            vtg.circle("target" + Num$(t), px, py, theView.Pixels(TARGETSIZE), ring$, "#000000", theView.Pixels(3), 2)
+                            vtg.circle("ring" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.6), ring$, "none", theView.Pixels(3), 2)
+                            vtg.circle("bull" + Num$(t), px, py, theView.Pixels(TARGETSIZE * 0.2), "none", ring$, 0, 2)
+                        NEXT t
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - When they meet
+
+                /// Settles every shot that hit something this frame.
+                ///
+                /// Each shot in the air is asked about: the guard first, then the targets.
+                /// A shot that hits something lands, and the score goes up by what it hit.
+                /// This is a plain function rather than a method of either: it is about how
+                /// they meet, which belongs to neither.
+                FUNCTION CheckHits() AS VOID
+                    LOCAL s = 0
+                    FOR s = 0 TO MAXSHOTS - 1
+                        IF theShots.Flying(s) = 1 THEN
+                            IF theGuard.IsHitBy(theShots.X(s), theShots.Y(s)) = 1 THEN
+                                theShots.Land(s)
+                                score = score + GUARDPOINTS
+                            ELSEIF theTargets.HitAt(theShots.X(s), theShots.Y(s)) = 1 THEN
+                                theShots.Land(s)
+                                score = score + TARGETPOINTS
+                            END IF
+                        END IF
+                    NEXT s
+                END FUNCTION
+
+                """#),
+                ("src/views/GameView.bas", #"""
+                ' GameView.bas — what is on the screen: the View, and Num$.
+                '
+                ' The View fits the game's fixed world to the window, draws the floor and
+                ' the words, and keeps the frames coming at an even pace. Each thing in the
+                ' game draws itself (its Render), asking the View where on the window a
+                ' place in the world is. Num$ writes a number for a shape's name or the
+                ' score line.
+                '
+                ' This file only declares. The GLOBALs these use (theInbox, vtg, touch, the
+                ' world's size) are in main.bas, because an imported file's top-level
+                ' statements never run.
+
+                ' MARK: - View
+
+                /// The game's fixed world, fitted to the window: the floor, the words, and the pace of the frames.
+                ///
+                /// The world is always WORLDWIDTH by WORLDHEIGHT; the View scales it to fit
+                /// the window, so it looks the same at any size.
+                CLASS View
+                    ' The window's size in pixels, and how the world fits in it: Scale
+                    ' pixels to a world unit, and the world's top left at (OffsetX, OffsetY).
+                    /// The window's width, in pixels.
+                    PUBLIC CanvasWidth AS INTEGER
+                    /// The window's height, in pixels.
+                    PUBLIC CanvasHeight AS INTEGER
+                    /// How many pixels a world unit is.
+                    PUBLIC Scale AS DOUBLE
+                    /// Where the world's left edge is in the window, in pixels.
+                    PUBLIC OffsetX AS DOUBLE
+                    /// Where the world's top edge is in the window, in pixels.
+                    PUBLIC OffsetY AS DOUBLE
+                    /// Set when the floor needs drawing.
+                    PUBLIC NeedsFloor AS INTEGER
+                    ' The words as last drawn, so they are drawn again only when they change:
+                    ' vector text takes longer to draw than a circle.
+                    /// The score line, as last drawn.
+                    PUBLIC Hud$ AS STRING
+                    /// The words in the middle of the floor, such as PAUSED; "" for none.
+                    PUBLIC Message$ AS STRING
+                    /// 1 when Message$ has changed and needs drawing again.
+                    PUBLIC MessageChanged AS INTEGER
+                    ' Pacing: how long to sleep after each frame, steered once a second.
+                    /// How long to sleep after each frame, in milliseconds.
+                    PUBLIC SleepMs AS DOUBLE
+                    /// The frames shown since the clock last moved on a second.
+                    PUBLIC FramesThisSecond AS INTEGER
+                    /// The time, as TIME$ gave it, when the clock last moved on a second.
+                    PUBLIC LastSecond$ AS STRING
+                    /// How many seconds have gone by: the first two are not used to steer.
+                    PUBLIC SecondsSeen AS INTEGER
+
+                    /// Asks the window's size and fits the world to it.
+                    ///
+                    /// The window's size, asked once at the start; theInbox hears after that.
+                    FUNCTION Measure() AS VOID
+                        ME.SleepMs = 30
+                        ' Waits up to 250 milliseconds for the terminal to answer.
+                        LOCAL measured AS VARIANT = vtg.queryCurrentCanvas(250)
+                        IF measured <> EMPTY THEN
+                            ME.CanvasWidth = measured("width")
+                            ME.CanvasHeight = measured("height")
+                        END IF
+                        ME.Fit()
+                    END FUNCTION
+
+                    /// The world, as large as fits, in the middle of the window.
+                    FUNCTION Fit() AS VOID
+                        ' No answer, or a window too small to play in: use the world's size.
+                        IF ME.CanvasWidth < 320 OR ME.CanvasHeight < 240 THEN
+                            ME.CanvasWidth = WORLDWIDTH
+                            ME.CanvasHeight = WORLDHEIGHT
+                        END IF
+                        ME.Scale = ME.CanvasWidth / WORLDWIDTH
+                        IF ME.CanvasHeight / WORLDHEIGHT < ME.Scale THEN ME.Scale = ME.CanvasHeight / WORLDHEIGHT
+                        ME.OffsetX = (ME.CanvasWidth - WORLDWIDTH * ME.Scale) / 2
+                        ME.OffsetY = (ME.CanvasHeight - WORLDHEIGHT * ME.Scale) / 2
+                        ME.NeedsFloor = 1
+                    END FUNCTION
+
+                    ' World positions and lengths to window pixels. VTG wants whole
+                    ' numbers, so these round.
+                    /// Where a place across the world is in the window.
+                    ///
+                    /// - Parameter x: How far across the world, in world units.
+                    /// - Returns: The window's pixel column for it.
+                    FUNCTION PixelX(x AS DOUBLE) AS INTEGER
+                        RETURN INT(ME.OffsetX + x * ME.Scale)
+                    END FUNCTION
+
+                    /// Where a place down the world is in the window.
+                    ///
+                    /// - Parameter y: How far down the world, in world units.
+                    /// - Returns: The window's pixel row for it.
+                    FUNCTION PixelY(y AS DOUBLE) AS INTEGER
+                        RETURN INT(ME.OffsetY + y * ME.Scale)
+                    END FUNCTION
+
+                    /// How long a length in the world is in the window.
+                    ///
+                    /// - Parameter amount: The length, in world units.
+                    /// - Returns: The length in pixels, rounded, and never less than 1.
+                    FUNCTION Pixels(amount AS DOUBLE) AS INTEGER
+                        LOCAL scaled = INT(amount * ME.Scale + 0.5)
+                        IF scaled < 1 THEN scaled = 1
+                        RETURN scaled
+                    END FUNCTION
+
+                    /// Starts a frame.
+                    ///
+                    /// A frame is drawn off screen and shown all at once, so nothing
+                    /// flickers. It starts here: fitting the world again if the window has
+                    /// changed size, and drawing the floor when it needs it.
+                    FUNCTION StartFrame() AS VOID
+                        IF theInbox.Resized = 1 THEN
+                            theInbox.Resized = 0
+                            ME.CanvasWidth = theInbox.NewWidth
+                            ME.CanvasHeight = theInbox.NewHeight
+                            ME.Fit()
+                        END IF
+                        vtg.startFrame("game")
+                        IF ME.NeedsFloor = 1 THEN ME.LayFloor()
+                    END FUNCTION
+
+                    /// The floor, ruled in squares, its edge, and a hint for the controls.
+                    ///
+                    /// Shapes are kept by the terminal under a name: drawing a name again
+                    /// moves it, and vtg.delete takes it away. Layer 1 is the floor, 2 the
+                    /// targets and the feet, 3 the bodies and the shots, 4 the noses and the
+                    /// words.
+                    FUNCTION LayFloor() AS VOID
+                        ME.NeedsFloor = 0
+                        vtg.clear()
+                        vtg.rect("floor", 0, 0, ME.CanvasWidth, ME.CanvasHeight, "none", "#000000", 0, 0, "", "", 1)
+                        LOCAL x = 0
+                        FOR x = GRIDSIZE TO WORLDWIDTH - GRIDSIZE STEP GRIDSIZE
+                            vtg.line("across" + Num$(x), ME.PixelX(x), ME.PixelY(0), ME.PixelX(x), ME.PixelY(WORLDHEIGHT), "#1e293b", 1, "", 1)
+                        NEXT x
+                        LOCAL y = 0
+                        FOR y = GRIDSIZE TO WORLDHEIGHT - GRIDSIZE STEP GRIDSIZE
+                            vtg.line("down" + Num$(y), ME.PixelX(0), ME.PixelY(y), ME.PixelX(WORLDWIDTH), ME.PixelY(y), "#1e293b", 1, "", 1)
+                        NEXT y
+                        vtg.rect("edge", ME.PixelX(0), ME.PixelY(0), ME.Pixels(WORLDWIDTH), ME.Pixels(WORLDHEIGHT), "#475569", "none", ME.Pixels(2), 0, "", "", 1)
+
+                        LOCAL hint$ = "ARROWS OR WASD WALK - SHIFT RUNS - SPACE FIRES"
+                        IF touch.Available THEN hint$ = "A LITTLE LEAN WALKS - ALL THE WAY RUNS"
+                        vtg.vectorPrint("hint", ME.PixelX(16), ME.PixelY(WORLDHEIGHT - 24), ME.Pixels(10), hint$, "#64748b", ME.Pixels(1), 4)
+                        ' Everything on the floor was cleared with it: draw the words again.
+                        ME.Hud$ = ""
+                        ME.MessageChanged = 1
+                    END FUNCTION
+
+                    /// The score, the speed in world units a second, and what that is called.
+                    ///
+                    /// From twice a walk up, it counts as a run.
+                    ///
+                    /// - Parameter points: The score.
+                    /// - Parameter speed: How fast the player is going, in world units a frame.
+                    FUNCTION ShowScore(points AS INTEGER, speed AS DOUBLE) AS VOID
+                        LOCAL gait$ = "STANDING"
+                        IF speed > 0 THEN gait$ = "WALKING"
+                        IF speed >= 2 * WALKSPEED THEN gait$ = "RUNNING"
+                        LOCAL words$ = "SCORE " + Num$(points) + "   SPEED " + Num$(INT(speed * FPS + 0.5)) + "  " + gait$
+                        IF words$ <> ME.Hud$ THEN
+                            ME.Hud$ = words$
+                            vtg.vectorPrint("hud", ME.PixelX(16), ME.PixelY(12), ME.Pixels(14), words$, "#f8fafc", ME.Pixels(1), 4)
+                        END IF
+                        IF ME.MessageChanged = 1 THEN ME.DrawMessage()
+                    END FUNCTION
+
+                    /// Words in the middle of the floor, such as PAUSED; "" for none.
+                    ///
+                    /// - Parameter words$: The words to show, or "" to take them away.
+                    FUNCTION ShowMessage(words$ AS STRING) AS VOID
+                        ME.Message$ = words$
+                        ME.MessageChanged = 1
+                    END FUNCTION
+
+                    /// Draws the message in the middle of the floor, or erases it.
+                    ///
+                    /// Vector text is erased by printing nothing over it.
+                    FUNCTION DrawMessage() AS VOID
+                        ME.MessageChanged = 0
+                        IF ME.Message$ = "" THEN
+                            vtg.vectorPrint("message", 0, 0, 10, "", "#000000", 1, 4)
+                            RETURN
+                        END IF
+                        ' Centered, taking each letter to be about as wide as it is tall.
+                        LOCAL height = ME.Pixels(20)
+                        vtg.vectorPrint("message", ME.PixelX(WORLDWIDTH / 2) - LEN(ME.Message$) * height / 2, ME.PixelY(WORLDHEIGHT / 2 - 10), height, ME.Message$, "#facc15", ME.Pixels(2), 4)
+                    END FUNCTION
+
+                    /// Shows the frame, and answers how long to sleep before the next one.
+                    ///
+                    /// A frame is its work plus a sleep. The work takes longer interpreted
+                    /// than compiled, so the sleep is steered: each second, the frames counted
+                    /// in the second before say how long a frame really took, and the sleep
+                    /// moves most of the way toward making it 1/FPS of a second.
+                    ///
+                    /// - Returns: How long to sleep before the next frame, in milliseconds.
+                    FUNCTION EndFrame() AS INTEGER
+                        vtg.endFrame("game")
+                        vtg.present()
+                        ME.FramesThisSecond = ME.FramesThisSecond + 1
+                        LOCAL now$ = TIME$()
+                        IF now$ <> ME.LastSecond$ THEN
+                            ' The first two seconds are still starting up: count them, but
+                            ' do not steer by them.
+                            IF ME.SecondsSeen >= 2 THEN
+                                LOCAL took = 1000 / ME.FramesThisSecond
+                                ME.SleepMs = ME.SleepMs + (1000 / FPS - took) * 0.7
+                                IF ME.SleepMs < 1 THEN ME.SleepMs = 1
+                                IF ME.SleepMs > 60 THEN ME.SleepMs = 60
+                            END IF
+                            ME.SecondsSeen = ME.SecondsSeen + 1
+                            ME.LastSecond$ = now$
+                            ME.FramesThisSecond = 0
+                        END IF
+                        RETURN INT(ME.SleepMs)
+                    END FUNCTION
+                END CLASS
+
+                ' MARK: - Numbers as words
+
+                /// A whole number with no space in front, where STR$ leaves one.
+                ///
+                /// - Parameter value: The number to write.
+                /// - Returns: Its digits, with a minus sign in front when it is negative.
+                FUNCTION Num$(value AS INTEGER) AS STRING
+                    LOCAL digits$ = STR$(value)
+                    IF LEFT$(digits$, 1) = " " THEN RETURN MID$(digits$, 2)
+                    RETURN digits$
+                END FUNCTION
 
                 """#),
             ]
@@ -1196,7 +1631,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.tui",
               "name": "TUI App",
               "language": "BASIC",
-              "summary": "A full-screen terminal application made with TUIKit: a window, a menu bar, a field, a list and buttons, each with its handler.",
+              "summary": "A full-screen terminal application made with TUIKit: a menu bar, a window with a toolbar, a field, a list and a status line, split into models, views, a controller and the app's menus.",
               "icon": "rectangle.split.3x1",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -1244,27 +1679,42 @@ enum BASICRecipeCatalog {
                 ("README.md", #"""
                 # {{NAME}}
 
-                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
-                build it with `basicc`:
+                A full-screen terminal application made with TUIKit and written in BASIC:
+                a menu bar (File ▸ Quit, Greeting ▸ Greet), a window with a toolbar (Greet,
+                Quit), a field for a name, a list of languages, and a status line along the
+                bottom. Esc and the window's close box quit too, through the same command.
+
+                Run it in a terminal, or build it with `basicc`:
 
                 ```sh
                 make        # build and run
                 make build  # just build, into Build/{{NAME}}
                 ```
 
-                The same source runs unchanged in the interpreter:
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The program: wires the parts together. |
+                | `src/models/LanguageList.bas` | `LanguageList`: the languages to pick from. |
+                | `src/models/Greeting.bas` | What the program says back. |
+                | `src/views/GreetingView.bas` | The banner, the name field and the list. |
+                | `src/views/StatusLine.bas` | The status line. |
+                | `src/controllers/MainWindowController.bas` | The window, its toolbar, and every command. |
+                | `src/app/AppMenus.bas` | The menu bar. |
 
-                ```sh
-                BASICShell src/main.bas
-                ```
+                ## How the comments are written
 
-                `project.json` names the file the program starts with (`entry`); its
-                modules sit beside it in `src/`.
+                Every `CLASS`, field, `FUNCTION` and `GLOBAL` has a documentation comment:
+                `///` lines on the line just above it, read by Swift's rules (BASIC's own,
+                from `BASICDocumentation.swift`; `basiclint` checks them): a one-line
+                summary, then, after a `///` line of its own, any discussion, then
+                `- Parameter name:` for each parameter and `- Returns:` for what it gives
+                back. Comments inside a routine start with `'` and say what each step does.
+                Each file starts with a `'` comment saying what is in it.
 
-                `basicc` builds from the BASICCompiler package in the BASICShell repo
-                (`swift build --package-path Code/BASICCompiler`), or installs with
-                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
-                point the Makefile at a build.
+                ## What BASIC's TUIKit cannot do yet
+
+                A toolbar item or menu item cannot be grayed out, so Greet stays enabled
+                with no name typed and says what to do instead.
 
                 """#),
                 ("project.json", #"""
@@ -1276,69 +1726,374 @@ enum BASICRecipeCatalog {
                 }
 
                 """#),
-                ("src/main.bas", #"""
-                ' {{NAME}} — a full-screen TUIKit application.
+                ("src/app/AppMenus.bas", #"""
+                ' AppMenus.bas — the menu bar across the top of the screen.
                 '
-                ' Run it in a terminal: a window with a menu bar, a field, a list and
-                ' buttons. Tab moves between controls, Enter presses one, and the File
-                ' menu (Alt-F, then Q) closes the application.
+                '     File      Quit
+                '     Greeting  Greet
+                '
+                ' Every menu item names the handler its toolbar button names, so a command
+                ' is carried out in one place whichever way it is asked for.
 
-                GLOBAL app = TUIApp()
-                GLOBAL banner = TUILabel("Tab to move, Enter to press.")
-                GLOBAL who = TUIField("your name")
-                GLOBAL picks = TUIList()
-                GLOBAL report$ = ""
+                /// The menu bar: File ▸ Quit, and Greeting ▸ Greet.
+                ///
+                /// `&` marks the mnemonic, here and everywhere in TUIKit: Alt-F opens File.
+                ///
+                /// - Returns: The menu bar, for the shell to hold.
+                FUNCTION BuildMenuBar() AS VARIANT
+                    LOCAL bar = TUIMenu()
+                    bar.menu("&File")
+                    bar.item("&Quit", "QuitPressed")
+                    bar.menu("&Greeting")
+                    bar.item("&Greet", "GreetPressed")
+                    RETURN bar
+                END FUNCTION
 
-                LET win = TUIWindow()
+                """#),
+                ("src/controllers/MainWindowController.bas", #"""
+                ' MainWindowController.bas — the window, its toolbar, and every command.
+                '
+                '     toolbar Greet / Greeting ▸ Greet ──► Greet ──► the banner
+                '     toolbar Quit  / File ▸ Quit / Esc ──► Quit ──► the app stops
+                '     a language picked                ──► PickLanguage ──► the status line
+                '
+                ' It is the only part that knows both the words (models/) and the screen
+                ' (views/). Each command is one method, which the toolbar and the menu both
+                ' reach through the same handler.
+                '
+                ' Where this differs from the Swift TUI starters, because BASIC's TUIKit
+                ' classes cannot do it yet: a toolbar item cannot be grayed out, so Greet
+                ' stays enabled with no name typed and says what to do instead.
 
-                ' `&` marks the mnemonic, here and everywhere in TUIKit.
-                LET bar = TUIMenu()
-                bar.menu("&File")
-                bar.item("&Quit", "Quit")
-                win.add(bar)
+                /// The window and its toolbar, over the app's view and status line.
+                ///
+                /// It works on `theApp`, `theGreetingView` and `theStatusLine`, the parts
+                /// main.bas makes (see there for why they are GLOBALs). Every control names
+                /// a plain FUNCTION as its handler (the handlers at the end of this file),
+                /// because TUIKit calls a handler by name and a method has none it can
+                /// call. Each handler hands its command to `theWindow`, this controller.
+                CLASS MainWindowController
+                    /// The shell: the backdrop that holds the menu bar and the status line.
+                    PUBLIC Shell AS VARIANT
+                    /// The window in front of it.
+                    PUBLIC Window AS VARIANT
+                    /// What the status line said last, printed once the program ends.
+                    PUBLIC LastStatus AS STRING
 
-                LET page = TUIStack("v")
-                page.add(banner)
-                page.add(TUILabel("Type a name, then press Greet"))
-                page.add(who)
+                    /// Builds the shell, the menu bar, the status line and the window.
+                    ///
+                    /// - Parameter title: The window's title: the app's name.
+                    /// - Parameter languages: The languages to list.
+                    FUNCTION Start(title AS STRING, languages AS LanguageList) AS VOID
+                        ' The shell first: menus across the top, status along the bottom.
+                        ME.Shell = TUIShell()
+                        ' Esc in the shell itself quits too, through the same Quit.
+                        ME.Shell.onquit("QuitPressed")
+                        ME.Shell.add(BuildMenuBar())
+                        ME.Shell.add(theStatusLine.Build())
 
-                picks.additem("BASIC")
-                picks.additem("Swift")
-                picks.onselect("Picked")
-                page.add(picks)
+                        ' Then the window, with its toolbar and the view inside.
+                        ME.Window = TUIFloatWindow(title)
+                        ' Esc and the close box close the window; it is the app's only one,
+                        ' so closing it is Quit.
+                        ME.Window.onclose("QuitPressed")
+                        ME.BuildToolbar()
+                        ME.Window.add(theGreetingView.Build(languages))
 
-                LET row = TUIStack("h")
-                LET greet = TUIButton("Greet")
-                greet.onclick("Greet")
-                LET done = TUIButton("Quit")
-                done.onclick("Quit")
-                row.add(greet)
-                row.add(done)
-                page.add(row)
+                        ' Who handles what.
+                        theGreetingView.Choices.onselect("LanguagePicked")
+                    END FUNCTION
 
-                win.add(page)
+                    /// Makes the toolbar: Greet, then Quit.
+                    FUNCTION BuildToolbar() AS VOID
+                        LOCAL bar = TUIToolbar()
+                        ' "both" draws the symbol over the title, so nothing is a guess.
+                        bar.displaymode("both")
+                        bar.additem("Greet", ">", "GreetPressed")
+                        bar.divider()
+                        bar.additem("Quit", "x", "QuitPressed")
+                        ME.Window.toolbar(bar)
+                    END FUNCTION
 
-                app.run(win)
+                    /// Shows the window and runs until Quit.
+                    FUNCTION Run() AS VOID
+                        theApp.present(ME.Window)
+                        theApp.run(ME.Shell)
+                    END FUNCTION
 
+                    /// The Greet command: greets the name in the field.
+                    FUNCTION Greet() AS VOID
+                        theGreetingView.Say(GreetingFor$(theGreetingView.TypedName$()))
+                    END FUNCTION
+
+                    /// A language was picked: the status line says which.
+                    FUNCTION PickLanguage() AS VOID
+                        ME.LastStatus = LanguageText$(theGreetingView.PickedLanguage$())
+                        theStatusLine.Show(ME.LastStatus)
+                    END FUNCTION
+
+                    /// The Quit command: stops the app, which ends Run.
+                    FUNCTION Quit() AS VOID
+                        theApp.stop()
+                    END FUNCTION
+                END CLASS
+
+                ' ================================================================ handlers
+                '
+                ' What each control and menu item calls. Each one hands its command to the
+                ' controller, so a command is carried out in one place.
+
+                /// Greet, in the toolbar or the Greeting menu.
+                FUNCTION GreetPressed() AS VOID
+                    theWindow.Greet()
+                END FUNCTION
+
+                /// Quit, in the toolbar or the File menu.
+                FUNCTION QuitPressed() AS VOID
+                    theWindow.Quit()
+                END FUNCTION
+
+                /// A language was picked in the list.
+                FUNCTION LanguagePicked() AS VOID
+                    theWindow.PickLanguage()
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                ' {{NAME}} — a full-screen terminal application, made with TUIKit.
+                '
+                ' Run it in a terminal: a menu bar, a window with a toolbar, a field and a
+                ' list, and a status line. Tab moves between controls, Enter presses one,
+                ' Alt-F opens the File menu, and File ▸ Quit (or Quit in the toolbar)
+                ' closes the application, as Esc does.
+                '
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas                              you are here: the parts, wired together
+                '   models/LanguageList.bas               the languages to pick from
+                '   models/Greeting.bas                   what the program says back
+                '   views/GreetingView.bas                the banner, the name field, the list
+                '   views/StatusLine.bas                  the line along the bottom
+                '   controllers/MainWindowController.bas  the window, its toolbar, every command
+                '   app/AppMenus.bas                      the menu bar
+                '
+                ' The models know nothing of the screen, the views never decide anything,
+                ' and the controller is the one part that knows both. README.md says how
+                ' the comments are written.
+
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's CLASSes and FUNCTIONs into this program, from
+                ' a path relative to this file. Only this file's own statements run; an
+                ' imported file's are declarations.
+                IMPORT "models/LanguageList.bas"
+                IMPORT "models/Greeting.bas"
+                IMPORT "views/GreetingView.bas"
+                IMPORT "views/StatusLine.bas"
+                IMPORT "controllers/MainWindowController.bas"
+                IMPORT "app/AppMenus.bas"
+
+                ' ---------------------------------------------------------------- the parts
+                '
+                ' Each part is a GLOBAL, declared here and made below, and the others reach
+                ' it by name. Three things in this BASIC make that the way: an imported
+                ' file's statements do not run (GLOBALs included), an object handed to a
+                ' FUNCTION is a copy (BASIC-35), and the interpreter cannot yet call a
+                ' method on an object kept in another object's field.
+
+                /// The application: TUIKit's run loop.
+                GLOBAL theApp AS VARIANT
+                /// The window's content: the banner, the field and the list.
+                GLOBAL theGreetingView AS GreetingView
+                /// The status line along the bottom.
+                GLOBAL theStatusLine AS StatusLine
+                /// The window's controller, which every handler hands its command to.
+                GLOBAL theWindow AS MainWindowController
+
+                ' ------------------------------------------------------------------- start
+                theApp = TUIApp()
+                theGreetingView = NEW GreetingView()
+                theStatusLine = NEW StatusLine()
+                theWindow = NEW MainWindowController()
+                theWindow.Start("{{NAME}}", StarterLanguages())
+                theWindow.Run()
+
+                ' Back here once Quit has stopped the app: the terminal is ours again.
                 PRINT "{{NAME}} closed."
-                IF report$ <> "" THEN PRINT report$
+                IF theWindow.LastStatus <> "" THEN PRINT "Last status: " + theWindow.LastStatus
 
-                FUNCTION Greet()
-                  IF who.value$() = "" THEN
-                    banner.text("Type a name in the field first.")
-                  ELSE
-                    banner.text("Hello, " + who.value$() + "!")
-                  END IF
+                """#),
+                ("src/models/Greeting.bas", #"""
+                ' Greeting.bas — what the program says back.
+                '
+                ' Plain BASIC, like LanguageList.bas: the words, with no screen in them.
+
+                /// What the program says to someone who typed their name.
+                ///
+                /// - Parameter person: The name typed, or "" for none yet.
+                /// - Returns: Such as "Hello, Ada!", or how to get one.
+                FUNCTION GreetingFor$(person AS STRING) AS STRING
+                    IF person = "" THEN RETURN "Type a name in the field first."
+                    RETURN "Hello, " + person + "!"
                 END FUNCTION
 
-                FUNCTION Picked()
-                  banner.text("Language: " + picks.selectedtext$())
+                /// What the status line says about a picked language.
+                ///
+                /// - Parameter language: The language picked.
+                /// - Returns: Such as "Language: BASIC".
+                FUNCTION LanguageText$(language AS STRING) AS STRING
+                    RETURN "Language: " + language
                 END FUNCTION
 
-                FUNCTION Quit()
-                  report$ = "Last status: " + banner.value$()
-                  app.stop()
+                """#),
+                ("src/models/LanguageList.bas", #"""
+                ' LanguageList.bas — the languages the list offers.
+                '
+                ' Plain BASIC: nothing here knows there is a screen, so the same list works
+                ' in a program that only prints.
+
+                /// The languages to pick from, in the order they are listed.
+                ///
+                /// This BASIC has no REDIM, so the places are made once at their most
+                /// (``Capacity``) and `Count` says how many are real.
+                CLASS LanguageList
+                    /// Every place there can be; the first `Count` hold names.
+                    PUBLIC Names(20) AS STRING
+                    /// How many languages there are.
+                    PUBLIC Count AS INTEGER
+
+                    /// How many languages the list can hold: the size `Names` is made with.
+                    ///
+                    /// - Returns: 20.
+                    FUNCTION Capacity() AS INTEGER
+                        RETURN 20
+                    END FUNCTION
+
+                    /// Adds a language at the end; a full list keeps what it has.
+                    ///
+                    /// - Parameter language: Its name.
+                    FUNCTION Add(language AS STRING) AS VOID
+                        IF ME.Count >= ME.Capacity() THEN RETURN
+                        ME.Names(ME.Count) = language
+                        ME.Count = ME.Count + 1
+                    END FUNCTION
+                END CLASS
+
+                /// The languages the program starts with. Add your own here.
+                ///
+                /// - Returns: BASIC and Swift.
+                FUNCTION StarterLanguages() AS LanguageList
+                    LOCAL languages AS LanguageList
+                    languages = NEW LanguageList()
+                    languages.Add("BASIC")
+                    languages.Add("Swift")
+                    RETURN languages
                 END FUNCTION
+
+                """#),
+                ("src/views/GreetingView.bas", #"""
+                ' GreetingView.bas — the window's content: the banner, the name field and
+                ' the list of languages.
+                '
+                '     ┌ {{NAME}} ───────────────────────┐
+                '     │ Tab to move, Enter to press.     │  the banner: what just happened
+                '     │ Type a name, then press Greet    │
+                '     │ [your name                     ] │
+                '     │ BASIC                            │  the languages
+                '     │ Swift                            │
+                '     └──────────────────────────────────┘
+                '
+                ' The view shows what it is given and reports what the person does; the
+                ' controller decides what that means.
+
+                /// The banner, the name field and the list of languages, in one column.
+                CLASS GreetingView
+                    /// The line at the top that says what just happened.
+                    PUBLIC Banner AS VARIANT
+                    /// The field a name is typed in.
+                    PUBLIC NameField AS VARIANT
+                    /// The languages to pick from.
+                    PUBLIC Choices AS VARIANT
+
+                    /// Makes the column of controls.
+                    ///
+                    /// - Parameter languages: The languages to list.
+                    /// - Returns: The column, for the window to hold.
+                    FUNCTION Build(languages AS LanguageList) AS VARIANT
+                        ME.Banner = TUILabel("Tab to move, Enter to press.")
+                        ME.NameField = TUIField("your name")
+                        ME.Choices = TUIList()
+                        LOCAL i = 0
+                        FOR i = 0 TO languages.Count - 1
+                            ME.Choices.additem(languages.Names(i))
+                        NEXT i
+
+                        ' Top to bottom: the banner, a hint, the field, the list.
+                        LOCAL page = TUIStack("v")
+                        page.add(ME.Banner)
+                        page.add(TUILabel("Type a name, then press Greet"))
+                        page.add(ME.NameField)
+                        page.add(ME.Choices)
+                        RETURN page
+                    END FUNCTION
+
+                    /// Says something in the banner.
+                    ///
+                    /// - Parameter message: What to say.
+                    FUNCTION Say(message AS STRING) AS VOID
+                        ME.Banner.text(message)
+                    END FUNCTION
+
+                    /// What the banner says now.
+                    ///
+                    /// - Returns: Its text.
+                    FUNCTION Said$() AS STRING
+                        RETURN ME.Banner.value$()
+                    END FUNCTION
+
+                    /// The name typed so far.
+                    ///
+                    /// - Returns: The field's text.
+                    FUNCTION TypedName$() AS STRING
+                        RETURN ME.NameField.value$()
+                    END FUNCTION
+
+                    /// The language picked in the list.
+                    ///
+                    /// - Returns: Its name, or "" for none.
+                    FUNCTION PickedLanguage$() AS STRING
+                        RETURN ME.Choices.selectedtext$()
+                    END FUNCTION
+                END CLASS
+
+                """#),
+                ("src/views/StatusLine.bas", #"""
+                ' StatusLine.bas — the line along the bottom of the screen.
+                '
+                '     Language: BASIC
+
+                /// The status line: what was picked last.
+                CLASS StatusLine
+                    /// The label the status is written in.
+                    PUBLIC StatusLabel AS VARIANT
+
+                    /// Makes the status strip, along the bottom of the shell.
+                    ///
+                    /// - Returns: The strip, for the shell to hold.
+                    FUNCTION Build() AS VARIANT
+                        ME.StatusLabel = TUILabel("No language picked yet.")
+                        LOCAL strip = TUIStatus()
+                        strip.addsegment(ME.StatusLabel, 0, 100)
+                        RETURN strip
+                    END FUNCTION
+
+                    /// Shows a status.
+                    ///
+                    /// - Parameter message: What to show.
+                    FUNCTION Show(message AS STRING) AS VOID
+                        ME.StatusLabel.text(message)
+                    END FUNCTION
+                END CLASS
 
                 """#),
             ]
@@ -1349,11 +2104,11 @@ enum BASICRecipeCatalog {
               "identifier": "basic.activeui",
               "name": "ActiveUI App",
               "language": "BASIC",
-              "summary": "A window of its own, made with ActiveUI: a row of buttons, a field, a list and a status line, with a to-do list to show how they work together.",
+              "summary": "A to-do list in a window of its own, made with ActiveUI: New Task, Done, Delete and Clear Done across the top, a field, a list of tasks and a status line, kept in Application Support. Split into models, views and a controller.",
               "icon": "macwindow",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
-              "postNote": "created — run it in BASICStudio, which opens its window"
+              "postNote": "created — make run builds it with basicc and opens its window"
             }
 
             """#,
@@ -1397,27 +2152,52 @@ enum BASICRecipeCatalog {
                 ("README.md", #"""
                 # {{NAME}}
 
-                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
-                build it with `basicc`:
+                A to-do list in a window of its own, made with ActiveUI and written in
+                BASIC: New Task, Done, Delete and Clear Done (which asks first) across the
+                top, a field for a new task, a list with ☐ or ☑ in front of each task, and
+                a status line ("2 to do · 1 done"). Done and Delete are grayed out until a
+                task is picked, New Task until something is typed, and Clear Done until a
+                task is done.
+
+                Build it with `basicc`:
 
                 ```sh
                 make        # build and run
                 make build  # just build, into Build/{{NAME}}
                 ```
 
-                The same source runs unchanged in the interpreter:
+                The tasks are kept in `tasks.txt` in `~/Library/Application Support/{{NAME}}/`,
+                or in `$APP_DATA_DIR` when that is set.
 
-                ```sh
-                BASICShell src/main.bas
-                ```
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The program: wires the parts together. |
+                | `src/models/TodoTask.bas` | `TodoTask`: one task. |
+                | `src/models/TaskList.bas` | `TaskList`: the tasks, and what can be done with them. |
+                | `src/models/TaskStore.bas` | `ReadTasks` and `WriteTasks`: `tasks.txt`, in and out. |
+                | `src/models/TabSeparated.bas` | The file's format: one record a line, fields split by tabs. |
+                | `src/views/TaskListView.bas` | The New task field and the list. |
+                | `src/views/StatusBarView.bas` | The status line. |
+                | `src/controllers/TodoWindowController.bas` | The window, its commands, and every change. |
+                | `src/app/DataFolder.bas` | Where the app keeps its data. |
 
-                `project.json` names the file the program starts with (`entry`); its
-                modules sit beside it in `src/`.
+                ## How the comments are written
 
-                `basicc` builds from the BASICCompiler package in the BASICShell repo
-                (`swift build --package-path Code/BASICCompiler`), or installs with
-                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
-                point the Makefile at a build.
+                Every `TYPE`, `CLASS`, field, `FUNCTION` and `GLOBAL` has a documentation
+                comment: `///` lines on the line just above it, read by Swift's rules
+                (BASIC's own, from `BASICDocumentation.swift`; `basiclint` checks them):
+                a one-line summary, then, after a `///` line of its own, any discussion,
+                then `- Parameter name:` for each parameter and `- Returns:` for what it
+                gives back. Comments inside a routine start with `'` and say what each step
+                does. Each file starts with a `'` comment saying what is in it.
+
+                ## What BASIC's ActiveUI cannot do yet
+
+                The same app in Swift has a window toolbar, a Task menu, a checkbox on each
+                task and done tasks struck through. BASIC's ActiveUI classes have none of
+                those yet, so the commands are buttons across the top of the window, the
+                menus are the ones every Mac app has, and ☑ stands in for the checkbox.
+                Each place this happens has a comment saying so.
 
                 """#),
                 ("project.json", #"""
@@ -1429,138 +2209,2058 @@ enum BASICRecipeCatalog {
                 }
 
                 """#),
+                ("src/app/DataFolder.bas", #"""
+                ' DataFolder.bas — where the app keeps its data between launches.
+                '
+                '     DataFolder$("MyApp") ──► $APP_DATA_DIR, when it is set (tests set it)
+                '                         └──► ~/Library/Application Support/MyApp
+                '
+                ' The folder is made the first time it is asked for, so a caller can write
+                ' into it straight away.
+
+                /// The folder the app keeps its data in, made if it is not there yet.
+                ///
+                /// `APP_DATA_DIR`, when it is set, names the folder instead, so a test or a
+                /// second copy of the app can keep its data apart from yours.
+                ///
+                /// - Parameter appName: The app's name, which names its folder in
+                ///   Application Support.
+                /// - Returns: The folder's path, with no `/` at the end.
+                FUNCTION DataFolder$(appName AS STRING) AS STRING
+                    ' The override wins, so tests never touch the real Application Support.
+                    LOCAL folder$ = ENVIRON$("APP_DATA_DIR")
+                    IF folder$ = "" THEN folder$ = ENVIRON$("HOME") + "/Library/Application Support/" + appName
+
+                    ' File.Mkdir makes any missing folders on the way, as mkdir -p does.
+                    IF NOT File.Exists(folder$) THEN File.Mkdir folder$
+                    RETURN folder$
+                END FUNCTION
+
+                """#),
+                ("src/controllers/TodoWindowController.bas", #"""
+                ' TodoWindowController.bas — the window, its commands, and every change.
+                '
+                '     New Task   ──► NewTask   ──► Tasks.Add       ──► Save ──► Refresh
+                '     Done       ──► MarkDone  ──► Tasks.MarkDone  ──► Save ──► Refresh
+                '     Delete     ──► DeleteTask ─► Tasks.Remove    ──► Save ──► Refresh
+                '     Clear Done ──► ClearDone ──► (asks) ─► Tasks.ClearDone ─► Save ─► Refresh
+                '                                                    Refresh ──► list, status, commands
+                '
+                ' It is the only part that knows both the tasks and the views. The views
+                ' report what the person did; the controller changes the tasks, saves them,
+                ' and shows the result. Each command is one method, and a command that has
+                ' nothing to do is grayed out.
+                '
+                ' Where this differs from Swift's To-Do List, because BASIC's ActiveUI
+                ' classes cannot do it yet:
+                ' - The commands are a row of buttons across the top of the window, in the
+                '   toolbar's place: an AUIWindow has no toolbar, and no flexible space to
+                '   push Clear Done to the trailing end.
+                ' - There is no Task menu and no File ▸ New Task: built with basicc, the
+                '   program has the menu bar every Mac app has (the app menu, File with Close
+                '   and Quit, Edit, Window), and BASIC cannot add to it yet. When it can,
+                '   each menu item names the same handler its button names.
+
+                /// The window and the commands across its top, over the app's tasks and
+                /// views.
+                ///
+                /// It works on `theTasks`, `theTaskListView` and `theStatusBar`, the parts
+                /// main.bas makes (see there for why they are GLOBALs). Every control names
+                /// a plain FUNCTION as its handler (the handlers at the end of this file),
+                /// because ActiveUI calls a handler by name and a method has none it can
+                /// call. Each handler hands its command to `theWindow`, this controller.
+                CLASS TodoWindowController
+                    /// The window.
+                    PUBLIC Window AS VARIANT
+                    /// New Task: adds what the New task field holds.
+                    PUBLIC NewTaskButton AS VARIANT
+                    /// Done: marks the picked task as done.
+                    PUBLIC DoneButton AS VARIANT
+                    /// Delete: takes the picked task off the list.
+                    PUBLIC DeleteButton AS VARIANT
+                    /// Clear Done: asks, then takes every done task off the list.
+                    PUBLIC ClearDoneButton AS VARIANT
+                    /// The file the tasks are kept in.
+                    PUBLIC TasksFile AS STRING
+                    /// The picked task's row, or -1 for none.
+                    PUBLIC PickedRow AS INTEGER
+
+                    /// Builds the window over the tasks, with nothing picked.
+                    ///
+                    /// - Parameter title: The window's title: the app's name.
+                    /// - Parameter tasksFile: The file the tasks are kept in, written after
+                    ///   every change.
+                    FUNCTION Start(title AS STRING, tasksFile AS STRING) AS VOID
+                        ME.TasksFile = tasksFile
+                        ME.PickedRow = -1
+
+                        ' Top to bottom: the commands, the field and the list, the status.
+                        ME.Window = AUIWindow(title)
+                        ME.BuildCommands()
+                        theTaskListView.Build(ME.Window)
+                        theStatusBar.Build(ME.Window)
+
+                        ' Who handles what: Return in the field is New Task, and picking a
+                        ' row or typing in the field brings the commands up to date.
+                        theTaskListView.NewTaskField.onsubmit("NewTaskPressed")
+                        theTaskListView.NewTaskField.onchange("NewTaskTextChanged")
+                        theTaskListView.Rows.onselect("TaskPicked")
+
+                        ' Swift's window is 420 by 460 points.
+                        ME.Window.size(420, 460)
+
+                        ' A button starts enabled, and nothing asks again until the first
+                        ' change, so everything is brought up to date before the window
+                        ' opens: Done and Delete start grayed out, as nothing is picked.
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Makes the command buttons, in the toolbar's place across the top.
+                    FUNCTION BuildCommands() AS VOID
+                        LOCAL bar = AUIStack("horizontal")
+                        ME.NewTaskButton = AUIButton("New Task")
+                        ME.DoneButton = AUIButton("Done")
+                        ME.DeleteButton = AUIButton("Delete")
+                        ME.ClearDoneButton = AUIButton("Clear Done")
+                        bar.add(ME.NewTaskButton)
+                        bar.add(ME.DoneButton)
+                        bar.add(ME.DeleteButton)
+                        bar.add(ME.ClearDoneButton)
+                        ME.Window.add(bar)
+
+                        ME.NewTaskButton.onclick("NewTaskPressed")
+                        ME.DoneButton.onclick("DonePressed")
+                        ME.DeleteButton.onclick("DeletePressed")
+                        ME.ClearDoneButton.onclick("ClearDonePressed")
+                    END FUNCTION
+
+                    /// Shows the window and waits until it is closed.
+                    FUNCTION Run() AS VOID
+                        ME.Window.run()
+                    END FUNCTION
+
+                    ' ------------------------------------------------------------ commands
+
+                    /// The New Task command: adds what the New task field holds.
+                    FUNCTION NewTask() AS VOID
+                        LOCAL title$ = theTaskListView.NewTaskText$()
+                        IF title$ = "" OR NOT theTasks.HasRoom() THEN RETURN
+                        theTasks.Add(title$, FALSE)
+                        theTaskListView.ClearField()
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Done command: marks the picked task as done.
+                    FUNCTION MarkDone() AS VOID
+                        IF NOT theTasks.CanMarkDone(ME.PickedRow) THEN RETURN
+                        theTasks.MarkDone(ME.PickedRow)
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Delete command: takes the picked task off the list.
+                    FUNCTION DeleteTask() AS VOID
+                        IF NOT theTasks.HasRow(ME.PickedRow) THEN RETURN
+                        theTasks.Remove(ME.PickedRow)
+                        ' The row is gone, so nothing is picked now.
+                        ME.PickedRow = -1
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Clear Done command: asks first, then takes every done task off.
+                    FUNCTION ClearDone() AS VOID
+                        IF NOT theTasks.HasDone() THEN RETURN
+                        ' show() waits for an answer and gives back the button's number.
+                        LOCAL question = AUIDialog("Clear completed tasks?", "The done tasks are removed. This cannot be undone.")
+                        question.addbutton("Clear")
+                        question.addbutton("Cancel")
+                        IF question.show() <> 0 THEN RETURN
+                        theTasks.ClearDone()
+                        ME.PickedRow = -1
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Picks a task, as a click on its row does.
+                    ///
+                    /// - Parameter row: The task's row, or -1 for none.
+                    FUNCTION Pick(row AS INTEGER) AS VOID
+                        ME.PickedRow = row
+                        IF NOT theTasks.HasRow(row) THEN ME.PickedRow = -1
+                        ME.RefreshCommands()
+                    END FUNCTION
+
+                    ' -------------------------------------------------------------- showing
+
+                    /// Brings the whole window up to date with the tasks.
+                    FUNCTION Refresh() AS VOID
+                        theTaskListView.Show(theTasks, ME.PickedRow)
+                        theStatusBar.Show(theTasks)
+                        ME.RefreshCommands()
+                    END FUNCTION
+
+                    /// Grays out each command that has nothing to do.
+                    FUNCTION RefreshCommands() AS VOID
+                        ME.NewTaskButton.enabled(ME.CanAddTask())
+                        ME.DoneButton.enabled(theTasks.CanMarkDone(ME.PickedRow))
+                        ME.DeleteButton.enabled(theTasks.HasRow(ME.PickedRow))
+                        ME.ClearDoneButton.enabled(theTasks.HasDone())
+                    END FUNCTION
+
+                    /// Whether New Task has something to add.
+                    ///
+                    /// - Returns: TRUE when the field holds text and the list has room.
+                    FUNCTION CanAddTask() AS BOOLEAN
+                        IF theTaskListView.NewTaskText$() = "" THEN RETURN FALSE
+                        RETURN theTasks.HasRoom()
+                    END FUNCTION
+
+                    /// Writes the tasks to their file.
+                    FUNCTION Save() AS VOID
+                        WriteTasks(ME.TasksFile, theTasks)
+                    END FUNCTION
+                END CLASS
+
+                ' ================================================================ handlers
+                '
+                ' What each control calls. Each one hands its command to the controller,
+                ' so a command is carried out in one place, whichever control asked.
+
+                /// New Task, or Return in the New task field.
+                FUNCTION NewTaskPressed() AS VOID
+                    theWindow.NewTask()
+                END FUNCTION
+
+                /// Done.
+                FUNCTION DonePressed() AS VOID
+                    theWindow.MarkDone()
+                END FUNCTION
+
+                /// Delete.
+                FUNCTION DeletePressed() AS VOID
+                    theWindow.DeleteTask()
+                END FUNCTION
+
+                /// Clear Done.
+                FUNCTION ClearDonePressed() AS VOID
+                    theWindow.ClearDone()
+                END FUNCTION
+
+                /// A row of the list was picked.
+                ///
+                /// - Parameter event: Which row: `event.Index`, from 0.
+                FUNCTION TaskPicked(event AS BASICAUIEvent) AS VOID
+                    theWindow.Pick(event.Index)
+                END FUNCTION
+
+                /// The New task field's text changed, so New Task may gray out or not.
+                FUNCTION NewTaskTextChanged() AS VOID
+                    theWindow.RefreshCommands()
+                END FUNCTION
+
+                """#),
                 ("src/main.bas", #"""
-                ' {{NAME}} — a window of its own, made with ActiveUI.
+                ' {{NAME}} — a to-do list, in a window of its own made with ActiveUI.
                 '
-                ' Run it in BASICStudio: the window is the program's, opening beside
-                ' Studio's, and the program runs until it closes. (BASICShell and basicc
-                ' have no windows, and say so.)
+                ' Build it with basicc: make run builds it and runs it (make build only
+                ' builds it, into Build/). The program is a Mac application with a window
+                ' of its own, and it runs until the window closes.
                 '
-                ' A to-do list. Type a task and press Add, or Return; pick one and press
-                ' Done to take it off. The line at the bottom says what happened.
+                ' Type a task and press New Task, or Return; pick one and press Done to
+                ' tick it, or Delete to take it off; Clear Done takes off every done task,
+                ' after asking. The tasks are kept in tasks.txt, in
+                ' ~/Library/Application Support/{{NAME}}/ (or in $APP_DATA_DIR when that is
+                ' set), so they are there the next time it opens.
                 '
-                ' Each control names the FUNCTION that handles it: addButton.onclick("AddTask").
-                ' A handler is always a named FUNCTION, not a closure, because a closure's
-                ' changes would not get out of it. win.run() shows the window and waits,
-                ' running handlers as you work, until the window closes.
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas                              you are here: the parts, wired together
+                '   models/TodoTask.bas                   one task
+                '   models/TaskList.bas                   the tasks, and what can be done with them
+                '   models/TaskStore.bas                  tasks.txt, in and out
+                '   models/TabSeparated.bas               the file's one-record-a-line format
+                '   views/TaskListView.bas                the New task field and the list
+                '   views/StatusBarView.bas               "2 to do · 1 done"
+                '   controllers/TodoWindowController.bas  the window, its commands, every change
+                '   app/DataFolder.bas                    where the app keeps its data
+                '
+                ' The models know nothing of windows, the views never change a task, and
+                ' the controller is the one part that knows both. README.md says how the
+                ' comments are written.
 
-                ' The tasks, kept here: the list on screen shows them, and is filled again
-                ' from here when one is taken off.
-                GLOBAL MAXTASKS AS INTEGER = 50
-                GLOBAL task$(50) AS STRING
-                GLOBAL taskCount AS INTEGER
-                GLOBAL doneCount AS INTEGER
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's TYPEs, CLASSes and FUNCTIONs into this
+                ' program, from a path relative to this file. Only this file's own
+                ' statements run; an imported file's are declarations.
+                IMPORT "models/TodoTask.bas"
+                IMPORT "models/TaskList.bas"
+                IMPORT "models/TaskStore.bas"
+                IMPORT "models/TabSeparated.bas"
+                IMPORT "views/TaskListView.bas"
+                IMPORT "views/StatusBarView.bas"
+                IMPORT "controllers/TodoWindowController.bas"
+                IMPORT "app/DataFolder.bas"
 
-                GLOBAL win = AUIWindow("{{NAME}}")
-                GLOBAL taskField = AUIField("", "Something to do")
-                GLOBAL taskList = AUIList()
-                GLOBAL statusLine = AUILabel("Add a task, or pick one and press Done.")
+                ' ---------------------------------------------------------------- the parts
+                '
+                ' Each part is a GLOBAL, declared here and made below, and the others reach
+                ' it by name. Three things in this BASIC make that the way: an imported
+                ' file's statements do not run (GLOBALs included), an object handed to a
+                ' FUNCTION is a copy (BASIC-35), and the interpreter BASICStudio runs cannot
+                ' yet call a method on an object kept in another object's field.
 
-                ' Across the top, a row of buttons, where a toolbar would be.
-                LET tools = AUIStack("horizontal")
-                LET addButton = AUIButton("Add")
-                LET doneButton = AUIButton("Done")
-                LET clearButton = AUIButton("Clear All")
-                tools.add(addButton)
-                tools.add(doneButton)
-                tools.add(clearButton)
+                /// The tasks, read from tasks.txt.
+                GLOBAL theTasks AS TaskList
+                /// The New task field and the list.
+                GLOBAL theTaskListView AS TaskListView
+                /// The status line.
+                GLOBAL theStatusBar AS StatusBarView
+                /// The window's controller, which every control's handler hands its command to.
+                GLOBAL theWindow AS TodoWindowController
 
-                ' The window, top to bottom: the buttons, the field, the list, the status.
-                win.add(tools)
-                win.add(taskField)
-                win.add(taskList)
-                win.add(statusLine)
+                ' ------------------------------------------------------------------- start
+                tasksFile$ = DataFolder$("{{NAME}}") + "/tasks.txt"
+                theTasks = ReadTasks(tasksFile$)
+                theTaskListView = NEW TaskListView()
+                theStatusBar = NEW StatusBarView()
+                theWindow = NEW TodoWindowController()
+                theWindow.Start("{{NAME}}", tasksFile$)
+                theWindow.Run()
 
-                ' Who handles what.
-                addButton.onclick("AddTask")
-                taskField.onsubmit("AddTask")
-                doneButton.onclick("FinishTask")
-                clearButton.onclick("ClearAll")
-                taskList.onselect("Picked")
-                win.onclose("Closed")
+                """#),
+                ("src/models/TabSeparated.bas", #"""
+                ' TabSeparated.bas — the file format: one record a line, fields split by tabs.
+                '
+                '     done<TAB>Buy milk
+                '     todo<TAB>Call Ada\tor Grace
+                '
+                ' A tab, a new line or a backslash inside a field is written as \t, \n or
+                ' \\, so every record stays on one line and every field stays whole.
 
-                ' A first task, so the list is not empty.
-                Remember("Try this program")
-                ShowTasks()
-
-                win.run()
-
-                ' Back here once the window has closed.
-                PRINT "{{NAME}} closed: "; doneCount; " done, "; taskCount; " still to do."
-
-                ' ================================================================= handlers
-
-                ' Add, or Return in the field: the field's text becomes a task.
-                FUNCTION AddTask()
-                    LOCAL newTask$ = taskField.text$()
-                    IF newTask$ = "" THEN
-                        statusLine.text("Type a task first.")
-                        RETURN
-                    END IF
-                    IF taskCount >= MAXTASKS THEN
-                        statusLine.text("The list is full.")
-                        RETURN
-                    END IF
-                    Remember(newTask$)
-                    ShowTasks()
-                    taskField.text("")
-                    statusLine.text("Added " + newTask$ + ".")
-                END FUNCTION
-
-                ' Done: the picked task comes off the list.
-                FUNCTION FinishTask()
-                    LOCAL row = taskList.selectedindex()
-                    IF row < 0 THEN
-                        statusLine.text("Pick a task first.")
-                        RETURN
-                    END IF
-                    LOCAL finished$ = task$(row)
+                /// A field made safe to write between tabs, on one line.
+                ///
+                /// - Parameter original: The field as the app holds it.
+                /// - Returns: The same original with each backslash, tab and new line escaped.
+                FUNCTION EscapeField$(original AS STRING) AS STRING
+                    LOCAL result$ = ""
+                    LOCAL c$ = ""
                     LOCAL i = 0
-                    FOR i = row TO taskCount - 2
-                        task$(i) = task$(i + 1)
+                    ' One character at a time: the escapes are the only ones that change.
+                    FOR i = 1 TO LEN(original)
+                        c$ = MID$(original, i, 1)
+                        SELECT CASE c$
+                            CASE "\": result$ = result$ + "\\"
+                            CASE CHR$(9): result$ = result$ + "\t"
+                            CASE CHR$(10): result$ = result$ + "\n"
+                            CASE ELSE: result$ = result$ + c$
+                        END SELECT
                     NEXT i
-                    taskCount = taskCount - 1
-                    doneCount = doneCount + 1
-                    ShowTasks()
-                    statusLine.text("Done: " + finished$ + ".")
+                    RETURN result$
                 END FUNCTION
 
-                ' Clear All, after asking.
-                FUNCTION ClearAll()
-                    LOCAL sure = AUIDialog("Clear the list?", "Every task goes.")
-                    sure.addbutton("Clear")
-                    sure.addbutton("Cancel")
-                    IF sure.show() = 0 THEN
-                        taskCount = 0
-                        ShowTasks()
-                        statusLine.text("Cleared.")
+                /// A field as it was before ``EscapeField$`` wrote it.
+                ///
+                /// - Parameter escaped: The field as the file holds it.
+                /// - Returns: The escaped with \t, \n and \\ turned back into a tab, a new line
+                ///   and a backslash.
+                FUNCTION UnescapeField$(escaped AS STRING) AS STRING
+                    LOCAL result$ = ""
+                    LOCAL c$ = ""
+                    LOCAL i = 1
+                    WHILE i <= LEN(escaped)
+                        c$ = MID$(escaped, i, 1)
+                        ' A backslash and the character after it are one escape.
+                        IF c$ = "\" AND i < LEN(escaped) THEN
+                            c$ = MID$(escaped, i + 1, 1)
+                            SELECT CASE c$
+                                CASE "t": result$ = result$ + CHR$(9)
+                                CASE "n": result$ = result$ + CHR$(10)
+                                CASE ELSE: result$ = result$ + c$
+                            END SELECT
+                            i = i + 2
+                        ELSE
+                            result$ = result$ + c$
+                            i = i + 1
+                        END IF
+                    WEND
+                    RETURN result$
+                END FUNCTION
+
+                /// One field of a record, unescaped.
+                ///
+                /// - Parameter entry: A line of the file, without its new line.
+                /// - Parameter index: Which field, from 0.
+                /// - Returns: The field, or "" when the record has fewer fields.
+                FUNCTION FieldAt$(entry AS STRING, index AS INTEGER) AS STRING
+                    LOCAL rest$ = entry
+                    LOCAL skipped = 0
+                    LOCAL tabAt = 0
+                    ' Drop a field and its tab until the one wanted is at the front.
+                    WHILE skipped < index
+                        tabAt = INSTR(rest$, CHR$(9))
+                        IF tabAt = 0 THEN RETURN ""
+                        rest$ = MID$(rest$, tabAt + 1)
+                        skipped = skipped + 1
+                    WEND
+                    ' Then keep it up to the next tab, if there is one.
+                    LOCAL endAt = INSTR(rest$, CHR$(9))
+                    IF endAt > 0 THEN rest$ = LEFT$(rest$, endAt - 1)
+                    RETURN UnescapeField$(rest$)
+                END FUNCTION
+
+                /// The line of a fileText that starts at a place, without its new line.
+                ///
+                /// - Parameter fileText: The whole file.
+                /// - Parameter start: Where the line starts, from 1.
+                /// - Returns: The line.
+                FUNCTION LineAt$(fileText AS STRING, start AS INTEGER) AS STRING
+                    LOCAL rest$ = MID$(fileText, start)
+                    LOCAL endAt = INSTR(rest$, CHR$(10))
+                    IF endAt = 0 THEN RETURN rest$
+                    RETURN LEFT$(rest$, endAt - 1)
+                END FUNCTION
+
+                """#),
+                ("src/models/TaskList.bas", #"""
+                ' TaskList.bas — the tasks, in the order they were added.
+                '
+                '     controller ──► Add / MarkDone / Remove / ClearDone ──► the tasks
+                '     views      ◄── Count, Tasks(row), ToDoCount, DoneCount
+                '
+                ' Like TodoTask, it knows nothing of windows or files: the controller
+                ' changes it, the views read it, and TaskStore.bas reads and writes it.
+
+                /// The tasks, oldest first, and what can be done with them.
+                ///
+                /// A task is found by its row, from 0, which is where the list on screen
+                /// shows it too. This BASIC has no REDIM, so the rows are made once at
+                /// their most (``Capacity``) and `Count` says how many are real.
+                CLASS TaskList
+                    /// Every row there can be; the first `Count` hold tasks.
+                    PUBLIC Tasks(200) AS TodoTask
+                    /// How many tasks there are.
+                    PUBLIC Count AS INTEGER
+
+                    /// How many tasks the list can hold: the size `Tasks` is made with.
+                    ///
+                    /// - Returns: 200.
+                    FUNCTION Capacity() AS INTEGER
+                        RETURN 200
+                    END FUNCTION
+
+                    /// Whether a row holds a task.
+                    ///
+                    /// - Parameter row: The row, from 0; -1 means none.
+                    /// - Returns: TRUE when there is a task at `row`.
+                    FUNCTION HasRow(row AS INTEGER) AS BOOLEAN
+                        IF row >= 0 AND row < ME.Count THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+
+                    /// Whether there is room for one more task.
+                    ///
+                    /// - Returns: TRUE until every row holds a task.
+                    FUNCTION HasRoom() AS BOOLEAN
+                        IF ME.Count < ME.Capacity() THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+
+                    /// Adds a task at the end.
+                    ///
+                    /// - Parameter title: What to do.
+                    /// - Parameter isDone: Whether it is done already.
+                    FUNCTION Add(title AS STRING, isDone AS BOOLEAN) AS VOID
+                        ' A full list keeps what it has; the New Task command is grayed out
+                        ' before this can happen.
+                        IF NOT ME.HasRoom() THEN RETURN
+                        ME.Tasks(ME.Count).Title = title
+                        ME.Tasks(ME.Count).IsDone = isDone
+                        ME.Count = ME.Count + 1
+                    END FUNCTION
+
+                    /// Marks a task as done.
+                    ///
+                    /// - Parameter row: The task's row.
+                    FUNCTION MarkDone(row AS INTEGER) AS VOID
+                        IF ME.HasRow(row) THEN ME.Tasks(row).IsDone = TRUE
+                    END FUNCTION
+
+                    /// Whether a task can be marked as done: it is there, and still to do.
+                    ///
+                    /// - Parameter row: The task's row.
+                    /// - Returns: TRUE when the task at `row` is still to do.
+                    FUNCTION CanMarkDone(row AS INTEGER) AS BOOLEAN
+                        IF NOT ME.HasRow(row) THEN RETURN FALSE
+                        IF ME.Tasks(row).IsDone THEN RETURN FALSE
+                        RETURN TRUE
+                    END FUNCTION
+
+                    /// Takes a task off the list; the ones after it move up a row.
+                    ///
+                    /// - Parameter row: The task's row.
+                    FUNCTION Remove(row AS INTEGER) AS VOID
+                        IF NOT ME.HasRow(row) THEN RETURN
+                        LOCAL i = 0
+                        FOR i = row TO ME.Count - 2
+                            ME.Tasks(i) = ME.Tasks(i + 1)
+                        NEXT i
+                        ME.Count = ME.Count - 1
+                    END FUNCTION
+
+                    /// Takes every done task off the list, keeping the rest in order.
+                    FUNCTION ClearDone() AS VOID
+                        LOCAL kept = 0
+                        LOCAL i = 0
+                        ' Each task still to do moves up to the next free row.
+                        FOR i = 0 TO ME.Count - 1
+                            IF NOT ME.Tasks(i).IsDone THEN
+                                ME.Tasks(kept) = ME.Tasks(i)
+                                kept = kept + 1
+                            END IF
+                        NEXT i
+                        ME.Count = kept
+                    END FUNCTION
+
+                    /// Whether any task is done, for Clear Done.
+                    ///
+                    /// - Returns: TRUE when at least one task is done.
+                    FUNCTION HasDone() AS BOOLEAN
+                        IF ME.DoneCount() > 0 THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+
+                    /// How many tasks are still to do.
+                    ///
+                    /// - Returns: The count.
+                    FUNCTION ToDoCount() AS INTEGER
+                        RETURN ME.Count - ME.DoneCount()
+                    END FUNCTION
+
+                    /// How many tasks are done.
+                    ///
+                    /// - Returns: The count.
+                    FUNCTION DoneCount() AS INTEGER
+                        LOCAL done = 0
+                        LOCAL i = 0
+                        FOR i = 0 TO ME.Count - 1
+                            IF ME.Tasks(i).IsDone THEN done = done + 1
+                        NEXT i
+                        RETURN done
+                    END FUNCTION
+                END CLASS
+
+                """#),
+                ("src/models/TaskStore.bas", #"""
+                ' TaskStore.bas — the tasks between launches: tasks.txt, in and out.
+                '
+                '     ReadTasks(path)          ──► a TaskList (three samples on a first run)
+                '     WriteTasks(path, tasks)  ──► tasks.txt, replaced whole
+                '
+                ' One task a line, in TabSeparated.bas's format: `done` or `todo`, a tab,
+                ' and the title. The controller writes after every change, so quitting
+                ' never loses anything.
+
+                /// The tasks a file holds, or the samples a first launch starts with.
+                ///
+                /// - Parameter path: The file, such as `.../Application Support/MyApp/tasks.txt`.
+                /// - Returns: The tasks, in the file's order.
+                FUNCTION ReadTasks(path AS STRING) AS TaskList
+                    LOCAL tasks AS TaskList
+                    tasks = NEW TaskList()
+
+                    ' No file yet: this is the first launch, so start with something to try.
+                    IF NOT File.Exists(path) THEN
+                        tasks.Add("Try this program", FALSE)
+                        tasks.Add("Pick a task, then press Done", FALSE)
+                        tasks.Add("Open the To-Do List", TRUE)
+                        RETURN tasks
                     END IF
+
+                    ' Each line is one task; a blank line (the last one) is none.
+                    LOCAL text$ = File.ReadText$(path)
+                    LOCAL start = 1
+                    LOCAL entry$ = ""
+                    LOCAL isDone AS BOOLEAN
+                    WHILE start <= LEN(text$)
+                        entry$ = LineAt$(text$, start)
+                        IF entry$ <> "" THEN
+                            ' A comparison is a number here, not a BOOLEAN, so the state is
+                            ' set in two steps.
+                            isDone = FALSE
+                            IF FieldAt$(entry$, 0) = "done" THEN isDone = TRUE
+                            tasks.Add(FieldAt$(entry$, 1), isDone)
+                        END IF
+                        start = start + LEN(entry$) + 1
+                    WEND
+                    RETURN tasks
                 END FUNCTION
 
-                ' A row was picked: the event says which.
-                FUNCTION Picked(event AS BASICAUIEvent)
-                    statusLine.text("Picked " + event.Text$ + ".")
+                /// Writes every task to a file, replacing what it held.
+                ///
+                /// - Parameter path: The file.
+                /// - Parameter tasks: The tasks to keep.
+                FUNCTION WriteTasks(path AS STRING, tasks AS TaskList) AS VOID
+                    LOCAL text$ = ""
+                    LOCAL state$ = ""
+                    LOCAL row = 0
+                    ' One line a task: its state, a tab, and its title, escaped.
+                    FOR row = 0 TO tasks.Count - 1
+                        state$ = "todo"
+                        IF tasks.Tasks(row).IsDone THEN state$ = "done"
+                        text$ = text$ + state$ + CHR$(9) + EscapeField$(tasks.Tasks(row).Title) + CHR$(10)
+                    NEXT row
+                    File.WriteText path, text$
                 END FUNCTION
 
-                FUNCTION Closed()
-                    PRINT "Window closed."
+                """#),
+                ("src/models/TodoTask.bas", #"""
+                ' TodoTask.bas — one task.
+                '
+                ' Plain BASIC: nothing here knows there is a window, so the same task works
+                ' in a program with no screen at all.
+
+                /// One thing to do, and whether it is done.
+                TYPE TodoTask
+                    /// What to do, as the person typed it.
+                    Title AS STRING
+                    /// Whether it is done: the list ticks it, and Clear Done removes it.
+                    IsDone AS BOOLEAN
+                END TYPE
+
+                """#),
+                ("src/views/StatusBarView.bas", #"""
+                ' StatusBarView.bas — the line along the bottom that counts the tasks.
+                '
+                '     2 to do · 1 done
+
+                /// The status line: how many tasks are still to do, and how many are done.
+                CLASS StatusBarView
+                    /// The label the counts are written in.
+                    PUBLIC CountsLabel AS VARIANT
+
+                    /// Makes the status line and puts it in a window.
+                    ///
+                    /// - Parameter window: The window to add it to, at the bottom.
+                    FUNCTION Build(window AS VARIANT) AS VOID
+                        ME.CountsLabel = AUILabel("")
+                        window.add(ME.CountsLabel)
+                    END FUNCTION
+
+                    /// Shows the counts for the tasks.
+                    ///
+                    /// - Parameter tasks: The tasks to count.
+                    FUNCTION Show(tasks AS TaskList) AS VOID
+                        ME.CountsLabel.text(StatusText$(tasks))
+                    END FUNCTION
+                END CLASS
+
+                /// What the status line says about the tasks.
+                ///
+                /// - Parameter tasks: The tasks to count.
+                /// - Returns: Such as "2 to do · 1 done".
+                FUNCTION StatusText$(tasks AS TaskList) AS STRING
+                    ' STR$ puts a space in front of a number; MID$ takes it off.
+                    RETURN MID$(STR$(tasks.ToDoCount()), 2) + " to do · " + MID$(STR$(tasks.DoneCount()), 2) + " done"
                 END FUNCTION
 
-                ' ================================================================= the list
+                """#),
+                ("src/views/TaskListView.bas", #"""
+                ' TaskListView.bas — the New task field, and the list of tasks under it.
+                '
+                '     ┌──────────────────────────────┐
+                '     │ New task                     │  the field: Return adds it
+                '     ├──────────────────────────────┤
+                '     │ ☐ Try this program           │
+                '     │ ☐ Pick a task, then press …  │  one row a task
+                '     │ ☑ Open the To-Do List        │  ☑ is done
+                '     └──────────────────────────────┘
+                '
+                ' The view shows the tasks and reports what the person does; it never
+                ' changes a task itself. The controller names the handlers.
 
-                FUNCTION Remember(newTask$ AS STRING) AS VOID
-                    task$(taskCount) = newTask$
-                    taskCount = taskCount + 1
+                /// The field a new task is typed in, and the list that shows every task.
+                CLASS TaskListView
+                    /// The New task field.
+                    PUBLIC NewTaskField AS VARIANT
+                    /// The list, one row a task.
+                    PUBLIC Rows AS VARIANT
+
+                    /// Makes the field and the list, and puts them in a window.
+                    ///
+                    /// - Parameter window: The window to add them to, top to bottom.
+                    FUNCTION Build(window AS VARIANT) AS VOID
+                        ME.NewTaskField = AUIField("", "New task")
+                        ME.Rows = AUIList()
+                        window.add(ME.NewTaskField)
+                        window.add(ME.Rows)
+                    END FUNCTION
+
+                    /// Shows every task, with one picked.
+                    ///
+                    /// Swift's To-Do List gives each row a checkbox and strikes a done task
+                    /// through. BASIC's AUIList rows are text, with no checkbox and no
+                    /// strike-through yet, so ☐ and ☑ in front of the title stand in.
+                    ///
+                    /// - Parameter tasks: The tasks to show.
+                    /// - Parameter picked: The picked row, or -1 for none.
+                    FUNCTION Show(tasks AS TaskList, picked AS INTEGER) AS VOID
+                        ' The list is filled again from the tasks, which are the truth.
+                        ME.Rows.clear()
+                        LOCAL box$ = ""
+                        LOCAL row = 0
+                        FOR row = 0 TO tasks.Count - 1
+                            box$ = "☐ "
+                            IF tasks.Tasks(row).IsDone THEN box$ = "☑ "
+                            ME.Rows.add(box$ + tasks.Tasks(row).Title)
+                        NEXT row
+                        ' Filling the list drops its selection, so the picked row is picked
+                        ' again. Picking in code reports nothing, so no handler runs.
+                        ME.Rows.select(picked)
+                    END FUNCTION
+
+                    /// What the New task field holds.
+                    ///
+                    /// - Returns: The text typed so far.
+                    FUNCTION NewTaskText$() AS STRING
+                        RETURN ME.NewTaskField.text$()
+                    END FUNCTION
+
+                    /// Empties the New task field, once its task is added.
+                    FUNCTION ClearField() AS VOID
+                        ME.NewTaskField.text("")
+                    END FUNCTION
+                END CLASS
+
+                """#),
+            ]
+        ),
+        recipe(
+            json: #"""
+            {
+              "identifier": "basic.activeui.counter",
+              "name": "ActiveUI Click Counter",
+              "language": "BASIC",
+              "summary": "ActiveUI's smallest complete app, in a window of its own: a count, a Click me button, and Reset, grayed out at zero. Split into a model, a view and a controller.",
+              "icon": "cursorarrow.click.2",
+              "folderExtension": "basproj",
+              "openFile": "src/main.bas",
+              "postNote": "created — make run builds it with basicc and opens its window"
+            }
+
+            """#,
+            files: [
+                (".gitignore", #"""
+                Build/
+                .omegaIDE/
+                .DS_Store
+
+                """#),
+                ("Makefile", #"""
+                # BASIC build. `basicc` comes from the BASICCompiler package in the
+                # BASICShell repo (`swift build` there puts it in .build/debug/basicc),
+                # or from its buildAndInstall.sh. Set BASICC=/path/to/basicc to use a build.
+                BASICC ?= basicc
+                BUILD := Build
+                NAME := {{NAME}}
+
+                .PHONY: run build clean help
+
+                ## run — build, then run it
+                run: build
+                	$(BUILD)/$(NAME)
+
+                ## build — compile src/main.bas to Build/$(NAME)
+                build:
+                	@command -v $(BASICC) >/dev/null 2>&1 || \
+                		{ echo "error: $(BASICC) not found — build it in the BASICShell repo, or set BASICC=/path/to/basicc"; exit 1; }
+                	@mkdir -p $(BUILD)
+                	$(BASICC) build src/main.bas -o $(BUILD)/$(NAME)
+
+                ## clean — remove everything the build produced
+                clean:
+                	rm -rf $(BUILD)
+
+                ## help — list these targets
+                help:
+                	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
+
+                """#),
+                ("README.md", #"""
+                # {{NAME}}
+
+                The click counter, in a window of its own made with ActiveUI and written in
+                BASIC: a label that counts, a Click me button, and Reset, which takes the
+                count back to zero and is grayed out while there is nothing to reset.
+
+                Build it with `basicc`:
+
+                ```sh
+                make        # build and run
+                make build  # just build, into Build/{{NAME}}
+                ```
+
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The program: wires the parts together. |
+                | `src/models/Counter.bas` | `Counter`: the count. |
+                | `src/views/CounterView.bas` | The label and the Click me button. |
+                | `src/controllers/CounterWindowController.bas` | The window, Reset, and each count. |
+
+                ## How the comments are written
+
+                Every `CLASS`, field, `FUNCTION` and `GLOBAL` has a documentation comment:
+                `///` lines on the line just above it, read by Swift's rules (BASIC's own,
+                from `BASICDocumentation.swift`; `basiclint` checks them): a one-line
+                summary, then, after a `///` line of its own, any discussion, then
+                `- Parameter name:` for each parameter and `- Returns:` for what it gives
+                back. Comments inside a routine start with `'` and say what each step does.
+                Each file starts with a `'` comment saying what is in it.
+
+                ## What BASIC's ActiveUI cannot do yet
+
+                The same app in Swift has Reset in a window toolbar and a Counter menu.
+                BASIC's ActiveUI classes have no toolbar and cannot add menus yet, so Reset
+                is a button above the count and the menus are the ones every Mac app has.
+                Each place this happens has a comment saying so.
+
+                """#),
+                ("project.json", #"""
+                {
+                  "schemaVersion": 1,
+                  "kind": "project",
+                  "name": "{{NAME}}",
+                  "entry": "src/main.bas"
+                }
+
+                """#),
+                ("src/controllers/CounterWindowController.bas", #"""
+                ' CounterWindowController.bas — the window, its Reset command, and each count.
+                '
+                '     Click me ──► Count      ──► Counter.Increment ──► Refresh
+                '     Reset    ──► ResetCount ──► Counter.Reset     ──► Refresh
+                '                                          Refresh ──► the label, Reset grayed at zero
+                '
+                ' It is the only part that knows both the counter and the view. Each
+                ' command is one method, and Reset is grayed out while the count is zero.
+                '
+                ' Where this differs from Swift's Click Counter, because BASIC's ActiveUI
+                ' classes cannot do it yet:
+                ' - Reset is a button above the count, in the toolbar's place: an AUIWindow
+                '   has no toolbar.
+                ' - There is no Counter menu: built with basicc, the program has the menu
+                '   bar every Mac app has (the app menu, File with Close and Quit, Edit,
+                '   Window), and BASIC cannot add to it yet. When it can, Counter ▸ Count
+                '   and Counter ▸ Reset name the same handlers the buttons name.
+                ' - A BASIC window's column fills its width, so Click me is as wide as the
+                '   window, where Swift's keeps its own width.
+
+                /// The window and its Reset command, over the app's counter and view.
+                ///
+                /// It works on `theCounter` and `theCounterView`, the parts main.bas makes
+                /// (see there for why they are GLOBALs). Every control names a plain
+                /// FUNCTION as its handler (the handlers at the end of this file), because
+                /// ActiveUI calls a handler by name and a method has none it can call. Each
+                /// handler hands its command to `theWindow`, this controller.
+                CLASS CounterWindowController
+                    /// The window.
+                    PUBLIC Window AS VARIANT
+                    /// Reset: back to zero.
+                    PUBLIC ResetButton AS VARIANT
+
+                    /// Builds the window, at zero.
+                    ///
+                    /// - Parameter title: The window's title: the app's name.
+                    FUNCTION Start(title AS STRING) AS VOID
+                        ' Top to bottom: the command, the count, the button.
+                        ME.Window = AUIWindow(title)
+                        ME.BuildCommands()
+                        theCounterView.Build(ME.Window)
+
+                        ' Who handles what.
+                        theCounterView.ClickButton.onclick("Clicked")
+
+                        ' Swift's window is 320 by 200 points.
+                        ME.Window.size(320, 200)
+
+                        ' A button starts enabled, and nothing asks again until the first
+                        ' count, so everything is brought up to date before the window
+                        ' opens: Reset starts grayed out, at zero.
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Makes the Reset button, in the toolbar's place across the top.
+                    FUNCTION BuildCommands() AS VOID
+                        ME.ResetButton = AUIButton("Reset")
+                        ME.Window.add(ME.ResetButton)
+                        ME.ResetButton.onclick("ResetPressed")
+                    END FUNCTION
+
+                    /// Shows the window and waits until it is closed.
+                    FUNCTION Run() AS VOID
+                        ME.Window.run()
+                    END FUNCTION
+
+                    /// The Count command: one more.
+                    FUNCTION Count() AS VOID
+                        theCounter.Increment()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Reset command: back to zero.
+                    FUNCTION ResetCount() AS VOID
+                        IF NOT theCounter.CanReset() THEN RETURN
+                        theCounter.Reset()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Shows the count, and grays Reset out at zero.
+                    FUNCTION Refresh() AS VOID
+                        theCounterView.Show(theCounter)
+                        ME.ResetButton.enabled(theCounter.CanReset())
+                    END FUNCTION
+                END CLASS
+
+                ' ================================================================ handlers
+                '
+                ' What each control calls. Each one hands its command to the controller,
+                ' so a command is carried out in one place, whichever control asked.
+
+                /// Click me.
+                FUNCTION Clicked() AS VOID
+                    theWindow.Count()
                 END FUNCTION
 
-                ' The list on screen, filled again from the tasks.
-                FUNCTION ShowTasks() AS VOID
-                    taskList.clear()
+                /// Reset.
+                FUNCTION ResetPressed() AS VOID
+                    theWindow.ResetCount()
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                ' {{NAME}} — the click counter, in a window of its own made with ActiveUI.
+                '
+                ' Build it with basicc: make run builds it and runs it (make build only
+                ' builds it, into Build/). The program is a Mac application with a window
+                ' of its own, and it runs until the window closes.
+                '
+                ' ActiveUI's smallest complete app: a label that counts, and a button.
+                ' Press Click me and the count goes up; Reset takes it back to zero, and is
+                ' grayed out while there is nothing to reset.
+                '
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas                                 you are here: the parts, wired together
+                '   models/Counter.bas                       the count
+                '   views/CounterView.bas                    the label and the Click me button
+                '   controllers/CounterWindowController.bas  the window, Reset, and each count
+                '
+                ' The model knows nothing of windows, the view never changes the count, and
+                ' the controller is the one part that knows both. README.md says how the
+                ' comments are written.
+
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's CLASSes and FUNCTIONs into this program, from
+                ' a path relative to this file. Only this file's own statements run; an
+                ' imported file's are declarations.
+                IMPORT "models/Counter.bas"
+                IMPORT "views/CounterView.bas"
+                IMPORT "controllers/CounterWindowController.bas"
+
+                ' ---------------------------------------------------------------- the parts
+                '
+                ' Each part is a GLOBAL, declared here and made below, and the others reach
+                ' it by name. Three things in this BASIC make that the way: an imported
+                ' file's statements do not run (GLOBALs included), an object handed to a
+                ' FUNCTION is a copy (BASIC-35), and the interpreter BASICStudio runs cannot
+                ' yet call a method on an object kept in another object's field.
+
+                /// The count.
+                GLOBAL theCounter AS Counter
+                /// The count's label and the Click me button.
+                GLOBAL theCounterView AS CounterView
+                /// The window's controller, which every button's handler hands its command to.
+                GLOBAL theWindow AS CounterWindowController
+
+                ' ------------------------------------------------------------------- start
+                theCounter = NEW Counter()
+                theCounterView = NEW CounterView()
+                theWindow = NEW CounterWindowController()
+                theWindow.Start("{{NAME}}")
+                theWindow.Run()
+
+                """#),
+                ("src/models/Counter.bas", #"""
+                ' Counter.bas — the count, and nothing else.
+                '
+                ' Plain BASIC: it knows nothing of windows, so the same counter works in a
+                ' program with no screen at all.
+
+                /// A count that goes up one at a time and back to zero.
+                CLASS Counter
+                    /// How many times it has been counted.
+                    PUBLIC Value AS INTEGER
+
+                    /// Counts one more.
+                    FUNCTION Increment() AS VOID
+                        ME.Value = ME.Value + 1
+                    END FUNCTION
+
+                    /// Goes back to zero.
+                    FUNCTION Reset() AS VOID
+                        ME.Value = 0
+                    END FUNCTION
+
+                    /// Whether there is anything to reset.
+                    ///
+                    /// - Returns: TRUE once the count is above zero.
+                    FUNCTION CanReset() AS BOOLEAN
+                        IF ME.Value > 0 THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+                END CLASS
+
+                """#),
+                ("src/views/CounterView.bas", #"""
+                ' CounterView.bas — the count, and the one button that is the app.
+                '
+                '     ┌──────────────┐
+                '     │   Count: 2   │   what the counter says
+                '     │  [Click me]  │   reports each press
+                '     └──────────────┘
+                '
+                ' A view shows what it is given and reports what the person does. It never
+                ' changes the count itself: the controller decides what a press means. The
+                ' button stays a button because pressing it is the app; the app's command
+                ' (Reset) is with the window's commands.
+
+                /// The count's label, and the Click me button under it.
+                CLASS CounterView
+                    /// The label that says the count.
+                    PUBLIC CountLabel AS VARIANT
+                    /// The button that counts.
+                    PUBLIC ClickButton AS VARIANT
+
+                    /// Makes the label and the button, and puts them in a window.
+                    ///
+                    /// Swift's label is in the headline font; BASIC's AUILabel sets text
+                    /// only, so it is in the window's own font.
+                    ///
+                    /// - Parameter window: The window to add them to, top to bottom.
+                    FUNCTION Build(window AS VARIANT) AS VOID
+                        ME.CountLabel = AUILabel("Count: 0")
+                        ME.ClickButton = AUIButton("Click me")
+                        window.add(ME.CountLabel)
+                        window.add(ME.ClickButton)
+                    END FUNCTION
+
+                    /// Shows the count.
+                    ///
+                    /// - Parameter counter: The counter to show.
+                    FUNCTION Show(counter AS Counter) AS VOID
+                        ME.CountLabel.text(CountText$(counter))
+                    END FUNCTION
+                END CLASS
+
+                /// What the label says about a counter.
+                ///
+                /// - Parameter counter: The counter.
+                /// - Returns: Such as "Count: 2".
+                FUNCTION CountText$(counter AS Counter) AS STRING
+                    ' STR$ puts a space in front of a number, which is the one after "Count:".
+                    RETURN "Count:" + STR$(counter.Value)
+                END FUNCTION
+
+                """#),
+            ]
+        ),
+        recipe(
+            json: #"""
+            {
+              "identifier": "basic.activeui.masterdetail",
+              "name": "ActiveUI Master/Detail",
+              "language": "BASIC",
+              "summary": "A window of its own, made with ActiveUI: a searchable list of items, Favorites first, beside the chosen one's title and notes, with New Item, Favorite and Delete, kept in Application Support. The shape of most document and record apps, split into models, views and a controller.",
+              "icon": "sidebar.left",
+              "folderExtension": "basproj",
+              "openFile": "src/main.bas",
+              "postNote": "created — make run builds it with basicc and opens its window"
+            }
+
+            """#,
+            files: [
+                (".gitignore", #"""
+                Build/
+                .omegaIDE/
+                .DS_Store
+
+                """#),
+                ("Makefile", #"""
+                # BASIC build. `basicc` comes from the BASICCompiler package in the
+                # BASICShell repo (`swift build` there puts it in .build/debug/basicc),
+                # or from its buildAndInstall.sh. Set BASICC=/path/to/basicc to use a build.
+                BASICC ?= basicc
+                BUILD := Build
+                NAME := {{NAME}}
+
+                .PHONY: run build clean help
+
+                ## run — build, then run it
+                run: build
+                	$(BUILD)/$(NAME)
+
+                ## build — compile src/main.bas to Build/$(NAME)
+                build:
+                	@command -v $(BASICC) >/dev/null 2>&1 || \
+                		{ echo "error: $(BASICC) not found — build it in the BASICShell repo, or set BASICC=/path/to/basicc"; exit 1; }
+                	@mkdir -p $(BUILD)
+                	$(BASICC) build src/main.bas -o $(BUILD)/$(NAME)
+
+                ## clean — remove everything the build produced
+                clean:
+                	rm -rf $(BUILD)
+
+                ## help — list these targets
+                help:
+                	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
+
+                """#),
+                ("README.md", #"""
+                # {{NAME}}
+
+                A master/detail app in a window of its own, made with ActiveUI and written
+                in BASIC: a searchable list of items on the left, Favorites first, and the
+                chosen item's title and notes on the right, or a note that none is chosen.
+                New Item, Favorite and Delete are across the top; Favorite and Delete are
+                grayed out until an item is chosen. Edits are saved as you type.
+
+                Build it with `basicc`:
+
+                ```sh
+                make        # build and run
+                make build  # just build, into Build/{{NAME}}
+                ```
+
+                The items are kept in `items.txt` in `~/Library/Application Support/{{NAME}}/`,
+                or in `$APP_DATA_DIR` when that is set.
+
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The program: wires the parts together. |
+                | `src/models/Item.bas` | `Item`: one item, and searching it. |
+                | `src/models/ItemList.bas` | `ItemList`: the items, and what can be done with them. |
+                | `src/models/ItemStore.bas` | `ReadItems` and `WriteItems`: `items.txt`, in and out. |
+                | `src/models/TabSeparated.bas` | The file's format: one record a line, fields split by tabs. |
+                | `src/views/ItemSidebarView.bas` | The search field and the list, in two sections. |
+                | `src/views/ItemDetailView.bas` | The chosen item, or the empty state. |
+                | `src/controllers/ItemsWindowController.bas` | The window, its commands, and every change. |
+                | `src/app/DataFolder.bas` | Where the app keeps its data. |
+
+                ## How the comments are written
+
+                Every `TYPE`, `CLASS`, field, `FUNCTION` and `GLOBAL` has a documentation
+                comment: `///` lines on the line just above it, read by Swift's rules
+                (BASIC's own, from `BASICDocumentation.swift`; `basiclint` checks them):
+                a one-line summary, then, after a `///` line of its own, any discussion,
+                then `- Parameter name:` for each parameter and `- Returns:` for what it
+                gives back. Comments inside a routine start with `'` and say what each step
+                does. Each file starts with a `'` comment saying what is in it.
+
+                ## What BASIC's ActiveUI cannot do yet
+
+                The same app in Swift is ActiveUI's own `AUIMasterDetailView`, with a
+                sidebar list of real sections and symbols, a window toolbar with the
+                sidebar button, File and View menus, a large title and a notes editor of
+                many lines. BASIC's ActiveUI classes have none of those yet, so two stacks
+                sit side by side, the sections are heading rows in a list, the commands are
+                buttons across the top, and the notes are one line. Each place this happens
+                has a comment saying so.
+
+                """#),
+                ("project.json", #"""
+                {
+                  "schemaVersion": 1,
+                  "kind": "project",
+                  "name": "{{NAME}}",
+                  "entry": "src/main.bas"
+                }
+
+                """#),
+                ("src/app/DataFolder.bas", #"""
+                ' DataFolder.bas — where the app keeps its data between launches.
+                '
+                '     DataFolder$("MyApp") ──► $APP_DATA_DIR, when it is set (tests set it)
+                '                         └──► ~/Library/Application Support/MyApp
+                '
+                ' The folder is made the first time it is asked for, so a caller can write
+                ' into it straight away.
+
+                /// The folder the app keeps its data in, made if it is not there yet.
+                ///
+                /// `APP_DATA_DIR`, when it is set, names the folder instead, so a test or a
+                /// second copy of the app can keep its data apart from yours.
+                ///
+                /// - Parameter appName: The app's name, which names its folder in
+                ///   Application Support.
+                /// - Returns: The folder's path, with no `/` at the end.
+                FUNCTION DataFolder$(appName AS STRING) AS STRING
+                    ' The override wins, so tests never touch the real Application Support.
+                    LOCAL folder$ = ENVIRON$("APP_DATA_DIR")
+                    IF folder$ = "" THEN folder$ = ENVIRON$("HOME") + "/Library/Application Support/" + appName
+
+                    ' File.Mkdir makes any missing folders on the way, as mkdir -p does.
+                    IF NOT File.Exists(folder$) THEN File.Mkdir folder$
+                    RETURN folder$
+                END FUNCTION
+
+                """#),
+                ("src/controllers/ItemsWindowController.bas", #"""
+                ' ItemsWindowController.bas — the window, its commands, and every change.
+                '
+                '     New Item ──► NewItem        ──► Items.Add            ──► Save ──► Refresh
+                '     Favorite ──► ToggleFavorite ──► Items.ToggleFavorite ──► Save ──► Refresh
+                '     Delete   ──► DeleteItem     ──► Items.Remove         ──► Save ──► Refresh
+                '     a row    ──► ChooseRow      ──► Choose               ──► Refresh
+                '     typing   ──► TitleEdited / NotesEdited ──► Items.SetTitle / SetNotes ──► Save
+                '     Search   ──► Search         ──► the sidebar, narrowed
+                '
+                ' It is the only part that knows both the items and the views. The views
+                ' report what the person did; the controller changes the items, saves them,
+                ' and shows the result. Each command is one method, and Favorite and Delete
+                ' are grayed out until an item is chosen.
+                '
+                ' Where this differs from Swift's Master/Detail, because BASIC's ActiveUI
+                ' classes cannot do it yet:
+                ' - The two panes are two stacks side by side, where Swift's are
+                '   ActiveUI's own AUIMasterDetailView with a sidebar of its own width.
+                ' - The commands are a row of buttons across the top of the window, in the
+                '   toolbar's place: an AUIWindow has no toolbar, so there is no sidebar
+                '   button, tracking separator or flexible space either.
+                ' - There is no File ▸ New Item, Delete, or View menu: built with basicc,
+                '   the program has the menu bar every Mac app has (the app menu, File with
+                '   Close and Quit, Edit, Window), and BASIC cannot add to it yet. When it
+                '   can, each menu item names the same handler its button names.
+
+                /// The window, the commands across its top and the two panes, over the
+                /// app's items and views.
+                ///
+                /// It works on `theItems`, `theSidebar` and `theDetail`, the parts main.bas
+                /// makes (see there for why they are GLOBALs). Every control names a plain
+                /// FUNCTION as its handler (the handlers at the end of this file), because
+                /// ActiveUI calls a handler by name and a method has none it can call.
+                /// Each handler hands its command to `theWindow`, this controller.
+                CLASS ItemsWindowController
+                    /// The window.
+                    PUBLIC Window AS VARIANT
+                    /// New Item: makes an item and chooses it.
+                    PUBLIC NewItemButton AS VARIANT
+                    /// Favorite: puts the chosen item in Favorites, or takes it out.
+                    PUBLIC FavoriteButton AS VARIANT
+                    /// Delete: takes the chosen item off the list.
+                    PUBLIC DeleteButton AS VARIANT
+                    /// The file the items are kept in.
+                    PUBLIC ItemsFile AS STRING
+                    /// The chosen item's index, or -1 for none.
+                    PUBLIC ChosenIndex AS INTEGER
+
+                    /// Builds the window over the items, with the first one chosen.
+                    ///
+                    /// - Parameter title: The window's title: the app's name.
+                    /// - Parameter itemsFile: The file the items are kept in, written after
+                    ///   every change.
+                    FUNCTION Start(title AS STRING, itemsFile AS STRING) AS VOID
+                        ME.ItemsFile = itemsFile
+                        ME.ChosenIndex = -1
+                        IF theItems.Count > 0 THEN ME.ChosenIndex = 0
+
+                        ' Top to bottom: the commands, then the two panes side by side.
+                        ME.Window = AUIWindow(title)
+                        ME.BuildCommands()
+                        LOCAL master = AUIStack("vertical")
+                        LOCAL detailPane = AUIStack("vertical")
+                        theSidebar.Build(master)
+                        theDetail.Build(detailPane)
+                        LOCAL panes = AUIStack("horizontal")
+                        panes.add(master)
+                        panes.add(detailPane)
+                        ME.Window.add(panes)
+
+                        ' Who handles what.
+                        theSidebar.Rows.onselect("ItemPicked")
+                        theSidebar.SearchField.onchange("SearchChanged")
+                        theDetail.TitleField.onchange("TitleChanged")
+                        theDetail.NotesField.onchange("NotesChanged")
+
+                        ' Swift's window is 760 by 460 points.
+                        ME.Window.size(760, 460)
+
+                        ' A button starts enabled, and nothing asks again until the first
+                        ' change, so everything is brought up to date before the window
+                        ' opens: with no items, Favorite and Delete start grayed out.
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Makes the command buttons, in the toolbar's place across the top.
+                    FUNCTION BuildCommands() AS VOID
+                        LOCAL bar = AUIStack("horizontal")
+                        ME.NewItemButton = AUIButton("New Item")
+                        ME.FavoriteButton = AUIButton("Favorite")
+                        ME.DeleteButton = AUIButton("Delete")
+                        bar.add(ME.NewItemButton)
+                        bar.add(ME.FavoriteButton)
+                        bar.add(ME.DeleteButton)
+                        ME.Window.add(bar)
+
+                        ME.NewItemButton.onclick("NewItemPressed")
+                        ME.FavoriteButton.onclick("FavoritePressed")
+                        ME.DeleteButton.onclick("DeletePressed")
+                    END FUNCTION
+
+                    /// Shows the window and waits until it is closed.
+                    FUNCTION Run() AS VOID
+                        ME.Window.run()
+                    END FUNCTION
+
+                    ' ------------------------------------------------------------ commands
+
+                    /// The New Item command: makes an untitled item and chooses it.
+                    FUNCTION NewItem() AS VOID
+                        IF NOT theItems.HasRoom() THEN RETURN
+                        theItems.Add("", "", FALSE)
+                        ME.ChosenIndex = theItems.Count - 1
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Favorite command: puts the chosen item in Favorites, or takes it
+                    /// out.
+                    FUNCTION ToggleFavorite() AS VOID
+                        IF NOT theItems.HasIndex(ME.ChosenIndex) THEN RETURN
+                        theItems.ToggleFavorite(ME.ChosenIndex)
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// The Delete command: takes the chosen item off the list.
+                    FUNCTION DeleteItem() AS VOID
+                        IF NOT theItems.HasIndex(ME.ChosenIndex) THEN RETURN
+                        theItems.Remove(ME.ChosenIndex)
+                        ' The item is gone, so nothing is chosen now.
+                        ME.ChosenIndex = -1
+                        ME.Save()
+                        ME.Refresh()
+                    END FUNCTION
+
+                    /// Chooses the item a row shows, as a click on the row does.
+                    ///
+                    /// - Parameter row: The row, from 0. A heading chooses nothing.
+                    FUNCTION ChooseRow(row AS INTEGER) AS VOID
+                        ME.Choose(theSidebar.ItemAtRow(row))
+                    END FUNCTION
+
+                    /// Chooses an item, and shows it.
+                    ///
+                    /// - Parameter index: The item's index, or -1 for none.
+                    FUNCTION Choose(index AS INTEGER) AS VOID
+                        ME.ChosenIndex = index
+                        IF NOT theItems.HasIndex(index) THEN ME.ChosenIndex = -1
+                        theDetail.Show(theItems, ME.ChosenIndex)
+                        ME.RefreshCommands()
+                    END FUNCTION
+
+                    /// The title was edited: the chosen item takes it, and the list says so.
+                    ///
+                    /// - Parameter title: What the title field holds now.
+                    FUNCTION TitleEdited(title AS STRING) AS VOID
+                        IF NOT theItems.HasIndex(ME.ChosenIndex) THEN RETURN
+                        theItems.SetTitle(ME.ChosenIndex, title)
+                        ME.Save()
+                        ' The fields are left alone: they hold what is being typed.
+                        theSidebar.Show(theItems, ME.ChosenIndex)
+                        theDetail.ShowHeading(theItems, ME.ChosenIndex)
+                    END FUNCTION
+
+                    /// The notes were edited: the chosen item takes them.
+                    ///
+                    /// - Parameter notes: What the notes field holds now.
+                    FUNCTION NotesEdited(notes AS STRING) AS VOID
+                        IF NOT theItems.HasIndex(ME.ChosenIndex) THEN RETURN
+                        theItems.SetNotes(ME.ChosenIndex, notes)
+                        ME.Save()
+                    END FUNCTION
+
+                    /// The search changed: the list shows only the items that match.
+                    FUNCTION Search() AS VOID
+                        theSidebar.Show(theItems, ME.ChosenIndex)
+                    END FUNCTION
+
+                    ' -------------------------------------------------------------- showing
+
+                    /// Brings the whole window up to date with the items.
+                    FUNCTION Refresh() AS VOID
+                        theSidebar.Show(theItems, ME.ChosenIndex)
+                        theDetail.Show(theItems, ME.ChosenIndex)
+                        ME.RefreshCommands()
+                    END FUNCTION
+
+                    /// Grays out each command that has nothing to do.
+                    FUNCTION RefreshCommands() AS VOID
+                        ME.NewItemButton.enabled(theItems.HasRoom())
+                        ME.FavoriteButton.enabled(theItems.HasIndex(ME.ChosenIndex))
+                        ME.DeleteButton.enabled(theItems.HasIndex(ME.ChosenIndex))
+                    END FUNCTION
+
+                    /// Writes the items to their file.
+                    FUNCTION Save() AS VOID
+                        WriteItems(ME.ItemsFile, theItems)
+                    END FUNCTION
+                END CLASS
+
+                ' ================================================================ handlers
+                '
+                ' What each control calls. Each one hands its command to the controller,
+                ' so a command is carried out in one place, whichever control asked.
+
+                /// New Item.
+                FUNCTION NewItemPressed() AS VOID
+                    theWindow.NewItem()
+                END FUNCTION
+
+                /// Favorite.
+                FUNCTION FavoritePressed() AS VOID
+                    theWindow.ToggleFavorite()
+                END FUNCTION
+
+                /// Delete.
+                FUNCTION DeletePressed() AS VOID
+                    theWindow.DeleteItem()
+                END FUNCTION
+
+                /// A row of the list was picked.
+                ///
+                /// - Parameter event: Which row: `event.Index`, from 0.
+                FUNCTION ItemPicked(event AS BASICAUIEvent) AS VOID
+                    theWindow.ChooseRow(event.Index)
+                END FUNCTION
+
+                /// The search field's text changed.
+                FUNCTION SearchChanged() AS VOID
+                    theWindow.Search()
+                END FUNCTION
+
+                /// The title field's text changed.
+                ///
+                /// - Parameter event: What the field holds now: `event.Text$`.
+                FUNCTION TitleChanged(event AS BASICAUIEvent) AS VOID
+                    theWindow.TitleEdited(event.Text$)
+                END FUNCTION
+
+                /// The notes field's text changed.
+                ///
+                /// - Parameter event: What the field holds now: `event.Text$`.
+                FUNCTION NotesChanged(event AS BASICAUIEvent) AS VOID
+                    theWindow.NotesEdited(event.Text$)
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                ' {{NAME}} — a master/detail app, in a window of its own made with ActiveUI.
+                '
+                ' Build it with basicc: make run builds it and runs it (make build only
+                ' builds it, into Build/). The program is a Mac application with a window
+                ' of its own, and it runs until the window closes.
+                '
+                ' A list of items on the left, Favorites first, and the chosen one on the
+                ' right: the shape of most document and record apps. Search narrows the
+                ' list; New Item makes one, Favorite moves the chosen one in or out of
+                ' Favorites, and Delete takes it off. Edit the title and notes on the right
+                ' and they are saved as you type, in items.txt, in
+                ' ~/Library/Application Support/{{NAME}}/ (or in $APP_DATA_DIR when that is
+                ' set), so they are there the next time it opens.
+                '
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas                                you are here: the parts, wired together
+                '   models/Item.bas                         one item, and searching it
+                '   models/ItemList.bas                     the items, and what can be done with them
+                '   models/ItemStore.bas                    items.txt, in and out
+                '   models/TabSeparated.bas                 the file's one-record-a-line format
+                '   views/ItemSidebarView.bas               the search field and the list
+                '   views/ItemDetailView.bas                the chosen item, or none
+                '   controllers/ItemsWindowController.bas   the window, its commands, every change
+                '   app/DataFolder.bas                      where the app keeps its data
+                '
+                ' The models know nothing of windows, the views never change an item, and
+                ' the controller is the one part that knows both. README.md says how the
+                ' comments are written.
+
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's TYPEs, CLASSes and FUNCTIONs into this
+                ' program, from a path relative to this file. Only this file's own
+                ' statements run; an imported file's are declarations.
+                IMPORT "models/Item.bas"
+                IMPORT "models/ItemList.bas"
+                IMPORT "models/ItemStore.bas"
+                IMPORT "models/TabSeparated.bas"
+                IMPORT "views/ItemSidebarView.bas"
+                IMPORT "views/ItemDetailView.bas"
+                IMPORT "controllers/ItemsWindowController.bas"
+                IMPORT "app/DataFolder.bas"
+
+                ' ---------------------------------------------------------------- the parts
+                '
+                ' Each part is a GLOBAL, declared here and made below, and the others reach
+                ' it by name. Three things in this BASIC make that the way: an imported
+                ' file's statements do not run (GLOBALs included), an object handed to a
+                ' FUNCTION is a copy (BASIC-35), and the interpreter BASICStudio runs cannot
+                ' yet call a method on an object kept in another object's field.
+
+                /// The items, read from items.txt.
+                GLOBAL theItems AS ItemList
+                /// The master pane: the search field and the list.
+                GLOBAL theSidebar AS ItemSidebarView
+                /// The detail pane: the chosen item, or none.
+                GLOBAL theDetail AS ItemDetailView
+                /// The window's controller, which every control's handler hands its command to.
+                GLOBAL theWindow AS ItemsWindowController
+
+                ' ------------------------------------------------------------------- start
+                itemsFile$ = DataFolder$("{{NAME}}") + "/items.txt"
+                theItems = ReadItems(itemsFile$)
+                theSidebar = NEW ItemSidebarView()
+                theDetail = NEW ItemDetailView()
+                theWindow = NEW ItemsWindowController()
+                theWindow.Start("{{NAME}}", itemsFile$)
+                theWindow.Run()
+
+                """#),
+                ("src/models/Item.bas", #"""
+                ' Item.bas — one item, and whether it matches a search.
+                '
+                ' Plain BASIC: nothing here knows there is a window, so the same item works
+                ' in a program with no screen at all.
+
+                /// One item: a title, its notes, and whether it is a favorite.
+                TYPE Item
+                    /// What the item is called; the sidebar lists it by this.
+                    Title AS STRING
+                    /// What is written about it.
+                    Notes AS STRING
+                    /// Whether it is in Favorites, at the top of the sidebar.
+                    IsFavorite AS BOOLEAN
+                END TYPE
+
+                /// The name the sidebar and the detail give an item.
+                ///
+                /// - Parameter entry: The item.
+                /// - Returns: Its title, or "Untitled" when it has none yet.
+                FUNCTION DisplayTitle$(entry AS Item) AS STRING
+                    IF entry.Title = "" THEN RETURN "Untitled"
+                    RETURN entry.Title
+                END FUNCTION
+
+                /// Whether an item matches what was typed in the search field.
+                ///
+                /// - Parameter entry: The item.
+                /// - Parameter query: What was typed; "" matches every item.
+                /// - Returns: TRUE when the title or the notes hold the query, whatever
+                ///   its case.
+                FUNCTION ItemMatches(entry AS Item, query AS STRING) AS BOOLEAN
+                    IF query = "" THEN RETURN TRUE
+                    LOCAL wanted$ = UpperCase$(query)
+                    IF INSTR(UpperCase$(entry.Title), wanted$) > 0 THEN RETURN TRUE
+                    IF INSTR(UpperCase$(entry.Notes), wanted$) > 0 THEN RETURN TRUE
+                    RETURN FALSE
+                END FUNCTION
+
+                /// A original in capitals, so a search can ignore case.
+                ///
+                /// This BASIC has no UCASE$ yet, so the letters a to z are turned into
+                /// capitals here, one at a time; every other character stays as it is.
+                ///
+                /// - Parameter original: The original.
+                /// - Returns: The same original with a to z in capitals.
+                FUNCTION UpperCase$(original AS STRING) AS STRING
+                    LOCAL result$ = ""
+                    LOCAL code = 0
                     LOCAL i = 0
-                    FOR i = 0 TO taskCount - 1
-                        taskList.add(task$(i))
+                    FOR i = 1 TO LEN(original)
+                        code = ASC(MID$(original, i, 1))
+                        ' a is 97 and z is 122; each capital is 32 before its letter.
+                        IF code >= 97 AND code <= 122 THEN code = code - 32
+                        result$ = result$ + CHR$(code)
                     NEXT i
+                    RETURN result$
                 END FUNCTION
+
+                """#),
+                ("src/models/ItemList.bas", #"""
+                ' ItemList.bas — the items, in the order they were made.
+                '
+                '     controller ──► Add / SetTitle / SetNotes / ToggleFavorite / Remove
+                '     views      ◄── Count, Items(index)
+                '
+                ' Like Item, it knows nothing of windows or files: the controller changes
+                ' it, the views read it, and ItemStore.bas reads and writes it.
+
+                /// The items, oldest first, and what can be done with them.
+                ///
+                /// An item is found by its index, from 0. This BASIC has no REDIM, so the
+                /// places are made once at their most (``Capacity``) and `Count` says how
+                /// many are real.
+                CLASS ItemList
+                    /// Every place there can be; the first `Count` hold items.
+                    PUBLIC Items(200) AS Item
+                    /// How many items there are.
+                    PUBLIC Count AS INTEGER
+
+                    /// How many items the list can hold: the size `Items` is made with.
+                    ///
+                    /// - Returns: 200.
+                    FUNCTION Capacity() AS INTEGER
+                        RETURN 200
+                    END FUNCTION
+
+                    /// Whether an index holds an item.
+                    ///
+                    /// - Parameter index: The index, from 0; -1 means none.
+                    /// - Returns: TRUE when there is an item at `index`.
+                    FUNCTION HasIndex(index AS INTEGER) AS BOOLEAN
+                        IF index >= 0 AND index < ME.Count THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+
+                    /// Whether there is room for one more item.
+                    ///
+                    /// - Returns: TRUE until every place holds an item.
+                    FUNCTION HasRoom() AS BOOLEAN
+                        IF ME.Count < ME.Capacity() THEN RETURN TRUE
+                        RETURN FALSE
+                    END FUNCTION
+
+                    /// Adds an item at the end.
+                    ///
+                    /// - Parameter title: Its title.
+                    /// - Parameter notes: Its notes.
+                    /// - Parameter isFavorite: Whether it is in Favorites.
+                    FUNCTION Add(title AS STRING, notes AS STRING, isFavorite AS BOOLEAN) AS VOID
+                        ' A full list keeps what it has; the New Item command is grayed out
+                        ' before this can happen.
+                        IF NOT ME.HasRoom() THEN RETURN
+                        ME.Items(ME.Count).Title = title
+                        ME.Items(ME.Count).Notes = notes
+                        ME.Items(ME.Count).IsFavorite = isFavorite
+                        ME.Count = ME.Count + 1
+                    END FUNCTION
+
+                    /// Gives an item a new title.
+                    ///
+                    /// - Parameter index: The item's index.
+                    /// - Parameter title: Its new title.
+                    FUNCTION SetTitle(index AS INTEGER, title AS STRING) AS VOID
+                        IF ME.HasIndex(index) THEN ME.Items(index).Title = title
+                    END FUNCTION
+
+                    /// Gives an item new notes.
+                    ///
+                    /// - Parameter index: The item's index.
+                    /// - Parameter notes: Its new notes.
+                    FUNCTION SetNotes(index AS INTEGER, notes AS STRING) AS VOID
+                        IF ME.HasIndex(index) THEN ME.Items(index).Notes = notes
+                    END FUNCTION
+
+                    /// Puts an item in Favorites, or takes it out.
+                    ///
+                    /// - Parameter index: The item's index.
+                    FUNCTION ToggleFavorite(index AS INTEGER) AS VOID
+                        IF NOT ME.HasIndex(index) THEN RETURN
+                        IF ME.Items(index).IsFavorite THEN
+                            ME.Items(index).IsFavorite = FALSE
+                        ELSE
+                            ME.Items(index).IsFavorite = TRUE
+                        END IF
+                    END FUNCTION
+
+                    /// Takes an item off the list; the ones after it move up a place.
+                    ///
+                    /// - Parameter index: The item's index.
+                    FUNCTION Remove(index AS INTEGER) AS VOID
+                        IF NOT ME.HasIndex(index) THEN RETURN
+                        LOCAL i = 0
+                        FOR i = index TO ME.Count - 2
+                            ME.Items(i) = ME.Items(i + 1)
+                        NEXT i
+                        ME.Count = ME.Count - 1
+                    END FUNCTION
+                END CLASS
+
+                """#),
+                ("src/models/ItemStore.bas", #"""
+                ' ItemStore.bas — the items between launches: items.txt, in and out.
+                '
+                '     ReadItems(path)          ──► an ItemList (three samples on a first run)
+                '     WriteItems(path, items)  ──► items.txt, replaced whole
+                '
+                ' One item a line, in TabSeparated.bas's format: `favorite` or `item`, the
+                ' title and the notes, split by tabs. The controller writes after every
+                ' change, so quitting never loses anything.
+
+                /// The items a file holds, or the samples a first launch starts with.
+                ///
+                /// - Parameter path: The file, such as `.../Application Support/MyApp/items.txt`.
+                /// - Returns: The items, in the file's order.
+                FUNCTION ReadItems(path AS STRING) AS ItemList
+                    LOCAL items AS ItemList
+                    items = NEW ItemList()
+
+                    ' No file yet: this is the first launch, so start with something to read.
+                    IF NOT File.Exists(path) THEN
+                        items.Add("Getting started", "A list on the left, the chosen item on the right. Edit the title and these notes; they are saved as you type.", TRUE)
+                        items.Add("The model", "models/Item.bas, ItemList.bas and ItemStore.bas: plain BASIC, and the file.", FALSE)
+                        items.Add("The views", "views/ItemSidebarView.bas and views/ItemDetailView.bas show; the controller decides.", FALSE)
+                        RETURN items
+                    END IF
+
+                    ' Each line is one item; a blank line (the last one) is none.
+                    LOCAL text$ = File.ReadText$(path)
+                    LOCAL start = 1
+                    LOCAL entry$ = ""
+                    LOCAL isFavorite AS BOOLEAN
+                    WHILE start <= LEN(text$)
+                        entry$ = LineAt$(text$, start)
+                        IF entry$ <> "" THEN
+                            ' A comparison is a number here, not a BOOLEAN, so the flag is
+                            ' set in two steps.
+                            isFavorite = FALSE
+                            IF FieldAt$(entry$, 0) = "favorite" THEN isFavorite = TRUE
+                            items.Add(FieldAt$(entry$, 1), FieldAt$(entry$, 2), isFavorite)
+                        END IF
+                        start = start + LEN(entry$) + 1
+                    WEND
+                    RETURN items
+                END FUNCTION
+
+                /// Writes every item to a file, replacing what it held.
+                ///
+                /// - Parameter path: The file.
+                /// - Parameter items: The items to keep.
+                FUNCTION WriteItems(path AS STRING, items AS ItemList) AS VOID
+                    LOCAL text$ = ""
+                    LOCAL kind$ = ""
+                    LOCAL index = 0
+                    ' One line an item: favorite or item, its title and its notes, escaped.
+                    FOR index = 0 TO items.Count - 1
+                        kind$ = "item"
+                        IF items.Items(index).IsFavorite THEN kind$ = "favorite"
+                        text$ = text$ + kind$ + CHR$(9) + EscapeField$(items.Items(index).Title) + CHR$(9) + EscapeField$(items.Items(index).Notes) + CHR$(10)
+                    NEXT index
+                    File.WriteText path, text$
+                END FUNCTION
+
+                """#),
+                ("src/models/TabSeparated.bas", #"""
+                ' TabSeparated.bas — the file format: one record a line, fields split by tabs.
+                '
+                '     favorite<TAB>Getting started<TAB>A list on the left…
+                '     item<TAB>The model<TAB>Ada\tor Grace
+                '
+                ' A tab, a new line or a backslash inside a field is written as \t, \n or
+                ' \\, so every record stays on one line and every field stays whole.
+
+                /// A field made safe to write between tabs, on one line.
+                ///
+                /// - Parameter original: The field as the app holds it.
+                /// - Returns: The same original with each backslash, tab and new line escaped.
+                FUNCTION EscapeField$(original AS STRING) AS STRING
+                    LOCAL result$ = ""
+                    LOCAL c$ = ""
+                    LOCAL i = 0
+                    ' One character at a time: the escapes are the only ones that change.
+                    FOR i = 1 TO LEN(original)
+                        c$ = MID$(original, i, 1)
+                        SELECT CASE c$
+                            CASE "\": result$ = result$ + "\\"
+                            CASE CHR$(9): result$ = result$ + "\t"
+                            CASE CHR$(10): result$ = result$ + "\n"
+                            CASE ELSE: result$ = result$ + c$
+                        END SELECT
+                    NEXT i
+                    RETURN result$
+                END FUNCTION
+
+                /// A field as it was before ``EscapeField$`` wrote it.
+                ///
+                /// - Parameter escaped: The field as the file holds it.
+                /// - Returns: The escaped with \t, \n and \\ turned back into a tab, a new line
+                ///   and a backslash.
+                FUNCTION UnescapeField$(escaped AS STRING) AS STRING
+                    LOCAL result$ = ""
+                    LOCAL c$ = ""
+                    LOCAL i = 1
+                    WHILE i <= LEN(escaped)
+                        c$ = MID$(escaped, i, 1)
+                        ' A backslash and the character after it are one escape.
+                        IF c$ = "\" AND i < LEN(escaped) THEN
+                            c$ = MID$(escaped, i + 1, 1)
+                            SELECT CASE c$
+                                CASE "t": result$ = result$ + CHR$(9)
+                                CASE "n": result$ = result$ + CHR$(10)
+                                CASE ELSE: result$ = result$ + c$
+                            END SELECT
+                            i = i + 2
+                        ELSE
+                            result$ = result$ + c$
+                            i = i + 1
+                        END IF
+                    WEND
+                    RETURN result$
+                END FUNCTION
+
+                /// One field of a record, unescaped.
+                ///
+                /// - Parameter entry: A line of the file, without its new line.
+                /// - Parameter index: Which field, from 0.
+                /// - Returns: The field, or "" when the record has fewer fields.
+                FUNCTION FieldAt$(entry AS STRING, index AS INTEGER) AS STRING
+                    LOCAL rest$ = entry
+                    LOCAL skipped = 0
+                    LOCAL tabAt = 0
+                    ' Drop a field and its tab until the one wanted is at the front.
+                    WHILE skipped < index
+                        tabAt = INSTR(rest$, CHR$(9))
+                        IF tabAt = 0 THEN RETURN ""
+                        rest$ = MID$(rest$, tabAt + 1)
+                        skipped = skipped + 1
+                    WEND
+                    ' Then keep it up to the next tab, if there is one.
+                    LOCAL endAt = INSTR(rest$, CHR$(9))
+                    IF endAt > 0 THEN rest$ = LEFT$(rest$, endAt - 1)
+                    RETURN UnescapeField$(rest$)
+                END FUNCTION
+
+                /// The line of a fileText that starts at a place, without its new line.
+                ///
+                /// - Parameter fileText: The whole file.
+                /// - Parameter start: Where the line starts, from 1.
+                /// - Returns: The line.
+                FUNCTION LineAt$(fileText AS STRING, start AS INTEGER) AS STRING
+                    LOCAL rest$ = MID$(fileText, start)
+                    LOCAL endAt = INSTR(rest$, CHR$(10))
+                    IF endAt = 0 THEN RETURN rest$
+                    RETURN LEFT$(rest$, endAt - 1)
+                END FUNCTION
+
+                """#),
+                ("src/views/ItemDetailView.bas", #"""
+                ' ItemDetailView.bas — the detail pane: the chosen item, or a note that
+                ' none is chosen.
+                '
+                '     ┌──────────────────────────────┐
+                '     │ Getting started              │  the title, as a heading
+                '     │ Favorite                     │  a caption
+                '     │ Title                        │
+                '     │ [Getting started           ] │  edits are saved as you type
+                '     │ Notes                        │
+                '     │ [A list on the left, …     ] │
+                '     └──────────────────────────────┘
+                '
+                ' With nothing chosen the heading says No Item Selected and the fields are
+                ' empty and grayed out. Swift draws the heading in its title font and the
+                ' notes in a text editor of many lines, and hides the fields when nothing
+                ' is chosen; BASIC's AUILabel sets text only, its AUIField is one line, and
+                ' a view cannot be hidden yet, so this is the nearest it comes.
+
+                /// The chosen item's heading, caption, title field and notes field.
+                CLASS ItemDetailView
+                    /// The heading: the item's title, or No Item Selected.
+                    PUBLIC HeadingLabel AS VARIANT
+                    /// The caption under it: Favorite, or what to do with nothing chosen.
+                    PUBLIC CaptionLabel AS VARIANT
+                    /// The title, to edit.
+                    PUBLIC TitleField AS VARIANT
+                    /// The notes, to edit.
+                    PUBLIC NotesField AS VARIANT
+
+                    /// Makes the labels and the fields, and puts them in a pane.
+                    ///
+                    /// - Parameter pane: The stack to add them to, top to bottom.
+                    FUNCTION Build(pane AS VARIANT) AS VOID
+                        ME.HeadingLabel = AUILabel("")
+                        ME.CaptionLabel = AUILabel("")
+                        ME.TitleField = AUIField("", "Title")
+                        ME.NotesField = AUIField("", "Notes")
+                        pane.add(ME.HeadingLabel)
+                        pane.add(ME.CaptionLabel)
+                        pane.add(AUILabel("Title"))
+                        pane.add(ME.TitleField)
+                        pane.add(AUILabel("Notes"))
+                        pane.add(ME.NotesField)
+                    END FUNCTION
+
+                    /// Shows an item, filling the fields from it; or, with none, the empty
+                    /// state.
+                    ///
+                    /// - Parameter items: The items.
+                    /// - Parameter chosen: The chosen item's index, or -1 for none.
+                    FUNCTION Show(items AS ItemList, chosen AS INTEGER) AS VOID
+                        IF NOT items.HasIndex(chosen) THEN
+                            ' The empty state: nothing to edit, so the fields are grayed out.
+                            ME.HeadingLabel.text("No Item Selected")
+                            ME.CaptionLabel.text("Choose an item in the list, or press New Item.")
+                            ME.TitleField.text("")
+                            ME.NotesField.text("")
+                            ME.TitleField.enabled(FALSE)
+                            ME.NotesField.enabled(FALSE)
+                            RETURN
+                        END IF
+                        ME.TitleField.enabled(TRUE)
+                        ME.NotesField.enabled(TRUE)
+                        ME.TitleField.text(items.Items(chosen).Title)
+                        ME.NotesField.text(items.Items(chosen).Notes)
+                        ME.ShowHeading(items, chosen)
+                    END FUNCTION
+
+                    /// Shows the heading and caption for an item, leaving the fields as
+                    /// they are: while the title is typed, the field is the truth.
+                    ///
+                    /// - Parameter items: The items.
+                    /// - Parameter chosen: The chosen item's index.
+                    FUNCTION ShowHeading(items AS ItemList, chosen AS INTEGER) AS VOID
+                        ME.HeadingLabel.text(DisplayTitle$(items.Items(chosen)))
+                        IF items.Items(chosen).IsFavorite THEN
+                            ME.CaptionLabel.text("Favorite")
+                        ELSE
+                            ME.CaptionLabel.text("Item")
+                        END IF
+                    END FUNCTION
+                END CLASS
+
+                """#),
+                ("src/views/ItemSidebarView.bas", #"""
+                ' ItemSidebarView.bas — the master pane: a search field over the list.
+                '
+                '     ┌──────────────────┐
+                '     │ Search           │  narrows the list as you type
+                '     ├──────────────────┤
+                '     │ FAVORITES        │  a heading row
+                '     │   ★ Getting st…  │
+                '     │ ITEMS            │
+                '     │   ▤ The model    │  every item that is not a favorite
+                '     │   ▤ The views    │
+                '     └──────────────────┘
+                '
+                ' Swift's master is an AUISidebarList with real Favorites and Items
+                ' sections and symbols. BASIC's ActiveUI classes have no sidebar list yet,
+                ' so an AUIList stands in: the headings are rows of their own, and ★ and ▤
+                ' in front of each title stand in for the symbols. The view keeps which
+                ' item each row shows, so a pick on a heading chooses nothing.
+
+                /// The search field, and the list of items in two sections.
+                CLASS ItemSidebarView
+                    /// The search field.
+                    PUBLIC SearchField AS VARIANT
+                    /// The list: headings and items.
+                    PUBLIC Rows AS VARIANT
+                    /// The item each row shows, by index; -1 for a heading.
+                    PUBLIC RowItem(210) AS INTEGER
+                    /// How many rows the list has.
+                    PUBLIC RowCount AS INTEGER
+
+                    /// Makes the search field and the list, and puts them in a pane.
+                    ///
+                    /// - Parameter pane: The stack to add them to, top to bottom.
+                    FUNCTION Build(pane AS VARIANT) AS VOID
+                        ME.SearchField = AUIField("", "Search")
+                        ME.Rows = AUIList()
+                        pane.add(ME.SearchField)
+                        pane.add(ME.Rows)
+                    END FUNCTION
+
+                    /// Lists the items that match the search, Favorites first, with one
+                    /// chosen.
+                    ///
+                    /// - Parameter items: The items.
+                    /// - Parameter chosen: The chosen item's index, or -1 for none.
+                    FUNCTION Show(items AS ItemList, chosen AS INTEGER) AS VOID
+                        LOCAL query$ = ME.Query$()
+                        ME.Rows.clear()
+                        ME.RowCount = 0
+                        ' Favorites first, then the rest, each under its heading.
+                        ME.ShowSection(items, query$, TRUE, "FAVORITES", "★ ")
+                        ME.ShowSection(items, query$, FALSE, "ITEMS", "▤ ")
+                        ' Filling the list drops its selection, so the chosen item's row is
+                        ' picked again. Picking in code reports nothing, so no handler runs.
+                        ME.Rows.select(ME.RowOf(chosen))
+                    END FUNCTION
+
+                    /// Adds one section's rows: its heading, then its items.
+                    ///
+                    /// A section with no items that match shows no heading either.
+                    ///
+                    /// - Parameter items: The items.
+                    /// - Parameter query: What the search field holds.
+                    /// - Parameter favorites: TRUE for the favorites, FALSE for the rest.
+                    /// - Parameter heading: The section's heading.
+                    /// - Parameter mark: What goes in front of each item's title.
+                    FUNCTION ShowSection(items AS ItemList, query AS STRING, favorites AS BOOLEAN, heading AS STRING, mark AS STRING) AS VOID
+                        LOCAL hasHeading AS BOOLEAN
+                        hasHeading = FALSE
+                        LOCAL index = 0
+                        FOR index = 0 TO items.Count - 1
+                            IF items.Items(index).IsFavorite = favorites AND ItemMatches(items.Items(index), query) THEN
+                                ' The heading goes in with the section's first item.
+                                IF NOT hasHeading THEN
+                                    ME.AddRow(heading, -1)
+                                    hasHeading = TRUE
+                                END IF
+                                ME.AddRow("  " + mark + DisplayTitle$(items.Items(index)), index)
+                            END IF
+                        NEXT index
+                    END FUNCTION
+
+                    /// Adds a row to the list, remembering which item it shows.
+                    ///
+                    /// - Parameter rowText: What the row says.
+                    /// - Parameter index: The item's index, or -1 for a heading.
+                    FUNCTION AddRow(rowText AS STRING, index AS INTEGER) AS VOID
+                        ME.Rows.add(rowText)
+                        ME.RowItem(ME.RowCount) = index
+                        ME.RowCount = ME.RowCount + 1
+                    END FUNCTION
+
+                    /// The item a row shows.
+                    ///
+                    /// - Parameter row: The row, from 0.
+                    /// - Returns: The item's index, or -1 for a heading or no row.
+                    FUNCTION ItemAtRow(row AS INTEGER) AS INTEGER
+                        IF row < 0 OR row >= ME.RowCount THEN RETURN -1
+                        RETURN ME.RowItem(row)
+                    END FUNCTION
+
+                    /// The row that shows an item.
+                    ///
+                    /// - Parameter index: The item's index.
+                    /// - Returns: Its row, or -1 when the search hides it or it is none.
+                    FUNCTION RowOf(index AS INTEGER) AS INTEGER
+                        IF index < 0 THEN RETURN -1
+                        LOCAL row = 0
+                        FOR row = 0 TO ME.RowCount - 1
+                            IF ME.RowItem(row) = index THEN RETURN row
+                        NEXT row
+                        RETURN -1
+                    END FUNCTION
+
+                    /// What the search field holds.
+                    ///
+                    /// - Returns: The text typed so far.
+                    FUNCTION Query$() AS STRING
+                        RETURN ME.SearchField.text$()
+                    END FUNCTION
+                END CLASS
 
                 """#),
             ]
@@ -1571,7 +4271,7 @@ enum BASICRecipeCatalog {
               "identifier": "basic.contacts",
               "name": "Contact Book",
               "language": "BASIC",
-              "summary": "A full-screen TUIKit contact book in six files: a model, JSON save and load, a window with a toolbar and menus, and an unsaved-changes dialog. A real program to learn from and build on.",
+              "summary": "A full-screen TUIKit contact book in seven files, in models, views and app: a model, JSON save and load in Application Support, a window with a toolbar and menus, and an unsaved-changes dialog. A real program to learn from and build on.",
               "icon": "person.crop.rectangle.stack",
               "folderExtension": "basproj",
               "openFile": "src/main.bas",
@@ -1619,27 +4319,43 @@ enum BASICRecipeCatalog {
                 ("README.md", #"""
                 # {{NAME}}
 
-                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
-                build it with `basicc`:
+                The Contact Book: a full-screen TUIKit application in BASIC that keeps an
+                address book in a JSON file. Open, Save and New Contact are on the toolbar
+                and in the File menu; the list on the left picks a contact and the form on
+                the right edits it; quitting with unsaved edits asks Save, Discard or Cancel.
+
+                Run it in a terminal, or build it with `basicc`:
 
                 ```sh
                 make        # build and run
                 make build  # just build, into Build/{{NAME}}
                 ```
 
-                The same source runs unchanged in the interpreter:
+                The book is kept in `contacts.json` in
+                `~/Library/Application Support/Contact Book/`, or in `$APP_DATA_DIR` when that
+                is set; the toolbar's field names another file to open or save.
 
-                ```sh
-                BASICShell src/main.bas
-                ```
+                | File | What it is |
+                |---|---|
+                | `src/main.bas` | The shared state, and the start. |
+                | `src/models/ContactModel.bas` | What a contact is, and the list of them. |
+                | `src/models/ContactStorage.bas` | The JSON file, in and out. |
+                | `src/views/ContactWindow.bas` | The window: toolbar, list, edit form. |
+                | `src/views/ContactDialogs.bas` | The dialogs, and the unsaved-changes gate. |
+                | `src/app/ContactApp.bas` | Theme, menu bar, status strip, start-up. |
+                | `src/app/DataFolder.bas` | Where the app keeps its data. |
 
-                `project.json` names the file the program starts with (`entry`); its
-                modules sit beside it in `src/`.
+                It is a copy of the demo `apps/contacts.basproj`, which is the original.
 
-                `basicc` builds from the BASICCompiler package in the BASICShell repo
-                (`swift build --package-path Code/BASICCompiler`), or installs with
-                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
-                point the Makefile at a build.
+                ## How the comments are written
+
+                Every `TYPE`, `RECORD`, field, `FUNCTION` and `GLOBAL` has a documentation
+                comment: `///` lines on the line just above it, read by Swift's rules
+                (BASIC's own, from `BASICDocumentation.swift`; `basiclint` checks them):
+                a one-line summary, then, after a `///` line of its own, any discussion,
+                then `- Parameter name:` for each parameter and `- Returns:` for what it
+                gives back. Comments inside a routine start with `'` and say what each step
+                does. Each file starts with a `'` comment saying what is in it.
 
                 """#),
                 ("project.json", #"""
@@ -1651,7 +4367,7 @@ enum BASICRecipeCatalog {
                 }
 
                 """#),
-                ("src/ContactApp.bas", #"""
+                ("src/app/ContactApp.bas", #"""
                 ' ContactApp.bas - the application: theme, menu bar, status strip, start-up.
                 '
                 ' A TUIKit program is three things put together: an application (the run
@@ -1663,9 +4379,21 @@ enum BASICRecipeCatalog {
                 ' The layout is OmegaCLIDE's, and it is worth copying: menus across the
                 ' top, desktop in the middle, one line of status along the bottom.
 
-                ' Builds everything and runs. Called from main.bas, and the only function
-                ' in this program that blocks.
+                /// Builds everything and runs.
+                ///
+                /// Called from main.bas, and the only function in this program that blocks.
+                /// The book lives in contacts.json in the app's data folder:
+                /// ~/Library/Application Support/Contact Book, or $APP_DATA_DIR when that
+                /// is set (see DataFolder.bas).
+                ///
+                /// - Returns: 0, once the program has quit.
                 FUNCTION RunContactBook() AS VARIANT
+                    ' Where the book lives, settled first: the toolbar's file field and the
+                    ' starting book both read CurrentPath$. An imported file's top-level
+                    ' statements never run, so this is set here rather than beside the
+                    ' GLOBAL. DataFolder$ makes the folder, so Save can write straight away.
+                    CurrentPath$ = DataFolder$("Contact Book") + "/contacts.json"
+
                     shell = TUIShell()
 
                     ' Esc quits from anywhere in a TUIKit shell. Left alone it stops the
@@ -1698,9 +4426,11 @@ enum BASICRecipeCatalog {
                     ' when it refreshes, so the model has to be true first.
                     LoadStartingBook()
 
+                    ' Show the window and fill it from the model.
                     app.present(BuildContactWindow())
                     RefreshEverything()
 
+                    ' The run loop: this line does not return until app.stop is called.
                     app.run(shell)
 
                     ' Anything printed while the app is up goes to a screen nobody can see -
@@ -1710,26 +4440,35 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
-                ' Opens the default file when there is one, and seeds samples when not.
-                '
-                ' A starter program that begins with an empty list and no file teaches
-                ' nothing about either. This way the first run shows three contacts, the
-                ' second run shows whatever was saved.
+                /// Opens the default file when there is one, and seeds samples when not.
+                ///
+                /// A starter program that begins with an empty list and no file teaches
+                /// nothing about either. This way the first run shows three contacts, the
+                /// second run shows whatever was saved. The default file is contacts.json
+                /// in the app's data folder, which RunContactBook puts in CurrentPath$.
+                ///
+                /// - Returns: How many contacts the book starts with.
                 FUNCTION LoadStartingBook() AS INTEGER
+                    ' A saved book wins over the samples.
                     IF FILEEXISTS(CurrentPath$) THEN
                         LoadContacts(CurrentPath$)
                         RETURN ContactCount
                     END IF
 
+                    ' No file yet: seed the samples, and say where Save will put them.
                     SeedSampleContacts()
                     LastMessage$ = "new book - Save writes " + CurrentPath$
                     RETURN ContactCount
                 END FUNCTION
 
-                ' The strip's labels take their colors from the theme by naming a role,
-                ' rather than by naming a color. Name a color and the strip stays that
-                ' color when the theme changes, which is how a themed program ends up
-                ' with one piece that does not match.
+                /// Styles the status strip's labels from the theme.
+                ///
+                /// The strip's labels take their colors from the theme by naming a role,
+                /// rather than by naming a color. Name a color and the strip stays that
+                /// color when the theme changes, which is how a themed program ends up
+                /// with one piece that does not match.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION StyleStatusStrip() AS INTEGER
                     statusTitle.style("header")
                     statusHint.style("headerplain")
@@ -1737,14 +4476,20 @@ enum BASICRecipeCatalog {
                 END FUNCTION
 
                 ' ------------------------------------------------------------ the menu bar
-                '
-                ' Every menu item names a handler function, and each one calls exactly the
-                ' function the matching toolbar button calls. The menu is a second door
-                ' into the same room, not a second implementation.
-                '
-                ' "&" marks the Alt- mnemonic: "&Open..." is Alt-O.
+
+                /// Builds the menu bar: File, Edit and Help.
+                ///
+                /// Every menu item names a handler function, and each one calls exactly the
+                /// function the matching toolbar button calls. The menu is a second door
+                /// into the same room, not a second implementation.
+                ///
+                /// "&" marks the Alt- mnemonic: "&Open..." is Alt-O.
+                ///
+                /// - Returns: The menu bar, for the shell to add.
                 FUNCTION BuildMenuBar() AS VARIANT
                     LOCAL bar = TUIMenu()
+
+                    ' Each bar.menu starts a menu; the items after it belong to it.
 
                     bar.menu("&File")
                     bar.item("&New Contact", "NewContactAction")
@@ -1770,45 +4515,632 @@ enum BASICRecipeCatalog {
                 ' ------------------------------------------------------------ the commands
                 '
                 ' The four File commands. Each one is short because the deciding is done
-                ' elsewhere: ContactDialogs.bas decides whether unsaved edits allow an
-                ' Open, ContactStorage.bas decides whether a path can be written.
+                ' elsewhere: views/ContactDialogs.bas decides whether unsaved edits allow
+                ' an Open, models/ContactStorage.bas decides whether a path can be written.
 
-                ' Open the file named in the toolbar - after asking about unsaved edits.
+                /// Open the file named in the toolbar - after asking about unsaved edits.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION FileOpen() AS VARIANT
                     ' ConfirmFirst does not open anything. It either runs the action now,
                     ' because there is nothing to lose, or puts up the Save / Discard /
                     ' Cancel dialog and runs it later, or never. Either way this function
-                    ' is finished; see PerformPendingAction in ContactDialogs.bas.
+                    ' is finished; see PerformPendingAction in views/ContactDialogs.bas.
                     ConfirmFirst("open")
                     RETURN 0
                 END FUNCTION
 
-                ' Save to the file that is open.
+                /// Save to the file that is open.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION FileSave() AS VARIANT
                     SaveContacts(CurrentPath$)
                     RefreshEverything()
                     RETURN 0
                 END FUNCTION
 
-                ' Save to whatever the toolbar field says, and open that file from now on.
-                '
-                ' Save As and Save are one function apart, and the difference is only which
-                ' path they take - which is why CurrentPath$ is a variable and not a
-                ' constant buried in the save code.
+                /// Save to whatever the toolbar field says, and open that file from now on.
+                ///
+                /// Save As and Save are one function apart, and the difference is only which
+                /// path they take - which is why CurrentPath$ is a variable and not a
+                /// constant buried in the save code.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION FileSaveAs() AS VARIANT
                     SaveContacts(pathField.value$())
                     RefreshEverything()
                     RETURN 0
                 END FUNCTION
 
-                ' Quit - after asking about unsaved edits.
+                /// Quit - after asking about unsaved edits.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION RequestQuit() AS VARIANT
                     ConfirmFirst("quit")
                     RETURN 0
                 END FUNCTION
 
                 """#),
-                ("src/ContactDialogs.bas", #"""
+                ("src/app/DataFolder.bas", #"""
+                ' DataFolder.bas — where the app keeps its data between launches.
+                '
+                '     DataFolder$("MyApp") ──► $APP_DATA_DIR, when it is set (tests set it)
+                '                         └──► ~/Library/Application Support/MyApp
+                '
+                ' The folder is made the first time it is asked for, so a caller can write
+                ' into it straight away.
+
+                /// The folder the app keeps its data in, made if it is not there yet.
+                ///
+                /// `APP_DATA_DIR`, when it is set, names the folder instead, so a test or a
+                /// second copy of the app can keep its data apart from yours.
+                ///
+                /// - Parameter appName: The app's name, which names its folder in
+                ///   Application Support.
+                /// - Returns: The folder's path, with no `/` at the end.
+                FUNCTION DataFolder$(appName AS STRING) AS STRING
+                    ' The override wins, so tests never touch the real Application Support.
+                    LOCAL folder$ = ENVIRON$("APP_DATA_DIR")
+                    IF folder$ = "" THEN folder$ = ENVIRON$("HOME") + "/Library/Application Support/" + appName
+
+                    ' File.Mkdir makes any missing folders on the way, as mkdir -p does.
+                    IF NOT File.Exists(folder$) THEN File.Mkdir folder$
+                    RETURN folder$
+                END FUNCTION
+
+                """#),
+                ("src/main.bas", #"""
+                #!/usr/bin/env BASICShell
+                ' Contact Book - a windowed BASIC program, in seven files.
+                '
+                '   basicshell basicPrograms/demos/apps/contacts.basproj/main.bas
+                '
+                ' WHAT IT DOES
+                '
+                ' Keeps an address book in a JSON file, contacts.json, in the app's own
+                ' folder in Application Support (~/Library/Application Support/Contact Book,
+                ' or $APP_DATA_DIR when that is set). Open and Save are on the toolbar and
+                ' in the File menu; the list on the left picks a contact, the form on the
+                ' right edits it, and quitting with unsaved edits asks Save, Discard or
+                ' Cancel before it goes.
+                '
+                ' WHAT IT IS FOR
+                '
+                ' This is a starter project, so it is also an argument about how to write
+                ' BASIC. The language got its reputation from programs that were one file,
+                ' one flat run of statements, and a GOTO every time a decision was made.
+                ' None of that is required, and none of it is here:
+                '
+                '   * No GOTO and no GOSUB. Every decision is IF/END IF or SELECT CASE,
+                '     and every piece of work is a FUNCTION with a name that says what it
+                '     does. You can read any one of them without reading the others.
+                '
+                '   * Seven files, not one. IMPORT brings them together, and each file is
+                '     about one thing, so "where does saving happen?" has an answer you can
+                '     point at rather than search for.
+                '
+                '   * The model does not know about the screen. models/ContactModel.bas
+                '     could be used by a program that prints a report and never opens a
+                '     window.
+                '
+                '   * State is named and shared on purpose, not by accident. Every GLOBAL
+                '     in the program is declared below, in one list, with a comment.
+                '
+                '   * Everything else is declared LOCAL, loop counters included. A name
+                '     that is not declared is shared with the whole program, so an
+                '     undeclared counter in one function silently overwrites a variable of
+                '     the same name in the function that called it. That is the oldest bug
+                '     in BASIC, and the fix is one word: LOCAL.
+                '
+                ' THE FILES, in the order worth reading them:
+                '
+                '   main.bas                   you are here - the shared state, and the start
+                '   models/ContactModel.bas    what a contact IS, and the list of them
+                '   models/ContactStorage.bas  the JSON file, in and out
+                '   views/ContactWindow.bas    the window: toolbar, list, edit form
+                '   app/ContactApp.bas         theme, menu bar, status strip, start-up
+                '   views/ContactDialogs.bas   the dialogs, and the unsaved-changes gate
+                '   app/DataFolder.bas         where the app keeps its data
+
+                ' ---------------------------------------------------------------- the files
+                '
+                ' IMPORT reads another file's FUNCTIONs and TYPEs into this program. Paths
+                ' are relative to this file, so the program runs from any directory.
+                '
+                ' The order does not matter to BASIC - a function may call one that is
+                ' imported further down - so these are listed in reading order instead.
+                IMPORT "models/ContactModel.bas"
+                IMPORT "models/ContactStorage.bas"
+                IMPORT "views/ContactWindow.bas"
+                IMPORT "app/ContactApp.bas"
+                IMPORT "views/ContactDialogs.bas"
+                IMPORT "app/DataFolder.bas"
+
+                ' ----------------------------------------------------------------- the state
+                '
+                ' Every GLOBAL the program has is HERE, and that is not a preference:
+                ' functions cross the IMPORT boundary but state does not, so a GLOBAL
+                ' declared inside an imported file cannot be seen by the file that imported
+                ' it. Shared state has to be declared in the entry file to be shared at all.
+                '
+                ' The list is short, and that is also on purpose. Anything only one
+                ' function needs is a LOCAL inside that function.
+
+                /// The highest row number the book has room for.
+                ///
+                /// The book. This BASIC has no REDIM, so the array is DIMmed once at its
+                /// largest and ContactCount says how much of it is real - the traditional
+                /// arrangement, and the reason every function that takes a row number checks
+                /// it against ContactCount first.
+                GLOBAL MaxContacts = 199
+                /// Every contact in the book, in list order; only the first ContactCount are real.
+                GLOBAL Contacts(199) AS Contact
+                /// How many rows of Contacts() hold a contact.
+                GLOBAL ContactCount = 0
+
+                /// Which contact the form is editing, or -1 for none.
+                ///
+                /// Held here rather than asked of the list, because a list that has just
+                /// been refilled has no selection yet and the form still has to know what
+                /// it is showing.
+                GLOBAL EditingRow = -1
+
+                /// Are there edits that are not in the file?
+                ///
+                /// Set by the model, displayed as the asterisk in the window title, and
+                /// asked about before quitting.
+                GLOBAL IsDirty = 0
+
+                /// The file the book came from, and the file Save writes back to.
+                ///
+                /// RunContactBook points it at contacts.json in the app's data folder
+                /// (see app/DataFolder.bas) before anything reads it; the value here is
+                /// only what it holds until then.
+                GLOBAL CurrentPath$ = "contacts.json"
+
+                /// What the status strip says: the last thing that happened, good or bad.
+                ///
+                /// Failures are reported here instead of stopping the program.
+                GLOBAL LastMessage$ = ""
+
+                /// What the unsaved-changes dialog is waiting to do - "quit", "open", or ""
+                /// for nothing.
+                ///
+                /// See views/ContactDialogs.bas.
+                GLOBAL PendingAction$ = ""
+
+                /// The application: the run loop.
+                ///
+                /// The application and its shell. TUIApp() is the run loop; everything the
+                /// program shows lives inside the shell or in a window in front of it.
+                GLOBAL app = TUIApp()
+                /// The shell: the backdrop that owns the menu row and the status row.
+                GLOBAL shell AS VARIANT
+
+                ' The controls the handlers reach for after the window is built. A handler
+                ' is a named function with no arguments, so the controls it touches have to
+                ' be findable by name - which is what these are.
+
+                /// The one window, which holds the toolbar, the list and the form.
+                GLOBAL mainWindow AS VARIANT
+                /// The list of contacts on the left of the window.
+                GLOBAL contactList AS VARIANT
+                /// The toolbar field that holds the file name Open and Save As use.
+                GLOBAL pathField AS VARIANT
+                /// The form's Name field.
+                GLOBAL fullNameField AS VARIANT
+                /// The form's Email field.
+                GLOBAL emailField AS VARIANT
+                /// The form's Phone field.
+                GLOBAL phoneField AS VARIANT
+                /// The form's Notes field.
+                GLOBAL notesField AS VARIANT
+                /// The left of the status strip: how many contacts there are.
+                GLOBAL statusTitle AS VARIANT
+                /// The middle of the status strip: the last thing that happened.
+                GLOBAL statusHint AS VARIANT
+
+                ' ----------------------------------------------------------------- the start
+                '
+                ' One call. Everything else is in app/ContactApp.bas, where it can be read
+                ' as one piece: find the data file, build the shell, dress it, load the
+                ' book, show the window, run.
+                RunContactBook()
+
+                """#),
+                ("src/models/ContactModel.bas", #"""
+                ' ContactModel.bas - what a contact IS, and the list of them.
+                '
+                ' There is not one window in this file, and that is the point. The model
+                ' knows names, addresses and a dirty flag; it does not know that a list
+                ' control exists. Everything here can be called from a program with no
+                ' screen at all, which is what makes it the part you can trust.
+                '
+                ' The rule this file follows, and the reason it is first in the tour:
+                ' decide what the data is before you decide what it looks like.
+
+                /// A single contact.
+                ///
+                /// JSON NAME gives each field the spelling it has in the file, so the BASIC
+                /// name and the file format can differ without a conversion step: FullName
+                /// is written as "name". A field with no JSON NAME is not written at all,
+                /// which is how you keep scratch state out of a saved file.
+                TYPE Contact
+                    /// The person's full name, written to the file as "name".
+                    FullName AS STRING JSON NAME "name" = ""
+                    /// The person's email address, written to the file as "email".
+                    Email AS STRING JSON NAME "email" = ""
+                    /// The person's phone number, written to the file as "phone".
+                    Phone AS STRING JSON NAME "phone" = ""
+                    /// Anything else worth remembering, written to the file as "notes".
+                    Notes AS STRING JSON NAME "notes" = ""
+                END TYPE
+
+                /// The whole file, as one value.
+                ///
+                /// A RECORD can hold a growable array of TYPEs - People(*) - and the JSON
+                /// reader fills it in from the file, so loading is one call rather than a
+                /// parsing loop. Version is here because a format that cannot say what it is
+                /// cannot be changed later without guessing.
+                RECORD ContactBook
+                    /// Which version of the file format this is, written as "version".
+                    Version AS INTEGER JSON NAME "version" = 1
+                    /// Every contact in the file, written as "people".
+                    People(*) AS Contact JSON NAME "people"
+                END RECORD
+
+                ' ---------------------------------------------------------------- the list
+                '
+                ' Contacts() and ContactCount are GLOBALs in main.bas. This BASIC has no
+                ' REDIM, so the array is DIMmed once at its largest and ContactCount says
+                ' how much of it is real - the classic BASIC arrangement, and the reason
+                ' every function here checks the bound before it writes.
+
+                /// Adds a contact and answers its row, or -1 when the book is full.
+                ///
+                /// Answering -1 rather than stopping is deliberate: a full book is something
+                /// the caller can tell the person about, not a reason to lose the window.
+                ///
+                /// - Parameter fullName: The new contact's full name.
+                /// - Parameter email: The new contact's email address.
+                /// - Parameter phone: The new contact's phone number.
+                /// - Parameter notes: The new contact's notes.
+                /// - Returns: The row the contact was added at, or -1 when the book is full.
+                FUNCTION AddContact(fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
+                    ' A full book is reported, not written past.
+                    IF ContactCount > MaxContacts THEN
+                        RETURN -1
+                    END IF
+
+                    ' The new contact goes in the first unused row, after the last real one.
+                    LOCAL row = ContactCount
+                    Contacts(row).FullName = fullName
+                    Contacts(row).Email = email
+                    Contacts(row).Phone = phone
+                    Contacts(row).Notes = notes
+                    ContactCount = ContactCount + 1
+                    IsDirty = 1
+                    RETURN row
+                END FUNCTION
+
+                /// Writes edited values back over one row. Answers 1 when it wrote.
+                ///
+                /// - Parameter row: The row to write over.
+                /// - Parameter fullName: The contact's full name.
+                /// - Parameter email: The contact's email address.
+                /// - Parameter phone: The contact's phone number.
+                /// - Parameter notes: The contact's notes.
+                /// - Returns: 1 when it wrote, 0 when there is no contact in that row.
+                FUNCTION UpdateContact(row AS INTEGER, fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
+                    IF NOT ContactExists(row) THEN
+                        RETURN 0
+                    END IF
+
+                    Contacts(row).FullName = fullName
+                    Contacts(row).Email = email
+                    Contacts(row).Phone = phone
+                    Contacts(row).Notes = notes
+                    IsDirty = 1
+                    RETURN 1
+                END FUNCTION
+
+                /// Removes one row, closing the gap behind it. Answers 1 when it removed.
+                ///
+                /// The loop copies each later contact down one place. A TYPE assigns whole:
+                /// one statement moves all four fields, so this is the same code it would be
+                /// for a book with forty fields per person.
+                ///
+                /// - Parameter row: The row to remove.
+                /// - Returns: 1 when it removed, 0 when there is no contact in that row.
+                FUNCTION RemoveContact(row AS INTEGER) AS INTEGER
+                    IF NOT ContactExists(row) THEN
+                        RETURN 0
+                    END IF
+
+                    ' Each contact after the removed one moves up a row; the last row is
+                    ' left behind as a copy, and the shorter count stops it being real.
+                    LOCAL later
+                    FOR later = row TO ContactCount - 2
+                        Contacts(later) = Contacts(later + 1)
+                    NEXT later
+
+                    ContactCount = ContactCount - 1
+                    IsDirty = 1
+                    RETURN 1
+                END FUNCTION
+
+                /// Is there a contact in this row? Asked by everything that takes a row.
+                ///
+                /// A list control answers -1 when nothing is selected, so "is this a real
+                /// row?" is a question every handler has to ask, and it should be spelled
+                /// one way in one place.
+                ///
+                /// - Parameter row: The row to ask about; -1 means nothing is selected.
+                /// - Returns: 1 when the row holds a contact, 0 when it does not.
+                FUNCTION ContactExists(row AS INTEGER) AS INTEGER
+                    ' Below the first row: nothing selected.
+                    IF row < 0 THEN
+                        RETURN 0
+                    END IF
+                    ' Past the last real row: left over, or never used.
+                    IF row >= ContactCount THEN
+                        RETURN 0
+                    END IF
+                    RETURN 1
+                END FUNCTION
+
+                /// Empties the book. Used by Open before it reads a file in.
+                ///
+                /// - Returns: Always 0.
+                FUNCTION ResetContacts() AS INTEGER
+                    ' No rows are real, none is being edited, and nothing is unsaved.
+                    ContactCount = 0
+                    EditingRow = -1
+                    IsDirty = 0
+                    RETURN 0
+                END FUNCTION
+
+                /// One row of the list, as the person reading it wants to see it.
+                ///
+                /// Presentation, but not a view: it makes a STRING, and a string is
+                /// something a list, a report or a PRINT can all take. That is the seam -
+                /// the model formats text, the window decides where text goes.
+                ///
+                /// - Parameter row: The row to describe.
+                /// - Returns: The name, with the email address after it in angle brackets
+                ///   when there is one, or "" when there is no contact in that row.
+                FUNCTION ContactRow$(row AS INTEGER) AS STRING
+                    IF NOT ContactExists(row) THEN
+                        RETURN ""
+                    END IF
+
+                    ' A contact with no name still needs something to click on.
+                    LOCAL shown$ = Contacts(row).FullName
+                    IF shown$ = "" THEN
+                        shown$ = "(no name)"
+                    END IF
+
+                    IF Contacts(row).Email <> "" THEN
+                        shown$ = shown$ + "  <" + Contacts(row).Email + ">"
+                    END IF
+                    RETURN shown$
+                END FUNCTION
+
+                /// Three contacts, so a first run has something to click on.
+                ///
+                /// Only called when there is no file to open. A starter project that opens
+                /// empty teaches nothing about the list, the form, or the dirty flag.
+                ///
+                /// - Returns: How many contacts the book holds afterward.
+                FUNCTION SeedSampleContacts() AS INTEGER
+                    AddContact("Ada Lovelace", "ada@example.com", "555-0100", "Wrote the first program.")
+                    AddContact("Grace Hopper", "grace@example.com", "555-0101", "Found the first bug.")
+                    AddContact("Katherine Johnson", "katherine@example.com", "555-0102", "Checked the computer's math by hand.")
+
+                    ' Sample data is not an edit: the book matches nothing on disk, but
+                    ' there is nothing on disk to match, and starting up with the quit
+                    ' dialog already armed would be a lie.
+                    IsDirty = 0
+                    RETURN ContactCount
+                END FUNCTION
+
+                /// A number as text, with no gap in front of it.
+                ///
+                /// STR$ leaves a space where a minus sign would go, so "have " + STR$(3)
+                /// reads "have  3". Every count in this program goes through here instead,
+                /// which is the sort of thing worth fixing once rather than remembering at
+                /// every call.
+                ///
+                /// - Parameter amount: The number to write out.
+                /// - Returns: The number as text, with no leading space.
+                FUNCTION Number$(amount AS INTEGER) AS STRING
+                    LOCAL text$ = STR$(amount)
+                    ' Drop the space STR$ keeps for a minus sign that is not there.
+                    IF LEFT$(text$, 1) = " " THEN
+                        RETURN MID$(text$, 2)
+                    END IF
+                    RETURN text$
+                END FUNCTION
+
+                """#),
+                ("src/models/ContactStorage.bas", #"""
+                ' ContactStorage.bas - the JSON file, in and out.
+                '
+                ' Two functions do the work, LoadContacts and SaveContacts, and both answer
+                ' 1 for success and 0 for failure rather than stopping the program. Between
+                ' them sits one rule worth stating out loud:
+                '
+                '   CHECK BEFORE YOU OPEN.
+                '
+                ' BASIC's only error trap is ON ERROR GOTO, and a trap is a poor fit for a
+                ' windowed program: the label it jumps to is somewhere else, and the window
+                ' it jumped out of is still on the screen. Every failure this program can
+                ' have is one it can ask about first - does the file exist, does the folder
+                ' exist - so it asks, reports in the status strip, and carries on. No GOTO,
+                ' and no run that ends in a stack of red text over the desktop.
+
+                /// The folder part of a path: everything before the last "/".
+                ///
+                /// Answers "." for a bare file name, because "the folder of contacts.json"
+                /// is the current directory and the caller should not have to special-case
+                /// it. MID$ walks backwards rather than using a search function, since the
+                /// last separator is the one that matters and INSTR finds the first.
+                ///
+                /// - Parameter path: The path to take the folder from.
+                /// - Returns: The folder, "/" for a file in the root folder, or "." for a
+                ///   bare file name.
+                FUNCTION FolderOf$(path AS STRING) AS STRING
+                    ' Start at the last character and step back to the first "/".
+                    LOCAL at = LEN(path)
+                    WHILE at > 0
+                        IF MID$(path, at, 1) = "/" THEN
+                            ' A leading "/" means the root folder, which is "/" and not "".
+                            IF at = 1 THEN
+                                RETURN "/"
+                            END IF
+                            RETURN LEFT$(path, at - 1)
+                        END IF
+                        at = at - 1
+                    WEND
+                    RETURN "."
+                END FUNCTION
+
+                /// Can this path be written to? Checks the name and the folder, not the file.
+                ///
+                /// The file itself is allowed not to exist - that is what Save As does. What
+                /// must exist is somewhere to put it. Says why not in LastMessage$.
+                ///
+                /// - Parameter path: The file to be written.
+                /// - Returns: 1 when it can be written, 0 when it cannot.
+                FUNCTION PathIsWritable(path AS STRING) AS INTEGER
+                    ' An empty name is the toolbar field left blank.
+                    IF path = "" THEN
+                        LastMessage$ = "no file name - type one in the toolbar"
+                        RETURN 0
+                    END IF
+
+                    ' The folder has to be there already; Save does not make one.
+                    LOCAL folder$ = FolderOf$(path)
+                    IF NOT FILEEXISTS(folder$) THEN
+                        LastMessage$ = "no folder called " + folder$
+                        RETURN 0
+                    END IF
+                    RETURN 1
+                END FUNCTION
+
+                /// The book as one value, ready for the JSON writer.
+                ///
+                /// People(*) is a growable array and Contacts() is a fixed one with a count,
+                /// so the two cannot be handed straight across: staging is DIMmed to exactly
+                /// the contacts that are real and assigned whole. DIM takes an expression,
+                /// which is what makes "exactly this many" possible.
+                ///
+                /// - Returns: A ContactBook holding every real contact.
+                FUNCTION BookSnapshot() AS VARIANT
+                    LOCAL book AS ContactBook
+                    book.Version = 1
+
+                    IF ContactCount = 0 THEN
+                        ' An empty book writes {"version":1} and reads back as no contacts,
+                        ' which is the right answer for a file someone emptied on purpose.
+                        RETURN book
+                    END IF
+
+                    ' Copy the real rows, and only those, into an array of exactly that size.
+                    DIM staging(ContactCount - 1) AS Contact
+                    LOCAL row
+                    FOR row = 0 TO ContactCount - 1
+                        staging(row) = Contacts(row)
+                    NEXT row
+
+                    book.People = staging
+                    RETURN book
+                END FUNCTION
+
+                /// Writes the book to a JSON file. Answers 1 when it wrote.
+                ///
+                /// The file becomes CurrentPath$, the book is no longer dirty, and
+                /// LastMessage$ says what was saved, or why it was not.
+                ///
+                /// - Parameter path: The file to write.
+                /// - Returns: 1 when it wrote, 0 when the path cannot be written.
+                FUNCTION SaveContacts(path AS STRING) AS INTEGER
+                    ' Ask first, so a bad path is a message rather than a runtime error.
+                    IF NOT PathIsWritable(path) THEN
+                        RETURN 0
+                    END IF
+
+                    LOCAL book AS ContactBook
+                    book = BookSnapshot()
+
+                    ' File(name, access, type, requireNew) and writeJson(value, pretty).
+                    ' Pretty is on because a contact book is a file a person might open in
+                    ' an editor, and a format nobody can read is a format nobody checks.
+                    LOCAL writer = File()
+                    writer.open(path, WRITE, JSON, false)
+                    writer.writeJson(book, true)
+                    writer.close
+
+                    ' The file just written is the one the book now matches.
+                    CurrentPath$ = path
+                    IsDirty = 0
+                    LastMessage$ = "saved " + Number$(ContactCount) + " contacts to " + path
+                    RETURN 1
+                END FUNCTION
+
+                /// Reads a JSON file into the book, replacing what was there.
+                ///
+                /// The caller is responsible for asking about unsaved edits FIRST - see
+                /// views/ContactDialogs.bas. This function is the part that has no opinion.
+                ///
+                /// - Parameter path: The file to read.
+                /// - Returns: 1 when it read the file, 0 when there is no file to read.
+                FUNCTION LoadContacts(path AS STRING) AS INTEGER
+                    ' Check the name and the file before opening anything.
+                    IF path = "" THEN
+                        LastMessage$ = "no file name - type one in the toolbar"
+                        RETURN 0
+                    END IF
+
+                    IF NOT FILEEXISTS(path) THEN
+                        LastMessage$ = "no file called " + path
+                        RETURN 0
+                    END IF
+
+                    ' The JSON reader fills the whole ContactBook in one call.
+                    LOCAL reader = File(path, READ, JSON, false)
+                    LOCAL book AS ContactBook
+                    book = reader.json()
+                    reader.close
+
+                    ' Nothing is disturbed until the file has been read, so a file that
+                    ' turns out to be unreadable leaves the book you already had.
+                    ResetContacts()
+
+                    LOCAL loaded = LEN(book.People)
+                    IF loaded > MaxContacts + 1 THEN
+                        ' More contacts than the array holds: take what fits and say so,
+                        ' rather than writing past the end.
+                        LastMessage$ = "file holds " + Number$(loaded) + " contacts; reading the first " + Number$(MaxContacts + 1)
+                        loaded = MaxContacts + 1
+                    ELSE
+                        LastMessage$ = "opened " + path
+                    END IF
+
+                    ' Copy the file's contacts into the book's fixed array.
+                    LOCAL row
+                    FOR row = 0 TO loaded - 1
+                        Contacts(row) = book.People(row)
+                    NEXT row
+                    ContactCount = loaded
+
+                    CurrentPath$ = path
+                    IsDirty = 0
+                    RETURN 1
+                END FUNCTION
+
+                """#),
+                ("src/views/ContactDialogs.bas", #"""
                 ' ContactDialogs.bas - the dialogs, and the unsaved-changes gate.
                 '
                 ' The interesting one is the gate. Quitting and opening a different file
@@ -1829,10 +5161,13 @@ enum BASICRecipeCatalog {
                 ' out - and adding a fifth command that discards edits means adding one
                 ' CASE below, not another dialog.
 
-                ' Runs an action, or asks about unsaved edits and runs it afterwards.
-                '
-                ' action$ is a name this file understands: "quit" or "open". Anything that
-                ' can lose edits should come through here.
+                /// Runs an action, or asks about unsaved edits and runs it afterwards.
+                ///
+                /// action$ is a name this file understands: "quit" or "open". Anything that
+                /// can lose edits should come through here.
+                ///
+                /// - Parameter action$: The action to run: "quit" or "open".
+                /// - Returns: 1 when it ran the action now, 0 when it put the dialog up.
                 FUNCTION ConfirmFirst(action$ AS STRING) AS INTEGER
                     IF NOT IsDirty THEN
                         ' Nothing to lose: do it now, and never put up a dialog that has
@@ -1843,6 +5178,7 @@ enum BASICRecipeCatalog {
                         RETURN 1
                     END IF
 
+                    ' Remember the action for whichever button is pressed, then ask.
                     PendingAction$ = action$
 
                     LOCAL ask = TUIDialog("Unsaved Changes")
@@ -1859,6 +5195,9 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
+                /// The dialog's Save button: saves, then does the remembered action.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION UnsavedSave() AS VARIANT
                     IF NOT SaveContacts(CurrentPath$) THEN
                         ' The save failed and said why in LastMessage$. The remembered
@@ -1869,10 +5208,14 @@ enum BASICRecipeCatalog {
                         RETURN 0
                     END IF
 
+                    ' Saved: the edits are safe, so the remembered action can go ahead.
                     PerformPendingAction()
                     RETURN 0
                 END FUNCTION
 
+                /// The dialog's Discard button: does the remembered action, losing the edits.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION UnsavedDiscard() AS VARIANT
                     ' Discarding is only a decision about the edits; the action itself is
                     ' the one that was already asked for.
@@ -1881,19 +5224,26 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
+                /// The dialog's Cancel button: forgets the remembered action.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION UnsavedCancel() AS VARIANT
+                    ' Nothing is saved, nothing is lost, and the status line says so.
                     PendingAction$ = ""
                     LastMessage$ = "canceled - nothing was saved or lost"
                     RefreshEverything()
                     RETURN 0
                 END FUNCTION
 
-                ' Carries out whatever was waiting on the dialog, and forgets it.
-                '
-                ' SELECT CASE rather than a chain of IFs: one statement says "these are all
-                ' the things that can be waiting", and an unknown name falls into CASE ELSE
-                ' instead of quietly doing nothing.
+                /// Carries out whatever was waiting on the dialog, and forgets it.
+                ///
+                /// SELECT CASE rather than a chain of IFs: one statement says "these are all
+                /// the things that can be waiting", and an unknown name falls into CASE ELSE
+                /// instead of quietly doing nothing.
+                ///
+                /// - Returns: 1 when an action was carried out, 0 when nothing was waiting.
                 FUNCTION PerformPendingAction() AS INTEGER
+                    ' Forget the action before doing it, so it can never run twice.
                     LOCAL action$ = PendingAction$
                     PendingAction$ = ""
 
@@ -1916,14 +5266,20 @@ enum BASICRecipeCatalog {
 
                 ' ------------------------------------------------------------------ About
 
+                /// Puts up the About dialog.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ShowAbout() AS VARIANT
                     LOCAL about = TUIDialog("About Contact Book")
-                    about.message("A contact book in BASIC, on TUIKit." + CHR$(10) + CHR$(10) + "Contacts are held in a JSON file you can open in any editor. Six source files, no GOTO, and every handler is a named FUNCTION." + CHR$(10) + CHR$(10) + "Reading order: main.bas, ContactModel.bas, ContactStorage.bas, ContactWindow.bas, ContactApp.bas, ContactDialogs.bas.")
+                    about.message("A contact book in BASIC, on TUIKit." + CHR$(10) + CHR$(10) + "Contacts are held in a JSON file you can open in any editor. Seven source files in models, views and app, no GOTO, and every handler is a named FUNCTION." + CHR$(10) + CHR$(10) + "Reading order: main.bas, models/ContactModel.bas, models/ContactStorage.bas, views/ContactWindow.bas, app/ContactApp.bas, views/ContactDialogs.bas, app/DataFolder.bas.")
                     about.addbutton("Close", "AboutClosed")
                     app.show(about)
                     RETURN 0
                 END FUNCTION
 
+                /// The About dialog's Close button.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION AboutClosed() AS VARIANT
                     ' A dialog button needs a handler even when there is nothing to do:
                     ' without one the button still dismisses, but naming the function is
@@ -1932,327 +5288,7 @@ enum BASICRecipeCatalog {
                 END FUNCTION
 
                 """#),
-                ("src/ContactModel.bas", #"""
-                ' ContactModel.bas - what a contact IS, and the list of them.
-                '
-                ' There is not one window in this file, and that is the point. The model
-                ' knows names, addresses and a dirty flag; it does not know that a list
-                ' control exists. Everything here can be called from a program with no
-                ' screen at all, which is what makes it the part you can trust.
-                '
-                ' The rule this file follows, and the reason it is first in the tour:
-                ' decide what the data is before you decide what it looks like.
-
-                ' A single contact.
-                '
-                ' JSON NAME gives each field the spelling it has in the file, so the BASIC
-                ' name and the file format can differ without a conversion step: FullName
-                ' is written as "name". A field with no JSON NAME is not written at all,
-                ' which is how you keep scratch state out of a saved file.
-                TYPE Contact
-                    FullName AS STRING JSON NAME "name" = ""
-                    Email AS STRING JSON NAME "email" = ""
-                    Phone AS STRING JSON NAME "phone" = ""
-                    Notes AS STRING JSON NAME "notes" = ""
-                END TYPE
-
-                ' The whole file, as one value.
-                '
-                ' A RECORD can hold a growable array of TYPEs - People(*) - and the JSON
-                ' reader fills it in from the file, so loading is one call rather than a
-                ' parsing loop. Version is here because a format that cannot say what it is
-                ' cannot be changed later without guessing.
-                RECORD ContactBook
-                    Version AS INTEGER JSON NAME "version" = 1
-                    People(*) AS Contact JSON NAME "people"
-                END RECORD
-
-                ' ---------------------------------------------------------------- the list
-                '
-                ' Contacts() and ContactCount are GLOBALs in main.bas. This BASIC has no
-                ' REDIM, so the array is DIMmed once at its largest and ContactCount says
-                ' how much of it is real - the classic BASIC arrangement, and the reason
-                ' every function here checks the bound before it writes.
-
-                ' Adds a contact and answers its row, or -1 when the book is full.
-                '
-                ' Answering -1 rather than stopping is deliberate: a full book is something
-                ' the caller can tell the person about, not a reason to lose the window.
-                FUNCTION AddContact(fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
-                    IF ContactCount > MaxContacts THEN
-                        RETURN -1
-                    END IF
-
-                    LOCAL row = ContactCount
-                    Contacts(row).FullName = fullName
-                    Contacts(row).Email = email
-                    Contacts(row).Phone = phone
-                    Contacts(row).Notes = notes
-                    ContactCount = ContactCount + 1
-                    IsDirty = 1
-                    RETURN row
-                END FUNCTION
-
-                ' Writes edited values back over one row. Answers 1 when it wrote.
-                FUNCTION UpdateContact(row AS INTEGER, fullName AS STRING, email AS STRING, phone AS STRING, notes AS STRING) AS INTEGER
-                    IF NOT ContactExists(row) THEN
-                        RETURN 0
-                    END IF
-
-                    Contacts(row).FullName = fullName
-                    Contacts(row).Email = email
-                    Contacts(row).Phone = phone
-                    Contacts(row).Notes = notes
-                    IsDirty = 1
-                    RETURN 1
-                END FUNCTION
-
-                ' Removes one row, closing the gap behind it. Answers 1 when it removed.
-                '
-                ' The loop copies each later contact down one place. A TYPE assigns whole:
-                ' one statement moves all four fields, so this is the same code it would be
-                ' for a book with forty fields per person.
-                FUNCTION RemoveContact(row AS INTEGER) AS INTEGER
-                    IF NOT ContactExists(row) THEN
-                        RETURN 0
-                    END IF
-
-                    LOCAL later
-                    FOR later = row TO ContactCount - 2
-                        Contacts(later) = Contacts(later + 1)
-                    NEXT later
-
-                    ContactCount = ContactCount - 1
-                    IsDirty = 1
-                    RETURN 1
-                END FUNCTION
-
-                ' Is there a contact in this row? Asked by everything that takes a row.
-                '
-                ' A list control answers -1 when nothing is selected, so "is this a real
-                ' row?" is a question every handler has to ask, and it should be spelled
-                ' one way in one place.
-                FUNCTION ContactExists(row AS INTEGER) AS INTEGER
-                    IF row < 0 THEN
-                        RETURN 0
-                    END IF
-                    IF row >= ContactCount THEN
-                        RETURN 0
-                    END IF
-                    RETURN 1
-                END FUNCTION
-
-                ' Empties the book. Used by Open before it reads a file in.
-                FUNCTION ResetContacts() AS INTEGER
-                    ContactCount = 0
-                    EditingRow = -1
-                    IsDirty = 0
-                    RETURN 0
-                END FUNCTION
-
-                ' One row of the list, as the person reading it wants to see it.
-                '
-                ' Presentation, but not a view: it makes a STRING, and a string is
-                ' something a list, a report or a PRINT can all take. That is the seam -
-                ' the model formats text, the window decides where text goes.
-                FUNCTION ContactRow$(row AS INTEGER) AS STRING
-                    IF NOT ContactExists(row) THEN
-                        RETURN ""
-                    END IF
-
-                    LOCAL shown$ = Contacts(row).FullName
-                    IF shown$ = "" THEN
-                        shown$ = "(no name)"
-                    END IF
-
-                    IF Contacts(row).Email <> "" THEN
-                        shown$ = shown$ + "  <" + Contacts(row).Email + ">"
-                    END IF
-                    RETURN shown$
-                END FUNCTION
-
-                ' Three contacts, so a first run has something to click on.
-                '
-                ' Only called when there is no file to open. A starter project that opens
-                ' empty teaches nothing about the list, the form, or the dirty flag.
-                FUNCTION SeedSampleContacts() AS INTEGER
-                    AddContact("Ada Lovelace", "ada@example.com", "555-0100", "Wrote the first program.")
-                    AddContact("Grace Hopper", "grace@example.com", "555-0101", "Found the first bug.")
-                    AddContact("Katherine Johnson", "katherine@example.com", "555-0102", "Checked the computer's math by hand.")
-
-                    ' Sample data is not an edit: the book matches nothing on disk, but
-                    ' there is nothing on disk to match, and starting up with the quit
-                    ' dialog already armed would be a lie.
-                    IsDirty = 0
-                    RETURN ContactCount
-                END FUNCTION
-
-                ' A number as text, with no gap in front of it.
-                '
-                ' STR$ leaves a space where a minus sign would go, so "have " + STR$(3)
-                ' reads "have  3". Every count in this program goes through here instead,
-                ' which is the sort of thing worth fixing once rather than remembering at
-                ' every call.
-                FUNCTION Number$(amount AS INTEGER) AS STRING
-                    LOCAL text$ = STR$(amount)
-                    IF LEFT$(text$, 1) = " " THEN
-                        RETURN MID$(text$, 2)
-                    END IF
-                    RETURN text$
-                END FUNCTION
-
-                """#),
-                ("src/ContactStorage.bas", #"""
-                ' ContactStorage.bas - the JSON file, in and out.
-                '
-                ' Two functions do the work, LoadContacts and SaveContacts, and both answer
-                ' 1 for success and 0 for failure rather than stopping the program. Between
-                ' them sits one rule worth stating out loud:
-                '
-                '   CHECK BEFORE YOU OPEN.
-                '
-                ' BASIC's only error trap is ON ERROR GOTO, and a trap is a poor fit for a
-                ' windowed program: the label it jumps to is somewhere else, and the window
-                ' it jumped out of is still on the screen. Every failure this program can
-                ' have is one it can ask about first - does the file exist, does the folder
-                ' exist - so it asks, reports in the status strip, and carries on. No GOTO,
-                ' and no run that ends in a stack of red text over the desktop.
-
-                ' The folder part of a path: everything before the last "/".
-                '
-                ' Answers "." for a bare file name, because "the folder of contacts.json"
-                ' is the current directory and the caller should not have to special-case
-                ' it. MID$ walks backwards rather than using a search function, since the
-                ' last separator is the one that matters and INSTR finds the first.
-                FUNCTION FolderOf$(path AS STRING) AS STRING
-                    LOCAL at = LEN(path)
-                    WHILE at > 0
-                        IF MID$(path, at, 1) = "/" THEN
-                            ' A leading "/" means the root folder, which is "/" and not "".
-                            IF at = 1 THEN
-                                RETURN "/"
-                            END IF
-                            RETURN LEFT$(path, at - 1)
-                        END IF
-                        at = at - 1
-                    WEND
-                    RETURN "."
-                END FUNCTION
-
-                ' Can this path be written to? Checks the name and the folder, not the file.
-                '
-                ' The file itself is allowed not to exist - that is what Save As does. What
-                ' must exist is somewhere to put it.
-                FUNCTION PathIsWritable(path AS STRING) AS INTEGER
-                    IF path = "" THEN
-                        LastMessage$ = "no file name - type one in the toolbar"
-                        RETURN 0
-                    END IF
-
-                    LOCAL folder$ = FolderOf$(path)
-                    IF NOT FILEEXISTS(folder$) THEN
-                        LastMessage$ = "no folder called " + folder$
-                        RETURN 0
-                    END IF
-                    RETURN 1
-                END FUNCTION
-
-                ' The book as one value, ready for the JSON writer.
-                '
-                ' People(*) is a growable array and Contacts() is a fixed one with a count,
-                ' so the two cannot be handed straight across: staging is DIMmed to exactly
-                ' the contacts that are real and assigned whole. DIM takes an expression,
-                ' which is what makes "exactly this many" possible.
-                FUNCTION BookSnapshot() AS VARIANT
-                    LOCAL book AS ContactBook
-                    book.Version = 1
-
-                    IF ContactCount = 0 THEN
-                        ' An empty book writes {"version":1} and reads back as no contacts,
-                        ' which is the right answer for a file someone emptied on purpose.
-                        RETURN book
-                    END IF
-
-                    DIM staging(ContactCount - 1) AS Contact
-                    LOCAL row
-                    FOR row = 0 TO ContactCount - 1
-                        staging(row) = Contacts(row)
-                    NEXT row
-
-                    book.People = staging
-                    RETURN book
-                END FUNCTION
-
-                ' Writes the book to a JSON file. Answers 1 when it wrote.
-                FUNCTION SaveContacts(path AS STRING) AS INTEGER
-                    IF NOT PathIsWritable(path) THEN
-                        RETURN 0
-                    END IF
-
-                    LOCAL book AS ContactBook
-                    book = BookSnapshot()
-
-                    ' File(name, access, type, requireNew) and writeJson(value, pretty).
-                    ' Pretty is on because a contact book is a file a person might open in
-                    ' an editor, and a format nobody can read is a format nobody checks.
-                    LOCAL writer = File()
-                    writer.open(path, WRITE, JSON, false)
-                    writer.writeJson(book, true)
-                    writer.close
-
-                    CurrentPath$ = path
-                    IsDirty = 0
-                    LastMessage$ = "saved " + Number$(ContactCount) + " contacts to " + path
-                    RETURN 1
-                END FUNCTION
-
-                ' Reads a JSON file into the book, replacing what was there.
-                '
-                ' The caller is responsible for asking about unsaved edits FIRST - see
-                ' ContactDialogs.bas. This function is the part that has no opinion.
-                FUNCTION LoadContacts(path AS STRING) AS INTEGER
-                    IF path = "" THEN
-                        LastMessage$ = "no file name - type one in the toolbar"
-                        RETURN 0
-                    END IF
-
-                    IF NOT FILEEXISTS(path) THEN
-                        LastMessage$ = "no file called " + path
-                        RETURN 0
-                    END IF
-
-                    LOCAL reader = File(path, READ, JSON, false)
-                    LOCAL book AS ContactBook
-                    book = reader.json()
-                    reader.close
-
-                    ' Nothing is disturbed until the file has been read, so a file that
-                    ' turns out to be unreadable leaves the book you already had.
-                    ResetContacts()
-
-                    LOCAL loaded = LEN(book.People)
-                    IF loaded > MaxContacts + 1 THEN
-                        ' More contacts than the array holds: take what fits and say so,
-                        ' rather than writing past the end.
-                        LastMessage$ = "file holds " + Number$(loaded) + " contacts; reading the first " + Number$(MaxContacts + 1)
-                        loaded = MaxContacts + 1
-                    ELSE
-                        LastMessage$ = "opened " + path
-                    END IF
-
-                    LOCAL row
-                    FOR row = 0 TO loaded - 1
-                        Contacts(row) = book.People(row)
-                    NEXT row
-                    ContactCount = loaded
-
-                    CurrentPath$ = path
-                    IsDirty = 0
-                    RETURN 1
-                END FUNCTION
-
-                """#),
-                ("src/ContactWindow.bas", #"""
+                ("src/views/ContactWindow.bas", #"""
                 ' ContactWindow.bas - the window: toolbar, list, and edit form.
                 '
                 ' The window is built once, in BuildContactWindow, and then never rebuilt.
@@ -2266,9 +5302,14 @@ enum BASICRecipeCatalog {
                 ' Handlers are named FUNCTIONs: every "onclick" below names a function
                 ' further down this file.
 
-                ' Builds the one window and answers it, for the caller to present.
+                /// Builds the one window and answers it, for the caller to present.
+                ///
+                /// - Returns: The window, with its toolbar, list and form in place.
                 FUNCTION BuildContactWindow() AS VARIANT
                     mainWindow = TUIFloatWindow("Contacts")
+
+                    ' Where it opens, the smallest it may be made, and the inset it keeps
+                    ' from the edges of the shell when maximized.
                     mainWindow.frame(2, 1, 76, 22)
                     mainWindow.minsize(54, 14)
                     mainWindow.maximizeinsets(1, 1)
@@ -2288,14 +5329,18 @@ enum BASICRecipeCatalog {
                 END FUNCTION
 
                 ' ------------------------------------------------------------- the toolbar
-                '
-                ' Open, Save and New Contact - the three things this program does often -
-                ' with the file name beside them in a field that stretches to the window.
-                '
-                ' The field is not decoration. This binding's dialogs hold a message and
-                ' buttons but no text entry, so the toolbar is where a file name is typed:
-                ' the same arrangement as a browser's address bar, which is where the
-                ' pattern comes from.
+
+                /// Builds the toolbar and puts it on the window.
+                ///
+                /// Open, Save and New Contact - the three things this program does often -
+                /// with the file name beside them in a field that stretches to the window.
+                ///
+                /// The field is not decoration. This binding's dialogs hold a message and
+                /// buttons but no text entry, so the toolbar is where a file name is typed:
+                /// the same arrangement as a browser's address bar, which is where the
+                /// pattern comes from.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION InstallContactToolbar() AS VARIANT
                     LOCAL bar = TUIToolbar()
 
@@ -2303,9 +5348,11 @@ enum BASICRecipeCatalog {
                     ' guessing game for anyone who did not write it.
                     bar.displaymode("both")
 
+                    ' The file field starts out showing the file the book belongs to.
                     pathField = TUIField()
                     pathField.text(CurrentPath$)
 
+                    ' The three buttons, then the field, which takes the rest of the width.
                     bar.additem("Open", "^", "ToolbarOpen")
                     bar.additem("Save", "*", "ToolbarSave")
                     bar.additem("New Contact", "+", "ToolbarNewContact")
@@ -2318,7 +5365,11 @@ enum BASICRecipeCatalog {
 
                 ' --------------------------------------------------------------- the list
 
+                /// Builds the list of contacts, in a panel of its own.
+                ///
+                /// - Returns: The panel, for the left side of the window.
                 FUNCTION BuildContactList() AS VARIANT
+                    ' The list is kept in a GLOBAL, so the handlers can refill and read it.
                     LOCAL panel = TUIPanel("Contacts")
                     contactList = TUIList()
                     contactList.onselect("ContactSelected")
@@ -2326,12 +5377,14 @@ enum BASICRecipeCatalog {
                     RETURN panel
                 END FUNCTION
 
-                ' Replaces every row from the model.
-                '
-                ' items() with no arguments empties the list; additem appends. Called after
-                ' anything that changes what contacts exist - adding, deleting, opening a
-                ' file - and never for a change that only affects one contact's text, which
-                ' is what UpdateRow is for.
+                /// Replaces every row from the model.
+                ///
+                /// items() with no arguments empties the list; additem appends. Called after
+                /// anything that changes what contacts exist - adding, deleting, opening a
+                /// file - and never for a change that only affects one contact's text, which
+                /// is what UpdateRow is for.
+                ///
+                /// - Returns: How many rows the list now has.
                 FUNCTION RefreshList() AS INTEGER
                     contactList.items()
 
@@ -2352,7 +5405,11 @@ enum BASICRecipeCatalog {
                 ' what a form is; doing it by hand with stacks and labels is four times the
                 ' code and comes out crooked when the window is resized.
 
+                /// Builds the edit form and its Apply, Revert and Delete buttons.
+                ///
+                /// - Returns: The panel, for the right side of the window.
                 FUNCTION BuildEditForm() AS VARIANT
+                    ' The four fields, each with a hint of what goes in it.
                     fullNameField = TUIField()
                     fullNameField.placeholder("full name")
                     emailField = TUIField()
@@ -2362,6 +5419,7 @@ enum BASICRecipeCatalog {
                     notesField = TUIField()
                     notesField.placeholder("anything worth remembering")
 
+                    ' One labeled row per field, under a section title.
                     LOCAL entry = TUIForm()
                     entry.section("Contact")
                     entry.field("Name", fullNameField)
@@ -2379,6 +5437,7 @@ enum BASICRecipeCatalog {
                     LOCAL deleteButton = TUIButton("&Delete")
                     deleteButton.onclick("DeleteContactAction")
 
+                    ' The buttons sit in one row, one line high, under the form.
                     LOCAL buttons = TUIStack("h")
                     buttons.add(applyButton)
                     buttons.add(revertButton)
@@ -2394,13 +5453,16 @@ enum BASICRecipeCatalog {
                     RETURN panel
                 END FUNCTION
 
-                ' Moves the list highlight and the form to one row, together.
-                '
-                ' Two things have to agree about which contact is current: the highlighted
-                ' row and the fields beside it. Every place that changes the current
-                ' contact calls this, so they cannot drift apart - and selecting in code
-                ' does not fire the list's own handler, which would re-enter this function
-                ' halfway through.
+                /// Moves the list highlight and the form to one row, together.
+                ///
+                /// Two things have to agree about which contact is current: the highlighted
+                /// row and the fields beside it. Every place that changes the current
+                /// contact calls this, so they cannot drift apart - and selecting in code
+                /// does not fire the list's own handler, which would re-enter this function
+                /// halfway through.
+                ///
+                /// - Parameter row: The row to make current, or -1 for none.
+                /// - Returns: Always 0.
                 FUNCTION SelectRow(row AS INTEGER) AS INTEGER
                     IF ContactExists(row) THEN
                         contactList.select(row)
@@ -2409,8 +5471,12 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
-                ' Fills the form from one contact, or empties it when there is none.
+                /// Fills the form from one contact, or empties it when there is none.
+                ///
+                /// - Parameter row: The contact to show, or -1 for none.
+                /// - Returns: 1 when it showed a contact, 0 when it emptied the form.
                 FUNCTION ShowContact(row AS INTEGER) AS INTEGER
+                    ' No contact: nothing is being edited, and every field is cleared.
                     IF NOT ContactExists(row) THEN
                         EditingRow = -1
                         fullNameField.text("")
@@ -2420,6 +5486,7 @@ enum BASICRecipeCatalog {
                         RETURN 0
                     END IF
 
+                    ' A contact: it becomes the one being edited, and fills the fields.
                     EditingRow = row
                     fullNameField.text(Contacts(row).FullName)
                     emailField.text(Contacts(row).Email)
@@ -2430,21 +5497,25 @@ enum BASICRecipeCatalog {
 
                 ' ------------------------------------------------------------- the chrome
 
-                ' Rewrites the window title and the status line from the model.
-                '
-                ' One function, called after every change, rather than each handler
-                ' remembering to update the title itself. The asterisk in the title is the
-                ' whole of the unsaved-changes display, and it comes from IsDirty, so it
-                ' can never disagree with the dialog that asks about it.
+                /// Rewrites the window title and the status line from the model.
+                ///
+                /// One function, called after every change, rather than each handler
+                /// remembering to update the title itself. The asterisk in the title is the
+                /// whole of the unsaved-changes display, and it comes from IsDirty, so it
+                /// can never disagree with the dialog that asks about it.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION RefreshChrome() AS INTEGER
                     LOCAL marker$ = ""
                     IF IsDirty THEN
                         marker$ = " *"
                     END IF
 
+                    ' The title names the file, with the asterisk when it is unsaved.
                     mainWindow.title("Contacts - " + CurrentPath$ + marker$)
                     statusTitle.text(" " + Number$(ContactCount) + " contacts")
 
+                    ' The last message, or the keys to know when nothing has happened yet.
                     IF LastMessage$ = "" THEN
                         statusHint.text("Tab moves focus - Apply commits an edit - Esc quits")
                     ELSE
@@ -2453,8 +5524,11 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
-                ' Everything the screen shows, from the model. Used after opening a file.
+                /// Everything the screen shows, from the model. Used after opening a file.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION RefreshEverything() AS INTEGER
+                    ' The rows and the file field first, then the current contact and title.
                     RefreshList()
                     pathField.text(CurrentPath$)
 
@@ -2475,18 +5549,28 @@ enum BASICRecipeCatalog {
                 ' Below here, one FUNCTION per thing a person can do. They are short on
                 ' purpose: each one changes the model, then asks the screen to catch up.
 
+                /// Shows the contact the list has just selected.
+                ///
+                /// The list's own handler: it runs when the person moves the highlight.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ContactSelected() AS VARIANT
                     ShowContact(contactList.selected())
                     RETURN 0
                 END FUNCTION
 
+                /// Writes the form's fields back into the contact being edited.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ApplyEdits() AS VARIANT
+                    ' With no contact current there is nothing to write into.
                     IF NOT ContactExists(EditingRow) THEN
                         LastMessage$ = "nothing selected - pick a contact or press New Contact"
                         RefreshChrome()
                         RETURN 0
                     END IF
 
+                    ' Write the fields into the model.
                     UpdateContact(EditingRow, fullNameField.value$(), emailField.value$(), phoneField.value$(), notesField.value$())
 
                     ' Only one contact changed, but the list holds strings rather than
@@ -2499,14 +5583,22 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
+                /// Puts the form back to the contact as it was last applied.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION RevertEdits() AS VARIANT
+                    ' The model still holds the applied values, so showing it again reverts.
                     ShowContact(EditingRow)
                     LastMessage$ = "reverted the form to the saved contact"
                     RefreshChrome()
                     RETURN 0
                 END FUNCTION
 
+                /// Adds a new contact and puts it in the form, ready to be named.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION NewContactAction() AS VARIANT
+                    ' AddContact answers -1 when the book is full.
                     LOCAL row = AddContact("New Contact", "", "", "")
                     IF row < 0 THEN
                         LastMessage$ = "the book is full - " + Number$(MaxContacts + 1) + " contacts is the limit"
@@ -2514,6 +5606,7 @@ enum BASICRecipeCatalog {
                         RETURN 0
                     END IF
 
+                    ' Show the new row and make it the one being edited.
                     RefreshList()
                     SelectRow(row)
                     LastMessage$ = "added a contact - type a name and press Apply"
@@ -2521,13 +5614,18 @@ enum BASICRecipeCatalog {
                     RETURN 0
                 END FUNCTION
 
+                /// Deletes the contact being edited.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION DeleteContactAction() AS VARIANT
+                    ' With no contact current there is nothing to delete.
                     IF NOT ContactExists(EditingRow) THEN
                         LastMessage$ = "nothing selected - pick a contact first"
                         RefreshChrome()
                         RETURN 0
                     END IF
 
+                    ' Keep its description for the status line before it is gone.
                     LOCAL gone$ = ContactRow$(EditingRow)
                     LOCAL removed = EditingRow
                     RemoveContact(removed)
@@ -2552,151 +5650,38 @@ enum BASICRecipeCatalog {
                 ' menu items call. Two ways in, one thing done - so a fix to Save is a fix
                 ' to both.
 
+                /// The toolbar's Open button: the same as File > Open.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ToolbarOpen() AS VARIANT
                     FileOpen()
                     RETURN 0
                 END FUNCTION
 
+                /// The toolbar's Save button: the same as File > Save.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ToolbarSave() AS VARIANT
                     FileSave()
                     RETURN 0
                 END FUNCTION
 
+                /// The toolbar's New Contact button: the same as File > New Contact.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION ToolbarNewContact() AS VARIANT
                     NewContactAction()
                     RETURN 0
                 END FUNCTION
 
+                /// The window's close box: asks about unsaved edits, then quits.
+                ///
+                /// - Returns: Always 0.
                 FUNCTION WindowCloseRequested() AS VARIANT
                     ' The close box is a quit: one window, and closing it leaves nothing.
                     RequestQuit()
                     RETURN 0
                 END FUNCTION
-
-                """#),
-                ("src/main.bas", #"""
-                #!/usr/bin/env BASICShell
-                ' Contact Book - a windowed BASIC program, in six files.
-                '
-                '   basicshell basicPrograms/demos/apps/contacts.basproj/main.bas
-                '
-                ' WHAT IT DOES
-                '
-                ' Keeps an address book in a JSON file. Open and Save are on the toolbar
-                ' and in the File menu; the list on the left picks a contact, the form on
-                ' the right edits it, and quitting with unsaved edits asks Save, Discard or
-                ' Cancel before it goes.
-                '
-                ' WHAT IT IS FOR
-                '
-                ' This is a starter project, so it is also an argument about how to write
-                ' BASIC. The language got its reputation from programs that were one file,
-                ' one flat run of statements, and a GOTO every time a decision was made.
-                ' None of that is required, and none of it is here:
-                '
-                '   * No GOTO and no GOSUB. Every decision is IF/END IF or SELECT CASE,
-                '     and every piece of work is a FUNCTION with a name that says what it
-                '     does. You can read any one of them without reading the others.
-                '
-                '   * Six files, not one. IMPORT brings them together, and each file is
-                '     about one thing, so "where does saving happen?" has an answer you can
-                '     point at rather than search for.
-                '
-                '   * The model does not know about the screen. ContactModel.bas could be
-                '     used by a program that prints a report and never opens a window.
-                '
-                '   * State is named and shared on purpose, not by accident. Every GLOBAL
-                '     in the program is declared below, in one list, with a comment.
-                '
-                '   * Everything else is declared LOCAL, loop counters included. A name
-                '     that is not declared is shared with the whole program, so an
-                '     undeclared counter in one function silently overwrites a variable of
-                '     the same name in the function that called it. That is the oldest bug
-                '     in BASIC, and the fix is one word: LOCAL.
-                '
-                ' THE FILES, in the order worth reading them:
-                '
-                '   main.bas            you are here - the shared state, and the start
-                '   ContactModel.bas    what a contact IS, and the list of them
-                '   ContactStorage.bas  the JSON file, in and out
-                '   ContactWindow.bas   the window: toolbar, list, edit form
-                '   ContactApp.bas      theme, menu bar, status strip, start-up
-                '   ContactDialogs.bas  the dialogs, and the unsaved-changes gate
-
-                ' ---------------------------------------------------------------- the files
-                '
-                ' IMPORT reads another file's FUNCTIONs and TYPEs into this program. Paths
-                ' are relative to this file, so the program runs from any directory.
-                '
-                ' The order does not matter to BASIC - a function may call one that is
-                ' imported further down - so these are listed in reading order instead.
-                IMPORT "ContactModel.bas"
-                IMPORT "ContactStorage.bas"
-                IMPORT "ContactWindow.bas"
-                IMPORT "ContactApp.bas"
-                IMPORT "ContactDialogs.bas"
-
-                ' ----------------------------------------------------------------- the state
-                '
-                ' Every GLOBAL the program has is HERE, and that is not a preference:
-                ' functions cross the IMPORT boundary but state does not, so a GLOBAL
-                ' declared inside an imported file cannot be seen by the file that imported
-                ' it. Shared state has to be declared in the entry file to be shared at all.
-                '
-                ' The list is short, and that is also on purpose. Anything only one
-                ' function needs is a LOCAL inside that function.
-
-                ' The book. This BASIC has no REDIM, so the array is DIMmed once at its
-                ' largest and ContactCount says how much of it is real - the traditional
-                ' arrangement, and the reason every function that takes a row number checks
-                ' it against ContactCount first.
-                GLOBAL MaxContacts = 199
-                GLOBAL Contacts(199) AS Contact
-                GLOBAL ContactCount = 0
-
-                ' Which contact the form is editing, or -1 for none. Held here rather than
-                ' asked of the list, because a list that has just been refilled has no
-                ' selection yet and the form still has to know what it is showing.
-                GLOBAL EditingRow = -1
-
-                ' Are there edits that are not in the file? Set by the model, displayed as
-                ' the asterisk in the window title, and asked about before quitting.
-                GLOBAL IsDirty = 0
-
-                ' The file the book came from, and the file Save writes back to.
-                GLOBAL CurrentPath$ = "contacts.json"
-
-                ' What the status strip says: the last thing that happened, good or bad.
-                ' Failures are reported here instead of stopping the program.
-                GLOBAL LastMessage$ = ""
-
-                ' What the unsaved-changes dialog is waiting to do - "quit", "open", or ""
-                ' for nothing. See ContactDialogs.bas.
-                GLOBAL PendingAction$ = ""
-
-                ' The application and its shell. TUIApp() is the run loop; everything the
-                ' program shows lives inside the shell or in a window in front of it.
-                GLOBAL app = TUIApp()
-                GLOBAL shell AS VARIANT
-
-                ' The controls the handlers reach for after the window is built. A handler
-                ' is a named function with no arguments, so the controls it touches have to
-                ' be findable by name - which is what these are.
-                GLOBAL mainWindow AS VARIANT
-                GLOBAL contactList AS VARIANT
-                GLOBAL pathField AS VARIANT
-                GLOBAL fullNameField AS VARIANT
-                GLOBAL emailField AS VARIANT
-                GLOBAL phoneField AS VARIANT
-                GLOBAL notesField AS VARIANT
-                GLOBAL statusTitle AS VARIANT
-                GLOBAL statusHint AS VARIANT
-
-                ' ----------------------------------------------------------------- the start
-                '
-                ' One call. Everything else is in ContactApp.bas, where it can be read as
-                ' one piece: build the shell, dress it, load the book, show the window, run.
-                RunContactBook()
 
                 """#),
             ]
@@ -2755,27 +5740,32 @@ enum BASICRecipeCatalog {
                 ("README.md", #"""
                 # {{NAME}}
 
-                A BASIC project. Open `{{NAME}}.basproj` in BASICStudio and press Run, or
-                build it with `basicc`:
+                The TUIKit Gallery: every TUIKit control in one full-screen BASIC
+                application, one file per group of them, to copy from.
+
+                Run it in a terminal, or build it with `basicc`:
 
                 ```sh
                 make        # build and run
                 make build  # just build, into Build/{{NAME}}
                 ```
 
-                The same source runs unchanged in the interpreter:
+                The files are laid out as they are on purpose: the gallery is a file-for-file
+                translation of TUIKit's Swift gallery (each `Gallery….bas` beside the
+                `.swift` file it translates, its functions in the same order), which
+                `Scripts/gallery-parity.sh` reads side by side. So it keeps that one folder
+                rather than models, views and controllers. It is a copy of the demo
+                `tui/gallery.basproj`, which is the original.
 
-                ```sh
-                BASICShell src/main.bas
-                ```
+                ## How the comments are written
 
-                `project.json` names the file the program starts with (`entry`); its
-                modules sit beside it in `src/`.
-
-                `basicc` builds from the BASICCompiler package in the BASICShell repo
-                (`swift build --package-path Code/BASICCompiler`), or installs with
-                that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
-                point the Makefile at a build.
+                Every `TYPE`, `RECORD`, field, `FUNCTION` and `GLOBAL` has a documentation
+                comment: `///` lines on the line just above it, read by Swift's rules
+                (BASIC's own, from `BASICDocumentation.swift`; `basiclint` checks them):
+                a one-line summary, then, after a `///` line of its own, any discussion,
+                then `- Parameter name:` for each parameter and `- Returns:` for what it
+                gives back. Comments inside a routine start with `'` and say what each step
+                does. Each file starts with a `'` comment saying what is in it.
 
                 """#),
                 ("project.json", #"""
@@ -2813,9 +5803,12 @@ enum BASICRecipeCatalog {
                 '
                 ' No `neutralBackdrop` local: the binding applies exactly this fallback
                 ' whenever a theme is set (tuiDesktopFill - cell background, else the
-                ' vector backdrop's top colour, else neutral grey), so in BASIC the
+                ' vector backdrop's top color, else neutral gray), so in BASIC the
                 ' desktop follows from asking for the theme.
 
+                /// Builds the shell, its menus and status strip, presents the first gallery window, and runs the app until it quits.
+                ///
+                /// - Returns: Always 0, once the app has stopped and the terminal is restored.
                 function RunGalleryApp() as variant
                     shell = TUIShell()
                     ' shell.onQuit = { app.stop() }
@@ -2928,11 +5921,14 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
-                ' The one theming path, used at boot, by every Theme menu item, and
-                ' by the preferences dialog's Appearance page.
-                '
-                ' Takes the theme's *name* rather than a Theme: BASIC has no theme values,
-                ' and the binding matches a name without case or spaces.
+                /// The one theming path, used at boot, by every Theme menu item, and
+                /// by the preferences dialog's Appearance page.
+                ///
+                /// Takes the theme's *name* rather than a Theme: BASIC has no theme values,
+                /// and the binding matches a name without case or spaces.
+                ///
+                /// - Parameter themeName: The built-in theme's name, matched without regard to case or spaces.
+                /// - Returns: Always 0; the value is unused.
                 function ApplyGalleryThemeNamed(themeName as string) as variant
                     app.theme(themeName)
                     ' let backdrop = theme.resolved(for: .desktop).background
@@ -2943,6 +5939,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Dresses the status strip's three labels in the current theme's header style.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function StyleStatusChrome() as variant
                     ' let header = shell.effectiveTheme.header
                     ' statusTitle.style = header
@@ -2957,6 +5956,10 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Shows or hides the status strip's hint text.
+                ///
+                /// - Parameter visible: 1 to show the hint, anything else to blank it.
+                /// - Returns: Always 0; the value is unused.
                 function SetHintsVisible(visible as integer) as variant
                     if visible = 1 then
                         statusHint.text("Tab moves focus - ^L controls panel - Theme menu restyles")
@@ -2966,6 +5969,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Writes the current time into the status strip's clock; the app's one-second timer calls it.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function RefreshClock() as variant
                     ' let clockFormatter = DateFormatter(); dateFormat = "HH:mm:ss"
                     '
@@ -2979,17 +5985,26 @@ enum BASICRecipeCatalog {
                 ' One function per menu item, because a BASIC menu item names a handler
                 ' where the Swift writes a closure.
 
+                /// File > New Gallery Window: presents another gallery window, offset from the last.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FileNewGalleryWindow() as variant
                     windowCount = windowCount + 1
                     app.present(MakeGalleryWindow(windowCount))
                     return 0
                 end function
 
+                /// File > Preferences...: presents the preferences dialog.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FilePreferences() as variant
                     PresentPreferences()
                     return 0
                 end function
 
+                /// File > Close Window: dismisses the front-most window that is not the shell.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FileCloseWindow() as variant
                     ' if let target = app.windows.last(where: { $0 !== shell }) { app.dismiss(target) }
                     '
@@ -2999,11 +6014,17 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// File > Quit: stops the app.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FileQuit() as variant
                     app.stop()
                     return 0
                 end function
 
+                /// View > Toggle Controls Panel: opens or closes the gallery window's Controls slide-out.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ViewToggleControlsPanel() as variant
                     ' (app.windows.last { $0 is GalleryWindow } as? GalleryWindow)?
                     '     .toggleSlideOut(.leading)
@@ -3014,7 +6035,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
-                ' The VTG check, a tick after the app is up.
+                /// The VTG check, a tick after the app is up.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ReportVTGCheck() as variant
                     ' app.isVectorChromeActive / app.graphicsCapabilities - the binding
                     ' answers the probe as one line rather than as a capability record,
@@ -3033,13 +6056,19 @@ enum BASICRecipeCatalog {
                 ' terminal the two columns are identical by design; the caption says so.
                 ' Taller than the window on purpose: the whole tab lives in a ScrollView.
 
-                ' One chart beside its cells-pinned twin, each in a titled panel.
-                '
-                ' `sideBySide(_:height:make:)` takes a closure and calls it twice. BASIC
-                ' cannot pass a builder, so the two copies are built by the caller and
-                ' handed in; everything the helper actually does - the two panels, their
-                ' VTG/ANSI titles, the nochrome on the right copy, the pinned height - is
-                ' here, once, as in the Swift.
+                /// One chart beside its cells-pinned twin, each in a titled panel.
+                ///
+                /// `sideBySide(_:height:make:)` takes a closure and calls it twice. BASIC
+                /// cannot pass a builder, so the two copies are built by the caller and
+                /// handed in; everything the helper actually does - the two panels, their
+                /// VTG/ANSI titles, the nochrome on the right copy, the pinned height - is
+                /// here, once, as in the Swift.
+                ///
+                /// - Parameter title: The chart's name, used in both panels' titles.
+                /// - Parameter height: The pinned height of the pair, in rows.
+                /// - Parameter vector: The copy that may render vector graphics.
+                /// - Parameter cells: The copy that is pinned to ANSI cells.
+                /// - Returns: A row holding the two titled panels, pinned to `height`.
                 function SideBySide(title as string, height as integer, vector as variant, cells as variant) as variant
                     cells.nochrome(1)
 
@@ -3068,6 +6097,9 @@ enum BASICRecipeCatalog {
                 ' document (pinned rows carry no intrinsic of their own). A BASIC vertical
                 ' TUIStack is that class already - `contentheight` is its declared height.
 
+                /// Builds the Charts tab: every chart as a VTG and ANSI pair, in a scrolling column.
+                ///
+                /// - Returns: The tab's root view, a scroll view.
                 function MakeChartsTab() as variant
                     let column = TUIStack("v")
                     let totalHeight = 0
@@ -3110,10 +6142,16 @@ enum BASICRecipeCatalog {
                 ' function, so a second `let chart = TUILineChart()` is rejected as an
                 ' assignment of the wrong object. Each builder names its own.
 
+                /// Builds the sample sparkline.
+                ///
+                /// - Returns: A new sparkline.
                 function MakeSparkline() as variant
                     return TUISparkline(2, 3, 3, 4, 5, 7, 8, 8, 9, 11, 14, 13, 15, 18, 17, 19, 22, 21, 24, 26)
                 end function
 
+                /// Builds the sample bar chart: builds and deploys per weekday.
+                ///
+                /// - Returns: A new bar chart.
                 function MakeBarChart() as variant
                     let barChart = TUIBarChart()
                     barChart.categories("Mon", "Tue", "Wed", "Thu", "Fri")
@@ -3123,12 +6161,15 @@ enum BASICRecipeCatalog {
                     return barChart
                 end function
 
+                /// Builds the sample timeline: four page resources loading, with waits and a failure.
+                ///
+                /// - Returns: A new timeline chart.
                 function MakeTimelineChart() as variant
                     let timelineChart = TUITimeline()
                     ' TimelineRow(label:, segments: [.init(start:duration:kind:)])
                     '
                     ' A track opens a row; its segments follow, each carrying its own kind -
-                    ' which is what colours style.css's wait and track.js's failure
+                    ' which is what colors style.css's wait and track.js's failure
                     ' differently from the rest.
                     timelineChart.track("index.html")
                     timelineChart.segment(0, 210, "active")
@@ -3147,6 +6188,9 @@ enum BASICRecipeCatalog {
                     return timelineChart
                 end function
 
+                /// Builds the sample scatter chart: cache hits and misses.
+                ///
+                /// - Returns: A new scatter chart.
                 function MakeScatterChart() as variant
                     let scatterChart = TUIScatter()
                     scatterChart.series("cache hit", 2, 11, 5, 14, 7, 13, 11, 17, 14, 16, 17, 21, 21, 20, 24, 24)
@@ -3155,6 +6199,9 @@ enum BASICRecipeCatalog {
                     return scatterChart
                 end function
 
+                /// Builds the sample line chart: resident and heap memory, with the heap's area filled.
+                ///
+                /// - Returns: A new line chart.
                 function MakeLineChart() as variant
                     let lineChart = TUILineChart()
                     lineChart.series("resident", 8, 9, 9, 10, 12, 12, 14, 17, 16, 18, 21, 22, 22, 25, 28)
@@ -3169,6 +6216,9 @@ enum BASICRecipeCatalog {
                     return lineChart
                 end function
 
+                /// Builds the sample pie chart, drawn as a donut.
+                ///
+                /// - Returns: A new pie chart.
                 function MakePieChart() as variant
                     let pieChart = TUIPieChart()
                     pieChart.slice("rent", 42)
@@ -3187,6 +6237,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Buttons
 
+                /// Builds the Buttons tab: roles and styles, long-press, state controls, dialogs and choices.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeButtonsTab() as variant
                     let root = TUIStack("v")
 
@@ -3290,26 +6343,41 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Reports a quick click on the long-press button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsHoldClicked() as variant
                     holdResult.text("clicked - quick press")
                     return 0
                 end function
 
+                /// Reports that the long-press button's alternate action fired.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsHoldLongPressed() as variant
                     holdResult.text("long-pressed - the alternate action fired")
                     return 0
                 end function
 
+                /// Reports the hold menu's Reopen Closed Tab item.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsMenuReopen() as variant
                     holdResult.text("menu: reopen")
                     return 0
                 end function
 
+                /// Reports the hold menu's Copy Address item.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsMenuCopy() as variant
                     holdResult.text("menu: copy")
                     return 0
                 end function
 
+                /// Shows the modal Delete Page? dialog.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsShowDialog() as variant
                     let dialog = TUIDialog("Delete Page?")
                     dialog.message("This cannot be undone.")
@@ -3325,16 +6393,25 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Reports the dialog's Cancel button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsDialogCancelled() as variant
                     dialogResult.text("dialog: cancelled")
                     return 0
                 end function
 
+                /// Reports the dialog's Delete button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsDialogDeleted() as variant
                     dialogResult.text("dialog: deleted")
                     return 0
                 end function
 
+                /// Reports that the open file dialog is not available in BASIC.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsOpenFile() as variant
                     ' FileDialog(mode: .open, root: FileManager.default.currentDirectoryPath)
                     '
@@ -3345,6 +6422,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Opens a document window: a text editor under a row of file buttons.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsOpenDocument() as variant
                     ' The document window is buildable; DocumentController is not bound, so
                     ' Open/Save/Save As/Close have nothing to drive and the dirty marker in
@@ -3371,6 +6451,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Presents the preferences dialog, for both Preferences buttons.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ButtonsPreferences() as variant
                     PresentPreferences()
                     return 0
@@ -3378,6 +6461,9 @@ enum BASICRecipeCatalog {
 
                 ' ----------------------------------------------------------------- Inputs
 
+                /// Builds the Inputs tab: text and choice fields, value controls, and progress.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeInputsTab() as variant
                     let root = TUIStack("v")
 
@@ -3393,7 +6479,7 @@ enum BASICRecipeCatalog {
                     let stepper = TUIStepper(4, 0, 10)
                     let level = TUILevel(3, 5)
                     level.editable(1)
-                    ' Phase 16.12: thresholds recolour the fill
+                    ' Phase 16.12: thresholds recolor the fill
                     level.thresholds(4, 5)
 
                     let progressBar = TUIProgress("bar", 0.6)
@@ -3431,6 +6517,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Advances the Inputs tab's spinner one frame; an app timer calls it.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function InputsAdvanceSpinner() as variant
                     spinner.advance()
                     return 0
@@ -3438,6 +6527,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Pickers
 
+                /// Builds the Pickers tab: date pickers, matrices and the color picker.
+                ///
+                /// - Returns: The tab's root view.
                 function MakePickersTab() as variant
                     let root = TUIStack("h")
 
@@ -3477,6 +6569,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Reports a change to the day matrix's selection.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function PickersDaysChanged() as variant
                     ' days.onSelectionChanged = { daysLabel.text = "selected: \(...)" }
                     '
@@ -3495,6 +6590,9 @@ enum BASICRecipeCatalog {
 
                 ' -------------------------------------------------------- Lists & trees
 
+                /// Builds the Lists tab: list, tree and table views, the real disk twice, and the navigation strips.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeListsTab() as variant
                     let root = TUIStack("v")
 
@@ -3567,6 +6665,9 @@ enum BASICRecipeCatalog {
 
                 ' ------------------------------------------------------------------ Text
 
+                /// Builds the Text tab: the syntax editor, text, Markdown and rich text views, and links.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeTextTab() as variant
                     ' The R8 lexers, all three at once: markup, a style island, a script
                     ' island with a regex literal.
@@ -3640,6 +6741,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Flips the Markdown view between rendered text and its source, and retitles the button to match.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function TextToggleEditing() as variant
                     markdown.toggleedit()
                     ' editToggle.title = markdown.isEditing ? "&Render" : "&Edit source"
@@ -3654,11 +6758,19 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Reports the URL the link would open.
+                ///
+                /// - Parameter url: The link's URL.
+                /// - Returns: Always 0; the value is unused.
                 function TextLinkOpened(url as string) as variant
                     linkResult.text("would open: " + url)
                     return 0
                 end function
 
+                /// Reports the help link's anchor.
+                ///
+                /// - Parameter url: The help link's URL.
+                /// - Returns: Always 0; the value is unused.
                 function TextHelpOpened(url as string) as variant
                     linkResult.text("help anchor: " + url)
                     return 0
@@ -3666,6 +6778,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Layout
 
+                /// Builds the Layout tab: ribbon, toolbox, flow stack, form, status bar, split view, scroller and disclosure.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeLayoutTab() as variant
                     let root = TUIStack("v")
 
@@ -3802,6 +6917,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Flips the split view between horizontal and vertical.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function LayoutFlipAxis() as variant
                     if splitAxisIsHorizontal = 1 then
                         splitter.axis("v")
@@ -3813,11 +6931,17 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Flashes a timed message on the Layout tab's status bar.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function LayoutFlash() as variant
                     layoutStatus.flash("Saved 3 files - back in 3 seconds")
                     return 0
                 end function
 
+                /// Names the toolbox's newly selected tool.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function LayoutToolChanged() as variant
                     ' toolLabel.text = "tool: \(toolbox.tools[$0].caption)"
                     toolLabel.text("tool: " + toolbox.selectedtitle())
@@ -3839,15 +6963,17 @@ enum BASICRecipeCatalog {
                 ' category as a plain string and passes "gallery" for every line the gallery
                 ' writes, which is what the constant stood for.
 
-                ' Points TUILogger at the shared store, once - called by the app's run and
-                ' by the page, whichever gets there first (snapshots never run the app).
-                '
-                ' In BASIC this is what TUILog() does when it is constructed: it adds
-                ' LogStore.shared to TUILogger and sets the level to debug. Constructing one
-                ' is therefore the only way to wire the logger - so `galleryLoggingWired`
-                ' guards it exactly as the Swift's private var does, and the handle is kept
-                ' in a global because BASIC writes log lines through it rather than through
-                ' a shared logger.
+                /// Points TUILogger at the shared store, once - called by the app's run and
+                /// by the page, whichever gets there first (snapshots never run the app).
+                ///
+                /// In BASIC this is what TUILog() does when it is constructed: it adds
+                /// LogStore.shared to TUILogger and sets the level to debug. Constructing one
+                /// is therefore the only way to wire the logger - so `galleryLoggingWired`
+                /// guards it exactly as the Swift's private var does, and the handle is kept
+                /// in a global because BASIC writes log lines through it rather than through
+                /// a shared logger.
+                ///
+                /// - Returns: The gallery's log handle, made on the first call and the same one after.
                 function WireGalleryLogging() as variant
                     if galleryLoggingWired = 1 then
                         return galleryLog
@@ -3858,6 +6984,9 @@ enum BASICRecipeCatalog {
                     return galleryLog
                 end function
 
+                /// Builds the Log tab: a log view of the gallery's own diagnostics, seeded with one sample line per level.
+                ///
+                /// - Returns: The tab's root view, a log view.
                 function MakeLogTab() as variant
                     WireGalleryLogging()
 
@@ -3890,6 +7019,9 @@ enum BASICRecipeCatalog {
                 ' The Navigation folder tab: the Phase 16 structural pieces - pages,
                 ' accordion sections, a layout that degrades, and (16.1) the navigator.
 
+                /// Builds the Navigation tab: view-that-fits, page view, navigator and accordion.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeNavigationTab() as variant
                     let root = TUIStack("v")
 
@@ -3965,14 +7097,24 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
-                ' func saveChoices() -> ViewThatFits - a nested function in the Swift,
-                ' called twice so each group gets its own copy.
+                /// Builds one view-that-fits of three Save buttons, widest first.
+                ///
+                /// func saveChoices() -> ViewThatFits - a nested function in the Swift,
+                /// called twice so each group gets its own copy.
+                ///
+                /// - Returns: A new view-that-fits.
                 function SaveChoices() as variant
                     ' Candidates widest-first, at construction, as ViewThatFits takes them.
                     return TUIViewThatFits("h", TUIButton("Save the document to disk"), TUIButton("Save document"), TUIButton("Save"))
                 end function
 
-                ' func options(_ prefix: String, count: Int) -> TUIView
+                /// Builds a column of numbered check boxes for an accordion section.
+                ///
+                /// func options(_ prefix: String, count: Int) -> TUIView
+                ///
+                /// - Parameter prefix: The text each check box's title starts with.
+                /// - Parameter count: How many check boxes to make.
+                /// - Returns: The column of check boxes.
                 function NavigationOptions(prefix as string, count as integer) as variant
                     let list = TUIStack("v")
                     for index = 1 to count
@@ -3981,26 +7123,45 @@ enum BASICRecipeCatalog {
                     return list
                 end function
 
+                /// Shows which page the page view has turned to.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function NavigationPageChanged() as variant
                     pageLabel.text("page " + STR$(pages.selected() + 1) + " of 3 - left/right turn, or click the dots")
                     return 0
                 end function
 
+                /// Shows how deep the navigator is.
+                ///
+                /// - Parameter depth: The navigator's level, 1 at the top.
+                /// - Returns: Always 0; the value is unused.
                 function NavigationDepthChanged(depth as integer) as variant
                     depthLabel.text("level " + STR$(depth) + " - Esc, Backspace or Back returns")
                     return 0
                 end function
 
+                /// Drills the navigator into the Appearance page.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function NavigationPushAppearance() as variant
                     navigator.push(NavigationPage("Appearance", "theme, colours, fonts", "NavigationPushAdvancedAppearance"), "Appearance")
                     return 0
                 end function
 
+                /// Drills the navigator into the Network page.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function NavigationPushNetwork() as variant
                     navigator.push(NavigationPage("Network", "proxies and timeouts", "NavigationPushAdvancedNetwork"), "Network")
                     return 0
                 end function
 
+                /// Builds a second-level navigator page: a line of text and an Advanced button.
+                ///
+                /// - Parameter title: The page's name, used in the Advanced button's title.
+                /// - Parameter body: The line of text the page shows.
+                /// - Parameter advancedHandler: The name of the function the Advanced button calls.
+                /// - Returns: The page's view.
                 function NavigationPage(title as string, body as string, advancedHandler as string) as variant
                     let page = TUIStack("v")
                     page.add(PinnedHeight(TUILabel(body), 1))
@@ -4010,11 +7171,17 @@ enum BASICRecipeCatalog {
                     return page
                 end function
 
+                /// Drills the navigator into the Advanced Appearance page.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function NavigationPushAdvancedAppearance() as variant
                     navigator.push(TUILabel("the deep end of Appearance"), "Advanced Appearance")
                     return 0
                 end function
 
+                /// Drills the navigator into the Advanced Network page.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function NavigationPushAdvancedNetwork() as variant
                     navigator.push(TUILabel("the deep end of Network"), "Advanced Network")
                     return 0
@@ -4029,6 +7196,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Fields
 
+                /// Builds the Fields tab: search and paste, tokens with completion, and sliders.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeFieldsTab() as variant
                     let root = TUIStack("v")
 
@@ -4089,8 +7259,12 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
-                ' The Swift closures receive the text; a BASIC search handler is handed
-                ' nothing, so each reads the field it belongs to.
+                /// Reports the search field's text as it is typed, or that it was cleared.
+                ///
+                /// The Swift closures receive the text; a BASIC search handler is handed
+                /// nothing, so each reads the field it belongs to.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FieldsSearchChanged() as variant
                     let text = search.text()
                     if text = "" then
@@ -4101,11 +7275,17 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Reports the search field's text when it is committed.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FieldsSearchCommitted() as variant
                     searchResult.text("committed: " + search.text())
                     return 0
                 end function
 
+                /// Reports that the paste button pasted.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FieldsPasted() as variant
                     ' PasteButton { searchResult.text = "pasted: \($0)" } - the pasted text
                     ' is not handed to a BASIC handler, so the report says that a paste
@@ -4114,11 +7294,17 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Reports that the paste button found nothing to paste.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FieldsPasteEmpty() as variant
                     searchResult.text("nothing to paste - copy something first (^C in a field)")
                     return 0
                 end function
 
+                /// Shows the range slider's two values.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function FieldsSpanChanged() as variant
                     ' span.onValuesChanged = { spanLabel.text = "\($0.lowerBound)...\($0.upperBound) ..." }
                     spanLabel.text(STR$(span.lower()) + "..." + STR$(span.upper()) + " - Space switches thumbs")
@@ -4127,6 +7313,9 @@ enum BASICRecipeCatalog {
 
                 ' ------------------------------------------------------------------ Data
 
+                /// Builds the Data tab: a master-detail view and a sectioned collection view.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeDataTab() as variant
                     let root = TUIStack("v")
 
@@ -4170,6 +7359,11 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Builds the detail pane for one master-detail folder.
+                ///
+                /// - Parameter title: The folder's name.
+                /// - Parameter subtitle: The folder's summary line.
+                /// - Returns: The detail pane.
                 function MakeFolderDetail(title as string, subtitle as string) as variant
                     let detail = TUIStack("v")
                     detail.add(PinnedHeight(TUILabel("  " + title), 1))
@@ -4179,6 +7373,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Wizard
 
+                /// Builds the Wizard tab: a three-step setup wizard.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeWizardTab() as variant
                     let root = TUIStack("v")
 
@@ -4208,6 +7405,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Reports that the wizard finished, and for whom.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function WizardFinished() as variant
                     let entered = wizardName.text()
                     if entered = "" then
@@ -4220,6 +7420,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Gauges
 
+                /// Builds the Gauges tab: ring, dial and bar gauges, and level indicators.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeGaugesTab() as variant
                     let root = TUIStack("v")
 
@@ -4248,6 +7451,10 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Builds a row of three gauges (CPU, RAM, Disk) in one style.
+                ///
+                /// - Parameter style: The gauge style: "ring", "dial" or "bar".
+                /// - Returns: The row of gauges.
                 function GaugeRow(style as string) as variant
                     ' `let row = HStack(spacing: 2)` - renamed twice over: ROW is this file's
                     ' own helper, `bar` is the toolbar in GalleryWindow.bas, and BASIC is
@@ -4265,17 +7472,27 @@ enum BASICRecipeCatalog {
                     return styleRow
                 end function
 
-                ' sideBySide(title, height:) { make() } takes a *closure* that builds the
-                ' view twice - once for the VTG panel, once for the ANSI one. BASIC has no
-                ' closure to pass, so each caller has its own side-by-side that calls its
-                ' own builder twice. Everything else - the two panels, their titles, the
-                ' nochrome on the right copy, the pinned height - is shared in SideBySide.
+                /// Builds a row of gauges as a VTG and ANSI pair.
+                ///
+                /// sideBySide(title, height:) { make() } takes a *closure* that builds the
+                /// view twice - once for the VTG panel, once for the ANSI one. BASIC has no
+                /// closure to pass, so each caller has its own side-by-side that calls its
+                /// own builder twice. Everything else - the two panels, their titles, the
+                /// nochrome on the right copy, the pinned height - is shared in SideBySide.
+                ///
+                /// - Parameter title: The pair's name, used in both panels' titles.
+                /// - Parameter height: The pinned height of the pair, in rows.
+                /// - Parameter style: The gauge style both rows use.
+                /// - Returns: The pair, from SideBySide.
                 function SideBySideGauges(title as string, height as integer, style as string) as variant
                     return SideBySide(title, height, GaugeRow(style), GaugeRow(style))
                 end function
 
                 ' --------------------------------------------------------------- Drawing
 
+                /// Builds the Drawing tab: canvases and an image view, each as a VTG and ANSI pair.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeDrawingTab() as variant
                     let root = TUIStack("v")
 
@@ -4320,12 +7537,16 @@ enum BASICRecipeCatalog {
                 ' call ApplyGalleryThemeNamed and SetHintsVisible in GalleryApp.bas by name.
                 ' The seam is the same one, named rather than assigned.
 
-                ' var storedTheme: Theme?
-                '
-                ' Returns the *name*, not a Theme: BASIC has no theme values, and the name is
-                ' what every consumer of this ends up passing on. "" would be the Swift's
-                ' nil, so the fallback to Modern Turbo lives here rather than at the call
-                ' site, where `?? .modernTurbo` is in the Swift.
+                /// The remembered theme's name, or Modern Turbo when none is stored or it no longer names a built-in theme.
+                ///
+                /// var storedTheme: Theme?
+                ///
+                /// Returns the *name*, not a Theme: BASIC has no theme values, and the name is
+                /// what every consumer of this ends up passing on. "" would be the Swift's
+                /// nil, so the fallback to Modern Turbo lives here rather than at the call
+                /// site, where `?? .modernTurbo` is in the Swift.
+                ///
+                /// - Returns: The name of a built-in theme.
                 function StoredThemeName() as string
                     ' `let name = store.string(forKey: "theme")` - renamed: NAME is a
                     ' reserved word, so a variable called `name` reads back empty.
@@ -4346,38 +7567,56 @@ enum BASICRecipeCatalog {
                     return "Modern Turbo"
                 end function
 
-                ' var controlsPanelOpen: Bool { get { ... ?? false } set { ... } }
-                '
-                ' A BASIC function cannot be a property, so the getter and setter are two.
+                /// Whether the Controls slide-out starts open.
+                ///
+                /// var controlsPanelOpen: Bool { get { ... ?? false } set { ... } }
+                ///
+                /// A BASIC function cannot be a property, so the getter and setter are two.
+                ///
+                /// - Returns: 1 when it starts open, 0 (the default) when it does not.
                 function ControlsPanelOpen() as integer
                     return prefsStore.flag("controlsPanelOpen", 0)
                 end function
 
+                /// Remembers whether the Controls slide-out starts open.
+                ///
+                /// - Parameter value: 1 to start it open, 0 to start it shut.
+                /// - Returns: Always 0; the value is unused.
                 function SetControlsPanelOpen(value as integer) as variant
                     prefsStore.setflag("controlsPanelOpen", value)
                     return 0
                 end function
 
-                ' var showsHints: Bool { get { ... ?? true } set { ... } }
+                /// Whether the status strip shows its hint.
+                ///
+                /// var showsHints: Bool { get { ... ?? true } set { ... } }
+                ///
+                /// - Returns: 1 (the default) when it does, 0 when it does not.
                 function ShowsHints() as integer
                     return prefsStore.flag("showsHints", 1)
                 end function
 
+                /// Remembers whether the status strip shows its hint.
+                ///
+                /// - Parameter value: 1 to show the hint, 0 to hide it.
+                /// - Returns: Always 0; the value is unused.
                 function SetShowsHints(value as integer) as variant
                     prefsStore.setflag("showsHints", value)
                     return 0
                 end function
 
-                ' Presents the preferences dialog - the same pages in either selector
-                ' style (the toolbar strip is the default; the split list is the
-                ' legacy look).
-                '
-                ' No `style` parameter: the binding builds the toolbar strip, which is the
-                ' Swift's default and the only style the gallery asks for.
+                /// Presents the preferences dialog - the same pages in either selector
+                /// style (the toolbar strip is the default; the split list is the
+                /// legacy look).
+                ///
+                /// No `style` parameter: the binding builds the toolbar strip, which is the
+                /// Swift's default and the only style the gallery asks for.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function PresentPreferences() as variant
                     let dialog = TUIPrefsDialog("Preferences")
 
-                    ' General: the two behaviours the gallery itself reads.
+                    ' General: the two behaviors the gallery itself reads.
                     panelCheck = TUICheck("Open the Controls panel at launch")
                     panelCheck.checked(ControlsPanelOpen())
                     panelCheck.onchange("PreferencesPanelChanged")
@@ -4420,11 +7659,17 @@ enum BASICRecipeCatalog {
                 ' reads its control rather than being handed the new value, because a BASIC
                 ' handler takes no argument from a control.
 
+                /// Remembers the General page's Controls panel check box.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function PreferencesPanelChanged() as variant
                     SetControlsPanelOpen(panelCheck.checked())
                     return 0
                 end function
 
+                /// Remembers the General page's hint check box and applies it at once.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function PreferencesHintsChanged() as variant
                     let visible = hintsCheck.checked()
                     SetShowsHints(visible)
@@ -4432,6 +7677,9 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Remembers the Appearance page's theme and applies it at once.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function PreferencesThemeChanged() as variant
                     let index = themePopUp.selected()
                     if index < 0 then
@@ -4453,6 +7701,9 @@ enum BASICRecipeCatalog {
 
                 ' ---------------------------------------------------------------- Boards
 
+                /// Builds the Boards tab: a four-column kanban board.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeBoardsTab() as variant
                     let root = TUIStack("v")
 
@@ -4485,6 +7736,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Reports that a card moved.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function BoardCardMoved() as variant
                     ' board.onCardMoved = { card, _, to, _ in moved.text = "moved ... to column \(to + 1)" }
                     '
@@ -4496,6 +7750,9 @@ enum BASICRecipeCatalog {
 
                 ' --------------------------------------------------------------- Diagram
 
+                /// Builds the Diagram tab: a build pipeline laid out as a layered diagram.
+                ///
+                /// - Returns: The tab's root view.
                 function MakeDiagramTab() as variant
                     let root = TUIStack("v")
 
@@ -4531,6 +7788,9 @@ enum BASICRecipeCatalog {
                     return root
                 end function
 
+                /// Reports that the diagram's selection moved.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function DiagramSelectionChanged() as variant
                     ' The selected node's id is not handed over, so the label reports that
                     ' the selection moved rather than which node it landed on.
@@ -4559,14 +7819,17 @@ enum BASICRecipeCatalog {
                 ' View menu's "Toggle Controls Panel" and the [>] title button reach the same
                 ' toggleslideout. ^L itself is the one thing this file loses.
 
-                ' Builds one gallery window - a resizable, maximizable *content* window
-                ' (Turbo dresses it blue with a white double frame) whose content is a
-                ' folder-tab view over every control in the kit, with a Controls panel
-                ' that slides out of the left edge to jump between the tabs.
-                '
-                ' No `app`/`settings` parameters: both are globals. No `live` parameter
-                ' either - it exists in the Swift to keep the Terminal tab from starting a
-                ' real shell during snapshots, and the Terminal tab is deliberately absent.
+                /// Builds one gallery window - a resizable, maximizable *content* window
+                /// (Turbo dresses it blue with a white double frame) whose content is a
+                /// folder-tab view over every control in the kit, with a Controls panel
+                /// that slides out of the left edge to jump between the tabs.
+                ///
+                /// No `app`/`settings` parameters: both are globals. No `live` parameter
+                /// either - it exists in the Swift to keep the Terminal tab from starting a
+                /// real shell during snapshots, and the Terminal tab is deliberately absent.
+                ///
+                /// - Parameter index: 0 for the first window; each later window is offset and numbered by it.
+                /// - Returns: The new window, not yet presented.
                 function MakeGalleryWindow(index as integer) as variant
                     if index = 0 then
                         win = TUIFloatWindow("TUIKit Gallery")
@@ -4639,21 +7902,32 @@ enum BASICRecipeCatalog {
                     return win
                 end function
 
-                ' One page: a tab, and the row that indexes it in the Controls panel. The
-                ' Swift builds an array of triples and then walks it twice; BASIC has no
-                ' tuple array, so the two walks become one call per page.
+                /// One page: a tab, and the row that indexes it in the Controls panel. The
+                /// Swift builds an array of triples and then walks it twice; BASIC has no
+                /// tuple array, so the two walks become one call per page.
+                ///
+                /// - Parameter title: The tab's title, also the index row's title.
+                /// - Parameter summary: The index row's subtitle.
+                /// - Parameter content: The tab's view.
+                /// - Returns: Always 0; the value is unused.
                 function AddGalleryPage(title as string, summary as string, content as variant) as variant
                     tabs.addtab(title, content)
                     controlsIndex.additem(">", title, summary)
                     return 0
                 end function
 
+                /// Logs the page the folder tabs switched to.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function GalleryPageSelected() as variant
                     ' TUILogger.shared.info("page: \(titles[selected])")
                     galleryLog.write("info", "page: " + tabs.selectedtitle())
                     return 0
                 end function
 
+                /// Shows the tab picked in the Controls panel, and logs it.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function GalleryControlsIndexSelected() as variant
                     let selected = controlsIndex.selected()
                     if selected < 0 then
@@ -4665,15 +7939,20 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Dismisses the gallery window when its close box is clicked.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function GalleryWindowCloseRequested() as variant
                     ' window.onCloseRequest = { app.dismiss(window) }
                     app.dismiss()
                     return 0
                 end function
 
-                ' The window toolbar: icon buttons, a flexible address field (R6), and the
-                ' long-press example - hold Back for its history menu, exactly the browser
-                ' gesture the feature was built for.
+                /// The window toolbar: icon buttons, a flexible address field (R6), and the
+                /// long-press example - hold Back for its history menu, exactly the browser
+                /// gesture the feature was built for.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function InstallToolbar() as variant
                     let bar = TUIToolbar()
                     bar.displaymode("both")
@@ -4696,11 +7975,17 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
+                /// Reports a quick click on the toolbar's Back button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarBack() as variant
                     address.text("tuikit://gallery/back - quick click")
                     return 0
                 end function
 
+                /// Opens the held Back button's history menu below the toolbar.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarBackHistory() as variant
                     let history = TUIMenu()
                     history.menu("")
@@ -4712,37 +7997,56 @@ enum BASICRecipeCatalog {
                     return 0
                 end function
 
-                ' for entry in [...] { history.addItem(...) { address.setText(...) } }
-                '
-                ' Three handlers rather than a loop: the Swift closure captures its entry,
-                ' and a menu item's carried argument is a string, so the loop could be kept -
-                ' but the three URLs are literals in the Swift too, and one handler each
-                ' reads the same as the array does.
+                /// Goes to the charts address from the Back history menu.
+                ///
+                /// for entry in [...] { history.addItem(...) { address.setText(...) } }
+                ///
+                /// Three handlers rather than a loop: the Swift closure captures its entry,
+                /// and a menu item's carried argument is a string, so the loop could be kept -
+                /// but the three URLs are literals in the Swift too, and one handler each
+                /// reads the same as the array does.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarHistoryCharts() as variant
                     address.text("tuikit://gallery/charts - from held Back")
                     return 0
                 end function
 
+                /// Goes to the text address from the Back history menu.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarHistoryText() as variant
                     address.text("tuikit://gallery/text - from held Back")
                     return 0
                 end function
 
+                /// Goes to the buttons address from the Back history menu.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarHistoryButtons() as variant
                     address.text("tuikit://gallery/buttons - from held Back")
                     return 0
                 end function
 
+                /// Reports the toolbar's Forward button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarForward() as variant
                     address.text("tuikit://gallery/forward")
                     return 0
                 end function
 
+                /// Reports the toolbar's Reload button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarReload() as variant
                     address.text("tuikit://gallery - reloaded")
                     return 0
                 end function
 
+                /// Presents the preferences dialog from the toolbar's Settings button.
+                ///
+                /// - Returns: Always 0; the value is unused.
                 function ToolbarSettings() as variant
                     ' the real preferences dialog
                     PresentPreferences()
@@ -4753,22 +8057,31 @@ enum BASICRecipeCatalog {
                 '
                 ' Used by every tab file, as in the Swift.
 
-                ' A group box: a titled panel whose content is a padded vertical stack.
-                '
-                ' `group(_:spacing:_:)` takes an array of children; BASIC has no array
-                ' literal of handles, so a group is opened, added to, and used - TUIPanel
-                ' stacks what it is given, which is what the Swift's helper does by hand.
+                /// A group box: a titled panel whose content is a padded vertical stack.
+                ///
+                /// `group(_:spacing:_:)` takes an array of children; BASIC has no array
+                /// literal of handles, so a group is opened, added to, and used - TUIPanel
+                /// stacks what it is given, which is what the Swift's helper does by hand.
+                ///
+                /// - Parameter title: The group's title.
+                /// - Returns: A new titled panel.
                 function Group(title as string) as variant
                     return TUIPanel(title)
                 end function
 
-                ' Pins a stack row to an exact height, so flexible rows don't absorb it.
+                /// Pins a stack row to an exact height, so flexible rows don't absorb it.
+                ///
+                /// - Parameter view: The view to pin.
+                /// - Parameter height: Its height, in rows.
+                /// - Returns: The same view, now pinned.
                 function PinnedHeight(view as variant, height as integer) as variant
                     view.height(height)
                     return view
                 end function
 
-                ' A row of side-by-side flexible children.
+                /// A row of side-by-side flexible children.
+                ///
+                /// - Returns: A new horizontal stack.
                 function Row() as variant
                     return TUIStack("h")
                 end function
@@ -4810,71 +8123,113 @@ enum BASICRecipeCatalog {
                 ' file does not reach the importer - functions cross the boundary, state does
                 ' not - so state has to be declared in the entry file to be shared at all.
                 '
-                ' Each one is labelled with the Swift file and binding it stands for, so the
+                ' Each one is labeled with the Swift file and binding it stands for, so the
                 ' side-by-side reading still works.
 
                 ' GalleryApp.swift
+                /// The TUIKit application: the terminal, the windows, the themes and the timers.
                 GLOBAL app = TUIApp()
+                /// The status strip's leading segment, the app's name.
                 GLOBAL statusTitle AS VARIANT
+                /// The status strip's hint segment, blank while hints are turned off.
                 GLOBAL statusHint AS VARIANT
+                /// The status strip's clock, refreshed once a second by RefreshClock.
                 GLOBAL clock AS VARIANT
+                /// The shell window: the menu bar strip, the desktop and the status strip.
                 GLOBAL shell AS VARIANT
+                /// How many more gallery windows File > New Gallery Window has opened.
                 GLOBAL windowCount = 0
 
                 ' GalleryLogPage.swift
+                /// The log handle the gallery writes its own diagnostics through.
                 GLOBAL galleryLog AS VARIANT
+                /// 1 once WireGalleryLogging has made the logger, so it is made only once.
                 GLOBAL galleryLoggingWired = 0
 
                 ' GallerySettings.swift
-                '
-                ' `store` is the Swift's `let store: Preferences`. STORE is not reserved, but
-                ' the name is kept distinct from the gallery's other handles for the same
-                ' reason the Swift qualifies it with `self.`.
+                /// The gallery's preferences suite on disk.
+                ///
+                /// `store` is the Swift's `let store: Preferences`. STORE is not reserved, but
+                /// the name is kept distinct from the gallery's other handles for the same
+                /// reason the Swift qualifies it with `self.`.
                 GLOBAL prefsStore = TUIPrefs("com.tuikit.gallery")
+                /// The preferences dialog's Controls panel at launch check box.
                 GLOBAL panelCheck AS VARIANT
+                /// The preferences dialog's status-bar hint check box.
                 GLOBAL hintsCheck AS VARIANT
+                /// The preferences dialog's theme pop-up.
                 GLOBAL themePopUp AS VARIANT
 
                 ' GalleryWindow.swift
+                /// The gallery window MakeGalleryWindow built most recently.
                 GLOBAL win AS VARIANT
+                /// The gallery window's folder tabs, one per control group.
                 GLOBAL tabs AS VARIANT
+                /// The toolbar's address field, which the toolbar buttons write into.
                 GLOBAL address AS VARIANT
+                /// The Controls slide-out's index of the tabs.
                 GLOBAL controlsIndex AS VARIANT
 
                 ' GalleryControlTabs.swift
+                /// The Buttons tab's label reporting the long-press button and its menu.
                 GLOBAL holdResult AS VARIANT
+                /// The Buttons tab's label reporting the dialogs.
                 GLOBAL dialogResult AS VARIANT
+                /// The Inputs tab's spinner, advanced by an app timer.
                 GLOBAL spinner AS VARIANT
+                /// The Pickers tab's day-of-the-week matrix.
                 GLOBAL days AS VARIANT
 
                 ' GalleryNewPages.swift
+                /// The Fields tab's label reporting the search field and the paste button.
                 GLOBAL searchResult AS VARIANT
+                /// The Fields tab's search field.
                 GLOBAL search AS VARIANT
+                /// The Fields tab's range slider.
                 GLOBAL span AS VARIANT
+                /// The label showing the range slider's two values.
                 GLOBAL spanLabel AS VARIANT
+                /// The Pickers tab's label reporting the day matrix's selection.
                 GLOBAL daysLabel AS VARIANT
+                /// The Pickers tab's day-of-the-week matrix, listed a second time under this heading.
                 GLOBAL days AS VARIANT
+                /// The Wizard tab's user name field.
                 GLOBAL wizardName AS VARIANT
+                /// The Wizard tab's label reporting a finished setup.
                 GLOBAL wizardDone AS VARIANT
 
                 ' GalleryNavigationTab.swift
+                /// The Navigation tab's page view.
                 GLOBAL pages AS VARIANT
+                /// The label showing which page the page view is on.
                 GLOBAL pageLabel AS VARIANT
+                /// The Navigation tab's drill-down navigator.
                 GLOBAL navigator AS VARIANT
+                /// The label showing how deep the navigator is.
                 GLOBAL depthLabel AS VARIANT
 
                 ' GalleryDataTabs.swift
+                /// The Text tab's Markdown view, which Edit flips to its source.
                 GLOBAL markdown AS VARIANT
+                /// The Text tab's Edit source / Render button.
                 GLOBAL editToggle AS VARIANT
+                /// The Layout tab's tool palette.
                 GLOBAL toolbox AS VARIANT
+                /// The label naming the toolbox's selected tool.
                 GLOBAL toolLabel AS VARIANT
+                /// The Layout tab's split view, whose axis Flip Axis changes.
                 GLOBAL splitter AS VARIANT
+                /// 1 while the split view is horizontal, 0 while it is vertical.
                 GLOBAL splitAxisIsHorizontal = 1
+                /// The Layout tab's status bar, which Flash writes a timed message into.
                 GLOBAL layoutStatus AS VARIANT
+                /// The Text tab's label reporting the link and the help link.
                 GLOBAL linkResult AS VARIANT
 
                 ' GallerySiblingPages.swift
+                /// The Boards tab's label reporting card moves.
                 GLOBAL boardMoved AS VARIANT
+                /// The Diagram tab's label reporting the selection.
                 GLOBAL diagramSelected AS VARIANT
 
                 ' The snapshot branch of main.swift is deliberately absent: GallerySnapshot

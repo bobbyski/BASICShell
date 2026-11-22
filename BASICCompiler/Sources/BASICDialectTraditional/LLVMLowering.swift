@@ -65,8 +65,15 @@ struct LLVMLowering {
 
         var functions: [String] = []
         if !options.omitsEntryPoint {
-            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel, debug: debug, locationBase: locationBase, locationTotal: locations.count)
+            // A program that opens ActiveUI windows of its own runs on a
+            // thread of its own, the application having the main thread
+            // (BASIC-31). Not a program a host gives windows (BASIC-45): its
+            // `main` stays the program, exactly as it was.
+            let opensWindows = module.opensActiveUIWindows && !options.hostedActiveUI
+            var mainEmitter = FunctionEmitter(function: module.main, module: module, constants: constants, isMain: true, objectModel: objectModel, debug: debug, locationBase: locationBase, locationTotal: locations.count,
+                                              entrySymbol: opensWindows ? Self.windowedProgramSymbol : "main")
             functions.append(mainEmitter.render())
+            if opensWindows { functions.append(Self.windowedMain) }
             locationBase += module.main.sourceLocations.count
         }
         // An imported class's members have no body here: the framework has
@@ -855,7 +862,25 @@ struct LLVMLowering {
     static let onDemandDeclarations: KeyValuePairs<String, String> = [
         "basic_rt_pwd": "declare ptr @basic_rt_pwd()",
         "basic_rt_timer": "declare double @basic_rt_timer()",
+        "basic_rt_aui_main": "declare i32 @basic_rt_aui_main(i32, ptr, ptr)",
     ]
+
+    /// The program's statements, in a program that opens ActiveUI windows of
+    /// its own (BASIC-31): what `main` would otherwise be.
+    static let windowedProgramSymbol = "\"basic.program\""
+
+    /// `main` for such a program: ActiveUI's application takes the main
+    /// thread, and runs the program's statements on another
+    /// (`basic_rt_aui_main`, in BASICRTActiveUI), so a window's `run` can
+    /// wait while the windows stay live. It never returns; the process ends
+    /// with the program or when the user quits.
+    static let windowedMain = """
+        define i32 @main(i32 %argc, ptr %argv) {
+        entry:
+          %status = call i32 @basic_rt_aui_main(i32 %argc, ptr %argv, ptr @\(windowedProgramSymbol))
+          ret i32 %status
+        }
+        """
 }
 
 /// Module-wide string constants, shared by every function emitter.
@@ -928,10 +953,15 @@ struct FunctionEmitter {
     /// table, and how long the table is (0: no statement is marked).
     private let locationBase: Int
     private let locationTotal: Int
+    /// The program's own symbol, for `main`: `main` itself, unless the
+    /// program opens windows and its statements run on a thread of their own
+    /// (`LLVMLowering.windowedProgramSymbol`, BASIC-31).
+    private let entrySymbol: String
     /// This function's subprogram, once `render` has described it.
     private var debugScope: DebugInfo.Scope?
 
-    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel(), debug: DebugInfo? = nil, locationBase: Int = 0, locationTotal: Int = 0) {
+    init(function: BIRFunction, module: BIRModule, constants: ConstantPool, isMain: Bool, objectModel: any ObjectModel = RuntimeObjectModel(), debug: DebugInfo? = nil, locationBase: Int = 0, locationTotal: Int = 0, entrySymbol: String = "main") {
+        self.entrySymbol = entrySymbol
         self.function = function
         self.module = module
         self.constants = constants
@@ -997,7 +1027,7 @@ struct FunctionEmitter {
 
         let signature: String
         if isMain {
-            signature = "define i32 @main(i32 %argc, ptr %argv)"
+            signature = "define i32 @\(entrySymbol)(i32 %argc, ptr %argv)"
         } else {
             let parameters = function.parameters.enumerated()
                 .map { "\(Self.llvmType(of: $0.element)) %p\($0.offset)" }

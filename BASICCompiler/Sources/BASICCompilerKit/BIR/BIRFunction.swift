@@ -629,6 +629,14 @@ public struct BIRModule: Sendable {
     /// a string could reach.
     public var namedHandlers: [(name: String, function: String)] = []
 
+    /// Whether the program makes BASIC's own ActiveUI controls (`AUIWindow`
+    /// and the rest), rather than importing ActiveUI's Swift classes of the
+    /// same names (BASIC-31). Built natively, such a program is an
+    /// application: its statements run beside ActiveUI's on a thread of their
+    /// own, and it links the windowed runtime. A host that gives a program
+    /// its windows (`CompileOptions.hostedActiveUI`) changes neither.
+    public var opensActiveUIWindows = false
+
     /// Whether the program takes part in `CHAIN`: its globals get a name
     /// table and capture and restore functions the runtime hands over with.
     public var chains = false

@@ -33,7 +33,7 @@ struct ExampleProjectTests {
         let copy = examples.appendingPathComponent("contacts.basproj")
         #expect(model.projectDirectoryURL == copy.standardizedFileURL)
         #expect(model.currentProgramURL == copy.appendingPathComponent("main.bas"))
-        #expect(model.projectFiles.contains("ContactModel.bas"))
+        #expect(model.projectFiles.contains("models/ContactModel.bas"))
         #expect(FileManager.default.fileExists(atPath: copy.appendingPathComponent("project.json").path))
         #expect(ProjectModel(model).title == "contacts")
     }

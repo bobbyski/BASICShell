@@ -8,6 +8,7 @@
 //
 
 import ActiveUI
+import BASICProjects
 import BASICRecipes
 import Foundation
 
@@ -45,6 +46,9 @@ final class NewProjectWizardAUI {
     let nameProblem = AUILabel("")
     let locationLabel = AUILabel("")
     let chooseLocationButton = AUIButton("Choose…")
+    /// Zip (the default) or Package: how the project is stored.
+    let formControl = AUISegmentedControl(["Zip", "Package"], selectedIndex: 0)
+    let formNote = AUILabel("")
     let createsLabel = AUILabel("")
 
     // The options page: one control per option, by key.
@@ -93,6 +97,8 @@ final class NewProjectWizardAUI {
         nameProblem.font = .caption
         nameProblem.textColor = .red
         locationLabel.wraps = true
+        formNote.wraps = true
+        formNote.font = .caption
         createsLabel.wraps = true
         createsLabel.font = .caption
 
@@ -101,6 +107,10 @@ final class NewProjectWizardAUI {
             self?.refreshButtons()
         }
         chooseLocationButton.onClick = { [weak self] in self?.chooseLocation() }
+        formControl.onSelectionChange = { [weak self] index in
+            self?.wizard.form = index == 1 ? .folder : .zip
+            self?.refresh()
+        }
         cancelButton.onClick = { [weak self] in self?.finish(with: nil) }
         backButton.onClick = { [weak self] in self?.back() }
         nextButton.onClick = { [weak self] in self?.goOn() }
@@ -159,11 +169,15 @@ final class NewProjectWizardAUI {
             nameField.text = wizard.name
             page.addChild(Self.labeled("Name", nameField))
             page.addChild(nameProblem)
-            var location: [AUIView] = [locationLabel, AUISpacer()]
+            // The path on a line of its own, Choose… under it: a long path wraps
+            // rather than pushing the button out of the sheet.
+            page.addChild(Self.labeled("Location", locationLabel))
             if wizard.canChooseLocation {
-                location.append(chooseLocationButton)
+                page.addChild(Self.labeled("", LogPaneAUI.row([chooseLocationButton, AUISpacer()])))
             }
-            page.addChild(Self.labeled("Location", LogPaneAUI.row(location)))
+            formControl.selectedIndex = wizard.form == .folder ? 1 : 0
+            page.addChild(Self.labeled("Form", LogPaneAUI.row([formControl, AUISpacer()])))
+            page.addChild(Self.labeled("", formNote))
             page.addChild(createsLabel)
         case .options:
             pageTitle.text = "Options"
@@ -184,15 +198,27 @@ final class NewProjectWizardAUI {
         #if os(iOS)
         locationLabel.text = "In Documents"
         #else
-        locationLabel.text = wizard.location.path
+        locationLabel.text = (wizard.location.path as NSString).abbreviatingWithTildeInPath
         #endif
-        createsLabel.text = "Creates " + (recipe?.folderName(for: wizard.name) ?? wizard.name)
         refreshButtons()
+    }
+
+    /// "Creates Game.basproj, a zip", and what the form chosen is good for.
+    private func refreshForm() {
+        let made = wizard.recipe?.folderName(for: wizard.name) ?? wizard.name
+        switch wizard.form {
+        case .zip:
+            createsLabel.text = "Creates \(made), a zip"
+            formNote.text = "One file, to mail, copy, keep in iCloud or keep on an iPad."
+        case .folder:
+            createsLabel.text = "Creates \(made), a package (a folder)"
+            formNote.text = "A folder named \(made), so git can see each file."
+        }
     }
 
     private func refreshButtons() {
         nameProblem.text = wizard.page == .recipe ? "" : (wizard.nameProblem ?? "")
-        createsLabel.text = "Creates " + (wizard.recipe?.folderName(for: wizard.name) ?? wizard.name)
+        refreshForm()
         backButton.isEnabled = wizard.canGoBack
         nextButton.title = wizard.isLastPage ? "Create" : "Next"
         nextButton.isEnabled = wizard.canGoOn

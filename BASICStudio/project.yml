@@ -10,6 +10,9 @@ packages:
   # New-project recipes, shared with basicc and the IDEs (BASIC-24).
   BASICRecipes:
     path: ../BASICRecipes
+  # Projects as a folder or a zip, through ProjectKit (BASIC-72).
+  BASICProjects:
+    path: ../BASICProjects
   # The compiler core, in process: on an iPad a program is compiled to
   # WebAssembly and run in JavaScriptCore (BASIC-42).
   BASICCompiler:
@@ -79,6 +82,8 @@ targets:
         product: BASICCore
       - package: BASICRecipes
         product: BASICRecipes
+      - package: BASICProjects
+        product: BASICProjects
       - package: BASICCompiler
         product: BASICCompilerKit
       - package: BASICCompiler
@@ -175,6 +180,8 @@ targets:
         product: BASICCore
       - package: BASICRecipes
         product: BASICRecipes
+      - package: BASICProjects
+        product: BASICProjects
       - package: BASICCompiler
         product: BASICCompilerKit
       - package: BASICCompiler

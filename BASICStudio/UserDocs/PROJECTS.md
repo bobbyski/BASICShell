@@ -2,14 +2,19 @@
 
 ![BASICStudio](https://img.shields.io/badge/BASICStudio-supported-brightgreen)
 
-A program that grows past one file becomes a project: a folder of `.bas` files that `IMPORT` each other, with one of them the file the program starts in.
+A program that grows past one file becomes a project: `.bas` files that `IMPORT` each other, with one of them the file the program starts in, kept together under one name.
 
 ## What a project is
 
-A project is a folder whose name ends in `.basproj`:
+A project's name ends in `.basproj`, and it comes in two forms:
+
+- **A zip:** one file, to mail, copy, keep in iCloud or keep on an iPad. New projects are zips unless you choose Package.
+- **A folder** of the same name: the same files unpacked, so git can see each one.
+
+Every BASIC tool opens either form, and the files in it are the same:
 
 ```text
-  Asteroids.basproj/
+  Asteroids.basproj
     project.json      the program's name, and the file it starts in
     src/main.bas      where the program starts
     src/Ship.bas      a module main.bas IMPORTs
@@ -39,26 +44,29 @@ Choose **File ▸ New Project…** (⇧⌘N). On iPad, it is in the **···** m
 
 1. **Choose a recipe.** Each one is a working program to start from. The summary under the list says what it makes, and the line under that lists its files.
 2. **Name the project.** The name is letters, digits, `-` and `_`. The project is `Name.basproj`.
-   - On the Mac, it goes beside the project that is open, or in the working directory. **Choose…** puts it somewhere else.
+   - It goes in Documents. On the Mac, **Choose…** puts it somewhere else.
    - On iPad, it goes in the Documents folder Studio works in.
+   - **Form:** **Zip** (the default) makes one file; **Package** makes a folder of the same name, for git.
 3. **Options.** Only a recipe that asks for something has this page.
-4. **Create.** Studio makes the project, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
+4. **Create.** Studio makes the project in the form chosen, opens it in the sidebar, and puts the file it starts in into the editor. Press **Run**.
 
 Create stays off while the name is not a name, or a project of that name is already there. The line under the name says which.
 
 | Recipe | What it makes |
 | --- | --- |
 | Console Program | One file that prints, loops and reads what is typed. |
-| Structured Program | FUNCTIONs with their own LOCALs, arrays and DATA. |
-| Game | Someone to move around, four targets (a point each) and a guard walking the edge (ten points, and another two seconds later) to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes (Walker, Player, Guard, Shots, Targets, View, Controls) in four files. |
-| TUI App | A full-screen TUIKit window with a menu bar, a field, a list and buttons. |
-| ActiveUI App | A to-do list in a window of its own: buttons, a field, a list and a status line. Runs in BASICStudio. |
-| Contact Book | A TUIKit contact book in six files: a model, JSON save and load, a toolbar and menus, and an unsaved-changes dialog. |
+| Structured Program | Documented FUNCTIONs with their own LOCALs, an array and DATA, in one file. |
+| Game | Someone to move around, four targets (a point each) and a guard walking the edge (ten points, and another two seconds later) to shoot: walk, run when you point harder, and fire the way you face, with the keyboard, a gamepad or touch. Written as classes (Walker, Player, Guard, Shots, Targets, View, Controls) in models, views and controllers. |
+| TUI App | A full-screen TUIKit app: a menu bar, a window with a toolbar, a field, a list and a status line, in models, views, a controller and the app's menus. |
+| ActiveUI App | A to-do list in a window of its own: New Task, Done, Delete and Clear Done across the top, a field, a list and a status line, kept in Application Support, in models, views and a controller. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| ActiveUI Click Counter | ActiveUI's smallest complete app: a count, a Click me button and Reset (grayed out at zero), in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| ActiveUI Master/Detail | A searchable list of items, Favorites first, beside the chosen one's title and notes, with New Item, Favorite and Delete, kept in Application Support, in a window of its own. basicc builds it into a Mac app of its own (`make run`); BASICStudio runs it too. |
+| Contact Book | A TUIKit contact book in seven files, in models, views and app: a model, JSON save and load in Application Support, a toolbar and menus, and an unsaved-changes dialog. |
 | TUIKit Gallery | Every TUIKit control in one application, one file per group of them. |
 
 ## Opening a project
 
-- **File ▸ Open Project…** opens a `.basproj` folder, or any folder of `.bas` files. It opens where the last project or file came from; the first time, in Studio's iCloud Drive folder, or Documents.
+- **File ▸ Open Project…** opens a `.basproj`, a zip or a folder, or any folder of `.bas` files. On iPad, it asks first whether to pick a zip or a folder. It opens where the last project or file came from; the first time, in Studio's iCloud Drive folder, or Documents.
 - **File ▸ Open Recent** lists the projects and the files opened lately, newest first, ten of each, and opens one again. A file picked in the project sidebar is not added: the project already is. **Clear Menu** empties it.
 - **Examples** that are projects open as projects. Studio opens a copy, so the example itself is never changed:
   - On the Mac, the copy is in `Documents/BASICStudio Examples`.
@@ -67,11 +75,29 @@ Create stays off while the name is not a name, or a project of that name is alre
 
   Opening the example again opens your copy as you left it. Delete the copy to start over.
 
+## Files in a project
+
+The sidebar lists every file and folder in the project. Click a file to open it in the editor; click a folder to choose where new files go.
+
+The **Project** menu (on iPad, in the **···** menu) changes what is in it:
+
+| Command | What it does |
+| --- | --- |
+| **New File…** (⌥⌘N) | Asks for a name, makes an empty file in the chosen folder, and opens it. The button at the top of the sidebar does the same. |
+| **New Folder…** | Asks for a name and makes a folder in the chosen folder. |
+| **Rename…** | Renames the chosen file or folder. A file open in the editor stays open under its new name. |
+| **Move…** | Moves the chosen file or folder into another folder, typed from the project's top (`src/games`; empty for the top). |
+| **Delete…** | Deletes the chosen file or folder, after asking. |
+
+**Saving a zip.** Studio works on a copy of the zip's files and writes the zip back. **Save** writes it at once, so Save is all it takes. What a program writes into its project, such as a scores file, is written into the zip shortly after the program writes it, and when the project closes.
+
+**Open in another app.** A zip another app has open opens read-only, and Studio says so. Nothing in it can be changed until the other app closes it.
+
 ## Deleting a project
 
-**File ▸ Delete Project…**, or the trash button at the top of the project sidebar, deletes the project that is open: its folder and everything in it. It asks first, naming the project and how many files go, with Cancel as the default answer.
+**File ▸ Delete Project…**, or the trash button at the top of the project sidebar, deletes the project that is open: its zip, or its folder and everything in it. It asks first, naming the project and how many files go, with Cancel as the default answer.
 
-- On the Mac the folder goes to the Trash, where it can be put back.
+- On the Mac it goes to the Trash, where it can be put back.
 - On iPad it is deleted for good.
 
 The project closes, and comes off File ▸ Open Recent with its files.
@@ -81,9 +107,16 @@ The project closes, and comes off File ▸ Open Recent with its files.
 BASICStudio, `basicc new`, OmniClide and Freebird Studio make projects from the same recipes. A project made in one opens in the others:
 
 ```sh
-basicc new Asteroids --kind game     # makes Asteroids.basproj
+basicc new Asteroids --kind game     # makes Asteroids.basproj, a zip
 basicc build Asteroids.basproj       # builds the program it names
-cd Asteroids.basproj && make run     # or build and run with its Makefile
+basicshell Asteroids.basproj         # runs it in the interpreter
+```
+
+For git, make the folder form instead, and its Makefile builds it too:
+
+```sh
+basicc new Asteroids --kind game --folder
+cd Asteroids.basproj && make run
 ```
 
 ## Adding your own recipe

@@ -23,9 +23,12 @@
 '
 ' No `neutralBackdrop` local: the binding applies exactly this fallback
 ' whenever a theme is set (tuiDesktopFill - cell background, else the
-' vector backdrop's top colour, else neutral grey), so in BASIC the
+' vector backdrop's top color, else neutral gray), so in BASIC the
 ' desktop follows from asking for the theme.
 
+/// Builds the shell, its menus and status strip, presents the first gallery window, and runs the app until it quits.
+///
+/// - Returns: Always 0, once the app has stopped and the terminal is restored.
 function RunGalleryApp() as variant
     shell = TUIShell()
     ' shell.onQuit = { app.stop() }
@@ -138,11 +141,14 @@ function RunGalleryApp() as variant
     return 0
 end function
 
-' The one theming path, used at boot, by every Theme menu item, and
-' by the preferences dialog's Appearance page.
-'
-' Takes the theme's *name* rather than a Theme: BASIC has no theme values,
-' and the binding matches a name without case or spaces.
+/// The one theming path, used at boot, by every Theme menu item, and
+/// by the preferences dialog's Appearance page.
+///
+/// Takes the theme's *name* rather than a Theme: BASIC has no theme values,
+/// and the binding matches a name without case or spaces.
+///
+/// - Parameter themeName: The built-in theme's name, matched without regard to case or spaces.
+/// - Returns: Always 0; the value is unused.
 function ApplyGalleryThemeNamed(themeName as string) as variant
     app.theme(themeName)
     ' let backdrop = theme.resolved(for: .desktop).background
@@ -153,6 +159,9 @@ function ApplyGalleryThemeNamed(themeName as string) as variant
     return 0
 end function
 
+/// Dresses the status strip's three labels in the current theme's header style.
+///
+/// - Returns: Always 0; the value is unused.
 function StyleStatusChrome() as variant
     ' let header = shell.effectiveTheme.header
     ' statusTitle.style = header
@@ -167,6 +176,10 @@ function StyleStatusChrome() as variant
     return 0
 end function
 
+/// Shows or hides the status strip's hint text.
+///
+/// - Parameter visible: 1 to show the hint, anything else to blank it.
+/// - Returns: Always 0; the value is unused.
 function SetHintsVisible(visible as integer) as variant
     if visible = 1 then
         statusHint.text("Tab moves focus - ^L controls panel - Theme menu restyles")
@@ -176,6 +189,9 @@ function SetHintsVisible(visible as integer) as variant
     return 0
 end function
 
+/// Writes the current time into the status strip's clock; the app's one-second timer calls it.
+///
+/// - Returns: Always 0; the value is unused.
 function RefreshClock() as variant
     ' let clockFormatter = DateFormatter(); dateFormat = "HH:mm:ss"
     '
@@ -189,17 +205,26 @@ end function
 ' One function per menu item, because a BASIC menu item names a handler
 ' where the Swift writes a closure.
 
+/// File > New Gallery Window: presents another gallery window, offset from the last.
+///
+/// - Returns: Always 0; the value is unused.
 function FileNewGalleryWindow() as variant
     windowCount = windowCount + 1
     app.present(MakeGalleryWindow(windowCount))
     return 0
 end function
 
+/// File > Preferences...: presents the preferences dialog.
+///
+/// - Returns: Always 0; the value is unused.
 function FilePreferences() as variant
     PresentPreferences()
     return 0
 end function
 
+/// File > Close Window: dismisses the front-most window that is not the shell.
+///
+/// - Returns: Always 0; the value is unused.
 function FileCloseWindow() as variant
     ' if let target = app.windows.last(where: { $0 !== shell }) { app.dismiss(target) }
     '
@@ -209,11 +234,17 @@ function FileCloseWindow() as variant
     return 0
 end function
 
+/// File > Quit: stops the app.
+///
+/// - Returns: Always 0; the value is unused.
 function FileQuit() as variant
     app.stop()
     return 0
 end function
 
+/// View > Toggle Controls Panel: opens or closes the gallery window's Controls slide-out.
+///
+/// - Returns: Always 0; the value is unused.
 function ViewToggleControlsPanel() as variant
     ' (app.windows.last { $0 is GalleryWindow } as? GalleryWindow)?
     '     .toggleSlideOut(.leading)
@@ -224,7 +255,9 @@ function ViewToggleControlsPanel() as variant
     return 0
 end function
 
-' The VTG check, a tick after the app is up.
+/// The VTG check, a tick after the app is up.
+///
+/// - Returns: Always 0; the value is unused.
 function ReportVTGCheck() as variant
     ' app.isVectorChromeActive / app.graphicsCapabilities - the binding
     ' answers the probe as one line rather than as a capability record,

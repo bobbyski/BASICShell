@@ -1,22 +1,29 @@
 import Foundation
+import BASICProjects
 
 /// Opening a project or a library, whichever shape it arrives in.
 ///
 /// BASPROJ_AND_BASLIB.md §5 asks for one path that handles four things: a
 /// zipped `.basproj`, a project directory, a zipped `.baslib`, and a loose
-/// `.bas` file. A zip is unpacked to a temporary directory and read from
-/// there — deliberately unclever, because editing a zip in place turns a
-/// crash into a corrupted project rather than a lost edit, and because a
-/// directory is what every other part of the compiler already understands.
+/// `.bas` file. A zip is opened with ProjectKit (BASIC-72), read-only, into a
+/// copy of its own, and read from there: a directory is what every other
+/// part of the compiler already understands. ProjectKit finds a project one
+/// folder down (Finder's Compress), passes over `__MACOSX`, and refuses names
+/// that would climb out, on every platform basicc runs on, the iPad included.
+///
+/// ```text
+///   Game.basproj (zip) ──ProjectKit, read-only──▶ <tmp>/basicc-containers/…/files
+///   Game.basproj/      ─────────────────────────▶ itself
+/// ```
+///
+/// A zip stays open while the process runs, so its sources stay readable as
+/// the compiler works; one that changes on disk is opened again. Each copy is
+/// removed when the process ends.
 public enum ProjectContainer {
     /// Something about the container the compiler cannot honor.
     public struct Failure: Error, CustomStringConvertible {
         public let description: String
     }
-
-    /// Where an unpacked container was put, kept for the process's life so
-    /// the sources stay readable while the compiler works on them.
-    nonisolated(unsafe) private static var unpacked: [String: String] = [:]
 
     /// The extensions that are containers rather than sources.
     public static let containerExtensions: Set<String> = ["basproj", "baslib"]
@@ -29,11 +36,7 @@ public enum ProjectContainer {
     }
 
     /// The directory a container's contents live in: itself when it is a
-    /// directory, an unpacked copy when it is a zip.
-    ///
-    /// A container may be zipped with its files at the top level or inside
-    /// one folder — both are what a person gets from Finder's Compress — so
-    /// the manifest is found either way.
+    /// directory, the open zip's copy when it is a zip.
     public static func directory(of path: String) throws -> String {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
@@ -41,35 +44,69 @@ public enum ProjectContainer {
         }
         if isDirectory.boolValue { return path }
         guard isZippedContainer(path) else { return path }
-        let key = URL(fileURLWithPath: path).standardizedFileURL.path
-        if let already = unpacked[key], FileManager.default.fileExists(atPath: already) { return already }
+        return try OpenZips.shared.directory(of: URL(fileURLWithPath: path))
+    }
+}
 
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("basicc-container-\(UUID().uuidString)").path
-        try FileManager.default.createDirectory(atPath: destination, withIntermediateDirectories: true)
-        let result = try ProcessRunner.run("/usr/bin/unzip", ["-q", "-o", path, "-d", destination])
-        guard result.exitCode == 0 else {
-            throw Failure(description: "\(path) could not be unpacked: \(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
-        }
-        let root = try manifestRoot(under: destination, container: path)
-        unpacked[key] = root
-        return root
+/// The zips the process has open, by path: each a read-only ProjectKit project,
+/// with the stamp it had when opened.
+private final class OpenZips: @unchecked Sendable {
+    static let shared = OpenZips()
+
+    private struct Open {
+        let project: Project
+        let stamp: [String]
     }
 
-    /// The directory inside an unpacked container that holds its manifest.
-    private static func manifestRoot(under destination: String, container: String) throws -> String {
-        if hasManifest(destination) { return destination }
-        let entries = (try? FileManager.default.contentsOfDirectory(atPath: destination)) ?? []
-        for entry in entries where !entry.hasPrefix("__MACOSX") {
-            let candidate = (destination as NSString).appendingPathComponent(entry)
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
-            if hasManifest(candidate) { return candidate }
-        }
-        throw Failure(description: "\(container) has no project.json or library.json")
+    private let lock = NSLock()
+    private var open: [String: Open] = [:]
+
+    private init() {
+        // Removes every copy when the process ends; atexit takes no captures.
+        atexit { OpenZips.shared.closeAll() }
     }
 
-    private static func hasManifest(_ directory: String) -> Bool {
-        ["project.json", "library.json"].contains { FileManager.default.fileExists(atPath: (directory as NSString).appendingPathComponent($0)) }
+    /// The open zip's directory, opening it, or opening it again when it changed.
+    func directory(of zip: URL) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let key = zip.standardizedFileURL.path
+        let stamp = Self.stamp(of: zip)
+        if let already = open[key], already.stamp == stamp {
+            return already.project.workingDirectory.path
+        }
+        try? open.removeValue(forKey: key)?.project.close()
+        let project: Project
+        do {
+            project = try Project.open(at: zip, as: BASICProjects.types, options: Self.options)
+        } catch {
+            throw ProjectContainer.Failure(description: "\(zip.path) could not be opened: \(error)")
+        }
+        let root = project.workingDirectory
+        guard ["project.json", "library.json"].contains(where: { (try? project.exists($0)) == true }) else {
+            try? project.close()
+            throw ProjectContainer.Failure(description: "\(zip.path) has no project.json or library.json")
+        }
+        open[key] = Open(project: project, stamp: stamp)
+        return root.path
+    }
+
+    func closeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        for zip in open.values { try? zip.project.close() }
+        open.removeAll()
+    }
+
+    /// Read-only, in a copy of its own under the temporary folder, so a build never
+    /// waits on an app editing the zip and leaves nothing in Application Support.
+    private static let options = ProjectOptions(
+        saving: .manual, readOnly: true,
+        workingCopies: FileManager.default.temporaryDirectory.appendingPathComponent("basicc-containers", isDirectory: true))
+
+    /// What changes when the zip is written: its size and time.
+    private static func stamp(of url: URL) -> [String] {
+        let attributes = (try? FileManager.default.attributesOfItem(atPath: url.path)) ?? [:]
+        return ["\(attributes[.size] ?? "")", "\(attributes[.modificationDate] ?? "")"]
     }
 }

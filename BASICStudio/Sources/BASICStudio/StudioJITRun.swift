@@ -146,6 +146,8 @@ extension StudioModel {
         nativeRun = nil
         #endif
         isJITRunning = false
+        // What the program wrote into a zip project is saved shortly (BASIC-72).
+        noteProjectChanges()
         if status != 0 {
             appendJITOutput("JIT: exited with status \(status)\n")
         }

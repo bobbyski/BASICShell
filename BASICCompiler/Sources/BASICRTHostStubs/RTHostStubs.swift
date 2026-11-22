@@ -71,6 +71,18 @@ public func basic_rt_host_aui_call(_ typeName: UnsafePointer<CChar>, _ id: Int, 
     rtStubFail("ActiveUI windows are not supported by this host")
 }
 
+/// A program that opens ActiveUI windows starts here (BASIC-31). Without the
+/// windowed runtime there is no application to start, so the program simply
+/// runs, and its first window says it is not supported.
+@_cdecl("basic_rt_aui_main")
+public func basic_rt_aui_main(
+    _ argc: Int32,
+    _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+    _ program: @convention(c) (Int32, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
+) -> Int32 {
+    program(argc, argv)
+}
+
 @_cdecl("basic_rt_host_handler_register")
 public func basic_rt_host_handler_register(_ name: UnsafePointer<CChar>, _ handler: UnsafeMutableRawPointer) {}
 

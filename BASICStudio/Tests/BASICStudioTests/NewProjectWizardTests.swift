@@ -8,6 +8,7 @@
 
 import ActiveUI
 import BASICRecipes
+import BASICProjects
 import Foundation
 import Testing
 @testable import BASICStudio
@@ -120,16 +121,20 @@ struct NewProjectWizardTests {
         wizard.next()
         #expect(wizard.optionValues["GREETING"] == "Howdy")
 
+        // A new project is a zip (BASIC-72); its files are read through ProjectKit.
         let project = try wizard.create()
         #expect(project.lastPathComponent == "Hi.basproj")
-        let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
+        #expect(try BASICProjects.recognize(project).form == .zip)
+        let main = try ProjectReader.open(at: project, as: BASICProjects.types).text(at: "src/main.bas")
         #expect(main == "PRINT \"Howdy, Hi\"\n")
     }
 
-    @Test("Create makes Name.basproj, opens it, and puts its main.bas in the editor")
+    @Test("Create makes the zip Name.basproj, opens it, and puts its main.bas in the editor, from the working copy")
     func createsAndOpens() throws {
         let location = try scratch()
         defer { try? FileManager.default.removeItem(at: location) }
+        StudioOpenProject.workingCopies = location.appendingPathComponent("WorkingCopies", isDirectory: true)
+        defer { StudioOpenProject.workingCopies = nil }
         let model = StudioHarness().model
         var wizard = NewProjectWizardModel(recipes: BASICRecipes.builtIn, location: location, canChooseLocation: true)
         wizard.select(try #require(BASICRecipes.builtIn.firstIndex { $0.id == "basic.game" }))
@@ -138,11 +143,14 @@ struct NewProjectWizardTests {
 
         let project = try model.createProject(from: wizard)
         #expect(project == location.appendingPathComponent("Rocks.basproj").standardizedFileURL)
-        #expect(BASICProjectFolder.entry(of: project) == project.appendingPathComponent("src/main.bas"))
-        #expect(model.projectDirectoryURL == project)
-        #expect(model.currentProgramURL == project.appendingPathComponent("src/main.bas"))
+        #expect(try BASICProjects.recognize(project).form == .zip)
+        #expect(model.openedProject?.url.standardizedFileURL == project)
+        let files = try #require(model.projectDirectoryURL)
+        #expect(files != project, "the zip's working copy")
+        #expect(model.currentProgramURL == files.appendingPathComponent("src/main.bas"))
         #expect(model.programText.contains("Rocks"))
         #expect(ProjectModel(model).title == "Rocks")
+        model.closeStudioProject()
     }
 
     @Test("In the ActiveUI shell, File ▸ New Project… brings up the wizard, not a save panel")
@@ -182,7 +190,13 @@ struct NewProjectWizardTests {
         #expect(!sheet.nameProblem.text.isEmpty)
         sheet.nameField.onChange?("Rocks")
         #expect(sheet.nextButton.isEnabled)
-        #expect(sheet.createsLabel.text == "Creates Rocks.basproj")
+        #expect(sheet.createsLabel.text == "Creates Rocks.basproj, a zip")
+        #expect(sheet.formControl.selectedIndex == 0, "a zip unless a package is asked for")
+        sheet.formControl.onSelectionChange?(1)
+        #expect(sheet.wizard.form == .folder)
+        #expect(sheet.createsLabel.text == "Creates Rocks.basproj, a package (a folder)")
+        sheet.formControl.onSelectionChange?(0)
+        #expect(sheet.wizard.form == .zip)
 
         sheet.nextButton.onClick?()
         sheet.nextButton.onClick?()
@@ -190,6 +204,45 @@ struct NewProjectWizardTests {
         #expect(finished.first??.name == "Rocks")
         #expect(finished.first??.recipe?.id == "basic.game")
     }
+
+    @Test("Package makes the folder Name.basproj, which opens as the project with its files in place")
+    func packageForm() throws {
+        let location = try scratch()
+        defer { try? FileManager.default.removeItem(at: location) }
+        let model = StudioHarness().model
+        var wizard = NewProjectWizardModel(recipes: BASICRecipes.builtIn, location: location, canChooseLocation: true)
+        wizard.next()
+        wizard.name = "Rocks"
+        wizard.form = .folder
+        let project = try model.createProject(from: wizard)
+        defer { model.closeStudioProject() }
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: project.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+        #expect(model.openedProject?.isZip == false)
+        #expect(model.projectDirectoryURL?.standardizedFileURL.path == project.standardizedFileURL.path, "a folder is worked on in place")
+        #expect(model.currentProgramURL?.standardizedFileURL.path == project.appendingPathComponent("src/main.bas").standardizedFileURL.path)
+    }
+
+    #if os(macOS)
+    @Test("A new project goes in Documents, even with a zip project open, never in its working copy")
+    func startsInDocuments() throws {
+        let folder = try scratch()
+        StudioOpenProject.workingCopies = folder.appendingPathComponent("WorkingCopies", isDirectory: true)
+        let model = StudioHarness().model
+        defer {
+            model.closeStudioProject()
+            StudioOpenProject.workingCopies = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let documents = try #require(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first).standardizedFileURL
+        #expect(model.makeNewProjectWizard().location == documents)
+        let recipe = try #require(BASICRecipes.builtIn(named: "console"))
+        model.openProjectAndEntry(at: try BASICProjects.create(from: recipe, named: "Open", in: folder))
+        #expect(model.openedProject?.isZip == true)
+        #expect(model.makeNewProjectWizard().location == documents)
+        #expect(model.makeNewProjectWizard().canChooseLocation)
+    }
+    #endif
 
     @Test("Cancel ends it with nothing made")
     func sheetCancels() throws {
@@ -219,7 +272,7 @@ struct NewProjectWizardTests {
         let loud = try #require(sheet.optionSwitches["LOUD"])
         loud.onChange?(true)
         let project = try sheet.wizard.create()
-        let main = try String(contentsOf: project.appendingPathComponent("src/main.bas"), encoding: .utf8)
+        let main = try ProjectReader.open(at: project, as: BASICProjects.types).text(at: "src/main.bas")
         #expect(main == "PRINT \"Hello, Hi!\"\n")
     }
 }

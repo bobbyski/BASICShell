@@ -247,24 +247,25 @@ struct DiagnosticTests {
         }
     }
 
-    /// A program's own ActiveUI windows (ACTIVEUI_TRANSITION.md P6) are made
-    /// by BASICStudio's interpreter through its host, which a compiled program
-    /// does not have. Refused by name, in each spelling a program can use,
-    /// rather than reported as an array subscript or an unknown type.
-    @Test func activeUIWindowsAreRefusedByName() throws {
-        let sources = [
-            "LET W = AUIWindow(\"x\")",
-            "LET B = NEW AUIButton(\"Go\")",
-            "DIM L AS AUIList",
-            "FUNCTION Picked(E AS BASICAUIEvent)\nEND FUNCTION",
+    /// A program's own ActiveUI windows (BASIC-31) compile natively, in each
+    /// spelling a program can use. One that makes a control is built as an
+    /// application: `main` gives ActiveUI the main thread and runs the
+    /// program's statements, `basic.program`, on a thread of their own.
+    @Test func activeUIProgramsCompileAsApplications() throws {
+        let sources: [(source: String, opensWindows: Bool)] = [
+            ("LET W = AUIWindow(\"x\")", true),
+            ("LET B = NEW AUIButton(\"Go\")", true),
+            ("DIM L AS AUIList", false),
+            ("FUNCTION Picked(E AS BASICAUIEvent)\n    PRINT E.Text$; E.Index\nEND FUNCTION", false),
         ]
-        for source in sources {
-            do {
-                _ = try Compilation(dialect: TraditionalDialect()).bir(source: source, name: "aui")
-                Issue.record("\(source) compiled")
-            } catch let error as CompileError {
-                #expect(String(describing: error).contains("BASICStudio's interpreter"), "\(source): \(error)")
-            }
+        for (source, opensWindows) in sources {
+            let compilation = Compilation(dialect: TraditionalDialect(), options: CompileOptions(emitDebugInfo: false))
+            let module = try compilation.bir(source: source, name: "aui")
+            #expect(module.opensActiveUIWindows == opensWindows, "\(source)")
+            let ir = try compilation.dialect.lower(module, options: compilation.options).llvmIR
+            #expect(ir.contains("@basic_rt_aui_main(") == opensWindows, "\(source)")
+            #expect(ir.contains("define i32 @\"basic.program\"(") == opensWindows, "\(source)")
+            #expect(ir.contains("define i32 @main("), "\(source)")
         }
     }
 
@@ -567,27 +568,59 @@ struct ProjectTests {
 struct StarterTests {
     /// The starters that run to the end with nothing but stdin.
     static let runsToTheEnd: Set<String> = ["console", "structured"]
-    /// The starters basicc refuses: a program's own ActiveUI windows run in
-    /// BASICStudio's interpreter, and basicc says so.
-    static let studioOnly: Set<String> = ["activeui"]
+    /// The starters that open ActiveUI windows of their own (BASIC-31): each
+    /// builds into an application, which a scripted user works and then
+    /// closes, and what it printed and showed is checked. Each entry is the
+    /// script, then what the run must have said. `#n` in the clicks picks
+    /// row n, and a grayed-out button is not pressed, as a person could not
+    /// press it.
+    static let windowed: [String: (script: [String: String], expected: [String])] = [
+        // Done and Delete open grayed out; Done on a picked task ticks it,
+        // and Clear Done asks first (the script answers Clear).
+        "activeui": (["BASIC_AUI_CLICK": "Done,#0,Done,Clear Done", "BASIC_AUI_DIALOG": "0"],
+                     ["\"Done\" grayed out", "\"Delete\" grayed out", "\"Done\" is grayed out, so not pressed",
+                      "says \"2 to do · 1 done\"", "says \"1 to do · 2 done\"", "dialog", "says \"1 to do · 0 done\""]),
+        // Reset opens grayed out at zero, and goes back to zero.
+        "activeui.counter": (["BASIC_AUI_CLICK": "Reset,Click me,Click me,Reset"],
+                             ["\"Reset\" grayed out", "\"Reset\" is grayed out, so not pressed",
+                              "says \"Count: 1\"", "says \"Count: 2\"", "says \"Count: 0\""]),
+        // A heading chooses nothing, which grays Favorite out; an item is
+        // chosen and made a favorite.
+        "activeui.masterdetail": (["BASIC_AUI_CLICK": "#2,Favorite,#3,Favorite"],
+                                  ["says \"Getting started\"", "says \"No Item Selected\"",
+                                   "\"Favorite\" is grayed out, so not pressed", "says \"The model\"", "says \"Favorite\""]),
+    ]
 
     @Test(arguments: ProjectScaffold.kinds)
     func starterBuildsAndMatchesTheInterpreter(kind: String) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind)
+        // A folder, to build its src/main.bas as a file; the next test builds a zip.
+        let project = try ProjectScaffold.generate(named: "Starter", into: root.path, kind: kind, form: .folder)
         #expect((project as NSString).lastPathComponent == "Starter.basproj")
         let source = (project as NSString).appendingPathComponent("src/main.bas")
         let output = (project as NSString).appendingPathComponent("Build/Starter")
         try FileManager.default.createDirectory(atPath: (output as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        if Self.studioOnly.contains(kind) {
-            #expect(throws: CompileError.self, "starter \(kind) is BASICStudio's") {
-                try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
+        try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
+        if let windowed = Self.windowed[kind] {
+            // Its own windows: up without taking the keyboard, worked by the
+            // script, then closed as their close boxes would.
+            // APP_DATA_DIR keeps the starter's data in the scratch folder,
+            // never in the real Application Support.
+            let script = windowed.script.merging([
+                "AUI_BACKGROUND": "1", "BASIC_AUI_TRACE": "1", "BASIC_AUI_CLOSE_AFTER": "2",
+                "APP_DATA_DIR": root.appendingPathComponent("data").path,
+            ]) { mine, _ in mine }
+            let run = try runWithInput(output, "", environment: script)
+            #expect(run.exitCode == 0, "starter \(kind): \(run.stdout)")
+            #expect(run.stdout.contains("opened: \"Starter\""), "starter \(kind): \(run.stdout)")
+            #expect(run.stdout.contains("closed"), "starter \(kind): \(run.stdout)")
+            for line in windowed.expected {
+                #expect(run.stdout.contains(line), "starter \(kind) said \(line): \(run.stdout)")
             }
             return
         }
-        try Compilation(dialect: TraditionalDialect()).build(sourcePath: source, output: output)
 
         // The console starter reads a name; feed both engines the same one.
         let stdin = "Bobby\n"
@@ -603,12 +636,15 @@ struct StarterTests {
         }
     }
 
-    @Test func aProjectIsBuiltFromItsFolder() throws {
+    /// `basicc new` makes a zip by default (BASIC-72), and basicc builds the zip itself.
+    @Test func aNewProjectIsAZipThatBuilds() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("basicc-starter-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let project = try ProjectScaffold.generate(named: "Folder", into: root.path, kind: "structured")
-        let output = (root.path as NSString).appendingPathComponent("folder-built")
+        var isDirectory: ObjCBool = true
+        #expect(FileManager.default.fileExists(atPath: project, isDirectory: &isDirectory) && !isDirectory.boolValue, "a zip")
+        let output = (root.path as NSString).appendingPathComponent("zip-built")
         try Compilation(dialect: TraditionalDialect()).build(sourcePath: project, output: output)
         #expect(try runWithInput(output, "").exitCode == 0)
         #expect(throws: ProjectScaffold.Failure.self) {
@@ -670,11 +706,12 @@ struct StarterTests {
         #expect(run.stdout == "hi\n")
     }
 
-    private func runWithInput(_ executable: String, _ input: String, arguments: [String] = []) throws -> (stdout: String, exitCode: Int32) {
+    private func runWithInput(_ executable: String, _ input: String, arguments: [String] = [],
+                              environment: [String: String] = [:]) throws -> (stdout: String, exitCode: Int32) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.environment = TestBuild.programEnvironment
+        process.environment = TestBuild.programEnvironment.merging(environment) { _, added in added }
         let inPipe = Pipe(), outPipe = Pipe()
         process.standardInput = inPipe
         process.standardOutput = outPipe

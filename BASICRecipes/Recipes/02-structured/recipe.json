@@ -2,7 +2,7 @@
   "identifier": "basic.structured",
   "name": "Structured Program",
   "language": "BASIC",
-  "summary": "Functions, arrays and DATA in one program: the shape a real program grows into.",
+  "summary": "Documented functions, an array and DATA in one file: the shape a real program grows into, small enough to read at once.",
   "icon": "function",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",

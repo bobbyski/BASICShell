@@ -25,6 +25,8 @@ struct DocsPaneModel: Equatable {
     struct Section: Equatable {
         let title: String
         let items: [Item]
+        /// Submenus inside this one: the Reference topics, when there are any.
+        var groups: [Section] = []
     }
 
     /// One page in the menu.
@@ -48,7 +50,10 @@ struct DocsPaneModel: Equatable {
     /// One submenu per category that has pages, in category order.
     let sections: [Section]
 
-    init(docs: [UserDoc], selectedID: UserDoc.ID?) {
+    /// - Parameter topics: Reference topics from `TOPICS.json`. With some, the
+    ///   Reference section is a submenu per topic, and pages no topic lists go
+    ///   under More Reference; with none, it is one list, as it always was.
+    init(docs: [UserDoc], selectedID: UserDoc.ID?, topics: [UserDocTopic] = []) {
         let showingID = selectedID ?? docs.first?.id
         selectedDoc = docs.first { $0.id == showingID }
         menuTitle = selectedDoc?.title ?? "Documentation Menu"
@@ -56,10 +61,23 @@ struct DocsPaneModel: Equatable {
         sections = UserDocCategory.allCases.compactMap { category in
             let pages = docs.filter { $0.category == category }
             guard !pages.isEmpty else { return nil }
-            return Section(
-                title: category.title,
-                items: pages.map { Item(id: $0.id, title: $0.title, isChecked: $0.id == showingID) }
-            )
+            func item(_ doc: UserDoc) -> Item {
+                Item(id: doc.id, title: doc.title, isChecked: doc.id == showingID)
+            }
+            guard category == .reference, !topics.isEmpty else {
+                return Section(title: category.title, items: pages.map(item))
+            }
+            let byID = Dictionary(pages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var groups = topics.compactMap { topic -> Section? in
+                let listed = topic.pages.compactMap { byID[$0] }
+                return listed.isEmpty ? nil : Section(title: topic.title, items: listed.map(item))
+            }
+            let placed = Set(topics.flatMap(\.pages))
+            let unplaced = pages.filter { !placed.contains($0.id) }
+            if !unplaced.isEmpty {
+                groups.append(Section(title: "More Reference", items: unplaced.map(item)))
+            }
+            return Section(title: category.title, items: [], groups: groups)
         }
     }
 }

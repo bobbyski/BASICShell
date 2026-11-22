@@ -2,33 +2,37 @@
 //  ProjectModel.swift
 //  BASICStudio
 //
-//  The project sidebar as values: the open folder and its programs.
+//  The project sidebar as values: the open project and its files and folders.
 //
 
 import BASICRecipes
 import Foundation
 
-/// The project sidebar (ACTIVEUI_TRANSITION.md P3.7): the folder that is open
-/// as a project, the BASIC programs in it, and which one is in the editor.
+/// The project sidebar (ACTIVEUI_TRANSITION.md P3.7, BASIC-72): the open project,
+/// a folder or a zip, every file and folder in it, and which one is selected.
 ///
 /// A projection like the P1 ones: built from ``StudioModel``, owning nothing,
 /// importing no UI framework. The ActiveUI shell draws it in an `AUISidebar`.
 ///
 /// ```text
-///   ┌ Samples            [+][⟳] ┐   title, and Open Project… / Rescan
-///   │ ▸ hello.bas               │   rows: file name, and its folder when
-///   │ ▸ sound.bas               │   nested; the open one is selected
-///   │ ▸ roids.bas     roids     │
-///   └───────────────────────────┘
+///   ┌ GradeBook        [+][⊕][⟳] ┐   title, and Open Project… / New File… / Rescan
+///   │ ▸ project.json             │   rows: each folder, then what is in it; a
+///   │ ▸ src                      │   nested one shows its folder; the selected
+///   │ ▸ main.bas      src        │   one (or the editor's file) is highlighted
+///   │ ▸ models        src        │
+///   └────────────────────────────┘
 /// ```
 struct ProjectModel: Equatable {
     struct Row: Equatable {
-        /// Relative to the project folder, with its extension.
+        /// Relative to the project folder, with its extension; a folder's ends in `/`.
         let path: String
-        /// The file's name.
+        /// The file's or folder's name.
         let title: String
-        /// The folder it is in, for a file below the top.
+        /// The folder it is in, for one below the top.
         let subtitle: String?
+
+        /// Whether the row is a folder.
+        var isFolder: Bool { path.hasSuffix("/") }
     }
 
     /// The folder's name, or ``noProjectTitle``.
@@ -45,13 +49,16 @@ struct ProjectModel: Equatable {
 
     @MainActor
     init(_ model: StudioModel) {
-        self.init(directory: model.projectDirectoryURL, files: model.projectFiles, openFile: model.currentProgramURL)
+        self.init(directory: model.projectDirectoryURL, files: model.projectFiles, openFile: model.currentProgramURL,
+                  name: model.openedProject?.displayName, selection: model.projectSelection)
     }
 
-    init(directory: URL?, files: [String], openFile: URL?) {
+    /// The sidebar for the files under `directory`. `name` is the project's (a zip's
+    /// working copy has a name of its own); `selection` wins over the editor's file.
+    init(directory: URL?, files: [String], openFile: URL?, name: String? = nil, selection: String? = nil) {
         isOpen = directory != nil
         // `MyGame.basproj` is the project MyGame.
-        title = directory.map { BASICProjectFolder.displayName(ofFolder: $0.lastPathComponent) } ?? Self.noProjectTitle
+        title = name ?? directory.map { BASICProjectFolder.displayName(ofFolder: $0.lastPathComponent) } ?? Self.noProjectTitle
         rows = files.map { path in
             let parts = path.split(separator: "/")
             return Row(
@@ -60,7 +67,9 @@ struct ProjectModel: Equatable {
                 subtitle: parts.count > 1 ? parts.dropLast().joined(separator: "/") : nil
             )
         }
-        if let directory, let openFile {
+        if let selection, let index = files.firstIndex(of: selection) {
+            selectedIndex = index
+        } else if let directory, let openFile {
             let root = directory.standardizedFileURL.path + "/"
             let open = openFile.standardizedFileURL.path
             selectedIndex = open.hasPrefix(root)
@@ -71,8 +80,8 @@ struct ProjectModel: Equatable {
         }
     }
 
-    /// The `.bas` files under `directory`, relative to it, in Finder order:
-    /// top-level files first by name, then each folder's. Hidden files and
+    /// The files and folders under `directory`, relative to it, each folder (ending
+    /// in `/`) followed by what is in it, by name as Finder sorts. Hidden names and
     /// ``skippedFolders`` are left out.
     static func scan(_ directory: URL) -> [String] {
         let root = directory.standardizedFileURL
@@ -89,16 +98,18 @@ struct ProjectModel: Equatable {
                 enumerator.skipDescendants()
                 continue
             }
-            guard url.pathExtension.lowercased() == "bas" else { continue }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(root.path + "/") else { continue }
-            found.append(String(path.dropFirst(root.path.count + 1)))
+            let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            found.append(String(path.dropFirst(root.path.count + 1)) + (isFolder ? "/" : ""))
         }
+        // Component by component, so a folder comes right before what is in it.
         return found.sorted { lhs, rhs in
-            let lhsDepth = lhs.split(separator: "/").count
-            let rhsDepth = rhs.split(separator: "/").count
-            if (lhsDepth == 1) != (rhsDepth == 1) { return lhsDepth == 1 }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+            let left = lhs.split(separator: "/"), right = rhs.split(separator: "/")
+            for (a, b) in zip(left, right) where a != b {
+                return String(a).localizedStandardCompare(String(b)) == .orderedAscending
+            }
+            return left.count < right.count
         }
     }
 }

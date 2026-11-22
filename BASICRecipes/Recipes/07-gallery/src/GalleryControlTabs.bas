@@ -4,6 +4,9 @@
 
 ' ---------------------------------------------------------------- Buttons
 
+/// Builds the Buttons tab: roles and styles, long-press, state controls, dialogs and choices.
+///
+/// - Returns: The tab's root view.
 function MakeButtonsTab() as variant
     let root = TUIStack("v")
 
@@ -107,26 +110,41 @@ function MakeButtonsTab() as variant
     return root
 end function
 
+/// Reports a quick click on the long-press button.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsHoldClicked() as variant
     holdResult.text("clicked - quick press")
     return 0
 end function
 
+/// Reports that the long-press button's alternate action fired.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsHoldLongPressed() as variant
     holdResult.text("long-pressed - the alternate action fired")
     return 0
 end function
 
+/// Reports the hold menu's Reopen Closed Tab item.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsMenuReopen() as variant
     holdResult.text("menu: reopen")
     return 0
 end function
 
+/// Reports the hold menu's Copy Address item.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsMenuCopy() as variant
     holdResult.text("menu: copy")
     return 0
 end function
 
+/// Shows the modal Delete Page? dialog.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsShowDialog() as variant
     let dialog = TUIDialog("Delete Page?")
     dialog.message("This cannot be undone.")
@@ -142,16 +160,25 @@ function ButtonsShowDialog() as variant
     return 0
 end function
 
+/// Reports the dialog's Cancel button.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsDialogCancelled() as variant
     dialogResult.text("dialog: cancelled")
     return 0
 end function
 
+/// Reports the dialog's Delete button.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsDialogDeleted() as variant
     dialogResult.text("dialog: deleted")
     return 0
 end function
 
+/// Reports that the open file dialog is not available in BASIC.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsOpenFile() as variant
     ' FileDialog(mode: .open, root: FileManager.default.currentDirectoryPath)
     '
@@ -162,6 +189,9 @@ function ButtonsOpenFile() as variant
     return 0
 end function
 
+/// Opens a document window: a text editor under a row of file buttons.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsOpenDocument() as variant
     ' The document window is buildable; DocumentController is not bound, so
     ' Open/Save/Save As/Close have nothing to drive and the dirty marker in
@@ -188,6 +218,9 @@ function ButtonsOpenDocument() as variant
     return 0
 end function
 
+/// Presents the preferences dialog, for both Preferences buttons.
+///
+/// - Returns: Always 0; the value is unused.
 function ButtonsPreferences() as variant
     PresentPreferences()
     return 0
@@ -195,6 +228,9 @@ end function
 
 ' ----------------------------------------------------------------- Inputs
 
+/// Builds the Inputs tab: text and choice fields, value controls, and progress.
+///
+/// - Returns: The tab's root view.
 function MakeInputsTab() as variant
     let root = TUIStack("v")
 
@@ -210,7 +246,7 @@ function MakeInputsTab() as variant
     let stepper = TUIStepper(4, 0, 10)
     let level = TUILevel(3, 5)
     level.editable(1)
-    ' Phase 16.12: thresholds recolour the fill
+    ' Phase 16.12: thresholds recolor the fill
     level.thresholds(4, 5)
 
     let progressBar = TUIProgress("bar", 0.6)
@@ -248,6 +284,9 @@ function MakeInputsTab() as variant
     return root
 end function
 
+/// Advances the Inputs tab's spinner one frame; an app timer calls it.
+///
+/// - Returns: Always 0; the value is unused.
 function InputsAdvanceSpinner() as variant
     spinner.advance()
     return 0
@@ -255,6 +294,9 @@ end function
 
 ' ---------------------------------------------------------------- Pickers
 
+/// Builds the Pickers tab: date pickers, matrices and the color picker.
+///
+/// - Returns: The tab's root view.
 function MakePickersTab() as variant
     let root = TUIStack("h")
 
@@ -294,6 +336,9 @@ function MakePickersTab() as variant
     return root
 end function
 
+/// Reports a change to the day matrix's selection.
+///
+/// - Returns: Always 0; the value is unused.
 function PickersDaysChanged() as variant
     ' days.onSelectionChanged = { daysLabel.text = "selected: \(...)" }
     '

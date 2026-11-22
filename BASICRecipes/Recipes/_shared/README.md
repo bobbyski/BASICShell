@@ -21,3 +21,13 @@ modules sit beside it in `src/`.
 (`swift build --package-path Code/BASICCompiler`), or installs with
 that package's `buildAndInstall.sh`. Set `BASICC=/path/to/basicc` to
 point the Makefile at a build.
+
+## How the comments are written
+
+Every `FUNCTION`, `TYPE`, `CLASS`, field and `GLOBAL` (and `DIM`med array
+the whole program shares) has a documentation comment: `///` lines on the
+line just above it, read by Swift's rules (BASIC's own, from
+`BASICDocumentation.swift`; `basiclint` checks them): a one-line summary,
+then, after a `///` line of its own, any discussion, then
+`- Parameter name:` for each parameter and `- Returns:` for what it gives
+back. Other comments start with `'` and say what each step does.

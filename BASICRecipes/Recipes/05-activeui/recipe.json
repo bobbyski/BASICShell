@@ -2,9 +2,9 @@
   "identifier": "basic.activeui",
   "name": "ActiveUI App",
   "language": "BASIC",
-  "summary": "A window of its own, made with ActiveUI: a row of buttons, a field, a list and a status line, with a to-do list to show how they work together.",
+  "summary": "A to-do list in a window of its own, made with ActiveUI: New Task, Done, Delete and Clear Done across the top, a field, a list of tasks and a status line, kept in Application Support. Split into models, views and a controller.",
   "icon": "macwindow",
   "folderExtension": "basproj",
   "openFile": "src/main.bas",
-  "postNote": "created — run it in BASICStudio, which opens its window"
+  "postNote": "created — make run builds it with basicc and opens its window"
 }

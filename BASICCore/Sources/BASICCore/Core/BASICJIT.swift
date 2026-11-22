@@ -171,6 +171,7 @@ public enum BASICJIT {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
+        process.environment = compilerEnvironment(environment)
         var arguments = ["build", sourcePath, optimization, "-o", binary]
         if let dialect { arguments += ["--dialect", dialect] }
         process.arguments = arguments
@@ -193,6 +194,20 @@ public enum BASICJIT {
         }
         return .built(binary: binary)
         #endif
+    }
+
+    /// The environment `basicc` runs with: the host's, without its `DYLD_`
+    /// variables.
+    ///
+    /// A host started by Xcode or `swift test` has `DYLD_LIBRARY_PATH` and
+    /// `DYLD_FRAMEWORK_PATH` pointing at its own build products. An installed
+    /// `basicc` that inherits them loads the host's `libTUIKit.dylib` instead
+    /// of the one installed beside it, and dies before compiling anything:
+    /// "dyld: Symbol not found: …TUIKit…" (2026-11-02, GradeBook's `jit` in
+    /// Studio run from Xcode). The compiler's libraries are found from where
+    /// it is installed, never from where the host was built.
+    public static func compilerEnvironment(_ environment: [String: String]) -> [String: String] {
+        environment.filter { !$0.key.hasPrefix("DYLD_") }
     }
 
     /// A typed `JIT`, as BASICShell's prompt and BASICStudio's console both

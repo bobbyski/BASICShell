@@ -46,6 +46,19 @@ public enum RTHostHosted {
         }
     }
 
+    /// Gives a native program the windows its own process opens (BASIC-31):
+    /// `windows` answers its AUI classes, and what the user does reaches its
+    /// handlers between statements and while a window's `run` waits, as in a
+    /// hosted run. Nothing else changes: the program keeps its terminal for
+    /// text, keys and graphics, and is not hosted (`RTHosted.isActive` stays
+    /// false).
+    public static func installNativeWindows(_ windows: BASICAUIHost) {
+        BASICCompiledEvents.reset()
+        BASICCompiledAUI.reset()
+        RTHostAUI.host = windows
+        RTHosted.collectEvents = collectEvents
+    }
+
     /// The run is over.
     public static func uninstall() {
         RTHostAUI.host = nil

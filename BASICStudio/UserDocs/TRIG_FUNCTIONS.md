@@ -11,7 +11,8 @@ Angles are in **radians**. Use `RAD` and `DEC` to convert.
 | `SEC(x)` `CSC(x)` `COT(x)` | Secant, cosecant, cotangent — the reciprocals of cosine, sine and tangent. |
 | `HSN(x)` `HCS(x)` `HTN(x)` | Hyperbolic sine, cosine and tangent. |
 | `RAD(x)` | Degrees as radians. |
-| `DEC(x)` | Radians as degrees. |
+| `DEG(x)` | Radians as degrees: `DEG(PI)` is 180. BBC BASIC's name, and the one people guess. |
+| `DEC(x)` | The same as `DEG`, kept for programs that already use it. |
 
 ```basic
 print rad(180)

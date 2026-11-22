@@ -13,13 +13,18 @@
 ' exist - so it asks, reports in the status strip, and carries on. No GOTO,
 ' and no run that ends in a stack of red text over the desktop.
 
-' The folder part of a path: everything before the last "/".
-'
-' Answers "." for a bare file name, because "the folder of contacts.json"
-' is the current directory and the caller should not have to special-case
-' it. MID$ walks backwards rather than using a search function, since the
-' last separator is the one that matters and INSTR finds the first.
+/// The folder part of a path: everything before the last "/".
+///
+/// Answers "." for a bare file name, because "the folder of contacts.json"
+/// is the current directory and the caller should not have to special-case
+/// it. MID$ walks backwards rather than using a search function, since the
+/// last separator is the one that matters and INSTR finds the first.
+///
+/// - Parameter path: The path to take the folder from.
+/// - Returns: The folder, "/" for a file in the root folder, or "." for a
+///   bare file name.
 FUNCTION FolderOf$(path AS STRING) AS STRING
+    ' Start at the last character and step back to the first "/".
     LOCAL at = LEN(path)
     WHILE at > 0
         IF MID$(path, at, 1) = "/" THEN
@@ -34,16 +39,21 @@ FUNCTION FolderOf$(path AS STRING) AS STRING
     RETURN "."
 END FUNCTION
 
-' Can this path be written to? Checks the name and the folder, not the file.
-'
-' The file itself is allowed not to exist - that is what Save As does. What
-' must exist is somewhere to put it.
+/// Can this path be written to? Checks the name and the folder, not the file.
+///
+/// The file itself is allowed not to exist - that is what Save As does. What
+/// must exist is somewhere to put it. Says why not in LastMessage$.
+///
+/// - Parameter path: The file to be written.
+/// - Returns: 1 when it can be written, 0 when it cannot.
 FUNCTION PathIsWritable(path AS STRING) AS INTEGER
+    ' An empty name is the toolbar field left blank.
     IF path = "" THEN
         LastMessage$ = "no file name - type one in the toolbar"
         RETURN 0
     END IF
 
+    ' The folder has to be there already; Save does not make one.
     LOCAL folder$ = FolderOf$(path)
     IF NOT FILEEXISTS(folder$) THEN
         LastMessage$ = "no folder called " + folder$
@@ -52,12 +62,14 @@ FUNCTION PathIsWritable(path AS STRING) AS INTEGER
     RETURN 1
 END FUNCTION
 
-' The book as one value, ready for the JSON writer.
-'
-' People(*) is a growable array and Contacts() is a fixed one with a count,
-' so the two cannot be handed straight across: staging is DIMmed to exactly
-' the contacts that are real and assigned whole. DIM takes an expression,
-' which is what makes "exactly this many" possible.
+/// The book as one value, ready for the JSON writer.
+///
+/// People(*) is a growable array and Contacts() is a fixed one with a count,
+/// so the two cannot be handed straight across: staging is DIMmed to exactly
+/// the contacts that are real and assigned whole. DIM takes an expression,
+/// which is what makes "exactly this many" possible.
+///
+/// - Returns: A ContactBook holding every real contact.
 FUNCTION BookSnapshot() AS VARIANT
     LOCAL book AS ContactBook
     book.Version = 1
@@ -68,6 +80,7 @@ FUNCTION BookSnapshot() AS VARIANT
         RETURN book
     END IF
 
+    ' Copy the real rows, and only those, into an array of exactly that size.
     DIM staging(ContactCount - 1) AS Contact
     LOCAL row
     FOR row = 0 TO ContactCount - 1
@@ -78,8 +91,15 @@ FUNCTION BookSnapshot() AS VARIANT
     RETURN book
 END FUNCTION
 
-' Writes the book to a JSON file. Answers 1 when it wrote.
+/// Writes the book to a JSON file. Answers 1 when it wrote.
+///
+/// The file becomes CurrentPath$, the book is no longer dirty, and
+/// LastMessage$ says what was saved, or why it was not.
+///
+/// - Parameter path: The file to write.
+/// - Returns: 1 when it wrote, 0 when the path cannot be written.
 FUNCTION SaveContacts(path AS STRING) AS INTEGER
+    ' Ask first, so a bad path is a message rather than a runtime error.
     IF NOT PathIsWritable(path) THEN
         RETURN 0
     END IF
@@ -95,17 +115,22 @@ FUNCTION SaveContacts(path AS STRING) AS INTEGER
     writer.writeJson(book, true)
     writer.close
 
+    ' The file just written is the one the book now matches.
     CurrentPath$ = path
     IsDirty = 0
     LastMessage$ = "saved " + Number$(ContactCount) + " contacts to " + path
     RETURN 1
 END FUNCTION
 
-' Reads a JSON file into the book, replacing what was there.
-'
-' The caller is responsible for asking about unsaved edits FIRST - see
-' ContactDialogs.bas. This function is the part that has no opinion.
+/// Reads a JSON file into the book, replacing what was there.
+///
+/// The caller is responsible for asking about unsaved edits FIRST - see
+/// views/ContactDialogs.bas. This function is the part that has no opinion.
+///
+/// - Parameter path: The file to read.
+/// - Returns: 1 when it read the file, 0 when there is no file to read.
 FUNCTION LoadContacts(path AS STRING) AS INTEGER
+    ' Check the name and the file before opening anything.
     IF path = "" THEN
         LastMessage$ = "no file name - type one in the toolbar"
         RETURN 0
@@ -116,6 +141,7 @@ FUNCTION LoadContacts(path AS STRING) AS INTEGER
         RETURN 0
     END IF
 
+    ' The JSON reader fills the whole ContactBook in one call.
     LOCAL reader = File(path, READ, JSON, false)
     LOCAL book AS ContactBook
     book = reader.json()
@@ -135,6 +161,7 @@ FUNCTION LoadContacts(path AS STRING) AS INTEGER
         LastMessage$ = "opened " + path
     END IF
 
+    ' Copy the file's contacts into the book's fixed array.
     LOCAL row
     FOR row = 0 TO loaded - 1
         Contacts(row) = book.People(row)

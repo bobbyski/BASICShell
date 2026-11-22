@@ -128,8 +128,14 @@ struct OpenRecentTests {
     @Test("A project made by New Project goes on the list")
     func newProjectCounts() throws {
         let folder = try scratch()
-        defer { try? FileManager.default.removeItem(at: folder) }
+        // A new project is a zip (BASIC-72): its working copy goes in the scratch folder.
+        StudioOpenProject.workingCopies = folder.appendingPathComponent("WorkingCopies", isDirectory: true)
         let model = StudioHarness().model
+        defer {
+            model.closeStudioProject()
+            StudioOpenProject.workingCopies = nil
+            try? FileManager.default.removeItem(at: folder)
+        }
         var wizard = NewProjectWizardModel(recipes: BASICRecipes.builtIn, location: folder, canChooseLocation: true)
         wizard.next()
         wizard.name = "Made"

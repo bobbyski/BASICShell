@@ -17,6 +17,7 @@ The numeric library. Every one takes a number and returns a number.
 | `LN(x)` | The natural logarithm, base e. |
 | `LOG10(x)` | The logarithm base 10, the same as `LOG`. `LCT` is a third name for it. |
 | `LTW(x)` | The logarithm base 2. |
+| `CDEC(x)` | `x` as a `DECIMAL`, exact to 28 significant digits. Give it text or a whole number: `CDEC("12.50")` is 12.5. A fractional `DOUBLE` has already lost the exactness `DECIMAL` is for, so `CDEC(0.1)` is an error that says so. |
 | `RND()` | A random number from 0 up to but not including 1. |
 | `RANDOMIZE n` | Starts the random sequence from a known place. |
 
@@ -39,3 +40,16 @@ print rnd(); rnd()
 ```
 
 Given the same seed that prints the same two numbers every time. Without `RANDOMIZE` the sequence starts where it likes.
+
+## MOD
+
+`a MOD b` is the remainder after dividing `a` by `b`. The remainder takes the
+sign of `a`:
+
+```basic
+print 17 mod 5
+print -7 mod 3
+```
+
+prints `2`, then `-1`. `n MOD 2` is 0 for an even number and 1 or -1 for an odd
+one, which is the usual way to ask which it is.

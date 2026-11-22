@@ -37,7 +37,9 @@ trap 'rm -rf "$STAGE"' EXIT
 # Zipped from inside the directory so entries are bare page names with no
 # leading folder, and -X so no extended attributes ride along: the archive
 # should differ between commits only when a page does.
-( cd "$SOURCE" && zip -q -X -9 "$STAGE/UserDocs.zip" ./*.md )
+# TOPICS.json rides along: it groups the Reference pages into the topics
+# the Documentation menu shows.
+( cd "$SOURCE" && zip -q -X -9 "$STAGE/UserDocs.zip" ./*.md $( [ -f TOPICS.json ] && echo ./TOPICS.json ) )
 
 for destination in "${DESTINATIONS[@]}"; do
     mkdir -p "$(dirname "$destination")"

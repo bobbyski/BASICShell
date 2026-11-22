@@ -81,6 +81,8 @@ extension StudioModel {
         wasmRun = nil
         clearWasmDebuggerState()
         isJITRunning = false
+        // What the program wrote into a zip project is saved shortly (BASIC-72).
+        noteProjectChanges()
         setCompiledRunInputActive(false)
         session.sendsHostEventsToCompiledProgram = false
         endCompiledRunGraphics(stoppedShort: ending != .finished)

@@ -22,7 +22,9 @@ func printUsage() {
     usage:
       basicc build <file.bas|project/> [options]   compile to an executable
       basicc run <file.bas|project/> [options]     compile, then run it
-      basicc new <Name> [--kind k] [-o dir]   create a starter project
+      basicc new <Name> [--kind k] [--folder] [-o dir]
+                                          create a starter project: a .basproj zip,
+                                          or with --folder a folder (for git)
       basicc swift-interface <file.bas>   print the Swift view of the program's
                                           classes, as a .swiftinterface
       basicc swift-class <file.bas> -o <dir>
@@ -32,6 +34,8 @@ func printUsage() {
                                           gave the program, and what it did not
       basicc import-probe <file.bas>      the same, and prove it: compile every
                                           generated shim and type-check the units
+      basicc import-cache [--clear]       what basicc keeps of the Swift packages
+                                          programs import, and how big it is
       basicc dialects                     list the dialects this build supports
       basicc --version
 
@@ -69,6 +73,8 @@ struct Invocation {
     var optimizationLevel = 0
     var emitDebugInfo = true
     var kind: String?
+    /// For `new`: a folder project rather than a zip (BASIC-72).
+    var folder = false
     var bundle = false
     /// `llvm` (the default) or `wasm` (BASIC-45).
     var target = "llvm"
@@ -98,6 +104,7 @@ struct Invocation {
             case "-g": emitDebugInfo = true
             case "-g0": emitDebugInfo = false
             case "--json-diagnostics": jsonDiagnostics = true
+            case "--folder": folder = true
             case "--bundle": bundle = true
             case "--target":
                 index += 1
@@ -326,6 +333,35 @@ func buildWasm(_ invocation: Invocation, source: String, output: String, thenRun
 /// exported symbols (for the compiler Studio carries), R4's shims for every
 /// member, and the entries that call them by name. Read before the ordinary
 /// arguments, which take one source file and nothing else.
+/// `basicc import-cache [--clear]`: each module's import cache entry and its size,
+/// and the total; `--clear` empties the cache. The entries replace the build folders
+/// imports used to leave behind (`Documents/BASICC_IMPORTS_WITHOUT_BUILDS.md`).
+func importCache() -> Never {
+    let cache = SwiftImportCache()
+    if CommandLine.arguments.dropFirst(2).contains("--clear") {
+        do {
+            if FileManager.default.fileExists(atPath: cache.root) { try FileManager.default.removeItem(atPath: cache.root) }
+            print("cleared \(cache.root)")
+            exit(0)
+        } catch {
+            fail("could not clear \(cache.root): \(error)")
+        }
+    }
+    let entries = cache.entries()
+    print(cache.root)
+    if entries.isEmpty { print("  (empty)") }
+    for entry in entries {
+        let sizes = entry.sizes
+        // The total as it is on disk now; the parts as recorded when the entry was made.
+        let now = SwiftImportCache.size(of: (cache.root as NSString).appendingPathComponent(entry.module))
+        print("  \(entry.module): \(SwiftImportCache.describe(now)) (objects \(SwiftImportCache.describe(sizes.objects)), "
+              + "modules \(SwiftImportCache.describe(sizes.modules)), graph \(SwiftImportCache.describe(sizes.graph)), "
+              + "other \(SwiftImportCache.describe(sizes.other))); build folder was \(SwiftImportCache.describe(sizes.buildFolder)); made \(entry.made)")
+    }
+    print("  total \(SwiftImportCache.describe(SwiftImportCache.size(of: cache.root)))")
+    exit(0)
+}
+
 func frameworkMap() -> Never {
     // basicc framework-map <out> <Module>=<package folder> ... (BASIC-45)
     //
@@ -349,6 +385,8 @@ func frameworkMap() -> Never {
             // What the Mac and the iPad both have: the Mac's graph, less every
             // symbol iOS's does not declare, and every relationship naming one.
             let iOSGraph = try SwiftPackageResolver.iOSSymbolGraph(of: resolved)
+            // Read once, then gone: nothing of the iOS build is kept.
+            defer { try? FileManager.default.removeItem(atPath: (iOSGraph as NSString).deletingLastPathComponent) }
             guard var graph = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: resolved.symbolGraph))) as? [String: Any],
                   var symbols = graph["symbols"] as? [[String: Any]],
                   let relationships = graph["relationships"] as? [[String: Any]],
@@ -406,7 +444,12 @@ func frameworkMap() -> Never {
     exit(0)
 }
 
+// Interrupted (Control-C, `timeout`), basicc stops the SwiftPM run it started and
+// removes the import build folder it was using, rather than leaving both behind.
+SwiftBuildFolders.removeOnInterrupt()
+
 if CommandLine.arguments.dropFirst().first == "framework-map" { frameworkMap() }
+if CommandLine.arguments.dropFirst().first == "import-cache" { importCache() }
 
 let invocation = Invocation(Array(CommandLine.arguments.dropFirst()))
 switch invocation.command {
@@ -535,8 +578,10 @@ case "new":
         fail("unknown kind '\(kind)' — one of: \(ProjectScaffold.kinds.joined(separator: ", "))", code: 2)
     }
     do {
-        let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath, kind: kind)
-        print("created \(root) — build with: make")
+        let root = try ProjectScaffold.generate(named: name, into: invocation.output ?? FileManager.default.currentDirectoryPath,
+                                                kind: kind, form: invocation.folder ? .folder : .zip)
+        print(invocation.folder ? "created \(root) — build with: make"
+                                : "created \(root), a zip — build with: basicc build \((root as NSString).lastPathComponent)")
     } catch {
         fail("\(error)")
     }

@@ -152,6 +152,10 @@ final class StudioActiveUIShell {
             AUISidebarHeaderAction(systemSymbol: "folder.badge.plus", tooltip: ProjectModel.openProjectTitle) { [weak model] in
                 model?.openProjectFromMenu()
             },
+            // A file in the selected folder (BASIC-72); the Project menu has the rest.
+            AUISidebarHeaderAction(systemSymbol: "doc.badge.plus", tooltip: "New File\u{2026}") { [weak model] in
+                model?.newProjectFileFromMenu()
+            },
             AUISidebarHeaderAction(systemSymbol: "arrow.clockwise", tooltip: "Rescan the project") { [weak model] in
                 model?.rescanProject()
             },
@@ -187,10 +191,16 @@ final class StudioActiveUIShell {
         }
         sidebar.onSelect = { [weak self] index in
             guard let self, let rows = self.drawnProject?.rows, rows.indices.contains(index) else { return }
-            self.model.openProjectFile(rows[index].path)
+            let row = rows[index]
+            if row.isFolder {
+                self.model.selectProjectFolder(row.path)
+            } else {
+                self.model.openProjectFile(row.path)
+            }
         }
 
         model.newProjectWizardPresenter = { [weak self] in self?.presentNewProjectWizard() }
+        model.projectNamePrompter = { title, initial in await ProjectNameSheet.ask(title: title, initial: initial) }
 
         observation = model.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
@@ -373,7 +383,7 @@ final class StudioActiveUIShell {
         if project != drawnProject {
             if project.rows != drawnProject?.rows {
                 sidebar.items = project.rows.map {
-                    AUISidebarItem(symbol: "doc.text", title: $0.title, subtitle: $0.subtitle)
+                    AUISidebarItem(symbol: $0.isFolder ? "folder" : "doc.text", title: $0.title, subtitle: $0.subtitle)
                 }
             }
             sidebar.headerTitle = project.title
@@ -551,6 +561,33 @@ final class StudioActiveUIShell {
 
     /// The menu bar, from ``MenuCommandModel``, in this order: the app, File,
     /// Edit, View, Examples, Console, Debug, Window, Help.
+    /// Project ▸ New File…, New Folder…, Rename…, Move…, Delete… (BASIC-72): the open
+    /// project's files, a folder or a zip alike. The sidebar's selection is what is
+    /// renamed, moved or deleted, and the folder new things go in.
+    static func projectMenu(model: StudioModel) -> AUIMenu {
+        func item(_ title: String, shortcut: AUIKeyboardShortcut? = nil, needsSelection: Bool = false,
+                  _ action: @escaping @MainActor (StudioModel) -> Void) -> AUIMenuItem {
+            let made = AUIMenuItem(title, shortcut: shortcut) { [weak model] in
+                MainActor.assumeIsolated { if let model { action(model) } }
+            }
+            made.isEnabledProvider = { [weak model] in
+                MainActor.assumeIsolated {
+                    guard let model else { return false }
+                    return needsSelection ? model.hasProjectSelection : model.canChangeProjectFiles
+                }
+            }
+            return made
+        }
+        return AUIMenu("Project", items: [
+            item("New File\u{2026}", shortcut: AUIKeyboardShortcut("n", modifiers: [.command, .option])) { $0.newProjectFileFromMenu() },
+            item("New Folder\u{2026}") { $0.newProjectFolderFromMenu() },
+            .separator(),
+            item("Rename\u{2026}", needsSelection: true) { $0.renameProjectItemFromMenu() },
+            item("Move\u{2026}", needsSelection: true) { $0.moveProjectItemFromMenu() },
+            item("Delete\u{2026}", needsSelection: true) { $0.deleteProjectItemFromMenu() },
+        ])
+    }
+
     static func makeMenuBar(model: StudioModel, onSettings: (() -> Void)? = nil) -> AUIMenuBar {
         let commands = MenuCommandModel(model)
         // Open Project… (P3.7).
@@ -577,6 +614,7 @@ final class StudioActiveUIShell {
             .separator(),
             .command(.closeDocument, title: "Close", shortcut: .command("w")),
         ])
+        let project = projectMenu(model: model)
         let edit = AUIMenu("Edit", items: [
             .command(.undo),
             .command(.redo),
@@ -590,6 +628,7 @@ final class StudioActiveUIShell {
         var menus: [AUIMenu] = [
             AUIMenu.application(name: "BASICStudio", about: { MenuCommandModel.perform(.about, on: model) }, settings: onSettings),
             file,
+            project,
             edit,
             AUIMenu.standardView(),
         ]

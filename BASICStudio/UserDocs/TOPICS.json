@@ -1,0 +1,186 @@
+{
+  "about": "The Reference pages grouped by topic, in the order a reader looks for them. BASICStudio's Documentation menu and Freebird Studio's BASIC book both read this file, so the two cannot disagree. A page not listed here is still shown, under More Reference.",
+  "reference": [
+    {
+      "title": "Program Flow",
+      "pages": [
+        "END_STOP.md",
+        "FOR_NEXT.md",
+        "GOSUB.md",
+        "GOTO.md",
+        "IF_THEN.md",
+        "LABEL.md",
+        "PAUSE.md",
+        "QUIT_EXIT.md",
+        "RETURN.md",
+        "SELECT_CASE.md",
+        "SLEEP.md",
+        "WHILE_WEND.md",
+        "YIELD.md"
+      ]
+    },
+    {
+      "title": "Errors and Events",
+      "pages": [
+        "ERROR.md",
+        "ERR_ERL.md",
+        "EVENTS.md",
+        "EVENT_TRAPPING.md",
+        "ON_ERROR.md",
+        "RESUME.md"
+      ]
+    },
+    {
+      "title": "Variables and Data",
+      "pages": [
+        "DATA.md",
+        "DATA_TYPES.md",
+        "DIM.md",
+        "GLOBAL.md",
+        "LET.md",
+        "LOCAL.md",
+        "LOGICAL_OPERATORS.md",
+        "NULL.md",
+        "OPTION.md",
+        "PSEUDO_VARIABLES.md",
+        "READ.md",
+        "RECORD.md",
+        "RESTORE.md",
+        "TYPE.md"
+      ]
+    },
+    {
+      "title": "Functions and Modules",
+      "pages": [
+        "ALIAS.md",
+        "CLOSURES.md",
+        "DEF_FN.md",
+        "FUNCTION.md",
+        "IMPORT.md",
+        "MODULE.md"
+      ]
+    },
+    {
+      "title": "Built-in Functions",
+      "pages": [
+        "ASC_VAL_STR.md",
+        "CHR.md",
+        "DATE_TIME.md",
+        "EVAL.md",
+        "FROMJSONSTRING.md",
+        "LEN.md",
+        "LOG.md",
+        "MATH_FUNCTIONS.md",
+        "REFLECTION.md",
+        "STRING_FUNCTIONS.md",
+        "STRING_SUB.md",
+        "TAB_POS.md",
+        "TOJSONSTRING.md",
+        "TRIG_FUNCTIONS.md",
+        "USING_DOLLAR.md"
+      ]
+    },
+    {
+      "title": "Input and Output",
+      "pages": [
+        "CLS.md",
+        "COLOR.md",
+        "INKEY.md",
+        "INPUT.md",
+        "INPUT_DOLLAR.md",
+        "KEYDOWN.md",
+        "LINE_INPUT.md",
+        "PRINT.md",
+        "PROMPT.md",
+        "SCREEN.md"
+      ]
+    },
+    {
+      "title": "Files",
+      "pages": [
+        "ASYNC_FILES.md",
+        "CLOSE.md",
+        "EOF.md",
+        "FILE.md",
+        "FILEEXISTS.md",
+        "FILES.md",
+        "OPEN.md",
+        "RANDOM_FILES.md",
+        "SEQUENTIAL_FILES.md"
+      ]
+    },
+    {
+      "title": "Objects",
+      "pages": [
+        "CLASS.md",
+        "IMPLEMENTS.md",
+        "INHERITS.md",
+        "INTERFACE.md",
+        "NEW_CONSTRUCTOR.md",
+        "OVERRIDES.md",
+        "PUBLIC_PRIVATE_PROTECTED.md",
+        "VIRTUAL.md"
+      ]
+    },
+    {
+      "title": "Graphics and Touch",
+      "pages": [
+        "CIRCLE.md",
+        "DRAW.md",
+        "HASTOUCH.md",
+        "LINE.md",
+        "PAINT.md",
+        "POINT.md",
+        "PRESET.md",
+        "PSET.md",
+        "TOUCH_CONTROLS.md"
+      ]
+    },
+    {
+      "title": "Sound",
+      "pages": [
+        "ENVELOPE.md"
+      ]
+    },
+    {
+      "title": "Async, Jobs and the Network",
+      "pages": [
+        "ASYNC_AWAIT.md",
+        "HTTPCLIENT.md",
+        "JOBS.md",
+        "PIPE.md"
+      ]
+    },
+    {
+      "title": "The Shell",
+      "pages": [
+        "CD.md",
+        "DIRECTORY_STACK.md",
+        "ENVIRONMENT.md",
+        "EXEC.md",
+        "PROJECTS.md",
+        "PWD.md",
+        "SHELL_SCRIPTING.md",
+        "STARTUP_FILES.md",
+        "SYSTEM.md"
+      ]
+    },
+    {
+      "title": "Programs and the Editor",
+      "pages": [
+        "CHAIN.md",
+        "CLEAR.md",
+        "EDIT.md",
+        "HELP.md",
+        "JIT.md",
+        "LIST.md",
+        "LOAD.md",
+        "NEW.md",
+        "REM.md",
+        "RUN.md",
+        "SAVE.md",
+        "TRON_TROFF.md"
+      ]
+    }
+  ]
+}

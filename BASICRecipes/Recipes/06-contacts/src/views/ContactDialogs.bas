@@ -18,10 +18,13 @@
 ' out - and adding a fifth command that discards edits means adding one
 ' CASE below, not another dialog.
 
-' Runs an action, or asks about unsaved edits and runs it afterwards.
-'
-' action$ is a name this file understands: "quit" or "open". Anything that
-' can lose edits should come through here.
+/// Runs an action, or asks about unsaved edits and runs it afterwards.
+///
+/// action$ is a name this file understands: "quit" or "open". Anything that
+/// can lose edits should come through here.
+///
+/// - Parameter action$: The action to run: "quit" or "open".
+/// - Returns: 1 when it ran the action now, 0 when it put the dialog up.
 FUNCTION ConfirmFirst(action$ AS STRING) AS INTEGER
     IF NOT IsDirty THEN
         ' Nothing to lose: do it now, and never put up a dialog that has
@@ -32,6 +35,7 @@ FUNCTION ConfirmFirst(action$ AS STRING) AS INTEGER
         RETURN 1
     END IF
 
+    ' Remember the action for whichever button is pressed, then ask.
     PendingAction$ = action$
 
     LOCAL ask = TUIDialog("Unsaved Changes")
@@ -48,6 +52,9 @@ FUNCTION ConfirmFirst(action$ AS STRING) AS INTEGER
     RETURN 0
 END FUNCTION
 
+/// The dialog's Save button: saves, then does the remembered action.
+///
+/// - Returns: Always 0.
 FUNCTION UnsavedSave() AS VARIANT
     IF NOT SaveContacts(CurrentPath$) THEN
         ' The save failed and said why in LastMessage$. The remembered
@@ -58,10 +65,14 @@ FUNCTION UnsavedSave() AS VARIANT
         RETURN 0
     END IF
 
+    ' Saved: the edits are safe, so the remembered action can go ahead.
     PerformPendingAction()
     RETURN 0
 END FUNCTION
 
+/// The dialog's Discard button: does the remembered action, losing the edits.
+///
+/// - Returns: Always 0.
 FUNCTION UnsavedDiscard() AS VARIANT
     ' Discarding is only a decision about the edits; the action itself is
     ' the one that was already asked for.
@@ -70,19 +81,26 @@ FUNCTION UnsavedDiscard() AS VARIANT
     RETURN 0
 END FUNCTION
 
+/// The dialog's Cancel button: forgets the remembered action.
+///
+/// - Returns: Always 0.
 FUNCTION UnsavedCancel() AS VARIANT
+    ' Nothing is saved, nothing is lost, and the status line says so.
     PendingAction$ = ""
     LastMessage$ = "canceled - nothing was saved or lost"
     RefreshEverything()
     RETURN 0
 END FUNCTION
 
-' Carries out whatever was waiting on the dialog, and forgets it.
-'
-' SELECT CASE rather than a chain of IFs: one statement says "these are all
-' the things that can be waiting", and an unknown name falls into CASE ELSE
-' instead of quietly doing nothing.
+/// Carries out whatever was waiting on the dialog, and forgets it.
+///
+/// SELECT CASE rather than a chain of IFs: one statement says "these are all
+/// the things that can be waiting", and an unknown name falls into CASE ELSE
+/// instead of quietly doing nothing.
+///
+/// - Returns: 1 when an action was carried out, 0 when nothing was waiting.
 FUNCTION PerformPendingAction() AS INTEGER
+    ' Forget the action before doing it, so it can never run twice.
     LOCAL action$ = PendingAction$
     PendingAction$ = ""
 
@@ -105,14 +123,20 @@ END FUNCTION
 
 ' ------------------------------------------------------------------ About
 
+/// Puts up the About dialog.
+///
+/// - Returns: Always 0.
 FUNCTION ShowAbout() AS VARIANT
     LOCAL about = TUIDialog("About Contact Book")
-    about.message("A contact book in BASIC, on TUIKit." + CHR$(10) + CHR$(10) + "Contacts are held in a JSON file you can open in any editor. Six source files, no GOTO, and every handler is a named FUNCTION." + CHR$(10) + CHR$(10) + "Reading order: main.bas, ContactModel.bas, ContactStorage.bas, ContactWindow.bas, ContactApp.bas, ContactDialogs.bas.")
+    about.message("A contact book in BASIC, on TUIKit." + CHR$(10) + CHR$(10) + "Contacts are held in a JSON file you can open in any editor. Seven source files in models, views and app, no GOTO, and every handler is a named FUNCTION." + CHR$(10) + CHR$(10) + "Reading order: main.bas, models/ContactModel.bas, models/ContactStorage.bas, views/ContactWindow.bas, app/ContactApp.bas, views/ContactDialogs.bas, app/DataFolder.bas.")
     about.addbutton("Close", "AboutClosed")
     app.show(about)
     RETURN 0
 END FUNCTION
 
+/// The About dialog's Close button.
+///
+/// - Returns: Always 0.
 FUNCTION AboutClosed() AS VARIANT
     ' A dialog button needs a handler even when there is nothing to do:
     ' without one the button still dismisses, but naming the function is

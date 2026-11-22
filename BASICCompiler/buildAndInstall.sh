@@ -6,6 +6,9 @@
 #   <prefix>/bin/basictest               the conformance runner
 #   <prefix>/bin/basiclint               the linter
 #   <prefix>/lib/libBASICRTHost.a        the runtime (core + host half + SDKs)
+#   <prefix>/lib/libBASICRTActiveUI.a    the same, plus the native host for a
+#                                        program's own ActiveUI windows (BASIC-31)
+#   <prefix>/lib/libActiveUI*.dylib      ActiveUI, which only such a program links
 #   <prefix>/share/basicc/BASICRT/       runtime sources — the fallback when
 #                                        the archive is absent (host stubbed)
 #   <prefix>/share/basicc/BASICSound/    the sound model compiled with them
@@ -29,7 +32,8 @@ done
 if [[ $uninstall -eq 1 ]]; then
   rm -f "$prefix/bin/basicc" "$prefix/bin/basictest"
   rm -f "$prefix/bin/basiclint"
-  rm -f "$prefix/lib/libBASICRTHost.a"
+  rm -f "$prefix/lib/libBASICRTHost.a" "$prefix/lib/libBASICRTActiveUI.a"
+  rm -f "$prefix/lib/libActiveUI.dylib" "$prefix/lib/libActiveUICharts.dylib"
   rm -rf "$prefix/share/basicc"
   echo "removed basicc from $prefix"
   exit 0
@@ -40,6 +44,7 @@ swift build -c release --product basicc 2>&1 | tail -1
 swift build -c release --product basictest
 swift build -c release --product basiclint 2>&1 | tail -1
 swift build -c release --product BASICRTHost 2>&1 | tail -1
+swift build -c release --product BASICRTActiveUI 2>&1 | tail -1
 bin="$(swift build -c release --show-bin-path)"
 
 mkdir -p "$prefix/bin" "$prefix/share/basicc" "$prefix/lib"
@@ -47,6 +52,10 @@ install -m 755 "$bin/basicc" "$prefix/bin/basicc"
 install -m 755 "$bin/basictest" "$prefix/bin/basictest"
 install -m 755 "$bin/basiclint" "$prefix/bin/basiclint"
 install -m 644 "$bin/libBASICRTHost.a" "$prefix/lib/libBASICRTHost.a"
+install -m 644 "$bin/libBASICRTActiveUI.a" "$prefix/lib/libBASICRTActiveUI.a"
+for library in libActiveUI.dylib libActiveUICharts.dylib; do
+  install -m 755 "$bin/$library" "$prefix/lib/$library"
+done
 rm -rf "$prefix/share/basicc/BASICRT" "$prefix/share/basicc/BASICRTHostStubs" "$prefix/share/basicc/BASICSound"
 cp -R Sources/BASICRT "$prefix/share/basicc/BASICRT"
 cp -R Sources/BASICRTHostStubs "$prefix/share/basicc/BASICRTHostStubs"

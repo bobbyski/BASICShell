@@ -5,6 +5,9 @@
 
 ' ---------------------------------------------------------------- Fields
 
+/// Builds the Fields tab: search and paste, tokens with completion, and sliders.
+///
+/// - Returns: The tab's root view.
 function MakeFieldsTab() as variant
     let root = TUIStack("v")
 
@@ -65,8 +68,12 @@ function MakeFieldsTab() as variant
     return root
 end function
 
-' The Swift closures receive the text; a BASIC search handler is handed
-' nothing, so each reads the field it belongs to.
+/// Reports the search field's text as it is typed, or that it was cleared.
+///
+/// The Swift closures receive the text; a BASIC search handler is handed
+/// nothing, so each reads the field it belongs to.
+///
+/// - Returns: Always 0; the value is unused.
 function FieldsSearchChanged() as variant
     let text = search.text()
     if text = "" then
@@ -77,11 +84,17 @@ function FieldsSearchChanged() as variant
     return 0
 end function
 
+/// Reports the search field's text when it is committed.
+///
+/// - Returns: Always 0; the value is unused.
 function FieldsSearchCommitted() as variant
     searchResult.text("committed: " + search.text())
     return 0
 end function
 
+/// Reports that the paste button pasted.
+///
+/// - Returns: Always 0; the value is unused.
 function FieldsPasted() as variant
     ' PasteButton { searchResult.text = "pasted: \($0)" } - the pasted text
     ' is not handed to a BASIC handler, so the report says that a paste
@@ -90,11 +103,17 @@ function FieldsPasted() as variant
     return 0
 end function
 
+/// Reports that the paste button found nothing to paste.
+///
+/// - Returns: Always 0; the value is unused.
 function FieldsPasteEmpty() as variant
     searchResult.text("nothing to paste - copy something first (^C in a field)")
     return 0
 end function
 
+/// Shows the range slider's two values.
+///
+/// - Returns: Always 0; the value is unused.
 function FieldsSpanChanged() as variant
     ' span.onValuesChanged = { spanLabel.text = "\($0.lowerBound)...\($0.upperBound) ..." }
     spanLabel.text(STR$(span.lower()) + "..." + STR$(span.upper()) + " - Space switches thumbs")
@@ -103,6 +122,9 @@ end function
 
 ' ------------------------------------------------------------------ Data
 
+/// Builds the Data tab: a master-detail view and a sectioned collection view.
+///
+/// - Returns: The tab's root view.
 function MakeDataTab() as variant
     let root = TUIStack("v")
 
@@ -146,6 +168,11 @@ function MakeDataTab() as variant
     return root
 end function
 
+/// Builds the detail pane for one master-detail folder.
+///
+/// - Parameter title: The folder's name.
+/// - Parameter subtitle: The folder's summary line.
+/// - Returns: The detail pane.
 function MakeFolderDetail(title as string, subtitle as string) as variant
     let detail = TUIStack("v")
     detail.add(PinnedHeight(TUILabel("  " + title), 1))
@@ -155,6 +182,9 @@ end function
 
 ' ---------------------------------------------------------------- Wizard
 
+/// Builds the Wizard tab: a three-step setup wizard.
+///
+/// - Returns: The tab's root view.
 function MakeWizardTab() as variant
     let root = TUIStack("v")
 
@@ -184,6 +214,9 @@ function MakeWizardTab() as variant
     return root
 end function
 
+/// Reports that the wizard finished, and for whom.
+///
+/// - Returns: Always 0; the value is unused.
 function WizardFinished() as variant
     let entered = wizardName.text()
     if entered = "" then
@@ -196,6 +229,9 @@ end function
 
 ' ---------------------------------------------------------------- Gauges
 
+/// Builds the Gauges tab: ring, dial and bar gauges, and level indicators.
+///
+/// - Returns: The tab's root view.
 function MakeGaugesTab() as variant
     let root = TUIStack("v")
 
@@ -224,6 +260,10 @@ function MakeGaugesTab() as variant
     return root
 end function
 
+/// Builds a row of three gauges (CPU, RAM, Disk) in one style.
+///
+/// - Parameter style: The gauge style: "ring", "dial" or "bar".
+/// - Returns: The row of gauges.
 function GaugeRow(style as string) as variant
     ' `let row = HStack(spacing: 2)` - renamed twice over: ROW is this file's
     ' own helper, `bar` is the toolbar in GalleryWindow.bas, and BASIC is
@@ -241,17 +281,27 @@ function GaugeRow(style as string) as variant
     return styleRow
 end function
 
-' sideBySide(title, height:) { make() } takes a *closure* that builds the
-' view twice - once for the VTG panel, once for the ANSI one. BASIC has no
-' closure to pass, so each caller has its own side-by-side that calls its
-' own builder twice. Everything else - the two panels, their titles, the
-' nochrome on the right copy, the pinned height - is shared in SideBySide.
+/// Builds a row of gauges as a VTG and ANSI pair.
+///
+/// sideBySide(title, height:) { make() } takes a *closure* that builds the
+/// view twice - once for the VTG panel, once for the ANSI one. BASIC has no
+/// closure to pass, so each caller has its own side-by-side that calls its
+/// own builder twice. Everything else - the two panels, their titles, the
+/// nochrome on the right copy, the pinned height - is shared in SideBySide.
+///
+/// - Parameter title: The pair's name, used in both panels' titles.
+/// - Parameter height: The pinned height of the pair, in rows.
+/// - Parameter style: The gauge style both rows use.
+/// - Returns: The pair, from SideBySide.
 function SideBySideGauges(title as string, height as integer, style as string) as variant
     return SideBySide(title, height, GaugeRow(style), GaugeRow(style))
 end function
 
 ' --------------------------------------------------------------- Drawing
 
+/// Builds the Drawing tab: canvases and an image view, each as a VTG and ANSI pair.
+///
+/// - Returns: The tab's root view.
 function MakeDrawingTab() as variant
     let root = TUIStack("v")
 
