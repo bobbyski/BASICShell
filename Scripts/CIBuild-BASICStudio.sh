@@ -1,8 +1,9 @@
 #!/bin/bash
 # CIBuild-BASICStudio.sh — the release build of BASICStudio.app: Xcode (xcodebuild) on
-# the package, output outside the source tree. What CodeBuilder's job runs.
+# the package, output in the repository's ignored Build folder. What CodeBuilder's job
+# runs, and what BASICStudio.fbsettings runs as its `build: .script`.
 #
-#   Scripts/CIBuild-BASICStudio.sh [--output DIR]     default: ~/tmp/BASICStudio/CIBuild
+#   Scripts/CIBuild-BASICStudio.sh [--output DIR]     default: Build/CIBuild
 #
 # It changes nothing in the project: `swift run` in BASICStudio, and the committed
 # BASICStudio.xcodeproj, work as they did. Named for the product rather than plain
@@ -28,7 +29,11 @@ shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE="$ROOT/BASICStudio"
-OUTPUT="$HOME/tmp/BASICStudio/CIBuild"
+# **In the repository, not a temp folder** (Bobby, 2026-11-10: a package may not point at
+# one). The app this leaves is read back by whoever runs the script — fbbuild's
+# `products:`, CodeBuilder's staging step — so it may not live anywhere a reboot or a
+# cleanup can empty. `Build/` at the repository root is already ignored by git.
+OUTPUT="$ROOT/Build/CIBuild"
 while [ $# -gt 0 ]; do
     case "$1" in
         --output) OUTPUT="$2"; shift 2 ;;
